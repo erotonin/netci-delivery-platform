@@ -21,3 +21,4 @@ registry-data/
 minio-data/
 jenkins-*-home/
 evidence/raw/
+*.tsbuildinfo
