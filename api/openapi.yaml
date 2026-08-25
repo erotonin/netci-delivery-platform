@@ -42,6 +42,7 @@ paths:
       operationId: createApplication
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/CorrelationId'
       requestBody:
         required: true
         content:
@@ -272,12 +273,13 @@ components:
     ApprovalRequest:
       type: object
       properties:
+        actor: { type: string, default: local-reviewer }
         comment: { type: string, maxLength: 1000 }
     RollbackRequest:
       type: object
       required: [targetArtifactDigest, reason]
       properties:
-        targetArtifactDigest: { type: string }
+        targetArtifactDigest: { type: string, pattern: '^sha256:[0-9a-f]{64}$' }
         reason: { type: string, minLength: 3 }
     ErrorResponse:
       type: object

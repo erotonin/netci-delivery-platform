@@ -5,8 +5,16 @@
   vars:
     app_name: hello-container
     app_root: /opt/netci-docker-demo
-    image_ref: "{{ image_ref | default('registry.localhost:5000/hello-container:latest') }}"
+    registry_url: "{{ registry_url | default('192.168.122.1:5000') }}"
+    image_repository: "{{ image_repository | default(registry_url ~ '/hello-container') }}"
+    artifact_digest: "{{ artifact_digest | default('') }}"
     host_port: "{{ host_port | default('18081') }}"
+  pre_tasks:
+    - name: Require immutable artifact digest
+      ansible.builtin.assert:
+        that:
+          - artifact_digest is match('^sha256:[0-9a-f]{64}$')
+        fail_msg: "artifact_digest must be a verified sha256 digest; tag-only deploy is forbidden"
   tasks:
     - name: Ensure application directory exists
       ansible.builtin.file:

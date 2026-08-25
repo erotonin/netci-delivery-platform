@@ -7,15 +7,21 @@
     app_user: netci
     app_root: /opt/netci-demo
     release_version: "{{ release_version | default('v1.0.0') }}"
-    artifact_path: "{{ artifact_path | default('../../../sample-apps/hello-systemd-go/hello-systemd') }}"
+    artifact_path: "{{ artifact_path | default('../../../sample-apps/hello-systemd-go/dist/hello-systemd-v1.0.0') }}"
   tasks:
+    - name: Read current release symlink
+      ansible.builtin.stat:
+        path: "{{ app_root }}/current"
+        follow: false
+      register: previous_release
+
     - name: Ensure service user exists
       ansible.builtin.user:
         name: "{{ app_user }}"
         system: true
         create_home: false
 
-    - name: Create release directory
+    - name: Ensure release directory exists
       ansible.builtin.file:
         path: "{{ app_root }}/releases/{{ release_version }}"
         state: directory
@@ -23,53 +29,76 @@
         group: "{{ app_user }}"
         mode: "0755"
 
-    - name: Install binary
-      ansible.builtin.copy:
-        src: "{{ artifact_path }}"
-        dest: "{{ app_root }}/releases/{{ release_version }}/{{ app_name }}"
-        owner: "{{ app_user }}"
-        group: "{{ app_user }}"
-        mode: "0755"
-      notify: Restart service
+    - name: Deploy and verify new release
+      block:
+        - name: Install binary
+          ansible.builtin.copy:
+            src: "{{ artifact_path }}"
+            dest: "{{ app_root }}/releases/{{ release_version }}/{{ app_name }}"
+            owner: "{{ app_user }}"
+            group: "{{ app_user }}"
+            mode: "0755"
 
-    - name: Point current release to requested version
-      ansible.builtin.file:
-        src: "{{ app_root }}/releases/{{ release_version }}"
-        dest: "{{ app_root }}/current"
-        state: link
-        force: true
-      notify: Restart service
+        - name: Point current release to requested version
+          ansible.builtin.file:
+            src: "{{ app_root }}/releases/{{ release_version }}"
+            dest: "{{ app_root }}/current"
+            state: link
+            force: true
 
-    - name: Install systemd unit
-      ansible.builtin.template:
-        src: hello-systemd.service.j2
-        dest: "/etc/systemd/system/{{ app_name }}.service"
-        mode: "0644"
-      notify:
-        - Reload systemd
-        - Restart service
+        - name: Install systemd unit
+          ansible.builtin.template:
+            src: hello-systemd.service.j2
+            dest: "/etc/systemd/system/{{ app_name }}.service"
+            mode: "0644"
 
-    - name: Ensure service enabled and started
-      ansible.builtin.systemd:
-        name: "{{ app_name }}"
-        enabled: true
-        state: started
+        - name: Reload systemd and restart new release
+          ansible.builtin.systemd:
+            name: "{{ app_name }}"
+            daemon_reload: true
+            enabled: true
+            state: restarted
 
-    - name: Wait for health endpoint
-      ansible.builtin.uri:
-        url: http://127.0.0.1:18080/healthz
-        status_code: 200
-      register: health
-      retries: 12
-      delay: 2
-      until: health.status == 200
+        - name: Wait for new release health endpoint
+          ansible.builtin.uri:
+            url: http://127.0.0.1:18080/healthz
+            status_code: 200
+          register: health
+          retries: 12
+          delay: 2
+          until: health.status == 200
 
-  handlers:
-    - name: Reload systemd
-      ansible.builtin.systemd:
-        daemon_reload: true
+      rescue:
+        - name: Restore previous release symlink when available
+          ansible.builtin.file:
+            src: "{{ previous_release.stat.lnk_source }}"
+            dest: "{{ app_root }}/current"
+            state: link
+            force: true
+          when: previous_release.stat.exists and previous_release.stat.islnk
 
-    - name: Restart service
-      ansible.builtin.systemd:
-        name: "{{ app_name }}"
-        state: restarted
+        - name: Reload systemd after rollback
+          ansible.builtin.systemd:
+            daemon_reload: true
+
+        - name: Restart previous healthy release
+          ansible.builtin.systemd:
+            name: "{{ app_name }}"
+            state: restarted
+          when: previous_release.stat.exists and previous_release.stat.islnk
+
+        - name: Fail deployment after rollback
+          ansible.builtin.fail:
+            msg: "new Systemd release failed health check and was rolled back"
+
+    - name: Collect service status for evidence
+      ansible.builtin.command: "systemctl status {{ app_name }} --no-pager"
+      register: service_status
+      changed_when: false
+      failed_when: false
+
+    - name: Collect service journal for evidence
+      ansible.builtin.command: "journalctl -u {{ app_name }} -n 100 --no-pager"
+      register: service_journal
+      changed_when: false
+      failed_when: false

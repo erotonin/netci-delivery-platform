@@ -7,10 +7,11 @@ import (
     "os"
 )
 
+var version = "dev"
+
 func main() {
-    version := os.Getenv("APP_VERSION")
-    if version == "" {
-        version = "dev"
+    if runtimeVersion := os.Getenv("APP_VERSION"); runtimeVersion != "" {
+        version = runtimeVersion
     }
     mux := http.NewServeMux()
     mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {

@@ -3,6 +3,8 @@ from __future__ import annotations
 import argparse
 import json
 import subprocess
+import os
+import platform
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -29,7 +31,7 @@ def main() -> None:
         'success': completed.returncode == 0,
         'stdout': completed.stdout,
         'stderr': completed.stderr,
-        'environment': 'windows-skeleton' if completed.returncode == 0 else 'unknown',
+        'environment': os.getenv('NETCI_EVIDENCE_ENV', f'{platform.system().lower()}-local'),
     }
     target = Path('evidence') / f'{args.name}.json'
     target.parent.mkdir(parents=True, exist_ok=True)

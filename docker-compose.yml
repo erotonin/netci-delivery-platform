@@ -14,6 +14,7 @@ services:
       retries: 20
 
   registry:
+    container_name: netci-registry
     image: registry:2
     ports: ["5000:5000"]
     volumes: ["registry-data:/var/lib/registry"]
@@ -55,7 +56,7 @@ services:
       context: ./jenkins
       dockerfile: Dockerfile.controller
     environment:
-      CASC_JENKINS_CONFIG: /var/jenkins_home/casc/base.yaml,/var/jenkins_home/casc/controller-a.yaml
+      CASC_JENKINS_CONFIG: /var/jenkins_home/casc/base.yaml,/var/jenkins_home/casc/controller-a.yaml,/var/jenkins_home/casc/ephemeral-agent.yaml
       JENKINS_CONTROLLER_ID: jenkins-a
     ports: ["8081:8080", "50001:50000"]
     volumes:
@@ -68,7 +69,7 @@ services:
       context: ./jenkins
       dockerfile: Dockerfile.controller
     environment:
-      CASC_JENKINS_CONFIG: /var/jenkins_home/casc/base.yaml,/var/jenkins_home/casc/controller-b.yaml
+      CASC_JENKINS_CONFIG: /var/jenkins_home/casc/base.yaml,/var/jenkins_home/casc/controller-b.yaml,/var/jenkins_home/casc/ephemeral-agent.yaml
       JENKINS_CONTROLLER_ID: jenkins-b
     ports: ["8082:8080", "50002:50000"]
     volumes:

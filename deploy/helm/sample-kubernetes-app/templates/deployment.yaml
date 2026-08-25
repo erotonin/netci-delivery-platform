@@ -22,7 +22,7 @@ spec:
         runAsNonRoot: true
       containers:
         - name: app
-          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          image: "{{ required \"image.digest is required; deploy by immutable digest\" .Values.image.digest | printf \"%s@%s\" .Values.image.repository }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           ports:
             - name: http

@@ -1,5 +1,4 @@
 jenkins:
-  systemMessage: "netCI Jenkins controller managed by JCasC"
   numExecutors: 0
   mode: EXCLUSIVE
   quietPeriod: 0
@@ -14,12 +13,6 @@ jenkins:
   authorizationStrategy:
     loggedInUsersCanDoAnything:
       allowAnonymousRead: false
-  globalNodeProperties:
-    - envVars:
-        env:
-          - key: NETCI_MANAGED
-            value: "true"
-
 unclassified:
   globalLibraries:
     libraries:

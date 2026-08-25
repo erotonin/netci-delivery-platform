@@ -2,12 +2,15 @@ replicaCount: 1
 
 image:
   repository: registry.localhost:5000/hello-kubernetes
-  tag: latest
+  digest: "sha256:REPLACE_WITH_VERIFIED_DIGEST"
   pullPolicy: IfNotPresent
 
 service:
   type: ClusterIP
   port: 8080
+
+ingress:
+  enabled: false
 
 resources:
   requests:
