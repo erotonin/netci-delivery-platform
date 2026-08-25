@@ -1,0 +1,75 @@
+---
+- name: Deploy netCI sample service with systemd
+  hosts: systemd_targets
+  become: true
+  vars:
+    app_name: hello-systemd
+    app_user: netci
+    app_root: /opt/netci-demo
+    release_version: "{{ release_version | default('v1.0.0') }}"
+    artifact_path: "{{ artifact_path | default('../../../sample-apps/hello-systemd-go/hello-systemd') }}"
+  tasks:
+    - name: Ensure service user exists
+      ansible.builtin.user:
+        name: "{{ app_user }}"
+        system: true
+        create_home: false
+
+    - name: Create release directory
+      ansible.builtin.file:
+        path: "{{ app_root }}/releases/{{ release_version }}"
+        state: directory
+        owner: "{{ app_user }}"
+        group: "{{ app_user }}"
+        mode: "0755"
+
+    - name: Install binary
+      ansible.builtin.copy:
+        src: "{{ artifact_path }}"
+        dest: "{{ app_root }}/releases/{{ release_version }}/{{ app_name }}"
+        owner: "{{ app_user }}"
+        group: "{{ app_user }}"
+        mode: "0755"
+      notify: Restart service
+
+    - name: Point current release to requested version
+      ansible.builtin.file:
+        src: "{{ app_root }}/releases/{{ release_version }}"
+        dest: "{{ app_root }}/current"
+        state: link
+        force: true
+      notify: Restart service
+
+    - name: Install systemd unit
+      ansible.builtin.template:
+        src: hello-systemd.service.j2
+        dest: "/etc/systemd/system/{{ app_name }}.service"
+        mode: "0644"
+      notify:
+        - Reload systemd
+        - Restart service
+
+    - name: Ensure service enabled and started
+      ansible.builtin.systemd:
+        name: "{{ app_name }}"
+        enabled: true
+        state: started
+
+    - name: Wait for health endpoint
+      ansible.builtin.uri:
+        url: http://127.0.0.1:18080/healthz
+        status_code: 200
+      register: health
+      retries: 12
+      delay: 2
+      until: health.status == 200
+
+  handlers:
+    - name: Reload systemd
+      ansible.builtin.systemd:
+        daemon_reload: true
+
+    - name: Restart service
+      ansible.builtin.systemd:
+        name: "{{ app_name }}"
+        state: restarted

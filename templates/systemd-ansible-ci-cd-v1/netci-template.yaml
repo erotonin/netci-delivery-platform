@@ -1,0 +1,21 @@
+apiVersion: netci.io/v1alpha1
+kind: DeliveryTemplate
+metadata:
+  name: systemd-ansible-ci-cd-v1
+spec:
+  runtime: systemd
+  artifactKind: linux-binary
+  deploy:
+    adapter: systemd
+    runner: ansible
+    transport: ssh
+  stages:
+    - checkout
+    - unit-test
+    - build
+    - publish
+    - deploy
+    - health-check
+  environments: [dev, staging, prod]
+  productionApproval: required
+  rollback: symlink-release

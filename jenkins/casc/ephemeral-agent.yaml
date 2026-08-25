@@ -1,0 +1,35 @@
+jenkins:
+  clouds:
+    - kubernetes:
+        name: netci-kind
+        serverUrl: https://kubernetes.default.svc
+        namespace: netci-build
+        skipTlsVerify: true
+        podRetention: never
+        templates:
+          - name: netci-ephemeral
+            label: netci-ephemeral
+            idleMinutes: 0
+            yaml: |
+              apiVersion: v1
+              kind: Pod
+              spec:
+                restartPolicy: Never
+                securityContext:
+                  runAsNonRoot: true
+                containers:
+                  - name: builder
+                    image: ghcr.io/netci/ci-toolbox:dev
+                    command: ["sleep"]
+                    args: ["99d"]
+                    tty: true
+                    resources:
+                      requests:
+                        cpu: "500m"
+                        memory: "1Gi"
+                      limits:
+                        cpu: "2"
+                        memory: "4Gi"
+                volumes:
+                  - name: workspace
+                    emptyDir: {}

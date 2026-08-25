@@ -1,0 +1,36 @@
+---
+- name: Deploy sample container service to Docker VM
+  hosts: docker_targets
+  become: true
+  vars:
+    app_name: hello-container
+    app_root: /opt/netci-docker-demo
+    image_ref: "{{ image_ref | default('registry.localhost:5000/hello-container:latest') }}"
+    host_port: "{{ host_port | default('18081') }}"
+  tasks:
+    - name: Ensure application directory exists
+      ansible.builtin.file:
+        path: "{{ app_root }}"
+        state: directory
+        mode: "0755"
+
+    - name: Render Compose file
+      ansible.builtin.template:
+        src: hello-container.compose.yml.j2
+        dest: "{{ app_root }}/compose.yml"
+        mode: "0644"
+
+    - name: Pull and start service
+      community.docker.docker_compose_v2:
+        project_src: "{{ app_root }}"
+        state: present
+        pull: always
+
+    - name: Wait for health endpoint
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ host_port }}/healthz"
+        status_code: 200
+      register: health
+      retries: 12
+      delay: 2
+      until: health.status == 200

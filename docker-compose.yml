@@ -1,0 +1,84 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: netci
+      POSTGRES_USER: netci
+      POSTGRES_PASSWORD: netci-local-only
+    ports: ["5432:5432"]
+    volumes: ["postgres-data:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U netci -d netci"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  registry:
+    image: registry:2
+    ports: ["5000:5000"]
+    volumes: ["registry-data:/var/lib/registry"]
+
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: netci
+      MINIO_ROOT_PASSWORD: netci-local-only
+    ports: ["9000:9000", "9001:9001"]
+    volumes: ["minio-data:/data"]
+
+  temporalite:
+    image: temporalio/temporal:latest
+    command: temporal server start-dev --ip 0.0.0.0
+    ports: ["7233:7233", "8233:8233"]
+
+  netci-api:
+    build: ./backend
+    environment:
+      DATABASE_URL: postgresql://netci:netci-local-only@postgres:5432/netci
+      REGISTRY_URL: http://registry:5000
+      MINIO_ENDPOINT: minio:9000
+      TEMPORAL_ADDRESS: temporalite:7233
+    ports: ["8000:8000"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      registry:
+        condition: service_started
+      minio:
+        condition: service_started
+      temporalite:
+        condition: service_started
+
+  jenkins-a:
+    build:
+      context: ./jenkins
+      dockerfile: Dockerfile.controller
+    environment:
+      CASC_JENKINS_CONFIG: /var/jenkins_home/casc/base.yaml,/var/jenkins_home/casc/controller-a.yaml
+      JENKINS_CONTROLLER_ID: jenkins-a
+    ports: ["8081:8080", "50001:50000"]
+    volumes:
+      - jenkins-a-home:/var/jenkins_home
+      - ./jenkins/casc:/var/jenkins_home/casc:ro
+      - ./jenkins/shared-library:/var/jenkins_home/shared-library:ro
+
+  jenkins-b:
+    build:
+      context: ./jenkins
+      dockerfile: Dockerfile.controller
+    environment:
+      CASC_JENKINS_CONFIG: /var/jenkins_home/casc/base.yaml,/var/jenkins_home/casc/controller-b.yaml
+      JENKINS_CONTROLLER_ID: jenkins-b
+    ports: ["8082:8080", "50002:50000"]
+    volumes:
+      - jenkins-b-home:/var/jenkins_home
+      - ./jenkins/casc:/var/jenkins_home/casc:ro
+      - ./jenkins/shared-library:/var/jenkins_home/shared-library:ro
+
+volumes:
+  postgres-data:
+  registry-data:
+  minio-data:
+  jenkins-a-home:
+  jenkins-b-home:

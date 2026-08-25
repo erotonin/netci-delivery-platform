@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://netci.local/schemas/security-evidence.json",
+  "type": "object",
+  "required": ["applicationId", "artifactDigest", "sbom", "vulnerabilityScan", "signature", "decision", "recordedAt"],
+  "properties": {
+    "applicationId": {"type": "string"},
+    "commitSha": {"type": "string"},
+    "artifactDigest": {"type": "string", "pattern": "^sha256:"},
+    "sbom": {
+      "type": "object",
+      "required": ["format", "location", "generatedBy"],
+      "properties": {
+        "format": {"enum": ["cyclonedx-json", "spdx-json"]},
+        "location": {"type": "string"},
+        "generatedBy": {"type": "string"}
+      }
+    },
+    "vulnerabilityScan": {
+      "type": "object",
+      "required": ["scanner", "status", "critical", "high"],
+      "properties": {
+        "scanner": {"type": "string"},
+        "status": {"enum": ["passed", "failed"]},
+        "critical": {"type": "integer", "minimum": 0},
+        "high": {"type": "integer", "minimum": 0}
+      }
+    },
+    "signature": {
+      "type": "object",
+      "required": ["provider", "verified"],
+      "properties": {
+        "provider": {"type": "string"},
+        "verified": {"type": "boolean"},
+        "certificateIdentity": {"type": ["string", "null"]}
+      }
+    },
+    "decision": {"enum": ["allow", "deny"]},
+    "reason": {"type": "string"},
+    "recordedAt": {"type": "string", "format": "date-time"}
+  }
+}

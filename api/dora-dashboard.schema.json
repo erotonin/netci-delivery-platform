@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://netci.local/schemas/dora-dashboard.json",
+  "type": "object",
+  "required": ["applicationId", "period", "metrics", "sourceEvents"],
+  "properties": {
+    "applicationId": {"type": "string"},
+    "period": {"type": "object", "required": ["from", "to"], "properties": {"from": {"type": "string", "format": "date-time"}, "to": {"type": "string", "format": "date-time"}}},
+    "metrics": {
+      "type": "object",
+      "required": ["changeLeadTimeSecondsAvg", "deploymentFrequency", "failedDeploymentRecoveryTimeSecondsAvg", "changeFailRate", "deploymentReworkRate"],
+      "properties": {
+        "changeLeadTimeSecondsAvg": {"type": "number", "minimum": 0},
+        "deploymentFrequency": {"type": "number", "minimum": 0},
+        "failedDeploymentRecoveryTimeSecondsAvg": {"type": "number", "minimum": 0},
+        "changeFailRate": {"type": "number", "minimum": 0, "maximum": 1},
+        "deploymentReworkRate": {"type": "number", "minimum": 0, "maximum": 1}
+      }
+    },
+    "sourceEvents": {"type": "integer", "minimum": 0}
+  }
+}

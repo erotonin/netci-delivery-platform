@@ -1,0 +1,41 @@
+release: netci-local-rc1
+checks:
+  - id: source-structure
+    command: python scripts/validate_windows.py
+    status: required
+  - id: catalog
+    command: python scripts/validate_catalog.py
+    status: required
+  - id: backend-unit
+    command: python -m pytest backend/tests
+    status: required
+  - id: frontend-build
+    command: npm --prefix frontend run build
+    status: required
+  - id: compose-config
+    command: docker compose config
+    status: ubuntu-required
+  - id: kind-cluster
+    command: kind create cluster --config infra/kind/kind-config.yaml
+    status: ubuntu-required
+  - id: jenkins-jcasc
+    command: docker compose up --build jenkins-a jenkins-b
+    status: ubuntu-required
+  - id: e2e-container
+    command: make e2e-container
+    status: ubuntu-required
+  - id: e2e-kubernetes
+    command: make e2e-kubernetes
+    status: ubuntu-required
+  - id: e2e-systemd
+    command: make e2e-systemd
+    status: ubuntu-required
+  - id: security-gate
+    command: make security-test
+    status: ubuntu-required
+  - id: benchmark
+    command: make benchmark
+    status: ubuntu-required
+  - id: failure-drill
+    command: make failure-drill
+    status: ubuntu-required

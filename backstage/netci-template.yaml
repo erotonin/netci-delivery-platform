@@ -1,0 +1,44 @@
+apiVersion: scaffolder.backstage.io/v1beta3
+kind: Template
+metadata:
+  name: netci-application
+  title: Create netCI Application
+  description: Create a delivery application through the netCI API.
+spec:
+  owner: platform-engineering
+  type: service
+  parameters:
+    - title: Application details
+      required: [name, repositoryUrl, pipelineTemplate]
+      properties:
+        name:
+          title: Application name
+          type: string
+          pattern: '^[a-z0-9][a-z0-9-]{2,62}$'
+        repositoryUrl:
+          title: Repository URL
+          type: string
+          format: uri
+        pipelineTemplate:
+          title: Pipeline template
+          type: string
+          enum:
+            - container-ci-cd-v1
+            - kubernetes-ci-cd-v1
+            - systemd-ansible-ci-cd-v1
+  steps:
+    - id: createNetciApplication
+      name: Create application in netCI
+      action: http:backstage:request
+      input:
+        method: POST
+        path: /api/netci/applications
+        body:
+          name: ${{ parameters.name }}
+          repositoryUrl: ${{ parameters.repositoryUrl }}
+          pipelineTemplate: ${{ parameters.pipelineTemplate }}
+          runtime: docker
+  output:
+    links:
+      - title: Open netCI application
+        url: ${{ steps.createNetciApplication.output.body.url }}

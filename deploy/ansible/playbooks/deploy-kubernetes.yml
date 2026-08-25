@@ -1,0 +1,28 @@
+---
+- name: Deploy sample application to Kubernetes through Helm
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    kube_context: "{{ kube_context | default('kind-netci-local') }}"
+    release_name: "{{ release_name | default('hello-kubernetes') }}"
+    target_namespace: "{{ target_namespace | default('staging') }}"
+    chart_path: "{{ chart_path | default('../../../deploy/helm/sample-kubernetes-app') }}"
+    image_tag: "{{ image_tag | default('latest') }}"
+  tasks:
+    - name: Deploy Helm release atomically
+      kubernetes.core.helm:
+        name: "{{ release_name }}"
+        chart_ref: "{{ chart_path }}"
+        release_namespace: "{{ target_namespace }}"
+        create_namespace: true
+        kube_context: "{{ kube_context }}"
+        release_values:
+          environment: "{{ target_namespace }}"
+          image:
+            tag: "{{ image_tag }}"
+        wait: true
+        wait_timeout: 180s
+        atomic: true
+        history_max: 10
+        validate_certs: true

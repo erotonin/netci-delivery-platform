@@ -1,0 +1,7 @@
+jenkins:
+  systemMessage: "netCI Jenkins controller A"
+  globalNodeProperties:
+    - envVars:
+        env:
+          - key: NETCI_CONTROLLER_ID
+            value: jenkins-a

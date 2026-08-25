@@ -1,0 +1,21 @@
+[Unit]
+Description={{ app_name }} netCI demo service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User={{ app_user }}
+Group={{ app_user }}
+WorkingDirectory={{ app_root }}/current
+ExecStart={{ app_root }}/current/{{ app_name }}
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths={{ app_root }}
+
+[Install]
+WantedBy=multi-user.target

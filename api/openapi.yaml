@@ -1,0 +1,288 @@
+openapi: 3.0.3
+info:
+  title: netCI Delivery API
+  version: 0.1.0
+  description: API-first contract for netCI Delivery Platform.
+servers:
+  - url: http://localhost:8000
+
+paths:
+  /healthz:
+    get:
+      operationId: healthCheck
+      responses:
+        '200':
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+  /stage-catalog:
+    get:
+      operationId: listStageCatalog
+      responses:
+        '200':
+          description: Available stages and templates
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [stages, templates]
+                properties:
+                  stages:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/StageDefinition'
+                  templates:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/TemplateDefinition'
+  /applications:
+    post:
+      operationId: createApplication
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ApplicationCreate'
+      responses:
+        '201':
+          description: Application created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Application'
+        '409':
+          $ref: '#/components/responses/Conflict'
+    get:
+      operationId: listApplications
+      responses:
+        '200':
+          description: Applications
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Application'
+  /applications/{applicationId}/pipeline-runs:
+    post:
+      operationId: startPipelineRun
+      parameters:
+        - $ref: '#/components/parameters/ApplicationId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/CorrelationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PipelineRunCreate'
+      responses:
+        '202':
+          description: Pipeline accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PipelineRun'
+  /pipeline-runs/{pipelineRunId}:
+    get:
+      operationId: getPipelineRun
+      parameters:
+        - $ref: '#/components/parameters/PipelineRunId'
+      responses:
+        '200':
+          description: Pipeline run
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PipelineRun'
+  /pipeline-runs/{pipelineRunId}/logs:
+    get:
+      operationId: getPipelineLogs
+      parameters:
+        - $ref: '#/components/parameters/PipelineRunId'
+      responses:
+        '200':
+          description: Pipeline logs
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [pipelineRunId, lines]
+                properties:
+                  pipelineRunId: { type: string, format: uuid }
+                  lines: { type: array, items: { type: string } }
+  /deployments/{deploymentId}/approve:
+    post:
+      operationId: approveDeployment
+      parameters:
+        - $ref: '#/components/parameters/DeploymentId'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ApprovalRequest'
+      responses:
+        '202':
+          description: Approval accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Deployment'
+  /deployments/{deploymentId}/rollback:
+    post:
+      operationId: rollbackDeployment
+      parameters:
+        - $ref: '#/components/parameters/DeploymentId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RollbackRequest'
+      responses:
+        '202':
+          description: Rollback accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Deployment'
+
+components:
+  parameters:
+    ApplicationId:
+      name: applicationId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    PipelineRunId:
+      name: pipelineRunId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    DeploymentId:
+      name: deploymentId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: false
+      schema: { type: string, maxLength: 128 }
+    CorrelationId:
+      name: X-Correlation-Id
+      in: header
+      required: false
+      schema: { type: string, maxLength: 128 }
+  responses:
+    Conflict:
+      description: Idempotency or domain conflict
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+  schemas:
+    HealthResponse:
+      type: object
+      required: [status, version]
+      properties:
+        status: { type: string, enum: [ok] }
+        version: { type: string }
+    Runtime:
+      type: string
+      enum: [docker, kubernetes, systemd]
+    Environment:
+      type: string
+      enum: [dev, staging, prod]
+    ApplicationCreate:
+      type: object
+      required: [name, repositoryUrl, pipelineTemplate, runtime]
+      properties:
+        name: { type: string, pattern: '^[a-z0-9][a-z0-9-]{2,62}$' }
+        repositoryUrl: { type: string, format: uri }
+        pipelineTemplate: { type: string, enum: [container-ci-cd-v1, kubernetes-ci-cd-v1, systemd-ansible-ci-cd-v1] }
+        runtime: { $ref: '#/components/schemas/Runtime' }
+        defaultEnvironment: { $ref: '#/components/schemas/Environment', default: dev }
+        stages:
+          type: array
+          items: { type: string }
+    Application:
+      allOf:
+        - $ref: '#/components/schemas/ApplicationCreate'
+        - type: object
+          required: [id, createdAt]
+          properties:
+            id: { type: string, format: uuid }
+            createdAt: { type: string, format: date-time }
+    StageDefinition:
+      type: object
+      required: [id, name, category, enabledByDefault]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        category: { type: string, enum: [source, test, build, security, publish, deploy, verify] }
+        enabledByDefault: { type: boolean }
+        parameters: { type: object, additionalProperties: true }
+    TemplateDefinition:
+      type: object
+      required: [id, name, runtime, stageIds]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        runtime: { $ref: '#/components/schemas/Runtime' }
+        stageIds: { type: array, items: { type: string } }
+    PipelineRunCreate:
+      type: object
+      required: [commitSha, environment]
+      properties:
+        commitSha: { type: string, minLength: 7 }
+        branch: { type: string, default: main }
+        environment: { $ref: '#/components/schemas/Environment' }
+        parameters: { type: object, additionalProperties: true }
+    PipelineRun:
+      type: object
+      required: [id, applicationId, status, commitSha, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        applicationId: { type: string, format: uuid }
+        status: { type: string, enum: [queued, running, waiting_approval, succeeded, failed, cancelled, rolled_back] }
+        commitSha: { type: string }
+        jenkinsRunId: { type: string, nullable: true }
+        workflowId: { type: string, nullable: true }
+        artifactDigest: { type: string, nullable: true }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    Deployment:
+      type: object
+      required: [id, applicationId, runtime, environment, status]
+      properties:
+        id: { type: string, format: uuid }
+        applicationId: { type: string, format: uuid }
+        runtime: { $ref: '#/components/schemas/Runtime' }
+        environment: { $ref: '#/components/schemas/Environment' }
+        status: { type: string, enum: [pending_approval, deploying, healthy, failed, rolled_back] }
+        artifactDigest: { type: string }
+        approvedBy: { type: string, nullable: true }
+    ApprovalRequest:
+      type: object
+      properties:
+        comment: { type: string, maxLength: 1000 }
+    RollbackRequest:
+      type: object
+      required: [targetArtifactDigest, reason]
+      properties:
+        targetArtifactDigest: { type: string }
+        reason: { type: string, minLength: 3 }
+    ErrorResponse:
+      type: object
+      required: [code, message]
+      properties:
+        code: { type: string }
+        message: { type: string }
+        correlationId: { type: string, nullable: true }
