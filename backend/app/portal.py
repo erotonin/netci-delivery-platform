@@ -484,6 +484,7 @@ class PortalReadModel:
             {"id": "svc-netchat", "name": "netChat", "code": "VTN_CNTT_MSS_686", "tenant": "Trung tâm nền tảng Công nghệ và Chuyển đổi số", "tier": "Tier 2", "description": "Real-time messaging platform for internal team communication."},
             {"id": "svc-pctt", "name": "PCTT", "code": "VTN_CS_PCTT_210", "tenant": "Trung tâm Chăm sóc khách hàng", "tier": "Tier 2", "description": "Ticketing and customer support case tracking."},
             {"id": "svc-nocpro5", "name": "NocPro5", "code": "VTN_NOC_PRO5_005", "tenant": "Trung tâm Vận hành khai thác mạng", "tier": "Tier 1", "description": "Network operations alarm monitoring and correlation."},
+            {"id": "svc-eoffice", "name": "eOffice", "code": "VTN_CNTT_EOFFICE_118", "tenant": "Trung tâm nền tảng Công nghệ và Chuyển đổi số", "tier": "Tier 3", "description": "Enterprise document workflow and digital office platform."},
         ]
         normalized = query.strip().lower()
         if not normalized:

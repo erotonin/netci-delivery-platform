@@ -111,6 +111,19 @@ def test_dcim_lookup_exposes_system_modules_and_deployment_targets():
     assert services.status_code == 200
     assert services.json()['items'][0]['code'] == 'VTN_CNTT_MSS_686'
 
+    available = client.get('/dcim/services?query=eoffice')
+    assert available.status_code == 200
+    assert available.json()['items'][0]['name'] == 'eOffice'
+
+    created = client.post('/systems', json={
+        'id': available.json()['items'][0]['name'],
+        'unit': available.json()['items'][0]['tenant'],
+        'description': available.json()['items'][0]['description'],
+        'owner': 'Admin',
+    })
+    assert created.status_code == 201
+    assert client.get('/systems/eOffice').json()['moduleCount'] == 0
+
     modules = client.get('/dcim/modules?systemId=netChat')
     assert modules.status_code == 200
     assert {'backend-api', 'web-client', 'notification-worker'} <= {

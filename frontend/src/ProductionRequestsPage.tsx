@@ -1,12 +1,29 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import {
   CalendarClock, Check, CheckCircle2, ChevronDown, Circle, CircleAlert, Clock3,
   Eye, FileCheck2, Pencil, Plus, RotateCcw, Search, Trash2, XCircle,
 } from 'lucide-react'
 import { Modal, PageHeader, StatusPill } from './PortalShell'
-import { modules, productionRequests } from './portalData'
+import { usePortalFeedback } from './PortalFeedback'
+import { modules, productionRequests, type ProductionRequestItem } from './portalData'
 
-type RequestItem = (typeof productionRequests)[number]
+type RequestItem = ProductionRequestItem
+const REQUEST_SESSION_KEY = 'netci.production-requests'
+
+function loadRequestSession(): ProductionRequestItem[] {
+  try {
+    const saved = window.sessionStorage.getItem(REQUEST_SESSION_KEY)
+    const parsed = saved ? JSON.parse(saved) : null
+    return Array.isArray(parsed) ? parsed : productionRequests
+  } catch {
+    return productionRequests
+  }
+}
+
+function scheduledIso(value: string): string {
+  const [day, month, year] = value.split(' ')[0].split('/')
+  return year && month && day ? `${year}-${month}-${day}` : ''
+}
 
 function RequestDetails({ request, onClose }: { request: RequestItem; onClose: () => void }) {
   const failed = request.status === 'Rolled back'
@@ -27,13 +44,13 @@ function RequestDetails({ request, onClose }: { request: RequestItem; onClose: (
   </Modal>
 }
 
-function NewRequest({ onClose }: { onClose: () => void }) {
+function NewRequest({ onClose, onCreate }: { onClose: () => void; onCreate: (moduleIds: string[]) => void }) {
   const [selected, setSelected] = useState<string[]>(['backend-api'])
   const [review, setReview] = useState(false)
   const [rollback, setRollback] = useState<'automatic' | 'manual'>('automatic')
   const [automation, setAutomation] = useState(true)
   const toggle = (id: string) => setSelected((current) => current.includes(id) ? current.filter((item) => item !== id) : [...current, id])
-  return <Modal wide title="New Production Request" description="Configure a controlled multi-module production deployment." onClose={onClose} footer={<><button className="secondary-button" onClick={onClose}>Cancel</button>{review ? <button className="primary-button" onClick={onClose}><FileCheck2 size={16} />Create Request</button> : <button className="primary-button" disabled={!selected.length} onClick={() => setReview(true)}>Review Request</button>}</>}>
+  return <Modal wide title="New Production Request" description="Configure a controlled multi-module production deployment." onClose={onClose} footer={<><button className="secondary-button" onClick={onClose}>Cancel</button>{review ? <button className="primary-button" onClick={() => onCreate(selected)}><FileCheck2 size={16} />Create Request</button> : <button className="primary-button" disabled={!selected.length} onClick={() => setReview(true)}>Review Request</button>}</>}>
     {!review ? <div className="request-form">
       <section className="form-section"><div className="form-section-title"><span>1</span><div><h3>Select modules</h3><p>Choose one or more modules to deploy together.</p></div></div><div className="selectable-modules">{modules.map((module) => <button className={selected.includes(module.id) ? 'selected' : ''} onClick={() => toggle(module.id)} key={module.id}><span className="check-box">{selected.includes(module.id) && <Check size={13} />}</span><span><strong>{module.name}</strong><small>{module.versions.length} available versions</small></span></button>)}</div></section>
       {selected.length > 0 && <section className="form-section"><div className="form-section-title"><span>2</span><div><h3>Versions and deployment order</h3><p>Modules with the same order run in parallel.</p></div></div><div className="deployment-order">{selected.map((id, index) => { const module = modules.find((item) => item.id === id)!; return <article key={id}><div><strong>{module.name}</strong><small>Security passed · Coverage {id === 'backend-api' ? '87%' : '91%'}</small></div><select defaultValue={module.versions[0]}>{module.versions.map((version) => <option key={version}>{version}</option>)}</select><label><span>Order</span><input type="number" min="1" defaultValue={index + 1} /></label></article> })}</div></section>}
@@ -45,19 +62,44 @@ function NewRequest({ onClose }: { onClose: () => void }) {
 }
 
 export function ProductionRequestsPage() {
+  const { notify } = usePortalFeedback()
+  const [items, setItems] = useState<ProductionRequestItem[]>(loadRequestSession)
   const [query, setQuery] = useState('')
   const [moduleFilter, setModuleFilter] = useState('All modules')
   const [statusFilter, setStatusFilter] = useState('All statuses')
+  const [fromDate, setFromDate] = useState('')
+  const [toDate, setToDate] = useState('')
   const [details, setDetails] = useState<RequestItem | null>(null)
   const [creating, setCreating] = useState(false)
-  const filtered = useMemo(() => productionRequests.filter((request) => request.id.toLowerCase().includes(query.toLowerCase()) && (moduleFilter === 'All modules' || request.modules.some((item) => item.startsWith(moduleFilter))) && (statusFilter === 'All statuses' || request.status === statusFilter)), [query, moduleFilter, statusFilter])
+  useEffect(() => {
+    window.sessionStorage.setItem(REQUEST_SESSION_KEY, JSON.stringify(items))
+  }, [items])
+  const filtered = useMemo(() => items.filter((request) => {
+    const scheduled = scheduledIso(request.scheduled)
+    return request.id.toLowerCase().includes(query.toLowerCase())
+      && (moduleFilter === 'All modules' || request.modules.some((item) => item.startsWith(moduleFilter)))
+      && (statusFilter === 'All statuses' || request.status === statusFilter)
+      && (!fromDate || scheduled >= fromDate)
+      && (!toDate || scheduled <= toDate)
+  }), [items, query, moduleFilter, statusFilter, fromDate, toDate])
+  const createRequest = (moduleIds: string[]) => {
+    const nextNumber = Math.max(...items.map((item) => Number(item.id.split('-').slice(-1)[0])), 0) + 1
+    const requestedModules = moduleIds.map((id) => {
+      const module = modules.find((item) => item.id === id)!
+      return `${module.name} · ${module.versions[0]}`
+    })
+    const request: ProductionRequestItem = { id: `PR-2025-${String(nextNumber).padStart(4, '0')}`, modules: requestedModules, requestedBy: 'Admin', scheduled: '30/04/2025 03:00', sr: 'Creating…', cr: 'Creating…', status: 'Pending checks' }
+    setItems((current) => [request, ...current])
+    setCreating(false)
+    notify(`${request.id} đã được tạo và đang chờ đồng bộ SR/CR.`)
+  }
   return <>
     <PageHeader title="Production Requests" description="Create and track requests to deploy netChat modules to production." action={<button className="primary-button" onClick={() => setCreating(true)}><Plus size={16} />New Request</button>} />
-    <div className="request-kpis">{[['Total Deploys', '3', 'neutral'], ['Success', '1', 'green'], ['Failed', '1', 'red'], ['Pending', '1', 'amber']].map(([label, value, tone]) => <article key={label}><i className={`request-kpi-dot ${tone}`} /><div><span>{label}</span><strong>{value}</strong></div></article>)}</div>
-    <section className="panel table-panel"><div className="table-toolbar request-filters"><label className="input-with-icon"><Search size={16} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search request ID…" /></label><select value={moduleFilter} onChange={(event) => setModuleFilter(event.target.value)}><option>All modules</option><option>Backend API</option><option>Web Client</option></select><select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}><option>All statuses</option><option>Success</option><option>Rolled back</option><option>Pending checks</option></select><label className="date-filter"><span>From</span><input type="date" /></label><label className="date-filter"><span>To</span><input type="date" /></label><button className="text-button">Clear filters</button></div>
-      <div className="data-table requests-table"><div className="table-row table-head"><span>Request</span><span>Modules</span><span>Requested by</span><span>Scheduled</span><span>SR / CR</span><span>Status</span><span>Actions</span></div>{filtered.map((request) => <div className="table-row" key={request.id}><span className="request-id">{request.id}</span><span className="module-list-cell">{request.modules.map((module) => <small key={module}>{module.split(' · ')[0]}</small>)}</span><span>{request.requestedBy}</span><span>{request.scheduled}</span><span>{request.sr}<small> · {request.cr}</small></span><StatusPill status={request.status} /><span className="row-actions"><button aria-label={`Xem ${request.id}`} onClick={() => setDetails(request)}><Eye size={16} /></button>{request.status === 'Pending checks' && <><button aria-label={`Sửa ${request.id}`}><Pencil size={15} /></button><button aria-label={`Xóa ${request.id}`}><Trash2 size={15} /></button></>}</span></div>)}</div>
+    <div className="request-kpis">{[['Total Deploys', String(items.length), 'neutral'], ['Success', String(items.filter((item) => item.status === 'Success').length), 'green'], ['Failed', String(items.filter((item) => item.status === 'Rolled back').length), 'red'], ['Pending', String(items.filter((item) => item.status === 'Pending checks').length), 'amber']].map(([label, value, tone]) => <article key={label}><i className={`request-kpi-dot ${tone}`} /><div><span>{label}</span><strong>{value}</strong></div></article>)}</div>
+    <section className="panel table-panel"><div className="table-toolbar request-filters"><label className="input-with-icon"><Search size={16} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search request ID…" /></label><select value={moduleFilter} onChange={(event) => setModuleFilter(event.target.value)}><option>All modules</option><option>Backend API</option><option>Web Client</option></select><select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}><option>All statuses</option><option>Success</option><option>Rolled back</option><option>Pending checks</option></select><label className="date-filter"><span>From</span><input type="date" value={fromDate} onChange={(event) => setFromDate(event.target.value)} /></label><label className="date-filter"><span>To</span><input type="date" value={toDate} min={fromDate || undefined} onChange={(event) => setToDate(event.target.value)} /></label><button className="text-button" onClick={() => { setQuery(''); setModuleFilter('All modules'); setStatusFilter('All statuses'); setFromDate(''); setToDate('') }}>Clear filters</button></div>
+      <div className="data-table requests-table"><div className="table-row table-head"><span>Request</span><span>Modules</span><span>Requested by</span><span>Scheduled</span><span>SR / CR</span><span>Status</span><span>Actions</span></div>{filtered.map((request) => <div className="table-row" key={request.id}><span className="request-id">{request.id}</span><span className="module-list-cell">{request.modules.map((module) => <small key={module}>{module.split(' · ')[0]}</small>)}</span><span>{request.requestedBy}</span><span>{request.scheduled}</span><span>{request.sr}<small> · {request.cr}</small></span><StatusPill status={request.status} /><span className="row-actions"><button aria-label={`Xem ${request.id}`} onClick={() => setDetails(request)}><Eye size={16} /></button>{request.status === 'Pending checks' && <><button aria-label={`Sửa ${request.id}`}><Pencil size={15} /></button><button aria-label={`Xóa ${request.id}`} onClick={() => { setItems((current) => current.filter((item) => item.id !== request.id)); notify(`${request.id} đã được xóa.`, 'info') }}><Trash2 size={15} /></button></>}</span></div>)}</div>{!filtered.length && <div className="empty-table"><Search size={22} /><strong>Không có request phù hợp</strong><span>Thử đổi bộ lọc hoặc tạo production request mới.</span></div>}
     </section>
     {details && <RequestDetails request={details} onClose={() => setDetails(null)} />}
-    {creating && <NewRequest onClose={() => setCreating(false)} />}
+    {creating && <NewRequest onClose={() => setCreating(false)} onCreate={createRequest} />}
   </>
 }

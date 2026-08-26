@@ -1,9 +1,10 @@
-import { useState, type ReactNode } from 'react'
+import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import {
   Activity, Bell, Box, CheckCircle2, ChevronDown, ChevronRight, Clock3,
   Gauge, Grid2X2, Layers3, LogOut, Menu, Search, Server, Settings,
   ShieldAlert, X,
 } from 'lucide-react'
+import { getSystem } from './api/netciClient'
 import { dora, systems, type PageId } from './portalData'
 
 export type Navigate = (page: PageId, options?: { systemId?: string; moduleId?: string }) => void
@@ -32,16 +33,53 @@ export function DoraCards() {
 }
 
 export function Modal({ title, description, children, footer, onClose, wide = false }: { title: string; description?: string; children: ReactNode; footer: ReactNode; onClose: () => void; wide?: boolean }) {
+  const modalRef = useRef<HTMLElement>(null)
+  const onCloseRef = useRef(onClose)
+  const titleId = useId()
+  const descriptionId = useId()
+  onCloseRef.current = onClose
+
+  useEffect(() => {
+    const previousFocus = document.activeElement as HTMLElement | null
+    const previousOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    const modal = modalRef.current
+    const focusable = () => Array.from(modal?.querySelectorAll<HTMLElement>('button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])') ?? [])
+    focusable()[0]?.focus()
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        onCloseRef.current()
+        return
+      }
+      if (event.key !== 'Tab') return
+      const items = focusable()
+      if (!items.length) return
+      const first = items[0]
+      const last = items[items.length - 1]
+      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus() }
+      if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus() }
+    }
+    document.addEventListener('keydown', onKeyDown)
+    return () => {
+      document.removeEventListener('keydown', onKeyDown)
+      document.body.style.overflow = previousOverflow
+      previousFocus?.focus()
+    }
+  }, [])
+
   return <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target) onClose() }}>
-    <section className={`modal ${wide ? 'modal-wide' : ''}`} role="dialog" aria-modal="true" aria-label={title}>
-      <header><div><h2>{title}</h2>{description && <p>{description}</p>}</div><button className="icon-button" aria-label="Đóng" onClick={onClose}><X size={18} /></button></header>
+    <section ref={modalRef} className={`modal ${wide ? 'modal-wide' : ''}`} role="dialog" aria-modal="true" aria-labelledby={titleId} aria-describedby={description ? descriptionId : undefined}>
+      <header><div><h2 id={titleId}>{title}</h2>{description && <p id={descriptionId}>{description}</p>}</div><button type="button" className="icon-button" aria-label="Đóng" onClick={onClose}><X size={18} /></button></header>
       <div className="modal-body">{children}</div>
       <footer>{footer}</footer>
     </section>
   </div>
 }
 
-function Sidebar({ page, systemId, moduleId, navigate, open, close }: { page: PageId; systemId: string; moduleId: string; navigate: Navigate; open: boolean; close: () => void }) {
+type NavigationModule = { id: string; name: string }
+
+function Sidebar({ page, systemId, moduleId, moduleLinks, navigate, open, close }: { page: PageId; systemId: string; moduleId: string; moduleLinks: NavigationModule[]; navigate: Navigate; open: boolean; close: () => void }) {
   const inSystem = ['system', 'requests', 'module', 'new-module'].includes(page)
   return <aside className={`sidebar ${open ? 'sidebar-open' : ''}`}>
     <button className="brand" onClick={() => navigate('dashboard')}>
@@ -51,15 +89,15 @@ function Sidebar({ page, systemId, moduleId, navigate, open, close }: { page: Pa
       {inSystem ? <>
         <button className="nav-back" onClick={() => navigate('systems')}><ChevronRight size={16} className="rotate-180" /> All Systems</button>
         <div className="nav-context"><span className="system-health health-green" /><strong>{systemId}</strong></div>
-        <button className={page === 'system' ? 'nav-item active' : 'nav-item'} onClick={() => navigate('system', { systemId })}><Grid2X2 size={17} />Overview</button>
-        <button className={page === 'requests' ? 'nav-item active' : 'nav-item'} onClick={() => navigate('requests', { systemId })}><ShieldAlert size={17} />Production Requests</button>
+        <button aria-current={page === 'system' ? 'page' : undefined} className={page === 'system' ? 'nav-item active' : 'nav-item'} onClick={() => navigate('system', { systemId })}><Grid2X2 size={17} />Overview</button>
+        <button aria-current={page === 'requests' ? 'page' : undefined} className={page === 'requests' ? 'nav-item active' : 'nav-item'} onClick={() => navigate('requests', { systemId })}><ShieldAlert size={17} />Production Requests</button>
         <span className="nav-label">Modules</span>
-        {systems.find((item) => item.id === systemId)?.modules.map((module) => <button key={module.id} className={page === 'module' && moduleId === module.id ? 'nav-item active' : 'nav-item'} onClick={() => navigate('module', { systemId, moduleId: module.id })}><Box size={17} />{module.name}</button>)}
+        {moduleLinks.map((module) => <button key={module.id} aria-current={page === 'module' && moduleId === module.id ? 'page' : undefined} className={page === 'module' && moduleId === module.id ? 'nav-item active' : 'nav-item'} onClick={() => navigate('module', { systemId, moduleId: module.id })}><Box size={17} />{module.name}</button>)}
       </> : <>
         <span className="nav-label">General</span>
-        <button className={page === 'dashboard' ? 'nav-item active' : 'nav-item'} onClick={() => navigate('dashboard')}><Grid2X2 size={17} />Dashboard</button>
-        <button className={page === 'systems' ? 'nav-item active' : 'nav-item'} onClick={() => navigate('systems')}><Layers3 size={17} />Systems</button>
-        <button className={page === 'servers' ? 'nav-item active' : 'nav-item'} onClick={() => navigate('servers')}><Server size={17} />Servers</button>
+        <button aria-current={page === 'dashboard' ? 'page' : undefined} className={page === 'dashboard' ? 'nav-item active' : 'nav-item'} onClick={() => navigate('dashboard')}><Grid2X2 size={17} />Dashboard</button>
+        <button aria-current={page === 'systems' ? 'page' : undefined} className={page === 'systems' ? 'nav-item active' : 'nav-item'} onClick={() => navigate('systems')}><Layers3 size={17} />Systems</button>
+        <button aria-current={page === 'servers' ? 'page' : undefined} className={page === 'servers' ? 'nav-item active' : 'nav-item'} onClick={() => navigate('servers')}><Server size={17} />Servers</button>
         <span className="nav-label nav-label-spaced">Systems</span>
         {systems.map((system) => <button key={system.id} className="nav-item system-link" onClick={() => navigate('system', { systemId: system.id })}><i className={`system-health health-${systemTone[system.status]}`} />{system.id}</button>)}
       </>}
@@ -69,9 +107,9 @@ function Sidebar({ page, systemId, moduleId, navigate, open, close }: { page: Pa
   </aside>
 }
 
-function TopBar({ page, systemId, moduleId, onSettings, onMenu }: { page: PageId; systemId: string; moduleId: string; onSettings: () => void; onMenu: () => void }) {
+function TopBar({ page, systemId, moduleId, moduleLinks, onSettings, onMenu }: { page: PageId; systemId: string; moduleId: string; moduleLinks: NavigationModule[]; onSettings: () => void; onMenu: () => void }) {
   const [notifications, setNotifications] = useState(false)
-  const moduleName = systems.flatMap((system) => system.modules).find((item) => item.id === moduleId)?.name
+  const moduleName = moduleLinks.find((item) => item.id === moduleId)?.name ?? systems.flatMap((system) => system.modules).find((item) => item.id === moduleId)?.name
   const labels: Partial<Record<PageId, string>> = { dashboard: 'Dashboard', systems: 'All Systems', servers: 'Servers', system: 'Overview', requests: 'Production Requests', module: moduleName, 'new-module': 'New Module' }
   const crumbs = ['system', 'requests', 'module', 'new-module'].includes(page) ? ['Systems', systemId, labels[page]] : [labels[page]]
   return <header className="topbar">
@@ -95,9 +133,18 @@ function TopBar({ page, systemId, moduleId, onSettings, onMenu }: { page: PageId
 
 export function PortalShell({ children, page, systemId, moduleId, navigate, onSettings }: { children: ReactNode; page: PageId; systemId: string; moduleId: string; navigate: Navigate; onSettings: () => void }) {
   const [menuOpen, setMenuOpen] = useState(false)
+  const [moduleLinks, setModuleLinks] = useState<NavigationModule[]>(systems.find((item) => item.id === systemId)?.modules ?? [])
+  useEffect(() => {
+    let active = true
+    setModuleLinks(systems.find((item) => item.id === systemId)?.modules ?? [])
+    if (['system', 'requests', 'module', 'new-module'].includes(page)) {
+      getSystem(systemId).then((system) => { if (active) setModuleLinks(system.modules.map((module) => ({ id: module.id, name: module.name }))) }).catch(() => undefined)
+    }
+    return () => { active = false }
+  }, [page, systemId, moduleId])
   return <div className="portal-shell">
-    <Sidebar page={page} systemId={systemId} moduleId={moduleId} navigate={(next, options) => { navigate(next, options); setMenuOpen(false) }} open={menuOpen} close={() => setMenuOpen(false)} />
+    <Sidebar page={page} systemId={systemId} moduleId={moduleId} moduleLinks={moduleLinks} navigate={(next, options) => { navigate(next, options); setMenuOpen(false) }} open={menuOpen} close={() => setMenuOpen(false)} />
     {menuOpen && <button className="mobile-overlay" aria-label="Đóng menu" onClick={() => setMenuOpen(false)} />}
-    <div className="portal-main"><TopBar page={page} systemId={systemId} moduleId={moduleId} onSettings={onSettings} onMenu={() => setMenuOpen(true)} /><main className="page-content">{children}</main></div>
+    <div className="portal-main"><TopBar page={page} systemId={systemId} moduleId={moduleId} moduleLinks={moduleLinks} onSettings={onSettings} onMenu={() => setMenuOpen(true)} /><main className="page-content">{children}</main></div>
   </div>
 }

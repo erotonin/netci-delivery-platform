@@ -90,7 +90,17 @@ export const versions = [
   { tag: 'v2.3.8', date: '01/03/2025 11:08', user: 'DungLV', commit: 'cc7101e', coverage: 82, dev: 'Deployed', staging: 'Not deployed', prod: 'Not deployed', autoTest: 'Failed' },
 ]
 
-export const productionRequests = [
+export type ProductionRequestItem = {
+  id: string
+  modules: string[]
+  requestedBy: string
+  scheduled: string
+  sr: string
+  cr: string
+  status: 'Pending checks' | 'Success' | 'Rolled back'
+}
+
+export const productionRequests: ProductionRequestItem[] = [
   { id: 'PR-2025-0033', modules: ['Web Client · v1.9.2', 'Backend API · v2.4.1'], requestedBy: 'LinhPT', scheduled: '30/04/2025 03:00', sr: 'SR-88400', cr: 'CR-44265', status: 'Pending checks' },
   { id: 'PR-2025-0031', modules: ['Backend API · v2.4.0', 'Web Client · v1.9.1'], requestedBy: 'TrungTT', scheduled: '29/04/2025 02:00', sr: 'SR-88213', cr: 'CR-44210', status: 'Success' },
   { id: 'PR-2025-0028', modules: ['Backend API · v2.3.8'], requestedBy: 'DungLV', scheduled: '25/04/2025 22:00', sr: 'SR-87990', cr: 'CR-44177', status: 'Rolled back' },
