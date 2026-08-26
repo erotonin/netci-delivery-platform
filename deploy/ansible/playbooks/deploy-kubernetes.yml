@@ -4,25 +4,58 @@
   connection: local
   gather_facts: false
   vars:
-    kube_context: "{{ kube_context | default('kind-netci-local') }}"
-    release_name: "{{ release_name | default('hello-kubernetes') }}"
-    target_namespace: "{{ target_namespace | default('staging') }}"
-    chart_path: "{{ chart_path | default('../../../deploy/helm/sample-kubernetes-app') }}"
-    image_tag: "{{ image_tag | default('latest') }}"
+    netci_kube_context: "{{ kube_context | default('kind-netci-local') }}"
+    netci_release_name: "{{ release_name | default('hello-kubernetes') }}"
+    netci_target_namespace: "{{ target_namespace | default('staging') }}"
+    netci_chart_path: "{{ chart_path | default(playbook_dir ~ '/../../helm/sample-kubernetes-app') }}"
+    netci_image_repository: "{{ image_repository | default('localhost:5000/hello-kubernetes') }}"
+    netci_artifact_digest: "{{ artifact_digest | default('') }}"
+
+  pre_tasks:
+    - name: Validate immutable Kubernetes release input
+      ansible.builtin.assert:
+        that:
+          - netci_artifact_digest is match('^sha256:[0-9a-f]{64}$')
+          - netci_artifact_digest != 'sha256:' ~ ('0' * 64)
+          - netci_image_repository is not search('@')
+          - netci_image_repository is not search(':[Ll][Aa][Tt][Ee][Ss][Tt]$')
+          - netci_target_namespace in ['dev', 'staging', 'prod']
+        fail_msg: >-
+          Kubernetes deployment requires a verified non-zero sha256 digest,
+          an untagged repository, and a managed target namespace
+
   tasks:
     - name: Deploy Helm release atomically
       kubernetes.core.helm:
-        name: "{{ release_name }}"
-        chart_ref: "{{ chart_path }}"
-        release_namespace: "{{ target_namespace }}"
-        create_namespace: true
-        kube_context: "{{ kube_context }}"
+        name: "{{ netci_release_name }}"
+        chart_ref: "{{ netci_chart_path }}"
+        release_namespace: "{{ netci_target_namespace }}"
+        create_namespace: false
+        kube_context: "{{ netci_kube_context }}"
         release_values:
-          environment: "{{ target_namespace }}"
+          environment: "{{ netci_target_namespace }}"
           image:
-            tag: "{{ image_tag }}"
+            repository: "{{ netci_image_repository }}"
+            digest: "{{ netci_artifact_digest }}"
         wait: true
         wait_timeout: 180s
         atomic: true
         history_max: 10
         validate_certs: true
+
+    - name: Read deployed workload after Helm health checks
+      kubernetes.core.k8s_info:
+        api_version: apps/v1
+        kind: Deployment
+        name: "{{ netci_release_name }}-sample-kubernetes-app"
+        namespace: "{{ netci_target_namespace }}"
+        context: "{{ netci_kube_context }}"
+      register: deployed_workload
+
+    - name: Verify the requested digest is running
+      ansible.builtin.assert:
+        that:
+          - deployed_workload.resources | length == 1
+          - deployed_workload.resources[0].status.availableReplicas | default(0) | int >= 1
+          - deployed_workload.resources[0].spec.template.spec.containers[0].image == netci_image_repository ~ '@' ~ netci_artifact_digest
+        fail_msg: "Helm completed but the requested immutable artifact is not available"

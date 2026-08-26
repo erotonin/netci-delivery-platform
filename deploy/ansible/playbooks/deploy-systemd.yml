@@ -3,102 +3,200 @@
   hosts: systemd_targets
   become: true
   vars:
-    app_name: hello-systemd
-    app_user: netci
-    app_root: /opt/netci-demo
-    release_version: "{{ release_version | default('v1.0.0') }}"
-    artifact_path: "{{ artifact_path | default('../../../sample-apps/hello-systemd-go/dist/hello-systemd-v1.0.0') }}"
+    netci_app_name: "{{ app_name | default('hello-systemd') }}"
+    netci_app_user: "{{ app_user | default('netci') }}"
+    netci_app_root: "{{ app_root | default('/opt/netci-demo') }}"
+    netci_release_version: "{{ release_version | default('v0.1.0') }}"
+    netci_artifact_path: >-
+      {{ artifact_path | default(playbook_dir ~ '/../../../sample-apps/hello-systemd-go/dist/hello-systemd-' ~ netci_release_version) }}
+    netci_artifact_url: "{{ artifact_url | default('') }}"
+    netci_artifact_sha256: "{{ artifact_sha256 | default('') }}"
+    netci_health_url: "{{ health_url | default('http://127.0.0.1:18080/healthz') }}"
+
+  pre_tasks:
+    - name: Validate immutable Systemd release input
+      ansible.builtin.assert:
+        that:
+          - netci_release_version is match('^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$')
+          - netci_artifact_sha256 is match('^[0-9a-f]{64}$')
+          - netci_artifact_sha256 != '0' * 64
+          - not (netci_artifact_url | length > 0 and artifact_path is defined)
+        fail_msg: >-
+          Provide artifact_sha256 and at most one of artifact_url or
+          artifact_path; the checked-in sample path is the local default
+
+    - name: Verify local artifact before transfer
+      ansible.builtin.stat:
+        path: "{{ netci_artifact_path }}"
+        checksum_algorithm: sha256
+      delegate_to: localhost
+      become: false
+      register: local_artifact
+      when: netci_artifact_url | length == 0
+
+    - name: Reject a missing or mismatched local artifact
+      ansible.builtin.assert:
+        that:
+          - local_artifact.stat.exists
+          - local_artifact.stat.isreg
+          - local_artifact.stat.checksum == netci_artifact_sha256
+        fail_msg: "local artifact does not match artifact_sha256"
+      when: netci_artifact_url | length == 0
+
   tasks:
     - name: Read current release symlink
       ansible.builtin.stat:
-        path: "{{ app_root }}/current"
+        path: "{{ netci_app_root }}/current"
         follow: false
       register: previous_release
 
     - name: Ensure service user exists
       ansible.builtin.user:
-        name: "{{ app_user }}"
+        name: "{{ netci_app_user }}"
         system: true
         create_home: false
 
     - name: Ensure release directory exists
       ansible.builtin.file:
-        path: "{{ app_root }}/releases/{{ release_version }}"
+        path: "{{ netci_app_root }}/releases/{{ netci_release_version }}"
         state: directory
-        owner: "{{ app_user }}"
-        group: "{{ app_user }}"
+        owner: "{{ netci_app_user }}"
+        group: "{{ netci_app_user }}"
         mode: "0755"
 
     - name: Deploy and verify new release
       block:
-        - name: Install binary
+        - name: Install local binary
           ansible.builtin.copy:
-            src: "{{ artifact_path }}"
-            dest: "{{ app_root }}/releases/{{ release_version }}/{{ app_name }}"
-            owner: "{{ app_user }}"
-            group: "{{ app_user }}"
+            src: "{{ netci_artifact_path }}"
+            dest: "{{ netci_app_root }}/releases/{{ netci_release_version }}/{{ netci_app_name }}"
+            owner: "{{ netci_app_user }}"
+            group: "{{ netci_app_user }}"
             mode: "0755"
+          when: netci_artifact_url | length == 0
+
+        - name: Download binary from artifact store
+          ansible.builtin.get_url:
+            url: "{{ netci_artifact_url }}"
+            dest: "{{ netci_app_root }}/releases/{{ netci_release_version }}/{{ netci_app_name }}"
+            checksum: "sha256:{{ netci_artifact_sha256 }}"
+            owner: "{{ netci_app_user }}"
+            group: "{{ netci_app_user }}"
+            mode: "0755"
+          when: netci_artifact_url | length > 0
+
+        - name: Verify installed binary digest
+          ansible.builtin.stat:
+            path: "{{ netci_app_root }}/releases/{{ netci_release_version }}/{{ netci_app_name }}"
+            checksum_algorithm: sha256
+          register: installed_artifact
+
+        - name: Reject an altered binary
+          ansible.builtin.assert:
+            that:
+              - installed_artifact.stat.checksum == netci_artifact_sha256
+            fail_msg: "installed binary digest differs from approved artifact"
 
         - name: Point current release to requested version
           ansible.builtin.file:
-            src: "{{ app_root }}/releases/{{ release_version }}"
-            dest: "{{ app_root }}/current"
+            src: "{{ netci_app_root }}/releases/{{ netci_release_version }}"
+            dest: "{{ netci_app_root }}/current"
             state: link
             force: true
 
         - name: Install systemd unit
           ansible.builtin.template:
             src: hello-systemd.service.j2
-            dest: "/etc/systemd/system/{{ app_name }}.service"
+            dest: "/etc/systemd/system/{{ netci_app_name }}.service"
             mode: "0644"
 
+        # Restart is deliberately synchronous and before the health check. A
+        # deferred handler would allow the check to observe the old process.
         - name: Reload systemd and restart new release
           ansible.builtin.systemd:
-            name: "{{ app_name }}"
+            name: "{{ netci_app_name }}"
             daemon_reload: true
             enabled: true
             state: restarted
 
         - name: Wait for new release health endpoint
           ansible.builtin.uri:
-            url: http://127.0.0.1:18080/healthz
+            url: "{{ netci_health_url }}"
             status_code: 200
-          register: health
+            return_content: true
+          register: systemd_health
           retries: 12
           delay: 2
-          until: health.status == 200
+          until:
+            - systemd_health.status == 200
+            - (systemd_health.json.status | default('')) == 'ok'
 
       rescue:
+        - name: Capture failed release journal before rollback
+          ansible.builtin.command: "journalctl -u {{ netci_app_name }} -n 100 --no-pager"
+          register: failed_release_journal
+          changed_when: false
+          failed_when: false
+
         - name: Restore previous release symlink when available
           ansible.builtin.file:
             src: "{{ previous_release.stat.lnk_source }}"
-            dest: "{{ app_root }}/current"
+            dest: "{{ netci_app_root }}/current"
             state: link
             force: true
           when: previous_release.stat.exists and previous_release.stat.islnk
 
-        - name: Reload systemd after rollback
-          ansible.builtin.systemd:
-            daemon_reload: true
+        - name: Remove failed current symlink on first deployment
+          ansible.builtin.file:
+            path: "{{ netci_app_root }}/current"
+            state: absent
+          when: not (previous_release.stat.exists and previous_release.stat.islnk)
 
         - name: Restart previous healthy release
           ansible.builtin.systemd:
-            name: "{{ app_name }}"
+            name: "{{ netci_app_name }}"
+            daemon_reload: true
             state: restarted
+          when: previous_release.stat.exists and previous_release.stat.islnk
+
+        - name: Stop failed first deployment
+          ansible.builtin.systemd:
+            name: "{{ netci_app_name }}"
+            daemon_reload: true
+            state: stopped
+          when: not (previous_release.stat.exists and previous_release.stat.islnk)
+
+        - name: Verify previous release recovered
+          ansible.builtin.uri:
+            url: "{{ netci_health_url }}"
+            status_code: 200
+          register: rollback_health
+          retries: 12
+          delay: 2
+          until: rollback_health.status == 200
           when: previous_release.stat.exists and previous_release.stat.islnk
 
         - name: Fail deployment after rollback
           ansible.builtin.fail:
-            msg: "new Systemd release failed health check and was rolled back"
+            msg: "new Systemd release failed its health check and rollback completed"
 
-    - name: Collect service status for evidence
-      ansible.builtin.command: "systemctl status {{ app_name }} --no-pager"
-      register: service_status
-      changed_when: false
-      failed_when: false
+      always:
+        - name: Collect service status for evidence
+          ansible.builtin.command: "systemctl status {{ netci_app_name }} --no-pager"
+          register: service_status
+          changed_when: false
+          failed_when: false
 
-    - name: Collect service journal for evidence
-      ansible.builtin.command: "journalctl -u {{ app_name }} -n 100 --no-pager"
-      register: service_journal
-      changed_when: false
-      failed_when: false
+        - name: Collect service journal for evidence
+          ansible.builtin.command: "journalctl -u {{ netci_app_name }} -n 100 --no-pager"
+          register: service_journal
+          changed_when: false
+          failed_when: false
+
+        - name: Remove failed release directory after a successful rollback
+          ansible.builtin.file:
+            path: "{{ netci_app_root }}/releases/{{ netci_release_version }}"
+            state: absent
+          when:
+            - ansible_failed_result is defined
+            - previous_release.stat.exists and previous_release.stat.islnk

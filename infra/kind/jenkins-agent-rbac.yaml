@@ -6,29 +6,44 @@ metadata:
 apiVersion: v1
 kind: ServiceAccount
 metadata:
+  name: jenkins-controller
+  namespace: netci-build
+automountServiceAccountToken: false
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
   name: jenkins-agent
   namespace: netci-build
+# Build pods must not inherit the controller's Kubernetes API privileges.
+automountServiceAccountToken: false
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
-  name: jenkins-agent
+  name: jenkins-controller
   namespace: netci-build
 rules:
   - apiGroups: [""]
-    resources: ["pods", "pods/log", "pods/exec"]
-    verbs: ["get", "list", "watch", "create", "delete", "patch", "update"]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch", "create", "delete", "patch"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get", "watch"]
+  - apiGroups: [""]
+    resources: ["pods/exec"]
+    verbs: ["create", "get"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
-  name: jenkins-agent
+  name: jenkins-controller
   namespace: netci-build
 subjects:
   - kind: ServiceAccount
-    name: jenkins-agent
+    name: jenkins-controller
     namespace: netci-build
 roleRef:
   kind: Role
-  name: jenkins-agent
+  name: jenkins-controller
   apiGroup: rbac.authorization.k8s.io

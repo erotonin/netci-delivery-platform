@@ -9,7 +9,7 @@ spec:
   type: service
   parameters:
     - title: Application details
-      required: [name, repositoryUrl, pipelineTemplate]
+      required: [name, repositoryUrl, pipelineTemplate, runtime]
       properties:
         name:
           title: Application name
@@ -26,19 +26,41 @@ spec:
             - container-ci-cd-v1
             - kubernetes-ci-cd-v1
             - systemd-ansible-ci-cd-v1
+          enumNames:
+            - Container CI/CD v1
+            - Kubernetes CI/CD v1
+            - Systemd Ansible CI/CD v1
+        runtime:
+          title: Runtime
+          description: Must match the selected template; netCI validates this invariant.
+          type: string
+          enum: [docker, kubernetes, systemd]
+        defaultEnvironment:
+          title: Default environment
+          type: string
+          enum: [dev, staging, prod]
+          default: dev
   steps:
     - id: createNetciApplication
       name: Create application in netCI
       action: http:backstage:request
       input:
         method: POST
-        path: /api/netci/applications
+        path: /api/proxy/netci/applications
+        headers:
+          content-type: application/json
         body:
           name: ${{ parameters.name }}
           repositoryUrl: ${{ parameters.repositoryUrl }}
           pipelineTemplate: ${{ parameters.pipelineTemplate }}
-          runtime: docker
+          runtime: ${{ parameters.runtime }}
+          defaultEnvironment: ${{ parameters.defaultEnvironment }}
   output:
     links:
-      - title: Open netCI application
-        url: ${{ steps.createNetciApplication.output.body.url }}
+      - title: Open netCI Portal
+        url: http://localhost:5173
+    text:
+      - title: Created netCI application
+        content: |
+          Application `${{ parameters.name }}` was created with ID
+          `${{ steps.createNetciApplication.output.body.id }}`.

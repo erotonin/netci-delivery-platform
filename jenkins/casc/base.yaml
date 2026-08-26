@@ -23,12 +23,7 @@ unclassified:
           modernSCM:
             scm:
               git:
-                remote: file:///var/jenkins_home/shared-library
-
-credentials:
-  system:
-    domainCredentials:
-      - credentials: []
+                remote: ${JENKINS_SHARED_LIBRARY_REMOTE:-file:///opt/netci-shared-library}
 
 jobs:
   - script: |
@@ -41,6 +36,3 @@ jobs:
           }
         }
       }
-
-kubernetes:
-  enabled: true

@@ -1,52 +1,80 @@
 # netCI Delivery Platform
 
-Prototype Internal Developer Platform cho pipeline-as-code, ephemeral agent isolation và delivery đa runtime.
+Local reference implementation của một delivery platform API-first: developer khai báo application từ Custom Portal hoặc Backstage, Jenkins thực hiện CI trên agent ephemeral, còn netCI/Temporal điều phối CD tới Docker, Kubernetes hoặc Systemd.
 
-## Mục tiêu
+> Trạng thái hiện tại: phần contract, domain skeleton, Portal và static gate có thể phát triển trên Windows. Các tuyên bố về Docker/kind/KVM/Jenkins/Temporal/Ansible/Syft/Trivy/Cosign chỉ được công nhận sau khi có evidence chạy thật trên Ubuntu 24.04.
 
-Developer tạo application và pipeline từ Custom Portal hoặc API, không cần tự viết Jenkinsfile. Jenkins thực hiện CI trên agent container ephemeral riêng cho build; netCI/Temporal điều phối CD qua Docker, Kubernetes hoặc Systemd bằng Ansible/Helm.
+## Output cần bàn giao
+
+Một bản hoàn chỉnh phải chứng minh được:
+
+- Reproducible: controller, plugin và job được dựng lại từ Git/JCasC.
+- Isolated: mỗi build có agent/workspace riêng và cleanup ở cả success/failure/cancel.
+- Extensible: cùng domain contract deploy được qua Docker, Kubernetes và Systemd adapter.
+- Governed: artifact bất biến có SBOM, scan, signature, approval, audit và rollback.
+- Measurable: có source event, DORA metrics, benchmark và failure-drill evidence.
+
+Luồng chính:
+
+```text
+Portal / Backstage -> netCI API -> Jenkins Router -> Jenkins A/B
+                                            -> ephemeral CI agent
+                                            -> immutable artifact digest
+                                            -> policy + approval
+                                            -> Docker | Kubernetes | Systemd
+```
+
+## Những gì chạy được trên Windows
+
+Windows là môi trường phát triển portable, không phải môi trường nghiệm thu runtime Linux.
+
+```powershell
+py -3 scripts/doctor.py --profile windows
+py -3 scripts/validate_release.py --profile windows --execute
+```
+
+Gate Windows kiểm tra Git/Python/Node/npm, syntax và schema, catalog invariant, frontend typecheck/build, unit/contract tests, tài liệu và tính nhất quán của release checklist. Xem [QUICKSTART.md](QUICKSTART.md) để chạy API và Portal.
 
 ## Runtime target
 
 | Runtime | Adapter | Target local |
 |---|---|---|
-| Docker/Compose | `DockerRuntimeAdapter` | Linux VM riêng qua SSH/Ansible |
-| Kubernetes | `KubernetesRuntimeAdapter` | kind, namespaces `dev`, `staging`, `prod` |
-| Systemd | `SystemdRuntimeAdapter` | Linux VM thật có systemd qua SSH/Ansible |
+| Docker/Compose | `DockerRuntimeAdapter` | Ubuntu VM riêng qua SSH/Ansible |
+| Kubernetes | `KubernetesRuntimeAdapter` | kind; namespaces `dev`, `staging`, `prod` |
+| Systemd | `SystemdRuntimeAdapter` | Ubuntu VM thật có systemd qua SSH/Ansible |
 
-## Stack đã chốt
-
-- Backend: Python + FastAPI.
-- Frontend: React + TypeScript + Vite.
-- Workflow: Temporalite cho workflow nhiều bước; direct adapter call cho thao tác ngắn.
-- CI: Jenkins Shared Library + JCasC.
-- CD: netCI/Temporal điều phối; Ansible là runner đa runtime; Kubernetes dùng `kubernetes.core.helm`.
-- Artifact/security: local Registry, MinIO, Syft, Trivy và Cosign.
-- Local orchestration: Docker Compose cho service nền tảng, kind cho Kubernetes workload.
-
-## Trạng thái môi trường
-
-Giai đoạn hiện tại tạo contract và source skeleton trên Windows. Các runtime Linux chưa được coi là đã xác thực cho đến khi chạy trên Ubuntu 24.04 native.
-
-## Khi chuyển sang Ubuntu
+## Các lệnh chính trên Ubuntu
 
 ```bash
 make doctor
-make compose-up
-make kind-up
-make jenkins-up
-make e2e-container
-make e2e-kubernetes
-make e2e-systemd
-make security-test
-make benchmark
-make failure-drill
+make validate
+make test
+make compose-config
+make release-ubuntu
 ```
 
-## Nguyên tắc boundary
+`make release-ubuntu` cố ý fail nếu một required gate vẫn có trạng thái `blocked` trong `release-checklist.yaml`. Không đổi gate sang `ready` cho đến khi command chạy thật và kiểm tra evidence thật.
 
-Portal và Backstage chỉ gọi netCI API. Core domain không phụ thuộc Jenkins, Temporal, Docker, Helm hay Systemd. Mọi integration phải đi qua interface/adapter để thay provider mà không sửa domain.
+## Boundary
 
-## Chưa tuyên bố hoàn thành
+- Portal và Backstage chỉ gọi netCI API; không gọi Jenkins trực tiếp.
+- Jenkins sở hữu checkout/test/build/SBOM/scan/sign/publish, không sở hữu application/deployment identity.
+- netCI sở hữu policy, approval, audit, promotion, deploy, health check và rollback.
+- Staging và production dùng cùng artifact digest; không rebuild khi promote.
+- Core domain không import SDK/CLI của Jenkins, Temporal, Docker, Helm hoặc Systemd.
 
-Các phần cần runtime Ubuntu để xác thực gồm Docker/kind/Jenkins/Temporalite, ephemeral agent thật, KVM/libvirt, hai Linux VM, Ansible SSH, security scan/signing, benchmark và multi-controller failure drill.
+## Tài liệu
+
+- [Architecture](docs/architecture.md)
+- [Domain model](docs/domain-model.md)
+- [API contract](docs/api-contract.md)
+- [State machine](docs/state-machine.md)
+- [Security model](docs/security-model.md)
+- [DORA metrics](docs/dora-metrics.md)
+- [Assumptions](docs/assumptions.md)
+- [Troubleshooting](docs/troubleshooting.md)
+- [Architecture decisions](docs/decisions/ADR-001-system-boundary.md)
+
+## Không được coi là evidence hoàn thành
+
+Static validator, screenshot đơn lẻ, file `sample.json`, command chỉ `echo`, hoặc file được tạo sau khi đặt biến `*_READY` không chứng minh E2E. Evidence nghiệm thu phải có command, commit SHA, application/run/deployment ID, artifact digest, timestamps, raw log/JSON và kết luận pass/fail.

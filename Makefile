@@ -1,33 +1,59 @@
 SHELL := /usr/bin/env bash
+PYTHON ?= python3
+NPM ?= npm
 
-.PHONY: help doctor backend frontend compose-config compose-up kind-up registry-connect jenkins-up test validate e2e-container e2e-kubernetes e2e-systemd security-test benchmark failure-drill
+.PHONY: help doctor doctor-windows backend frontend frontend-install frontend-build compose-config compose-up up kind-up registry-connect jenkins-up jenkins-rebuild test validate release-check release-windows release-ubuntu e2e-container e2e-kubernetes e2e-systemd security-test benchmark failure-drill dora-dashboard backstage-test
 
 help:
-	@printf '%s\n' 'Targets: doctor validate test frontend compose-config compose-up kind-up registry-connect jenkins-up e2e-container e2e-kubernetes e2e-systemd security-test benchmark failure-drill'
+	@printf '%s\n' \
+	  'Portable: validate test frontend-install frontend-build release-check release-windows' \
+	  'Ubuntu: doctor compose-config compose-up up kind-up registry-connect jenkins-up jenkins-rebuild release-ubuntu' \
+	  'Blocked until real runners exist: e2e-container e2e-kubernetes e2e-systemd security-test benchmark failure-drill dora-dashboard backstage-test'
 
 doctor:
-	@set -e; for tool in python3 docker kubectl kind helm ansible-playbook go syft trivy cosign; do command -v $$tool >/dev/null || { echo "missing required tool: $$tool" >&2; exit 1; }; done; docker info >/dev/null; echo 'doctor passed'
+	$(PYTHON) scripts/doctor.py --profile ubuntu
+
+doctor-windows:
+	$(PYTHON) scripts/doctor.py --profile windows
 
 backend:
-	cd backend && python3 -m uvicorn app.main:app --reload --port 8000
+	cd backend && $(PYTHON) -m uvicorn app.main:app --reload --port 8000
+
+frontend-install:
+	$(NPM) --prefix frontend ci
 
 frontend:
-	cd frontend && npm install && npm run dev
+	$(NPM) --prefix frontend run dev
+
+frontend-build:
+	$(NPM) --prefix frontend run build
 
 validate:
-	python3 scripts/validate_windows.py
-	python3 scripts/validate_catalog.py
-	python3 scripts/validate_platform.py
+	$(PYTHON) scripts/validate_windows.py
+	$(PYTHON) scripts/validate_catalog.py
+	$(PYTHON) scripts/validate_platform.py
+	$(PYTHON) scripts/validate_release.py
 
 test:
-	python3 -m pytest backend/tests tests/contract -q
-	$(MAKE) -C frontend build
+	$(PYTHON) -m pytest backend/tests tests/contract -q
+	$(NPM) --prefix frontend run build
+
+release-check:
+	$(PYTHON) scripts/validate_release.py
+
+release-windows:
+	$(PYTHON) scripts/validate_release.py --profile windows --execute
+
+release-ubuntu:
+	$(PYTHON) scripts/validate_release.py --profile ubuntu --execute
 
 compose-config:
 	docker compose config
 
 compose-up:
-	docker compose up -d postgres registry minio temporalite
+	docker compose up -d postgres registry minio temporalite netci-api
+
+up: compose-up
 
 kind-up:
 	kind create cluster --config infra/kind/kind-config.yaml
@@ -38,35 +64,37 @@ registry-connect:
 jenkins-up:
 	docker compose up --build -d jenkins-a jenkins-b
 
+jenkins-rebuild:
+	docker compose up --build --force-recreate -d jenkins-a jenkins-b
+
 e2e-container:
-	python3 scripts/collect_evidence.py --name e2e-container make _e2e-container
+	@echo 'BLOCKED: implement a real Portal/API -> CI -> Docker VM runner with health and evidence assertions.' >&2
+	@exit 2
 
 e2e-kubernetes:
-	python3 scripts/collect_evidence.py --name e2e-kubernetes make _e2e-kubernetes
+	@echo 'BLOCKED: implement a real CI/security -> Ansible/Helm -> kind runner with health and evidence assertions.' >&2
+	@exit 2
 
 e2e-systemd:
-	python3 scripts/collect_evidence.py --name e2e-systemd make _e2e-systemd
-
-_e2e-container:
-	@echo 'Run container template through Portal/API, Jenkins CI, security gate and Ansible Docker VM.'
-	@test -n "$(NETCI_E2E_READY)" || (echo 'set NETCI_E2E_READY=1 only after runtime is bootstrapped' && exit 1)
-
-_e2e-kubernetes:
-	@echo 'Run Kubernetes template through Helm/Ansible and verify health.'
-	@test -n "$(NETCI_E2E_READY)" || (echo 'set NETCI_E2E_READY=1 only after runtime is bootstrapped' && exit 1)
-
-_e2e-systemd:
-	@echo 'Run Systemd template through Ansible SSH and verify rollback.'
-	@test -n "$(NETCI_E2E_READY)" || (echo 'set NETCI_E2E_READY=1 only after runtime is bootstrapped' && exit 1)
+	@echo 'BLOCKED: implement a real binary -> Ansible SSH -> systemd runner with health and rollback assertions.' >&2
+	@exit 2
 
 security-test:
-	@echo 'Security deny tests require Ubuntu runtime tools and evidence.'
-	@test -n "$(NETCI_SECURITY_READY)" || (echo 'set NETCI_SECURITY_READY=1 only after Syft/Trivy/Cosign are configured' && exit 1)
+	@echo 'BLOCKED: implement a deny test that checks real SBOM, vulnerability and signature evidence.' >&2
+	@exit 2
 
 benchmark:
-	@python3 scripts/benchmark.py
-	@test -f evidence/benchmark-report.json || (echo 'benchmark report missing; run real shared/ephemeral measurements' && exit 1)
+	@echo 'BLOCKED: configure and measure real shared/ephemeral builds; skeleton output is not release evidence.' >&2
+	@exit 2
 
 failure-drill:
-	@python3 scripts/failure_drill.py
-	@test -f evidence/failure-drill/sample.json || exit 1
+	@echo 'BLOCKED: automate controller stop, detection, reroute, completion and rejoin before collecting MTTR.' >&2
+	@exit 2
+
+dora-dashboard:
+	@echo 'BLOCKED: implement the dashboard and verify metrics against source events.' >&2
+	@exit 2
+
+backstage-test:
+	@echo 'BLOCKED: run the Software Template in Backstage with the documented proxy configuration.' >&2
+	@exit 2

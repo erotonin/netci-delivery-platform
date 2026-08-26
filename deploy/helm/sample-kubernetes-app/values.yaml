@@ -1,8 +1,10 @@
 replicaCount: 1
 
 image:
-  repository: registry.localhost:5000/hello-kubernetes
-  digest: "sha256:REPLACE_WITH_VERIFIED_DIGEST"
+  repository: localhost:5000/hello-kubernetes
+  # Lint-only sentinel. The Ansible runner rejects this zero digest, so every
+  # real deployment must inject the approved artifact_digest explicitly.
+  digest: "sha256:0000000000000000000000000000000000000000000000000000000000000000"
   pullPolicy: IfNotPresent
 
 service:

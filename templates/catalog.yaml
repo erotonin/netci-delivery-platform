@@ -17,6 +17,6 @@ templates:
     name: Systemd Ansible CI/CD v1
     runtime: systemd
     artifactKind: linux-binary
-    stages: [checkout, unit-test, build, publish, deploy, health-check]
+    stages: [checkout, unit-test, build, sbom, vulnerability-scan, sign, publish, deploy, health-check]
     deployAdapter: systemd
     environments: [dev, staging, prod]

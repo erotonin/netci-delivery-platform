@@ -1,41 +1,92 @@
 release: netci-local-rc1
 checks:
+  - id: doctor-windows
+    profiles: [windows]
+    state: ready
+    command: [python, scripts/doctor.py, --profile, windows]
+  - id: doctor-ubuntu
+    profiles: [ubuntu]
+    state: ready
+    command: [python3, scripts/doctor.py, --profile, ubuntu]
   - id: source-structure
-    command: python scripts/validate_windows.py
-    status: required
+    profiles: [windows, ubuntu]
+    state: ready
+    command: [python, scripts/validate_windows.py]
+  - id: release-manifest
+    profiles: [windows, ubuntu]
+    state: ready
+    command: [python, scripts/validate_release.py]
   - id: catalog
-    command: python scripts/validate_catalog.py
-    status: required
-  - id: backend-unit
-    command: python -m pytest backend/tests
-    status: required
+    profiles: [windows, ubuntu]
+    state: ready
+    command: [python, scripts/validate_catalog.py]
+  - id: platform-static
+    profiles: [windows, ubuntu]
+    state: ready
+    command: [python, scripts/validate_platform.py]
+  - id: backend-and-contract-tests
+    profiles: [windows, ubuntu]
+    state: ready
+    command: [python, -m, pytest, backend/tests, tests/contract, -q]
   - id: frontend-build
-    command: npm --prefix frontend run build
-    status: required
+    profiles: [windows, ubuntu]
+    state: ready
+    command: [npm, --prefix, frontend, run, build]
   - id: compose-config
-    command: docker compose config
-    status: ubuntu-required
+    profiles: [ubuntu]
+    state: ready
+    command: [docker, compose, config]
+  - id: helm-lint
+    profiles: [ubuntu]
+    state: ready
+    command: [helm, lint, deploy/helm/sample-kubernetes-app]
   - id: kind-cluster
-    command: kind create cluster --config infra/kind/kind-config.yaml
-    status: ubuntu-required
-  - id: jenkins-jcasc
-    command: docker compose up --build jenkins-a jenkins-b
-    status: ubuntu-required
+    profiles: [ubuntu]
+    state: blocked
+    reason: Cluster bootstrap and namespace evidence must be implemented and verified on Ubuntu 24.04.
+    command: [make, kind-up]
+  - id: jenkins-rebuild
+    profiles: [ubuntu]
+    state: blocked
+    reason: A destructive JCasC rebuild rehearsal with retained evidence has not run on Ubuntu.
+    command: [make, jenkins-rebuild]
   - id: e2e-container
-    command: make e2e-container
-    status: ubuntu-required
+    profiles: [ubuntu]
+    state: blocked
+    reason: No executable container E2E runner and evidence assertion exists yet.
+    command: [make, e2e-container]
   - id: e2e-kubernetes
-    command: make e2e-kubernetes
-    status: ubuntu-required
+    profiles: [ubuntu]
+    state: blocked
+    reason: No executable Kubernetes E2E runner and evidence assertion exists yet.
+    command: [make, e2e-kubernetes]
   - id: e2e-systemd
-    command: make e2e-systemd
-    status: ubuntu-required
+    profiles: [ubuntu]
+    state: blocked
+    reason: No executable Systemd E2E runner and evidence assertion exists yet.
+    command: [make, e2e-systemd]
   - id: security-gate
-    command: make security-test
-    status: ubuntu-required
+    profiles: [ubuntu]
+    state: blocked
+    reason: The deny test does not yet verify real SBOM, scan and signature evidence.
+    command: [make, security-test]
   - id: benchmark
-    command: make benchmark
-    status: ubuntu-required
+    profiles: [ubuntu]
+    state: blocked
+    reason: Shared and ephemeral benchmark commands and measured phase timings are not implemented.
+    command: [make, benchmark]
   - id: failure-drill
-    command: make failure-drill
-    status: ubuntu-required
+    profiles: [ubuntu]
+    state: blocked
+    reason: The current harness does not stop, detect, reroute and rejoin real controllers.
+    command: [make, failure-drill]
+  - id: dora-dashboard
+    profiles: [ubuntu]
+    state: blocked
+    reason: Dashboard runtime and source-event verification are not implemented.
+    command: [make, dora-dashboard]
+  - id: backstage-integration
+    profiles: [ubuntu]
+    state: blocked
+    reason: The Software Template needs a real Backstage instance and proxy integration test.
+    command: [make, backstage-test]

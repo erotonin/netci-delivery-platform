@@ -57,6 +57,8 @@ class PipelineRun:
     application_id: UUID
     commit_sha: str
     environment: Environment
+    branch: str = "main"
+    correlation_id: str | None = None
     status: PipelineStatus = PipelineStatus.QUEUED
     id: UUID = field(default_factory=uuid4)
     jenkins_run_id: str | None = None
@@ -72,6 +74,8 @@ class Deployment:
     runtime: Runtime
     environment: Environment
     artifact_digest: str
+    pipeline_run_id: UUID | None = None
+    previous_artifact_digest: str | None = None
     status: DeploymentStatus = DeploymentStatus.PENDING_APPROVAL
     id: UUID = field(default_factory=uuid4)
     approved_by: str | None = None
@@ -82,7 +86,7 @@ class Deployment:
 PIPELINE_TRANSITIONS: dict[PipelineStatus, frozenset[PipelineStatus]] = {
     PipelineStatus.QUEUED: frozenset({PipelineStatus.RUNNING, PipelineStatus.CANCELLED}),
     PipelineStatus.RUNNING: frozenset({PipelineStatus.WAITING_APPROVAL, PipelineStatus.SUCCEEDED, PipelineStatus.FAILED, PipelineStatus.CANCELLED}),
-    PipelineStatus.WAITING_APPROVAL: frozenset({PipelineStatus.SUCCEEDED, PipelineStatus.FAILED, PipelineStatus.CANCELLED}),
+    PipelineStatus.WAITING_APPROVAL: frozenset({PipelineStatus.RUNNING, PipelineStatus.SUCCEEDED, PipelineStatus.FAILED, PipelineStatus.CANCELLED}),
     PipelineStatus.FAILED: frozenset({PipelineStatus.QUEUED, PipelineStatus.ROLLED_BACK}),
     PipelineStatus.SUCCEEDED: frozenset({PipelineStatus.ROLLED_BACK}),
     PipelineStatus.CANCELLED: frozenset(),

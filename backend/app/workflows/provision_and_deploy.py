@@ -1,73 +1,90 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from datetime import timedelta
 
-from temporalio import activity, workflow
+from temporalio import workflow
+from temporalio.common import RetryPolicy
 
 
-@dataclass
+@dataclass(frozen=True)
 class DeliveryInput:
     application_id: str
     pipeline_run_id: str
     runtime: str
     environment: str
     artifact_digest: str
-    require_approval: bool = True
+    release_name: str = "netci-release"
+    parameters: dict[str, object] = field(default_factory=dict)
+    require_approval: bool | None = None
+
+    @property
+    def approval_required(self) -> bool:
+        if self.require_approval is not None:
+            return self.require_approval
+        return self.environment == "prod"
 
 
-@dataclass
+@dataclass(frozen=True)
 class DeliveryResult:
     deployment_id: str
     status: str
     artifact_digest: str
 
 
-@activity.defn
-async def validate_artifact(input: DeliveryInput) -> None:
-    """Validate SBOM, scan and signature evidence through PolicyEngine adapter."""
-    return None
-
-
-@activity.defn
-async def wait_for_approval(input: DeliveryInput) -> None:
-    """Production approval is represented by a signal in the real worker."""
-    return None
-
-
-@activity.defn
-async def deploy(input: DeliveryInput) -> DeliveryResult:
-    """Resolve RuntimeAdapter and execute idempotent deployment."""
-    return DeliveryResult(deployment_id=f"deployment-{input.pipeline_run_id}", status="healthy", artifact_digest=input.artifact_digest)
-
-
-@activity.defn
-async def health_check(input: DeliveryInput) -> bool:
-    return True
-
-
-@activity.defn
-async def rollback(input: DeliveryInput) -> None:
-    return None
+@dataclass(frozen=True)
+class Approval:
+    actor: str
+    comment: str = ""
 
 
 @workflow.defn
 class ProvisionAndDeployWorkflow:
     def __init__(self) -> None:
-        self.approved = False
+        self.approval: Approval | None = None
 
     @workflow.signal
-    async def approve(self) -> None:
-        self.approved = True
+    async def approve(self, approval: Approval) -> None:
+        if not approval.actor.strip():
+            raise ValueError("approval actor is required")
+        self.approval = approval
+
+    @workflow.query
+    def approval_status(self) -> Approval | None:
+        return self.approval
 
     @workflow.run
-    async def run(self, input: DeliveryInput) -> DeliveryResult:
-        await workflow.execute_activity(validate_artifact, input, start_to_close_timeout=timedelta(minutes=5))
-        if input.require_approval:
-            await workflow.wait_condition(lambda: self.approved, timeout=timedelta(hours=24))
-        result = await workflow.execute_activity(deploy, input, start_to_close_timeout=timedelta(minutes=10), retry_policy=workflow.RetryPolicy(maximum_attempts=3))
-        healthy = await workflow.execute_activity(health_check, input, start_to_close_timeout=timedelta(minutes=5))
+    async def run(self, delivery: DeliveryInput) -> DeliveryResult:
+        await workflow.execute_activity(
+            "validate_artifact",
+            delivery,
+            start_to_close_timeout=timedelta(minutes=5),
+            retry_policy=RetryPolicy(maximum_attempts=1),
+        )
+        if delivery.approval_required:
+            await workflow.wait_condition(lambda: self.approval is not None, timeout=timedelta(hours=24))
+        result = await workflow.execute_activity(
+            "deploy",
+            delivery,
+            result_type=DeliveryResult,
+            start_to_close_timeout=timedelta(minutes=10),
+            retry_policy=RetryPolicy(maximum_attempts=3),
+        )
+        healthy = await workflow.execute_activity(
+            "health_check",
+            delivery,
+            result_type=bool,
+            start_to_close_timeout=timedelta(minutes=5),
+            retry_policy=RetryPolicy(maximum_attempts=3),
+        )
         if not healthy:
-            await workflow.execute_activity(rollback, input, start_to_close_timeout=timedelta(minutes=10))
-            result.status = "rolled_back"
+            await workflow.execute_activity(
+                "rollback",
+                delivery,
+                start_to_close_timeout=timedelta(minutes=10),
+                retry_policy=RetryPolicy(maximum_attempts=3),
+            )
+            result = replace(result, status="rolled_back")
+        else:
+            result = replace(result, status="healthy")
         return result

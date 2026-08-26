@@ -1,10 +1,12 @@
 * text=auto eol=lf
+
 *.sh text eol=lf
-*.groovy text eol=lf
-*.yaml text eol=lf
-*.yml text eol=lf
-*.json text eol=lf
-*.py text eol=lf
-*.ts text eol=lf
-*.tsx text eol=lf
-*.md text eol=lf
+Makefile text eol=lf
+*.ps1 text eol=crlf
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.pdf binary
+*.zip binary
+

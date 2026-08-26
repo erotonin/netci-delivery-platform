@@ -1,12 +1,14 @@
 services:
   postgres:
-    image: postgres:16-alpine
+    image: ${POSTGRES_IMAGE:-postgres:16.15-alpine3.24}
     environment:
       POSTGRES_DB: netci
       POSTGRES_USER: netci
-      POSTGRES_PASSWORD: netci-local-only
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-netci-local-only}
     ports: ["5432:5432"]
-    volumes: ["postgres-data:/var/lib/postgresql/data"]
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./backend/schema.sql:/docker-entrypoint-initdb.d/001-netci-schema.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U netci -d netci"]
       interval: 5s
@@ -15,31 +17,55 @@ services:
 
   registry:
     container_name: netci-registry
-    image: registry:2
+    image: ${REGISTRY_IMAGE:-registry:3.1.1}
     ports: ["5000:5000"]
     volumes: ["registry-data:/var/lib/registry"]
 
   minio:
-    image: minio/minio:latest
+    image: ${MINIO_IMAGE:-minio/minio:RELEASE.2025-09-07T16-13-09Z}
     command: server /data --console-address ":9001"
     environment:
-      MINIO_ROOT_USER: netci
-      MINIO_ROOT_PASSWORD: netci-local-only
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-netci}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-netci-local-only}
     ports: ["9000:9000", "9001:9001"]
     volumes: ["minio-data:/data"]
 
+  minio-init:
+    image: ${MINIO_MC_IMAGE:-minio/mc:RELEASE.2025-08-13T08-35-41Z}
+    depends_on:
+      minio:
+        condition: service_started
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-netci}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-netci-local-only}
+    entrypoint:
+      - /bin/sh
+      - -ec
+      - |
+        until mc alias set local http://minio:9000 "$${MINIO_ROOT_USER}" "$${MINIO_ROOT_PASSWORD}"; do sleep 2; done
+        mc mb --ignore-existing local/netci-evidence
+        mc anonymous set none local/netci-evidence
+
   temporalite:
-    image: temporalio/temporal:latest
+    image: ${TEMPORAL_IMAGE:-temporalio/temporal:1.8.2}
     command: temporal server start-dev --ip 0.0.0.0
     ports: ["7233:7233", "8233:8233"]
+    healthcheck:
+      test: ["CMD", "temporal", "operator", "cluster", "health", "--address", "127.0.0.1:7233"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
 
   netci-api:
     build: ./backend
     environment:
-      DATABASE_URL: postgresql://netci:netci-local-only@postgres:5432/netci
+      DATABASE_URL: postgresql://netci:${POSTGRES_PASSWORD:-netci-local-only}@postgres:5432/netci
       REGISTRY_URL: http://registry:5000
       MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:-netci}
+      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-netci-local-only}
       TEMPORAL_ADDRESS: temporalite:7233
+      NETCI_ALLOWED_ORIGINS: ${NETCI_ALLOWED_ORIGINS:-http://localhost:5173}
     ports: ["8000:8000"]
     depends_on:
       postgres:
@@ -48,8 +74,29 @@ services:
         condition: service_started
       minio:
         condition: service_started
+      minio-init:
+        condition: service_completed_successfully
       temporalite:
-        condition: service_started
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=2)"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  temporal-worker:
+    build: ./backend
+    command: ["python", "-m", "app.workflows.worker"]
+    environment:
+      TEMPORAL_ADDRESS: temporalite:7233
+      TEMPORAL_NAMESPACE: default
+      TEMPORAL_TASK_QUEUE: netci-delivery
+      NETCI_ANSIBLE_INVENTORY: /workspace/deploy/ansible/inventories/local.ini
+    volumes:
+      - ./:/workspace:ro
+    depends_on:
+      temporalite:
+        condition: service_healthy
 
   jenkins-a:
     build:
@@ -58,7 +105,13 @@ services:
     environment:
       CASC_JENKINS_CONFIG: /var/jenkins_home/casc/base.yaml,/var/jenkins_home/casc/controller-a.yaml,/var/jenkins_home/casc/ephemeral-agent.yaml
       JENKINS_CONTROLLER_ID: jenkins-a
+      JENKINS_ADMIN_PASSWORD: ${JENKINS_ADMIN_PASSWORD:-change-me-local-only}
+      KUBERNETES_API_URL: ${KUBERNETES_API_URL:-https://host.docker.internal:6443}
+      KUBERNETES_CREDENTIALS_ID: ${KUBERNETES_CREDENTIALS_ID:-netci-kind-kubeconfig}
+      JENKINS_AGENT_URL: ${JENKINS_A_AGENT_URL:-http://host.docker.internal:8081}
+      JENKINS_AGENT_TUNNEL: ${JENKINS_A_AGENT_TUNNEL:-host.docker.internal:50001}
     ports: ["8081:8080", "50001:50000"]
+    extra_hosts: ["host.docker.internal:host-gateway"]
     volumes:
       - jenkins-a-home:/var/jenkins_home
       - ./jenkins/casc:/var/jenkins_home/casc:ro
@@ -71,7 +124,13 @@ services:
     environment:
       CASC_JENKINS_CONFIG: /var/jenkins_home/casc/base.yaml,/var/jenkins_home/casc/controller-b.yaml,/var/jenkins_home/casc/ephemeral-agent.yaml
       JENKINS_CONTROLLER_ID: jenkins-b
+      JENKINS_ADMIN_PASSWORD: ${JENKINS_ADMIN_PASSWORD:-change-me-local-only}
+      KUBERNETES_API_URL: ${KUBERNETES_API_URL:-https://host.docker.internal:6443}
+      KUBERNETES_CREDENTIALS_ID: ${KUBERNETES_CREDENTIALS_ID:-netci-kind-kubeconfig}
+      JENKINS_AGENT_URL: ${JENKINS_B_AGENT_URL:-http://host.docker.internal:8082}
+      JENKINS_AGENT_TUNNEL: ${JENKINS_B_AGENT_TUNNEL:-host.docker.internal:50002}
     ports: ["8082:8080", "50002:50000"]
+    extra_hosts: ["host.docker.internal:host-gateway"]
     volumes:
       - jenkins-b-home:/var/jenkins_home
       - ./jenkins/casc:/var/jenkins_home/casc:ro

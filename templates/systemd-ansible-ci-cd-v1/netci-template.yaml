@@ -13,6 +13,9 @@ spec:
     - checkout
     - unit-test
     - build
+    - sbom
+    - vulnerability-scan
+    - sign
     - publish
     - deploy
     - health-check

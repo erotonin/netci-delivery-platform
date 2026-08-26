@@ -1,5 +1,5 @@
 configuration-as-code:2117.vc05a_0b_e6b_f4e
-kubernetes:1.26.0
+kubernetes:4547.v52f3080db_8cd
 workflow-aggregator:608.v67378e9d3db_1
 git:5.10.1
 ws-cleanup:0.49

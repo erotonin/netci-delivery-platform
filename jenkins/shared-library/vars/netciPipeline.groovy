@@ -4,6 +4,7 @@ def call(Map config = [:]) {
         'checkout', 'unit-test', 'build', 'sbom',
         'vulnerability-scan', 'sign', 'publish'
     ])
+    def ciScriptDir = config.get('ciScriptDir', "templates/${template}/scripts/ci")
 
     pipeline {
         agent { label config.get('agentLabel', 'netci-ephemeral') }
@@ -15,42 +16,69 @@ def call(Map config = [:]) {
         }
         environment {
             NETCI_TEMPLATE = template
+            NETCI_CI_SCRIPT_DIR = ciScriptDir
             NETCI_CORRELATION_ID = "${env.JOB_NAME}-${env.BUILD_NUMBER}"
         }
         stages {
             stage('Checkout') {
                 steps {
-                    checkout scm
+                    container('builder') {
+                        checkout scm
+                    }
                 }
             }
             stage('Unit Test') {
                 when { expression { stages.contains('unit-test') } }
-                steps { sh './scripts/ci/test.sh' }
+                steps {
+                    container('builder') {
+                        sh 'bash "${NETCI_CI_SCRIPT_DIR}/test.sh"'
+                    }
+                }
             }
             stage('Build') {
                 when { expression { stages.contains('build') } }
-                steps { sh './scripts/ci/build.sh' }
+                steps {
+                    container('builder') {
+                        sh 'bash "${NETCI_CI_SCRIPT_DIR}/build.sh"'
+                    }
+                }
             }
             stage('SBOM') {
                 when { expression { stages.contains('sbom') } }
-                steps { sh 'syft . -o cyclonedx-json=sbom.json' }
+                steps {
+                    container('builder') {
+                        sh 'bash "${NETCI_CI_SCRIPT_DIR}/sbom.sh"'
+                    }
+                }
             }
             stage('Vulnerability Scan') {
                 when { expression { stages.contains('vulnerability-scan') } }
-                steps { sh 'trivy fs --exit-code 1 --severity HIGH,CRITICAL .' }
+                steps {
+                    container('builder') {
+                        sh 'bash "${NETCI_CI_SCRIPT_DIR}/scan.sh"'
+                    }
+                }
             }
             stage('Sign') {
                 when { expression { stages.contains('sign') } }
-                steps { sh './scripts/ci/sign.sh' }
+                steps {
+                    container('builder') {
+                        sh 'bash "${NETCI_CI_SCRIPT_DIR}/sign.sh"'
+                    }
+                }
             }
             stage('Publish') {
                 when { expression { stages.contains('publish') } }
-                steps { sh './scripts/ci/publish.sh' }
+                steps {
+                    container('builder') {
+                        sh 'bash "${NETCI_CI_SCRIPT_DIR}/publish.sh"'
+                    }
+                }
             }
         }
         post {
             always {
-                archiveArtifacts artifacts: '**/sbom.json,**/scan-report.json', allowEmptyArchive: true
+                archiveArtifacts artifacts: '**/sbom.json,**/scan-report.json,**/artifact-digest.txt,**/artifact-ref.txt,**/*.bundle.json', allowEmptyArchive: true
                 cleanWs(deleteDirs: true, disableDeferredWipeout: true)
             }
         }

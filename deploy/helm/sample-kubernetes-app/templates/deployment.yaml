@@ -20,16 +20,27 @@ spec:
     spec:
       securityContext:
         runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: app
-          image: "{{ required \"image.digest is required; deploy by immutable digest\" .Values.image.digest | printf \"%s@%s\" .Values.image.repository }}"
+          image: "{{ printf \"%s@%s\" .Values.image.repository (required \"image.digest is required; deploy by immutable digest\" .Values.image.digest) }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
           ports:
             - name: http
               containerPort: 8080
           env:
             - name: NETCI_ENVIRONMENT
               value: {{ .Values.environment | quote }}
+            - name: APP_VERSION
+              value: {{ .Values.image.digest | quote }}
+            - name: PYTHONDONTWRITEBYTECODE
+              value: "1"
           resources: {{- toYaml .Values.resources | nindent 12 }}
           readinessProbe:
             httpGet:

@@ -1,24 +1,25 @@
 from __future__ import annotations
 
-import hashlib
-import json
-from datetime import datetime, timezone
-from uuid import UUID
+from typing import Literal
+from uuid import UUID, uuid4
 
 from fastapi import FastAPI, Header, HTTPException, Request, status
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, HttpUrl
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from .domain.models import (
     Application,
     Deployment,
-    DeploymentStatus,
     Environment,
     PipelineRun,
     PipelineStatus,
     Runtime,
 )
+from .delivery import CiResult, DeliveryError, DeliveryPlatform
+from .portal import PortalReadModel
 
 app = FastAPI(title="netCI Delivery API", version="0.1.0")
 app.add_middleware(
@@ -29,25 +30,32 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-applications: dict[UUID, Application] = {}
-pipeline_runs: dict[UUID, PipelineRun] = {}
-deployments: dict[UUID, Deployment] = {}
-pipeline_logs: dict[UUID, list[str]] = {}
-idempotency_records: dict[str, tuple[str, dict[str, object]]] = {}
+platform = DeliveryPlatform()
+portal = PortalReadModel(platform)
 
-TEMPLATES: dict[str, dict[str, object]] = {
-    "container-ci-cd-v1": {"runtime": Runtime.DOCKER, "stages": ["checkout", "unit-test", "build", "sbom", "vulnerability-scan", "sign", "publish", "deploy", "health-check"]},
-    "kubernetes-ci-cd-v1": {"runtime": Runtime.KUBERNETES, "stages": ["checkout", "unit-test", "build", "sbom", "vulnerability-scan", "sign", "publish", "deploy", "health-check"]},
-    "systemd-ansible-ci-cd-v1": {"runtime": Runtime.SYSTEMD, "stages": ["checkout", "unit-test", "build", "publish", "deploy", "health-check"]},
-}
 
+@app.middleware("http")
+async def correlation_id_middleware(request: Request, call_next):
+    supplied_correlation_id = request.headers.get("X-Correlation-Id")
+    correlation_id = supplied_correlation_id or str(uuid4())
+    if len(correlation_id) > 128:
+        correlation_id = str(uuid4())
+        request.state.correlation_id = correlation_id
+        response = error(
+            "VALIDATION_ERROR",
+            "request validation failed",
+            correlation_id,
+            422,
+        )
+        response.headers["X-Correlation-Id"] = correlation_id
+        return response
+    request.state.correlation_id = correlation_id
+    response = await call_next(request)
+    response.headers["X-Correlation-Id"] = correlation_id
+    return response
 
 def error(code: str, message: str, correlation_id: str | None = None, http_status: int = 400) -> JSONResponse:
     return JSONResponse(status_code=http_status, content={"code": code, "message": message, "correlationId": correlation_id})
-
-
-def payload_hash(payload: object) -> str:
-    return hashlib.sha256(json.dumps(payload, sort_keys=True, default=str).encode()).hexdigest()
 
 
 def application_json(item: Application) -> dict[str, object]:
@@ -55,11 +63,11 @@ def application_json(item: Application) -> dict[str, object]:
 
 
 def pipeline_json(item: PipelineRun) -> dict[str, object]:
-    return {"id": str(item.id), "applicationId": str(item.application_id), "status": item.status.value, "commitSha": item.commit_sha, "jenkinsRunId": item.jenkins_run_id, "workflowId": item.workflow_id, "artifactDigest": item.artifact_digest, "createdAt": item.created_at.isoformat(), "updatedAt": item.updated_at.isoformat()}
+    return {"id": str(item.id), "applicationId": str(item.application_id), "status": item.status.value, "commitSha": item.commit_sha, "branch": item.branch, "environment": item.environment.value, "correlationId": item.correlation_id, "jenkinsRunId": item.jenkins_run_id, "workflowId": item.workflow_id, "artifactDigest": item.artifact_digest, "createdAt": item.created_at.isoformat(), "updatedAt": item.updated_at.isoformat()}
 
 
 def deployment_json(item: Deployment) -> dict[str, object]:
-    return {"id": str(item.id), "applicationId": str(item.application_id), "runtime": item.runtime.value, "environment": item.environment.value, "status": item.status.value, "artifactDigest": item.artifact_digest, "approvedBy": item.approved_by, "createdAt": item.created_at.isoformat(), "updatedAt": item.updated_at.isoformat()}
+    return {"id": str(item.id), "applicationId": str(item.application_id), "pipelineRunId": str(item.pipeline_run_id) if item.pipeline_run_id else None, "runtime": item.runtime.value, "environment": item.environment.value, "status": item.status.value, "artifactDigest": item.artifact_digest, "previousArtifactDigest": item.previous_artifact_digest, "approvedBy": item.approved_by, "createdAt": item.created_at.isoformat(), "updatedAt": item.updated_at.isoformat()}
 
 
 class ApplicationCreate(BaseModel):
@@ -78,21 +86,65 @@ class PipelineRunCreate(BaseModel):
     parameters: dict[str, object] = Field(default_factory=dict)
 
 
+class CiResultRequest(BaseModel):
+    status: PipelineStatus
+    artifactDigest: str | None = None
+    logLines: list[str] = Field(default_factory=list, max_length=1000)
+
+
 class ApprovalRequest(BaseModel):
     comment: str | None = None
     actor: str = "local-reviewer"
 
 
+class DeploymentResultRequest(BaseModel):
+    status: Literal["healthy", "failed"]
+    message: str | None = Field(default=None, max_length=2000)
+
+
 class RollbackRequest(BaseModel):
-    targetArtifactDigest: str = Field(pattern=r"^sha256:")
+    targetArtifactDigest: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
     reason: str = Field(min_length=3)
 
 
-@app.exception_handler(HTTPException)
-async def http_exception_handler(request: Request, exc: HTTPException) -> JSONResponse:
-    correlation_id = request.headers.get("X-Correlation-Id")
+class SystemCreate(BaseModel):
+    id: str = Field(pattern=r"^[a-zA-Z][a-zA-Z0-9-]{2,62}$")
+    unit: str = Field(min_length=2, max_length=200)
+    description: str = Field(min_length=2, max_length=1000)
+    owner: str = Field(default="Admin", min_length=2, max_length=120)
+
+
+class ModuleCreate(BaseModel):
+    name: str = Field(pattern=r"^[a-z0-9][a-z0-9-]{2,62}$")
+    repositoryUrl: HttpUrl
+    pipelineTemplate: str
+    runtime: Runtime
+    moduleType: str = Field(default="Backend", min_length=2, max_length=40)
+    description: str = Field(default="", max_length=1000)
+    defaultEnvironment: Environment = Environment.DEV
+    stages: list[str] = Field(default_factory=list)
+
+
+class PortalApprovalRequest(BaseModel):
+    actor: str = Field(default="local-reviewer", min_length=2, max_length=120)
+    comment: str | None = Field(default=None, max_length=1000)
+
+
+@app.exception_handler(StarletteHTTPException)
+async def http_exception_handler(request: Request, exc: StarletteHTTPException) -> JSONResponse:
+    correlation_id = request.state.correlation_id
     detail = exc.detail if isinstance(exc.detail, dict) else {"code": "HTTP_ERROR", "message": str(exc.detail)}
     return error(detail.get("code", "HTTP_ERROR"), detail.get("message", "request failed"), correlation_id, exc.status_code)
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
+    return error("VALIDATION_ERROR", "request validation failed", request.state.correlation_id, 422)
+
+
+@app.exception_handler(DeliveryError)
+async def delivery_exception_handler(request: Request, exc: DeliveryError) -> JSONResponse:
+    return error(exc.code, exc.message, request.state.correlation_id, exc.status_code)
 
 
 @app.get("/healthz")
@@ -102,100 +154,265 @@ def healthz() -> dict[str, str]:
 
 @app.get("/stage-catalog")
 def stage_catalog() -> dict[str, list[dict[str, object]]]:
-    stages = [
-        {"id": "checkout", "name": "Checkout source", "category": "source", "enabledByDefault": True},
-        {"id": "unit-test", "name": "Unit tests", "category": "test", "enabledByDefault": True},
-        {"id": "build", "name": "Build artifact/image", "category": "build", "enabledByDefault": True},
-        {"id": "sbom", "name": "Generate SBOM", "category": "security", "enabledByDefault": True},
-        {"id": "vulnerability-scan", "name": "Vulnerability scan", "category": "security", "enabledByDefault": True},
-        {"id": "sign", "name": "Sign artifact", "category": "publish", "enabledByDefault": True},
-        {"id": "publish", "name": "Publish artifact", "category": "publish", "enabledByDefault": True},
-        {"id": "deploy", "name": "Deploy through netCI", "category": "deploy", "enabledByDefault": True},
-        {"id": "health-check", "name": "Health check", "category": "verify", "enabledByDefault": True},
-    ]
-    templates = [{"id": key, "name": key, "runtime": value["runtime"].value, "stageIds": value["stages"]} for key, value in TEMPLATES.items()]
-    return {"stages": stages, "templates": templates}
+    return platform.stage_catalog()
+
+
+@app.get("/portal/dashboard")
+def portal_dashboard() -> dict[str, object]:
+    return portal.dashboard()
+
+
+@app.get("/systems")
+def list_systems() -> list[dict[str, object]]:
+    return portal.systems()
+
+
+@app.post("/systems", status_code=status.HTTP_201_CREATED)
+def create_system(payload: SystemCreate) -> dict[str, object]:
+    try:
+        return portal.create_system(
+            system_id=payload.id,
+            unit=payload.unit,
+            description=payload.description,
+            owner=payload.owner,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail={"code": "SYSTEM_EXISTS", "message": str(exc)}) from exc
+
+
+@app.get("/systems/{systemId}")
+def get_system(systemId: str) -> dict[str, object]:
+    try:
+        return portal.system(systemId)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail={"code": "SYSTEM_NOT_FOUND", "message": str(exc)}) from exc
+
+
+@app.get("/systems/{systemId}/modules")
+def list_system_modules(systemId: str) -> list[dict[str, object]]:
+    try:
+        return list(portal.system(systemId)["modules"])
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail={"code": "SYSTEM_NOT_FOUND", "message": str(exc)}) from exc
+
+
+@app.post("/systems/{systemId}/modules", status_code=status.HTTP_201_CREATED)
+def create_module(
+    systemId: str,
+    payload: ModuleCreate,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key", min_length=1, max_length=128),
+) -> dict[str, object]:
+    try:
+        application = platform.create_application(
+            name=payload.name,
+            repository_url=str(payload.repositoryUrl),
+            pipeline_template=payload.pipelineTemplate,
+            runtime=payload.runtime,
+            default_environment=payload.defaultEnvironment,
+            stages=payload.stages,
+            idempotency_key=idempotency_key,
+        )
+        return portal.attach_module(
+            system_id=systemId,
+            module_id=payload.name,
+            name=payload.name,
+            module_type=payload.moduleType,
+            description=payload.description,
+            runtime=payload.runtime,
+            application_id=application.id,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail={"code": "SYSTEM_NOT_FOUND", "message": str(exc)}) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail={"code": "MODULE_EXISTS", "message": str(exc)}) from exc
+
+
+@app.get("/modules/{moduleId}")
+def get_module(moduleId: str) -> dict[str, object]:
+    try:
+        return portal.module(moduleId)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail={"code": "MODULE_NOT_FOUND", "message": str(exc)}) from exc
+
+
+@app.get("/modules/{moduleId}/overview")
+def get_module_overview(moduleId: str) -> dict[str, object]:
+    try:
+        return portal.module_overview(moduleId)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail={"code": "MODULE_NOT_FOUND", "message": str(exc)}) from exc
+
+
+@app.post("/modules/{moduleId}/pipeline-runs", status_code=status.HTTP_202_ACCEPTED)
+def start_module_pipeline_run(
+    moduleId: str,
+    payload: PipelineRunCreate,
+    request: Request,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key", min_length=1, max_length=128),
+) -> dict[str, object]:
+    try:
+        module = portal.module(moduleId)
+        application_id = module.get("applicationId")
+        if not application_id:
+            raise DeliveryError("MODULE_NOT_PROVISIONED", "module has no delivery application", 409)
+        run = platform.start_pipeline(
+            UUID(str(application_id)),
+            commit_sha=payload.commitSha,
+            branch=payload.branch,
+            environment=payload.environment,
+            parameters=payload.parameters,
+            correlation_id=request.state.correlation_id,
+            idempotency_key=idempotency_key,
+        )
+        return pipeline_json(run)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail={"code": "MODULE_NOT_FOUND", "message": str(exc)}) from exc
+
+
+@app.get("/modules/{moduleId}/pipeline-runs")
+def list_module_pipeline_runs(moduleId: str) -> dict[str, object]:
+    try:
+        return portal.pipeline_runs(moduleId)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail={"code": "MODULE_NOT_FOUND", "message": str(exc)}) from exc
+
+
+@app.get("/modules/{moduleId}/versions")
+def list_module_versions(moduleId: str) -> dict[str, object]:
+    try:
+        return portal.versions(moduleId)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail={"code": "MODULE_NOT_FOUND", "message": str(exc)}) from exc
+
+
+@app.get("/modules/{moduleId}/dora")
+def get_module_dora(moduleId: str) -> dict[str, object]:
+    try:
+        return portal.dora(moduleId)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail={"code": "MODULE_NOT_FOUND", "message": str(exc)}) from exc
+
+
+@app.get("/systems/{systemId}/dora")
+def get_system_dora(systemId: str) -> dict[str, object]:
+    try:
+        return portal.dora(systemId)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail={"code": "SYSTEM_NOT_FOUND", "message": str(exc)}) from exc
+
+
+@app.get("/production-requests")
+def list_production_requests() -> list[dict[str, object]]:
+    return portal.production_requests()
+
+
+@app.post("/production-requests/{requestId}/approve", status_code=status.HTTP_202_ACCEPTED)
+def approve_production_request(requestId: str, payload: PortalApprovalRequest) -> dict[str, object]:
+    try:
+        return portal.approve_request(requestId, payload.actor, payload.comment)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail={"code": "REQUEST_NOT_FOUND", "message": str(exc)}) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail={"code": "REQUEST_STATE_INVALID", "message": str(exc)}) from exc
+
+
+@app.post("/production-requests/{requestId}/reject", status_code=status.HTTP_202_ACCEPTED)
+def reject_production_request(requestId: str, payload: PortalApprovalRequest) -> dict[str, object]:
+    try:
+        return portal.reject_request(requestId, payload.actor, payload.comment)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail={"code": "REQUEST_NOT_FOUND", "message": str(exc)}) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail={"code": "REQUEST_STATE_INVALID", "message": str(exc)}) from exc
+
+
+@app.get("/servers")
+def list_servers() -> list[dict[str, object]]:
+    return portal.servers()
+
+
+@app.get("/audit-events")
+def list_audit_events(systemId: str | None = None, moduleId: str | None = None) -> list[dict[str, object]]:
+    return portal.audit_events(system_id=systemId, module_id=moduleId)
 
 
 @app.post("/applications", status_code=status.HTTP_201_CREATED, response_model=None)
-def create_application(payload: ApplicationCreate, idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"), correlation_id: str | None = Header(default=None, alias="X-Correlation-Id")) -> JSONResponse | dict[str, object]:
-    request_hash = payload_hash(payload.model_dump(mode="json"))
-    if idempotency_key and idempotency_key in idempotency_records:
-        previous_hash, previous_response = idempotency_records[idempotency_key]
-        if previous_hash != request_hash:
-            return error("IDEMPOTENCY_KEY_REUSED", "same key was used with a different request", correlation_id, 409)
-        return JSONResponse(status_code=201, content=previous_response)
-    template = TEMPLATES.get(payload.pipelineTemplate)
-    if template is None:
-        return error("TEMPLATE_NOT_FOUND", "pipeline template does not exist", correlation_id, 422)
-    if template["runtime"] != payload.runtime:
-        return error("RUNTIME_TEMPLATE_MISMATCH", "runtime does not match pipeline template", correlation_id, 422)
-    if any(item.name == payload.name for item in applications.values()):
-        return error("APPLICATION_EXISTS", "application name already exists", correlation_id, 409)
-    application = Application(name=payload.name, repository_url=str(payload.repositoryUrl), pipeline_template=payload.pipelineTemplate, runtime=payload.runtime, default_environment=payload.defaultEnvironment, stages=tuple(payload.stages or template["stages"]))
-    applications[application.id] = application
-    response = application_json(application)
-    if idempotency_key:
-        idempotency_records[idempotency_key] = (request_hash, response)
-    return response
+def create_application(payload: ApplicationCreate, idempotency_key: str | None = Header(default=None, alias="Idempotency-Key", min_length=1, max_length=128)) -> dict[str, object]:
+    application = platform.create_application(
+        name=payload.name,
+        repository_url=str(payload.repositoryUrl),
+        pipeline_template=payload.pipelineTemplate,
+        runtime=payload.runtime,
+        default_environment=payload.defaultEnvironment,
+        stages=payload.stages,
+        idempotency_key=idempotency_key,
+    )
+    return application_json(application)
 
 
 @app.get("/applications")
 def list_applications() -> list[dict[str, object]]:
-    return [application_json(item) for item in applications.values()]
+    return [application_json(item) for item in platform.list_applications()]
 
 
-@app.post("/applications/{application_id}/pipeline-runs", status_code=status.HTTP_202_ACCEPTED, response_model=None)
-def start_pipeline_run(application_id: UUID, payload: PipelineRunCreate, idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"), correlation_id: str | None = Header(default=None, alias="X-Correlation-Id")) -> JSONResponse | dict[str, object]:
-    if application_id not in applications:
-        return error("APPLICATION_NOT_FOUND", "application not found", correlation_id, 404)
-    request_hash = payload_hash({"applicationId": str(application_id), **payload.model_dump(mode="json")})
-    if idempotency_key and idempotency_key in idempotency_records:
-        previous_hash, previous_response = idempotency_records[idempotency_key]
-        if previous_hash != request_hash:
-            return error("IDEMPOTENCY_KEY_REUSED", "same key was used with a different request", correlation_id, 409)
-        return JSONResponse(status_code=202, content=previous_response)
-    run = PipelineRun(application_id=application_id, commit_sha=payload.commitSha, environment=payload.environment)
-    pipeline_runs[run.id] = run
-    pipeline_logs[run.id] = [f"queued correlationId={correlation_id or 'none'}", f"commit={run.commit_sha}"]
-    response = pipeline_json(run)
-    if idempotency_key:
-        idempotency_records[idempotency_key] = (request_hash, response)
-    return response
-
-
-@app.get("/pipeline-runs/{pipeline_run_id}")
-def get_pipeline_run(pipeline_run_id: UUID) -> dict[str, object]:
-    run = pipeline_runs.get(pipeline_run_id)
-    if run is None:
-        raise HTTPException(status_code=404, detail={"code": "PIPELINE_NOT_FOUND", "message": "pipeline run not found"})
+@app.post("/applications/{applicationId}/pipeline-runs", status_code=status.HTTP_202_ACCEPTED, response_model=None)
+def start_pipeline_run(applicationId: UUID, payload: PipelineRunCreate, request: Request, idempotency_key: str | None = Header(default=None, alias="Idempotency-Key", min_length=1, max_length=128)) -> JSONResponse | dict[str, object]:
+    run = platform.start_pipeline(
+        applicationId,
+        commit_sha=payload.commitSha,
+        branch=payload.branch,
+        environment=payload.environment,
+        parameters=payload.parameters,
+        correlation_id=request.state.correlation_id,
+        idempotency_key=idempotency_key,
+    )
     return pipeline_json(run)
 
 
-@app.get("/pipeline-runs/{pipeline_run_id}/logs")
-def get_pipeline_logs(pipeline_run_id: UUID) -> dict[str, object]:
-    if pipeline_run_id not in pipeline_runs:
-        raise HTTPException(status_code=404, detail={"code": "PIPELINE_NOT_FOUND", "message": "pipeline run not found"})
-    return {"pipelineRunId": str(pipeline_run_id), "lines": pipeline_logs.get(pipeline_run_id, [])}
+@app.get("/pipeline-runs/{pipelineRunId}")
+def get_pipeline_run(pipelineRunId: UUID) -> dict[str, object]:
+    return pipeline_json(platform.get_pipeline(pipelineRunId))
 
 
-@app.post("/deployments/{deployment_id}/approve", status_code=status.HTTP_202_ACCEPTED, response_model=None)
-def approve_deployment(deployment_id: UUID, payload: ApprovalRequest) -> JSONResponse | dict[str, object]:
-    deployment = deployments.get(deployment_id)
-    if deployment is None:
-        raise HTTPException(status_code=404, detail={"code": "DEPLOYMENT_NOT_FOUND", "message": "deployment not found"})
-    if deployment.status != DeploymentStatus.PENDING_APPROVAL:
-        return error("INVALID_DEPLOYMENT_STATE", "deployment is not waiting for approval", None, 409)
-    deployment = Deployment(**{**deployment.__dict__, "status": DeploymentStatus.DEPLOYING, "approved_by": payload.actor, "updated_at": datetime.now(timezone.utc)})
-    deployments[deployment.id] = deployment
-    return deployment_json(deployment)
+@app.get("/pipeline-runs/{pipelineRunId}/logs")
+def get_pipeline_logs(pipelineRunId: UUID) -> dict[str, object]:
+    run, lines = platform.get_pipeline_logs(pipelineRunId)
+    return {"pipelineRunId": str(pipelineRunId), "correlationId": run.correlation_id, "lines": list(lines)}
 
 
-@app.post("/deployments/{deployment_id}/rollback", status_code=status.HTTP_202_ACCEPTED, response_model=None)
-def rollback_deployment(deployment_id: UUID, payload: RollbackRequest) -> JSONResponse | dict[str, object]:
-    deployment = deployments.get(deployment_id)
-    if deployment is None:
-        raise HTTPException(status_code=404, detail={"code": "DEPLOYMENT_NOT_FOUND", "message": "deployment not found"})
-    deployment = Deployment(**{**deployment.__dict__, "status": DeploymentStatus.ROLLED_BACK, "artifact_digest": payload.targetArtifactDigest, "updated_at": datetime.now(timezone.utc)})
-    deployments[deployment.id] = deployment
-    return deployment_json(deployment)
+@app.post("/pipeline-runs/{pipelineRunId}/ci-result", status_code=status.HTTP_202_ACCEPTED)
+def record_ci_result(pipelineRunId: UUID, payload: CiResultRequest) -> dict[str, object]:
+    result: CiResult = platform.record_ci_result(
+        pipelineRunId,
+        payload.status.value,
+        payload.artifactDigest,
+        payload.logLines,
+    )
+    return {
+        "pipelineRun": pipeline_json(result.pipeline_run),
+        "deployment": deployment_json(result.deployment) if result.deployment else None,
+    }
+
+
+@app.post("/deployments/{deploymentId}/approve", status_code=status.HTTP_202_ACCEPTED, response_model=None)
+def approve_deployment(deploymentId: UUID, payload: ApprovalRequest) -> JSONResponse | dict[str, object]:
+    return deployment_json(platform.approve_deployment(deploymentId, payload.actor))
+
+
+@app.get("/deployments/{deploymentId}")
+def get_deployment(deploymentId: UUID) -> dict[str, object]:
+    return deployment_json(platform.get_deployment(deploymentId))
+
+
+@app.post("/deployments/{deploymentId}/result", status_code=status.HTTP_202_ACCEPTED)
+def record_deployment_result(deploymentId: UUID, payload: DeploymentResultRequest) -> dict[str, object]:
+    return deployment_json(
+        platform.record_deployment_result(deploymentId, payload.status, payload.message)
+    )
+
+
+@app.post("/deployments/{deploymentId}/rollback", status_code=status.HTTP_202_ACCEPTED, response_model=None)
+def rollback_deployment(deploymentId: UUID, payload: RollbackRequest) -> JSONResponse | dict[str, object]:
+    return deployment_json(
+        platform.rollback_deployment(deploymentId, payload.targetArtifactDigest)
+    )

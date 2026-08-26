@@ -2,29 +2,36 @@ from __future__ import annotations
 
 import asyncio
 import os
+from pathlib import Path
 
 from temporalio.client import Client
 from temporalio.worker import Worker
 
-from .provision_and_deploy import (
-    ProvisionAndDeployWorkflow,
-    deploy,
-    health_check,
-    rollback,
-    validate_artifact,
-    wait_for_approval,
-)
+from .activities import AnsibleRuntimeRunner, DeliveryActivities, FileEvidenceStore
+from .provision_and_deploy import ProvisionAndDeployWorkflow
 
 
 async def main() -> None:
     address = os.getenv('TEMPORAL_ADDRESS', 'localhost:7233')
     namespace = os.getenv('TEMPORAL_NAMESPACE', 'default')
     client = await Client.connect(address, namespace=namespace)
+    project_root = Path(os.getenv('NETCI_PROJECT_ROOT', '/workspace'))
+    evidence_root = Path(os.getenv('NETCI_SECURITY_EVIDENCE_DIR', project_root / 'evidence/security'))
+    inventory = Path(os.getenv('NETCI_ANSIBLE_INVENTORY', project_root / 'deploy/ansible/inventories/local.ini'))
+    activities = DeliveryActivities(
+        FileEvidenceStore(evidence_root),
+        AnsibleRuntimeRunner(project_root=project_root, inventory=inventory),
+    )
     worker = Worker(
         client,
         task_queue=os.getenv('TEMPORAL_TASK_QUEUE', 'netci-delivery'),
         workflows=[ProvisionAndDeployWorkflow],
-        activities=[validate_artifact, wait_for_approval, deploy, health_check, rollback],
+        activities=[
+            activities.validate_artifact,
+            activities.deploy,
+            activities.health_check,
+            activities.rollback,
+        ],
     )
     await worker.run()
 

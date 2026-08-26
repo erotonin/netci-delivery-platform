@@ -3,42 +3,82 @@
   hosts: docker_targets
   become: true
   vars:
-    app_name: hello-container
-    app_root: /opt/netci-docker-demo
-    registry_url: "{{ registry_url | default('192.168.122.1:5000') }}"
-    image_repository: "{{ image_repository | default(registry_url ~ '/hello-container') }}"
-    artifact_digest: "{{ artifact_digest | default('') }}"
-    host_port: "{{ host_port | default('18081') }}"
+    netci_app_name: "{{ app_name | default('hello-container') }}"
+    netci_app_root: "{{ app_root | default('/opt/netci-docker-demo') }}"
+    netci_registry_url: "{{ registry_url | default('192.168.122.1:5000') }}"
+    netci_image_repository: "{{ image_repository | default(netci_registry_url ~ '/hello-container') }}"
+    netci_artifact_digest: "{{ artifact_digest | default('') }}"
+    netci_host_port: "{{ host_port | default(18081) }}"
+
   pre_tasks:
     - name: Require immutable artifact digest
       ansible.builtin.assert:
         that:
-          - artifact_digest is match('^sha256:[0-9a-f]{64}$')
-        fail_msg: "artifact_digest must be a verified sha256 digest; tag-only deploy is forbidden"
+          - netci_artifact_digest is match('^sha256:[0-9a-f]{64}$')
+          - netci_artifact_digest != 'sha256:' ~ ('0' * 64)
+          - netci_image_repository is not search('@')
+          - netci_image_repository is not search(':[Ll][Aa][Tt][Ee][Ss][Tt]$')
+        fail_msg: >-
+          artifact_digest must be a verified non-zero sha256 digest and
+          image_repository must not contain a mutable tag
+
   tasks:
     - name: Ensure application directory exists
       ansible.builtin.file:
-        path: "{{ app_root }}"
+        path: "{{ netci_app_root }}"
         state: directory
         mode: "0755"
 
-    - name: Render Compose file
-      ansible.builtin.template:
-        src: hello-container.compose.yml.j2
-        dest: "{{ app_root }}/compose.yml"
-        mode: "0644"
+    - name: Deploy and verify requested image
+      block:
+        - name: Render Compose file
+          ansible.builtin.template:
+            src: hello-container.compose.yml.j2
+            dest: "{{ netci_app_root }}/compose.yml"
+            mode: "0644"
+            backup: true
+          register: compose_template
 
-    - name: Pull and start service
-      community.docker.docker_compose_v2:
-        project_src: "{{ app_root }}"
-        state: present
-        pull: always
+        - name: Pull and start service
+          community.docker.docker_compose_v2:
+            project_src: "{{ netci_app_root }}"
+            state: present
+            pull: always
 
-    - name: Wait for health endpoint
-      ansible.builtin.uri:
-        url: "http://127.0.0.1:{{ host_port }}/healthz"
-        status_code: 200
-      register: health
-      retries: 12
-      delay: 2
-      until: health.status == 200
+        - name: Wait for health endpoint
+          ansible.builtin.uri:
+            url: "http://127.0.0.1:{{ netci_host_port }}/healthz"
+            status_code: 200
+            return_content: true
+          register: docker_health
+          retries: 12
+          delay: 2
+          until:
+            - docker_health.status == 200
+            - (docker_health.json.status | default('')) == 'ok'
+
+      rescue:
+        - name: Restore previous Compose definition when available
+          ansible.builtin.copy:
+            src: "{{ compose_template.backup_file }}"
+            dest: "{{ netci_app_root }}/compose.yml"
+            remote_src: true
+            mode: "0644"
+          when: compose_template.backup_file is defined
+
+        - name: Restart previous Compose deployment
+          community.docker.docker_compose_v2:
+            project_src: "{{ netci_app_root }}"
+            state: present
+            pull: never
+          when: compose_template.backup_file is defined
+
+        - name: Stop failed first deployment
+          community.docker.docker_compose_v2:
+            project_src: "{{ netci_app_root }}"
+            state: absent
+          when: compose_template.backup_file is not defined
+
+        - name: Fail after Docker rollback
+          ansible.builtin.fail:
+            msg: "new Docker release failed its health check and rollback was attempted"

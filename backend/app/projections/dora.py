@@ -34,6 +34,8 @@ def project_dora(events: list[DoraEvent], application_id: str | None = None) -> 
     recovery_times: list[float] = []
 
     for failure in failed:
+        if failure.deployment_id is None:
+            continue
         recovery = next(
             (
                 event for event in ordered

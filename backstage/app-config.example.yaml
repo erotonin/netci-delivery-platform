@@ -1,0 +1,10 @@
+# Merge this fragment into the Backstage app-config.yaml used for the local experiment.
+# The proxy plugin must be registered in the Backstage backend.
+proxy:
+  reviveConsumedRequestBodies: true
+  endpoints:
+    /netci:
+      target: http://127.0.0.1:8000
+      changeOrigin: true
+      credentials: require
+      allowedMethods: [GET, POST]
