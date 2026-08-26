@@ -59,6 +59,7 @@ class PortalReadModel:
         self._systems: dict[str, PortalSystem] = {}
         self._modules: dict[str, PortalModule] = {}
         self._requests: dict[str, PortalProductionRequest] = {}
+        self._version_records: dict[tuple[str, str], dict[str, object]] = {}
         self._seed()
         self._load_persistent_state()
 
@@ -66,6 +67,7 @@ class PortalReadModel:
         self._systems.clear()
         self._modules.clear()
         self._requests.clear()
+        self._version_records.clear()
         self._seed()
         self._load_persistent_state()
 
@@ -174,6 +176,38 @@ class PortalReadModel:
                 "pr-alert-084": PortalProductionRequest(
                     "pr-alert-084", "alert-correlator", "v0.8.4", "MinhNV", "blocked"
                 ),
+            }
+        )
+        self._version_records.update(
+            {
+                ("backend-api", "v2.4.1"): {
+                    "gitTagUrl": "https://git.example.net/netchat/backend-api/-/tags/v2.4.1",
+                    "artifactUrl": "https://artifacts.example.net/netchat/backend-api/v2.4.1",
+                    "createdBy": "TrungTT",
+                    "createdAt": "2025-04-28T09:14:00+07:00",
+                    "ciReport": {
+                        "coverage": 87,
+                        "autoTest": "passed",
+                        "sast": "passed",
+                        "sastIssues": 0,
+                        "vulnerabilities": {"critical": 0, "high": 0, "medium": 2},
+                        "commit": "a1c4e2f",
+                    },
+                },
+                ("backend-api", "v2.4.0"): {
+                    "gitTagUrl": "https://git.example.net/netchat/backend-api/-/tags/v2.4.0",
+                    "artifactUrl": "https://artifacts.example.net/netchat/backend-api/v2.4.0",
+                    "createdBy": "HaiNM",
+                    "createdAt": "2025-04-10T14:22:00+07:00",
+                    "ciReport": {
+                        "coverage": 84,
+                        "autoTest": "passed",
+                        "sast": "passed",
+                        "sastIssues": 0,
+                        "vulnerabilities": {"critical": 0, "high": 1, "medium": 3},
+                        "commit": "7bd11ca",
+                    },
+                },
             }
         )
 
@@ -317,6 +351,11 @@ class PortalReadModel:
         module = self._modules.get(module_id)
         if module is None:
             raise KeyError("module not found")
+        environments = [
+            {"dev": "deployed", "staging": "deployed", "prod": "deployed"},
+            {"dev": "deployed", "staging": "deployed", "prod": "superseded"},
+            {"dev": "deployed", "staging": "not_deployed", "prod": "not_deployed"},
+        ]
         return {
             "moduleId": module_id,
             "items": [
@@ -326,10 +365,55 @@ class PortalReadModel:
                     "signed": False,
                     "sbom": "not_available",
                     "scan": "not_available",
+                    "environments": environments[index] if index < len(environments) else environments[-1],
+                    **self._version_records.get((module_id, version), {}),
                 }
-                for version in module.versions
+                for index, version in enumerate(module.versions)
             ],
         }
+
+    def register_version(
+        self,
+        module_id: str,
+        *,
+        tag: str,
+        git_tag_url: str,
+        artifact_url: str,
+        created_by: str = "Admin",
+    ) -> dict[str, object]:
+        module = self._modules.get(module_id)
+        if module is None:
+            raise KeyError("module not found")
+        if tag in module.versions:
+            raise ValueError("version already exists")
+        module.versions.insert(0, tag)
+        record = {
+            "gitTagUrl": git_tag_url,
+            "artifactUrl": artifact_url,
+            "createdBy": created_by,
+            "createdAt": datetime.now(timezone.utc).isoformat(),
+            "ciReport": None,
+        }
+        self._version_records[(module_id, tag)] = record
+        return {"moduleId": module_id, "version": tag, **record}
+
+    def record_ci_report(self, module_id: str, tag: str, report: dict[str, object]) -> dict[str, object]:
+        module = self._modules.get(module_id)
+        if module is None:
+            raise KeyError("module not found")
+        if tag not in module.versions:
+            module.versions.insert(0, tag)
+        record = self._version_records.setdefault(
+            (module_id, tag),
+            {
+                "gitTagUrl": None,
+                "artifactUrl": None,
+                "createdBy": "netCI Pipeline",
+                "createdAt": datetime.now(timezone.utc).isoformat(),
+            },
+        )
+        record["ciReport"] = dict(report)
+        return {"moduleId": module_id, "version": tag, **dict(report)}
 
     def dora(self, scope_id: str) -> dict[str, object]:
         if scope_id in self._modules:
@@ -382,12 +466,43 @@ class PortalReadModel:
 
     def servers(self) -> list[dict[str, object]]:
         return [
-            {"id": "jenkins-a", "kind": "jenkins-controller", "status": "healthy", "executors": {"busy": 1, "total": 4}},
-            {"id": "jenkins-b", "kind": "jenkins-controller", "status": "healthy", "executors": {"busy": 0, "total": 4}},
-            {"id": "docker-vm", "kind": "runtime-target", "status": "healthy", "runtime": "docker"},
-            {"id": "systemd-vm", "kind": "runtime-target", "status": "healthy", "runtime": "systemd"},
-            {"id": "kind-local", "kind": "runtime-target", "status": "healthy", "runtime": "kubernetes"},
+            {"id": "srv-dev-01", "hostname": "srv-dev-01", "systemId": "netChat", "ipAddress": "10.60.12.21", "environment": "dev", "status": "online", "kind": "runtime-target", "runtime": "docker"},
+            {"id": "srv-dev-02", "hostname": "srv-dev-02", "systemId": "netChat", "ipAddress": "10.60.12.22", "environment": "dev", "status": "online", "kind": "runtime-target", "runtime": "docker"},
+            {"id": "srv-stg-01", "hostname": "srv-stg-01", "systemId": "netChat", "ipAddress": "10.60.18.31", "environment": "staging", "status": "maintenance", "kind": "runtime-target", "runtime": "docker"},
+            {"id": "srv-prod-01", "hostname": "srv-prod-01", "systemId": "netChat", "ipAddress": "10.60.24.41", "environment": "prod", "status": "online", "kind": "runtime-target", "runtime": "docker"},
+            {"id": "srv-prod-02", "hostname": "srv-prod-02", "systemId": "netChat", "ipAddress": "10.60.24.42", "environment": "prod", "status": "online", "kind": "runtime-target", "runtime": "docker"},
+            {"id": "pctt-app-01", "hostname": "pctt-app-01", "systemId": "PCTT", "ipAddress": "10.61.20.11", "environment": "prod", "status": "online", "kind": "runtime-target", "runtime": "kubernetes"},
+            {"id": "nocpro5-01", "hostname": "nocpro5-01", "systemId": "NocPro5", "ipAddress": "10.62.10.15", "environment": "prod", "status": "offline", "kind": "runtime-target", "runtime": "systemd"},
+            {"id": "nocpro5-02", "hostname": "nocpro5-02", "systemId": "NocPro5", "ipAddress": "10.62.10.16", "environment": "staging", "status": "online", "kind": "runtime-target", "runtime": "systemd"},
+            {"id": "jenkins-a", "hostname": "jenkins-a", "systemId": "netCI", "ipAddress": "10.60.2.10", "environment": "prod", "status": "online", "kind": "jenkins-controller", "executors": {"busy": 1, "total": 4}},
+            {"id": "jenkins-b", "hostname": "jenkins-b", "systemId": "netCI", "ipAddress": "10.60.2.11", "environment": "prod", "status": "online", "kind": "jenkins-controller", "executors": {"busy": 0, "total": 4}},
+            {"id": "kind-local", "hostname": "kind-local", "systemId": "netCI", "ipAddress": "127.0.0.1", "environment": "dev", "status": "online", "kind": "runtime-target", "runtime": "kubernetes"},
         ]
+
+    def dcim_services(self, query: str) -> list[dict[str, object]]:
+        services = [
+            {"id": "svc-netchat", "name": "netChat", "code": "VTN_CNTT_MSS_686", "tenant": "Trung tâm nền tảng Công nghệ và Chuyển đổi số", "tier": "Tier 2", "description": "Real-time messaging platform for internal team communication."},
+            {"id": "svc-pctt", "name": "PCTT", "code": "VTN_CS_PCTT_210", "tenant": "Trung tâm Chăm sóc khách hàng", "tier": "Tier 2", "description": "Ticketing and customer support case tracking."},
+            {"id": "svc-nocpro5", "name": "NocPro5", "code": "VTN_NOC_PRO5_005", "tenant": "Trung tâm Vận hành khai thác mạng", "tier": "Tier 1", "description": "Network operations alarm monitoring and correlation."},
+        ]
+        normalized = query.strip().lower()
+        if not normalized:
+            return []
+        return [item for item in services if normalized in str(item["name"]).lower() or normalized in str(item["code"]).lower()]
+
+    def dcim_modules(self, system_id: str) -> list[dict[str, object]]:
+        if system_id not in self._systems:
+            raise KeyError("system not found")
+        fixtures = {
+            "netChat": [
+                {"id": "backend-api", "name": "Backend API", "code": "NETCHAT_BE", "type": "Backend", "repositoryUrl": "https://git.example.net/netchat/backend-api", "registered": True},
+                {"id": "web-client", "name": "Web Client", "code": "NETCHAT_WEB", "type": "Frontend", "repositoryUrl": "https://git.example.net/netchat/web-client", "registered": True},
+                {"id": "notification-worker", "name": "Notification Worker", "code": "NETCHAT_NOTIFY", "type": "Worker", "repositoryUrl": "https://git.example.net/netchat/notification-worker", "registered": False},
+                {"id": "media-service", "name": "Media Service", "code": "NETCHAT_MEDIA", "type": "Backend", "repositoryUrl": "https://git.example.net/netchat/media-service", "registered": False},
+                {"id": "edge-gateway", "name": "Edge Gateway", "code": "NETCHAT_EDGE", "type": "Gateway", "repositoryUrl": "https://git.example.net/netchat/edge-gateway", "registered": False},
+            ]
+        }
+        return fixtures.get(system_id, [])
 
     def audit_events(self, *, system_id: str | None = None, module_id: str | None = None) -> list[dict[str, object]]:
         events = [

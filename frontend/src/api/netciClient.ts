@@ -288,3 +288,52 @@ export function rejectProductionRequest(productionRequestId: string, payload: { 
     body: JSON.stringify(payload),
   })
 }
+
+export type DcimService = {
+  id: string
+  name: string
+  code: string
+  tenant: string
+  tier: string
+  description: string
+}
+
+export type DcimModule = {
+  id: string
+  name: string
+  code: string
+  type: string
+  repositoryUrl: string
+  registered: boolean
+}
+
+export type ServerInventoryItem = {
+  id: string
+  hostname: string
+  systemId: string
+  ipAddress: string
+  environment: Environment
+  status: string
+  kind: string
+  runtime?: Runtime
+}
+
+export function searchDcimServices(query: string): Promise<{ source: string; items: DcimService[] }> {
+  return request<{ source: string; items: DcimService[] }>(`/dcim/services?query=${encodeURIComponent(query)}`)
+}
+
+export function listDcimModules(systemId: string): Promise<{ source: string; systemId: string; items: DcimModule[] }> {
+  return request<{ source: string; systemId: string; items: DcimModule[] }>(`/dcim/modules?systemId=${encodeURIComponent(systemId)}`)
+}
+
+export function listServerInventory(): Promise<ServerInventoryItem[]> {
+  return request<ServerInventoryItem[]>('/servers')
+}
+
+export function createModuleVersion(moduleId: string, payload: { tag: string; gitTagUrl: string; artifactUrl: string; createdBy?: string }): Promise<Record<string, unknown>> {
+  return request<Record<string, unknown>>(`/modules/${encodeURIComponent(moduleId)}/versions`, {
+    method: 'POST',
+    headers: { 'X-Correlation-Id': requestId() },
+    body: JSON.stringify(payload),
+  })
+}

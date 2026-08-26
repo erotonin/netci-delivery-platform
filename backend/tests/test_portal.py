@@ -104,3 +104,80 @@ def test_portal_returns_servers_and_scoped_audit_events():
     audit = client.get('/audit-events?moduleId=backend-api')
     assert audit.status_code == 200
     assert all(item['target'] == 'backend-api' for item in audit.json())
+
+
+def test_dcim_lookup_exposes_system_modules_and_deployment_targets():
+    services = client.get('/dcim/services?query=netchat')
+    assert services.status_code == 200
+    assert services.json()['items'][0]['code'] == 'VTN_CNTT_MSS_686'
+
+    modules = client.get('/dcim/modules?systemId=netChat')
+    assert modules.status_code == 200
+    assert {'backend-api', 'web-client', 'notification-worker'} <= {
+        item['id'] for item in modules.json()['items']
+    }
+
+    servers = client.get('/servers')
+    assert any(item['hostname'] == 'srv-prod-01' for item in servers.json())
+    assert all({'ipAddress', 'environment', 'systemId'} <= item.keys() for item in servers.json())
+
+
+def test_pipeline_can_publish_ci_report_for_a_module_version(monkeypatch):
+    monkeypatch.setenv('NETCI_PIPELINE_API_KEY', 'test-pipeline-key')
+    payload = {
+        'coverage': 87,
+        'autoTest': 'passed',
+        'sast': 'passed',
+        'sastIssues': 0,
+        'vulnerabilities': {'critical': 0, 'high': 0, 'medium': 2},
+        'commit': 'a1c4e2f',
+    }
+
+    unauthorized = client.post('/modules/backend-api/versions/v2.4.1/ci-report', json=payload)
+    assert unauthorized.status_code == 401
+
+    response = client.post(
+        '/modules/backend-api/versions/v2.4.1/ci-report',
+        headers={'Authorization': 'Bearer test-pipeline-key'},
+        json=payload,
+    )
+    assert response.status_code == 202
+    assert response.json()['coverage'] == 87
+    assert response.json()['vulnerabilities']['medium'] == 2
+
+    versions = client.get('/modules/backend-api/versions').json()['items']
+    version = next(item for item in versions if item['version'] == 'v2.4.1')
+    assert version['ciReport']['commit'] == 'a1c4e2f'
+
+
+def test_pipeline_api_key_has_no_implicit_production_default(monkeypatch):
+    monkeypatch.delenv('NETCI_PIPELINE_API_KEY', raising=False)
+    monkeypatch.setenv('NETCI_ENVIRONMENT', 'production')
+
+    response = client.post(
+        '/modules/backend-api/versions/v2.4.1/ci-report',
+        headers={'Authorization': 'Bearer netci-local-pipeline-key'},
+        json={
+            'coverage': 87,
+            'autoTest': 'passed',
+            'sast': 'passed',
+            'sastIssues': 0,
+            'vulnerabilities': {'critical': 0, 'high': 0, 'medium': 2},
+            'commit': 'a1c4e2f',
+        },
+    )
+
+    assert response.status_code == 503
+    assert response.json()['code'] == 'PIPELINE_KEY_NOT_CONFIGURED'
+
+
+def test_manual_version_registration_is_visible_to_the_portal():
+    created = client.post('/modules/backend-api/versions', json={
+        'tag': 'v2.5.0',
+        'gitTagUrl': 'https://git.example.net/netchat/backend-api/-/tags/v2.5.0',
+        'artifactUrl': 'https://artifacts.example.net/netchat/backend-api/v2.5.0',
+    })
+
+    assert created.status_code == 201
+    assert created.json()['version'] == 'v2.5.0'
+    assert client.get('/modules/backend-api/versions').json()['items'][0]['version'] == 'v2.5.0'

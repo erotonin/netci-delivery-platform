@@ -36,3 +36,17 @@ Trong local source-only mode, read model có fallback in-memory để test deter
 ## UI states
 
 Mọi query cần có loading, empty, error và stale-data state. Mọi command cần gửi `Idempotency-Key`, `X-Correlation-Id`, hiển thị kết quả thành công/thất bại và giữ correlation id trong audit/log. Dữ liệu hiển thị trong dashboard phải có `asOf` hoặc thời gian truy vấn khi chuyển sang production read model.
+
+## UI reference contracts
+
+Các màn hình mới dùng ba contract bổ sung để giữ đúng luồng của Release Portal:
+
+- `GET /dcim/services?query={nameOrCode}`: tra cứu service khi tạo System.
+- `GET /dcim/modules?systemId={systemId}`: lấy module ứng viên cho wizard New Module.
+- `GET /servers`: inventory server theo system, IP, environment và trạng thái.
+- `POST /modules/{moduleId}/versions`: đăng ký version thủ công bằng Git tag và artifact URL.
+- `POST /modules/{moduleId}/versions/{tag}/ci-report`: pipeline đẩy coverage, automation test, SAST, vulnerability counts và commit SHA vào version đã đăng ký.
+
+Endpoint CI report yêu cầu `Authorization: Bearer <pipeline-api-key>`. Key đọc từ `NETCI_PIPELINE_API_KEY`; giá trị mặc định chỉ phục vụ local development và phải thay bằng secret manager khi triển khai thật.
+
+Hiện tại DCIM và server inventory là fixture-backed adapter để Windows demo chạy độc lập. Khi có thông tin endpoint và credential thật, thay implementation adapter nhưng giữ nguyên response contract để frontend không phải đổi.

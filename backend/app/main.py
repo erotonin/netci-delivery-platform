@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+import secrets
 from typing import Literal
 from uuid import UUID, uuid4
 
@@ -56,6 +58,24 @@ async def correlation_id_middleware(request: Request, call_next):
 
 def error(code: str, message: str, correlation_id: str | None = None, http_status: int = 400) -> JSONResponse:
     return JSONResponse(status_code=http_status, content={"code": code, "message": message, "correlationId": correlation_id})
+
+
+def require_pipeline_api_key(authorization: str | None) -> None:
+    expected = os.getenv("NETCI_PIPELINE_API_KEY")
+    if not expected:
+        if os.getenv("NETCI_ENVIRONMENT", "local") != "local":
+            raise HTTPException(
+                status_code=503,
+                detail={"code": "PIPELINE_KEY_NOT_CONFIGURED", "message": "pipeline API key is not configured"},
+            )
+        expected = "netci-local-pipeline-key"
+    supplied = authorization.removeprefix("Bearer ") if authorization and authorization.startswith("Bearer ") else ""
+    if not supplied or not secrets.compare_digest(supplied, expected):
+        raise HTTPException(
+            status_code=401,
+            detail={"code": "PIPELINE_UNAUTHORIZED", "message": "valid pipeline API key required"},
+            headers={"WWW-Authenticate": "Bearer"},
+        )
 
 
 def application_json(item: Application) -> dict[str, object]:
@@ -130,6 +150,28 @@ class PortalApprovalRequest(BaseModel):
     comment: str | None = Field(default=None, max_length=1000)
 
 
+class VersionCreate(BaseModel):
+    tag: str = Field(pattern=r"^v?\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$")
+    gitTagUrl: HttpUrl
+    artifactUrl: HttpUrl
+    createdBy: str = Field(default="Admin", min_length=2, max_length=120)
+
+
+class VulnerabilityCounts(BaseModel):
+    critical: int = Field(default=0, ge=0)
+    high: int = Field(default=0, ge=0)
+    medium: int = Field(default=0, ge=0)
+
+
+class VersionCiReport(BaseModel):
+    coverage: float = Field(ge=0, le=100)
+    autoTest: Literal["passed", "failed", "skipped"]
+    sast: Literal["passed", "failed"]
+    sastIssues: int = Field(ge=0)
+    vulnerabilities: VulnerabilityCounts
+    commit: str = Field(pattern=r"^[0-9a-fA-F]{7,64}$")
+
+
 @app.exception_handler(StarletteHTTPException)
 async def http_exception_handler(request: Request, exc: StarletteHTTPException) -> JSONResponse:
     correlation_id = request.state.correlation_id
@@ -160,6 +202,19 @@ def stage_catalog() -> dict[str, list[dict[str, object]]]:
 @app.get("/portal/dashboard")
 def portal_dashboard() -> dict[str, object]:
     return portal.dashboard()
+
+
+@app.get("/dcim/services")
+def search_dcim_services(query: str = "") -> dict[str, object]:
+    return {"source": "fixture", "items": portal.dcim_services(query)}
+
+
+@app.get("/dcim/modules")
+def list_dcim_modules(systemId: str) -> dict[str, object]:
+    try:
+        return {"source": "fixture", "systemId": systemId, "items": portal.dcim_modules(systemId)}
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail={"code": "SYSTEM_NOT_FOUND", "message": str(exc)}) from exc
 
 
 @app.get("/systems")
@@ -281,6 +336,36 @@ def list_module_pipeline_runs(moduleId: str) -> dict[str, object]:
 def list_module_versions(moduleId: str) -> dict[str, object]:
     try:
         return portal.versions(moduleId)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail={"code": "MODULE_NOT_FOUND", "message": str(exc)}) from exc
+
+
+@app.post("/modules/{moduleId}/versions", status_code=status.HTTP_201_CREATED)
+def create_module_version(moduleId: str, payload: VersionCreate) -> dict[str, object]:
+    try:
+        return portal.register_version(
+            moduleId,
+            tag=payload.tag,
+            git_tag_url=str(payload.gitTagUrl),
+            artifact_url=str(payload.artifactUrl),
+            created_by=payload.createdBy,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail={"code": "MODULE_NOT_FOUND", "message": str(exc)}) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail={"code": "VERSION_EXISTS", "message": str(exc)}) from exc
+
+
+@app.post("/modules/{moduleId}/versions/{tag}/ci-report", status_code=status.HTTP_202_ACCEPTED)
+def publish_module_ci_report(
+    moduleId: str,
+    tag: str,
+    payload: VersionCiReport,
+    authorization: str | None = Header(default=None, alias="Authorization"),
+) -> dict[str, object]:
+    require_pipeline_api_key(authorization)
+    try:
+        return portal.record_ci_report(moduleId, tag, payload.model_dump())
     except KeyError as exc:
         raise HTTPException(status_code=404, detail={"code": "MODULE_NOT_FOUND", "message": str(exc)}) from exc
 

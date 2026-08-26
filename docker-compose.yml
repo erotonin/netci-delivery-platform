@@ -66,6 +66,7 @@ services:
       MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-netci-local-only}
       TEMPORAL_ADDRESS: temporalite:7233
       NETCI_ALLOWED_ORIGINS: ${NETCI_ALLOWED_ORIGINS:-http://localhost:5173}
+      NETCI_PIPELINE_API_KEY: ${NETCI_PIPELINE_API_KEY:-netci-local-pipeline-key}
     ports: ["8000:8000"]
     depends_on:
       postgres:
