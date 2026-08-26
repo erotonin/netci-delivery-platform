@@ -25,7 +25,7 @@ Các response read model có thể materialize từ PostgreSQL query hoặc proj
 
 ## Commands
 
-`POST /systems` tạo system. `POST /systems/{systemId}/modules` tạo module đồng thời tạo application delivery record theo pipeline template/runtime đã chọn. `POST /modules/{moduleId}/pipeline-runs` là command Portal-level để trigger pipeline; backend resolve `moduleId → applicationId` rồi gọi delivery application layer.
+`POST /systems` tạo system. `POST /systems/{systemId}/modules` tạo module đồng thời tạo application delivery record theo pipeline template/runtime đã chọn và lưu `deploymentEnvironments` (environment, runtime, server/task hoặc kubeconfig reference/namespace). Mọi environment của một application dùng chung runtime; Docker/Systemd bắt buộc có server, Kubernetes bắt buộc có kubeconfig reference và namespace. `POST /modules/{moduleId}/pipeline-runs` là command Portal-level để trigger pipeline; backend resolve `moduleId → applicationId` rồi gọi delivery application layer.
 
 `POST /production-requests/{requestId}/approve` lưu actor/comment, thay đổi approval state và phải tạo audit event. Khi deployment thật đã tồn tại, command này phải tiếp tục gọi deployment approval của delivery domain thay vì chỉ đổi trạng thái read model.
 
@@ -47,6 +47,6 @@ Các màn hình mới dùng ba contract bổ sung để giữ đúng luồng c�
 - `POST /modules/{moduleId}/versions`: đăng ký version thủ công bằng Git tag và artifact URL.
 - `POST /modules/{moduleId}/versions/{tag}/ci-report`: pipeline đẩy coverage, automation test, SAST, vulnerability counts và commit SHA vào version đã đăng ký.
 
-Endpoint CI report yêu cầu `Authorization: Bearer <pipeline-api-key>`. Key đọc từ `NETCI_PIPELINE_API_KEY`; giá trị mặc định chỉ phục vụ local development và phải thay bằng secret manager khi triển khai thật.
+Endpoint CI report, callback `POST /pipeline-runs/{id}/ci-result` và callback `POST /deployments/{id}/result` đều yêu cầu `Authorization: Bearer <pipeline-api-key>`. Key đọc từ `NETCI_PIPELINE_API_KEY`; giá trị mặc định chỉ phục vụ local development và phải thay bằng secret manager khi triển khai thật.
 
 Hiện tại DCIM và server inventory là fixture-backed adapter để Windows demo chạy độc lập. Khi có thông tin endpoint và credential thật, thay implementation adapter nhưng giữ nguyên response contract để frontend không phải đổi.

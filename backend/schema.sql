@@ -113,10 +113,14 @@ CREATE TABLE IF NOT EXISTS modules (
     name VARCHAR(255) NOT NULL,
     module_type VARCHAR(64) NOT NULL,
     description TEXT NOT NULL DEFAULT '',
+    deployment_config JSONB NOT NULL DEFAULT '[]'::jsonb,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (system_id, name)
 );
+
+ALTER TABLE modules
+    ADD COLUMN IF NOT EXISTS deployment_config JSONB NOT NULL DEFAULT '[]'::jsonb;
 
 ALTER TABLE modules ADD COLUMN IF NOT EXISTS runtime VARCHAR(32) NOT NULL DEFAULT 'docker';
 

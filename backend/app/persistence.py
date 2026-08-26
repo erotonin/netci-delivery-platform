@@ -158,7 +158,7 @@ class PostgresPortalStore:
                 with connection.cursor() as cursor:
                     cursor.execute("SELECT id, unit, description, owner, status FROM systems ORDER BY created_at, id")
                     systems = list(cursor.fetchall())
-                    cursor.execute("SELECT id, system_id, application_id, runtime, name, module_type, description FROM modules ORDER BY created_at, id")
+                    cursor.execute("SELECT id, system_id, application_id, runtime, name, module_type, description, deployment_config FROM modules ORDER BY created_at, id")
                     modules = list(cursor.fetchall())
                     cursor.execute("SELECT module_id, version FROM release_versions ORDER BY created_at, version")
                     versions = list(cursor.fetchall())
@@ -181,10 +181,10 @@ class PostgresPortalStore:
             with connection.cursor() as cursor:
                 cursor.execute(
                     """
-                    INSERT INTO modules (id, system_id, application_id, runtime, name, module_type, description)
-                    VALUES (%(id)s, %(system_id)s, %(application_id)s, %(runtime)s, %(name)s, %(module_type)s, %(description)s)
+                    INSERT INTO modules (id, system_id, application_id, runtime, name, module_type, description, deployment_config)
+                    VALUES (%(id)s, %(system_id)s, %(application_id)s, %(runtime)s, %(name)s, %(module_type)s, %(description)s, %(deployment_config)s::jsonb)
                     """,
-                    record,
+                    {**record, "deployment_config": json.dumps(record["deployment_config"])},
                 )
 
     def update_request(self, request_id: str, status: str, comment: str | None) -> None:

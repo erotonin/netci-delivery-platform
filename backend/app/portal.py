@@ -37,6 +37,7 @@ class PortalModule:
     runtime: Runtime
     application_id: UUID | None = None
     versions: list[str] = field(default_factory=list)
+    deployment_environments: list[dict[str, object]] = field(default_factory=list)
 
 
 @dataclass
@@ -95,6 +96,7 @@ class PortalReadModel:
                 str(row["id"]), str(row["system_id"]), str(row["name"]),
                 str(row["module_type"]), str(row["description"]), Runtime(str(row.get("runtime", "docker"))),
                 application_id=application_id,
+                deployment_environments=list(row.get("deployment_config") or []),
             )
             self._modules[module.id] = module
             if module.system_id in self._systems:
@@ -233,6 +235,7 @@ class PortalReadModel:
         description: str,
         runtime: Runtime,
         application_id: UUID,
+        deployment_environments: list[dict[str, object]],
     ) -> dict[str, object]:
         system = self._systems.get(system_id)
         if system is None:
@@ -242,12 +245,13 @@ class PortalReadModel:
         module = PortalModule(
             module_id, system_id, name, module_type, description, runtime,
             application_id=application_id,
+            deployment_environments=deployment_environments,
         )
         self._modules[module_id] = module
         system.module_ids.append(module_id)
         if self.store is not None:
             try:
-                self.store.insert_module({"id": module_id, "system_id": system_id, "application_id": application_id, "runtime": runtime.value, "name": name, "module_type": module_type, "description": description})
+                self.store.insert_module({"id": module_id, "system_id": system_id, "application_id": application_id, "runtime": runtime.value, "name": name, "module_type": module_type, "description": description, "deployment_config": deployment_environments})
             except Exception:
                 pass
         return self.module(module_id)
@@ -289,6 +293,7 @@ class PortalReadModel:
             "runtime": item.runtime.value,
             "applicationId": str(item.application_id) if item.application_id else None,
             "versions": list(item.versions),
+            "deploymentEnvironments": list(item.deployment_environments),
             "environments": [
                 {
                     "name": environment.value,

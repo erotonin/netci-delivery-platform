@@ -4,6 +4,7 @@
   connection: local
   gather_facts: false
   vars:
+    netci_kubeconfig: "{{ kubeconfig | default(lookup('env', 'KUBECONFIG'), true) }}"
     netci_kube_context: "{{ kube_context | default('kind-netci-local') }}"
     netci_release_name: "{{ release_name | default('hello-kubernetes') }}"
     netci_target_namespace: "{{ target_namespace | default('staging') }}"
@@ -31,6 +32,7 @@
         chart_ref: "{{ netci_chart_path }}"
         release_namespace: "{{ netci_target_namespace }}"
         create_namespace: false
+        kubeconfig: "{{ netci_kubeconfig if netci_kubeconfig | length > 0 else omit }}"
         kube_context: "{{ netci_kube_context }}"
         release_values:
           environment: "{{ netci_target_namespace }}"
@@ -49,6 +51,7 @@
         kind: Deployment
         name: "{{ netci_release_name }}-sample-kubernetes-app"
         namespace: "{{ netci_target_namespace }}"
+        kubeconfig: "{{ netci_kubeconfig if netci_kubeconfig | length > 0 else omit }}"
         context: "{{ netci_kube_context }}"
       register: deployed_workload
 

@@ -163,6 +163,16 @@ export type PortalMetric = {
   hint: string
 }
 
+export type DeploymentEnvironmentConfig = {
+  displayName: string
+  environment: Environment
+  runtime: Runtime
+  servers: string[]
+  tasks: string[]
+  kubeconfigRef?: string | null
+  namespace?: string | null
+}
+
 export type PortalModule = {
   id: string
   systemId: string
@@ -172,6 +182,7 @@ export type PortalModule = {
   runtime: Runtime
   applicationId: string | null
   versions: string[]
+  deploymentEnvironments: DeploymentEnvironmentConfig[]
   environments: Array<{ name: Environment; status: string }>
   pipelineRuns: PipelineRun[]
   dora: PortalMetric[]
@@ -265,7 +276,7 @@ export function createSystem(payload: { id: string; unit: string; description: s
   })
 }
 
-export function createModule(systemId: string, payload: { name: string; repositoryUrl: string; pipelineTemplate: string; runtime: Runtime; moduleType: string; description: string; defaultEnvironment: Environment; stages?: string[] }): Promise<PortalModule> {
+export function createModule(systemId: string, payload: { name: string; displayName: string; repositoryUrl: string; pipelineTemplate: string; runtime: Runtime; moduleType: string; description: string; defaultEnvironment: Environment; deploymentEnvironments: DeploymentEnvironmentConfig[]; stages?: string[] }): Promise<PortalModule> {
   return request<PortalModule>(`/systems/${encodeURIComponent(systemId)}/modules`, {
     method: 'POST',
     headers: { 'Idempotency-Key': requestId(), 'X-Correlation-Id': requestId() },

@@ -1,10 +1,11 @@
 import pytest
 from fastapi.testclient import TestClient
 
-from app.main import app, platform
+from app.main import app, configured_cors_origins, platform
 
 
 client = TestClient(app)
+MACHINE_HEADERS = {'Authorization': 'Bearer netci-local-pipeline-key'}
 
 
 def application_payload(name: str = 'hello-netci', runtime: str = 'docker', template: str = 'container-ci-cd-v1'):
@@ -25,6 +26,48 @@ def test_healthz():
     assert response.status_code == 200
     assert response.json()['status'] == 'ok'
     assert response.headers['X-Correlation-Id'] == 'health-check-1'
+
+
+def test_cors_origins_are_loaded_normalized_and_deduplicated(monkeypatch):
+    monkeypatch.setenv(
+        'NETCI_ALLOWED_ORIGINS',
+        ' https://portal.example.net/,http://localhost:5173,https://portal.example.net ',
+    )
+
+    assert configured_cors_origins() == [
+        'https://portal.example.net',
+        'http://localhost:5173',
+    ]
+
+
+@pytest.mark.parametrize('value', [
+    '*',
+    'portal.example.net',
+    'https://portal.example.net/path',
+    'http://localhost:not-a-port',
+    'http://:5173',
+])
+def test_cors_origins_reject_unsafe_or_non_origin_values(monkeypatch, value):
+    monkeypatch.setenv('NETCI_ALLOWED_ORIGINS', value)
+
+    with pytest.raises(ValueError, match='NETCI_ALLOWED_ORIGINS'):
+        configured_cors_origins()
+
+
+def test_cors_preflight_allows_the_configured_portal_and_rejects_other_origins():
+    headers = {
+        'Origin': 'http://localhost:5173',
+        'Access-Control-Request-Method': 'GET',
+        'Access-Control-Request-Headers': 'X-Correlation-Id',
+    }
+
+    allowed = client.options('/healthz', headers=headers)
+    rejected = client.options('/healthz', headers={**headers, 'Origin': 'https://untrusted.example'})
+
+    assert allowed.status_code == 200
+    assert allowed.headers['Access-Control-Allow-Origin'] == 'http://localhost:5173'
+    assert rejected.status_code == 400
+    assert 'Access-Control-Allow-Origin' not in rejected.headers
 
 
 def test_stage_catalog_contains_three_templates():
@@ -191,9 +234,10 @@ def test_successful_production_ci_creates_a_deployment_waiting_for_approval():
     ).json()
     path = f"/pipeline-runs/{run['id']}/ci-result"
 
-    started = client.post(path, json={'status': 'running', 'logLines': ['agent allocated']})
+    started = client.post(path, headers=MACHINE_HEADERS, json={'status': 'running', 'logLines': ['agent allocated']})
     completed = client.post(
         path,
+        headers=MACHINE_HEADERS,
         json={
             'status': 'succeeded',
             'artifactDigest': f"sha256:{'a' * 64}",
@@ -214,9 +258,10 @@ def test_approval_resumes_the_waiting_production_pipeline():
         f"/applications/{application['id']}/pipeline-runs",
         json={'commitSha': 'abcdef1234567', 'environment': 'prod'},
     ).json()
-    client.post(f"/pipeline-runs/{run['id']}/ci-result", json={'status': 'running'})
+    client.post(f"/pipeline-runs/{run['id']}/ci-result", headers=MACHINE_HEADERS, json={'status': 'running'})
     completed = client.post(
         f"/pipeline-runs/{run['id']}/ci-result",
+        headers=MACHINE_HEADERS,
         json={'status': 'succeeded', 'artifactDigest': f"sha256:{'b' * 64}"},
     ).json()
 
@@ -237,15 +282,17 @@ def test_deployment_result_and_rollback_complete_the_public_lifecycle():
         f"/applications/{application['id']}/pipeline-runs",
         json={'commitSha': 'abcdef1234567', 'environment': 'staging'},
     ).json()
-    client.post(f"/pipeline-runs/{run['id']}/ci-result", json={'status': 'running'})
+    client.post(f"/pipeline-runs/{run['id']}/ci-result", headers=MACHINE_HEADERS, json={'status': 'running'})
     ci_result = client.post(
         f"/pipeline-runs/{run['id']}/ci-result",
+        headers=MACHINE_HEADERS,
         json={'status': 'succeeded', 'artifactDigest': f"sha256:{'c' * 64}"},
     ).json()
     deployment_id = ci_result['deployment']['id']
 
     healthy = client.post(
         f'/deployments/{deployment_id}/result',
+        headers=MACHINE_HEADERS,
         json={'status': 'healthy', 'message': 'health check passed'},
     )
     rolled_back = client.post(
@@ -269,10 +316,30 @@ def test_successful_ci_requires_an_exact_immutable_digest():
         json={'commitSha': 'abcdef1234567', 'environment': 'dev'},
     ).json()
     path = f"/pipeline-runs/{run['id']}/ci-result"
-    client.post(path, json={'status': 'running'})
+    client.post(path, headers=MACHINE_HEADERS, json={'status': 'running'})
 
-    response = client.post(path, json={'status': 'succeeded', 'artifactDigest': 'sha256:not-a-digest'})
+    response = client.post(path, headers=MACHINE_HEADERS, json={'status': 'succeeded', 'artifactDigest': 'sha256:not-a-digest'})
 
     assert response.status_code == 422
     assert response.json()['code'] == 'IMMUTABLE_ARTIFACT_REQUIRED'
     assert client.get(f"/pipeline-runs/{run['id']}").json()['status'] == 'running'
+
+
+def test_machine_callbacks_reject_missing_or_invalid_bearer_tokens():
+    application = client.post('/applications', json=application_payload()).json()
+    run = client.post(
+        f"/applications/{application['id']}/pipeline-runs",
+        json={'commitSha': 'abcdef1234567', 'environment': 'dev'},
+    ).json()
+    path = f"/pipeline-runs/{run['id']}/ci-result"
+
+    missing = client.post(path, json={'status': 'running'})
+    invalid = client.post(
+        path,
+        headers={'Authorization': 'Bearer invalid'},
+        json={'status': 'running'},
+    )
+
+    assert missing.status_code == invalid.status_code == 401
+    assert missing.json()['code'] == invalid.json()['code'] == 'PIPELINE_UNAUTHORIZED'
+    assert missing.headers['WWW-Authenticate'] == 'Bearer'

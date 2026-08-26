@@ -54,17 +54,104 @@ def test_portal_can_create_system_and_attach_a_delivery_application_as_module():
 
     created_module = client.post('/systems/billing-platform/modules', headers={'Idempotency-Key': 'module-1'}, json={
         'name': 'billing-api',
+        'displayName': 'Billing Service API',
         'repositoryUrl': 'https://github.com/example/billing-api',
         'pipelineTemplate': 'container-ci-cd-v1',
         'runtime': 'docker',
         'moduleType': 'Backend',
         'description': 'Billing API',
         'defaultEnvironment': 'dev',
+        'stages': ['checkout', 'unit-test', 'build', 'publish'],
+        'deploymentEnvironments': [{
+            'displayName': 'Development',
+            'environment': 'dev',
+            'runtime': 'docker',
+            'servers': ['srv-dev-01'],
+            'tasks': ['Restart service', 'Health check'],
+        }],
     })
     assert created_module.status_code == 201
     assert created_module.json()['systemId'] == 'billing-platform'
+    assert created_module.json()['name'] == 'Billing Service API'
     assert created_module.json()['applicationId']
+    assert created_module.json()['deploymentEnvironments'] == [{
+        'displayName': 'Development',
+        'environment': 'dev',
+        'runtime': 'docker',
+        'servers': ['srv-dev-01'],
+        'tasks': ['Restart service', 'Health check'],
+        'kubeconfigRef': None,
+        'namespace': None,
+    }]
     assert client.get('/systems/billing-platform').json()['moduleCount'] == 1
+    application = next(item for item in client.get('/applications').json() if item['id'] == created_module.json()['applicationId'])
+    assert application['stages'] == ['checkout', 'unit-test', 'build', 'publish']
+
+
+def test_module_environment_contract_rejects_mixed_runtime_and_incomplete_targets():
+    base_payload = {
+        'name': 'invalid-target-module',
+        'repositoryUrl': 'https://github.com/example/invalid-target-module',
+        'pipelineTemplate': 'container-ci-cd-v1',
+        'runtime': 'docker',
+        'moduleType': 'Backend',
+        'description': 'Invalid environment contract test',
+        'defaultEnvironment': 'dev',
+    }
+
+    mixed_runtime = client.post('/systems/netChat/modules', json={
+        **base_payload,
+        'deploymentEnvironments': [{
+            'displayName': 'Development',
+            'environment': 'dev',
+            'runtime': 'kubernetes',
+            'servers': [],
+            'tasks': [],
+            'kubeconfigRef': 'netci-dev-kubeconfig',
+            'namespace': 'dev',
+        }],
+    })
+    assert mixed_runtime.status_code == 422
+    assert mixed_runtime.json()['code'] == 'VALIDATION_ERROR'
+
+    missing_servers = client.post('/systems/netChat/modules', json={
+        **base_payload,
+        'deploymentEnvironments': [{
+            'displayName': 'Development',
+            'environment': 'dev',
+            'runtime': 'docker',
+            'servers': [],
+            'tasks': [],
+        }],
+    })
+    assert missing_servers.status_code == 422
+    assert missing_servers.json()['code'] == 'VALIDATION_ERROR'
+
+
+def test_kubernetes_module_keeps_secret_reference_and_explicit_namespace():
+    response = client.post('/systems/netChat/modules', json={
+        'name': 'notification-worker',
+        'repositoryUrl': 'https://github.com/example/notification-worker',
+        'pipelineTemplate': 'kubernetes-ci-cd-v1',
+        'runtime': 'kubernetes',
+        'moduleType': 'Worker',
+        'description': 'Notification worker',
+        'defaultEnvironment': 'staging',
+        'deploymentEnvironments': [{
+            'displayName': 'Pre-production',
+            'environment': 'staging',
+            'runtime': 'kubernetes',
+            'servers': [],
+            'tasks': ['Health check'],
+            'kubeconfigRef': 'netci-staging-kubeconfig',
+            'namespace': 'staging',
+        }],
+    })
+
+    assert response.status_code == 201
+    assert response.json()['runtime'] == 'kubernetes'
+    assert response.json()['deploymentEnvironments'][0]['kubeconfigRef'] == 'netci-staging-kubeconfig'
+    assert response.json()['deploymentEnvironments'][0]['namespace'] == 'staging'
 
 
 def test_module_pipeline_trigger_uses_the_delivery_application_contract():
@@ -76,6 +163,13 @@ def test_module_pipeline_trigger_uses_the_delivery_application_contract():
         'moduleType': 'Backend',
         'description': 'Trigger test module',
         'defaultEnvironment': 'dev',
+        'deploymentEnvironments': [{
+            'displayName': 'Development',
+            'environment': 'dev',
+            'runtime': 'docker',
+            'servers': ['srv-dev-01'],
+            'tasks': [],
+        }],
     })
     assert created.status_code == 201
     triggered = client.post('/modules/trigger-api/pipeline-runs', json={

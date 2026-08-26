@@ -3,13 +3,14 @@ from __future__ import annotations
 import os
 import secrets
 from typing import Literal
+from urllib.parse import urlsplit
 from uuid import UUID, uuid4
 
 from fastapi import FastAPI, Header, HTTPException, Request, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field, HttpUrl
+from pydantic import BaseModel, Field, HttpUrl, model_validator
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from .domain.models import (
@@ -23,13 +24,53 @@ from .domain.models import (
 from .delivery import CiResult, DeliveryError, DeliveryPlatform
 from .portal import PortalReadModel
 
+
+def configured_cors_origins() -> list[str]:
+    """Return validated browser origins from the comma-separated environment setting."""
+
+    raw = os.getenv("NETCI_ALLOWED_ORIGINS", "http://localhost:5173")
+    origins: list[str] = []
+    for candidate in raw.split(","):
+        candidate = candidate.strip()
+        if not candidate:
+            continue
+        try:
+            parsed = urlsplit(candidate)
+            parsed.port
+            hostname = parsed.hostname
+        except ValueError as exc:
+            raise ValueError(
+                "NETCI_ALLOWED_ORIGINS must contain comma-separated valid http(s) origins"
+            ) from exc
+        if (
+            candidate == "*"
+            or parsed.scheme not in {"http", "https"}
+            or not parsed.netloc
+            or not hostname
+            or parsed.username is not None
+            or parsed.password is not None
+            or parsed.path not in {"", "/"}
+            or parsed.query
+            or parsed.fragment
+        ):
+            raise ValueError(
+                "NETCI_ALLOWED_ORIGINS must contain comma-separated http(s) origins without paths"
+            )
+        origin = f"{parsed.scheme.lower()}://{parsed.netloc.lower()}"
+        if origin not in origins:
+            origins.append(origin)
+    if not origins:
+        raise ValueError("NETCI_ALLOWED_ORIGINS must contain at least one origin")
+    return origins
+
 app = FastAPI(title="netCI Delivery API", version="0.1.0")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
+    allow_origins=configured_cors_origins(),
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST"],
+    allow_headers=["Authorization", "Content-Type", "Idempotency-Key", "X-Correlation-Id"],
+    expose_headers=["X-Correlation-Id"],
 )
 
 platform = DeliveryPlatform()
@@ -56,8 +97,18 @@ async def correlation_id_middleware(request: Request, call_next):
     response.headers["X-Correlation-Id"] = correlation_id
     return response
 
-def error(code: str, message: str, correlation_id: str | None = None, http_status: int = 400) -> JSONResponse:
-    return JSONResponse(status_code=http_status, content={"code": code, "message": message, "correlationId": correlation_id})
+def error(
+    code: str,
+    message: str,
+    correlation_id: str | None = None,
+    http_status: int = 400,
+    headers: dict[str, str] | None = None,
+) -> JSONResponse:
+    return JSONResponse(
+        status_code=http_status,
+        content={"code": code, "message": message, "correlationId": correlation_id},
+        headers=headers,
+    )
 
 
 def require_pipeline_api_key(authorization: str | None) -> None:
@@ -134,15 +185,59 @@ class SystemCreate(BaseModel):
     owner: str = Field(default="Admin", min_length=2, max_length=120)
 
 
+class ModuleEnvironmentCreate(BaseModel):
+    displayName: str = Field(min_length=1, max_length=120)
+    environment: Environment
+    runtime: Runtime
+    servers: list[str] = Field(default_factory=list, max_length=200)
+    tasks: list[str] = Field(default_factory=list, max_length=100)
+    kubeconfigRef: str | None = Field(default=None, min_length=1, max_length=255)
+    namespace: str | None = Field(default=None, pattern=r"^[a-z0-9]([-a-z0-9]*[a-z0-9])?$", max_length=63)
+
+    @model_validator(mode="after")
+    def validate_target_connection(self) -> "ModuleEnvironmentCreate":
+        if self.runtime == Runtime.KUBERNETES:
+            if not self.kubeconfigRef or not self.namespace:
+                raise ValueError("Kubernetes environments require kubeconfigRef and namespace")
+            if self.servers:
+                raise ValueError("Kubernetes environments must not declare server targets")
+        else:
+            if not self.servers:
+                raise ValueError("Docker and Systemd environments require at least one server")
+            if self.kubeconfigRef or self.namespace:
+                raise ValueError("Docker and Systemd environments must not declare Kubernetes credentials")
+        return self
+
+
 class ModuleCreate(BaseModel):
     name: str = Field(pattern=r"^[a-z0-9][a-z0-9-]{2,62}$")
+    displayName: str | None = Field(default=None, min_length=1, max_length=255)
     repositoryUrl: HttpUrl
-    pipelineTemplate: str
+    pipelineTemplate: Literal["container-ci-cd-v1", "kubernetes-ci-cd-v1", "systemd-ansible-ci-cd-v1"]
     runtime: Runtime
     moduleType: str = Field(default="Backend", min_length=2, max_length=40)
     description: str = Field(default="", max_length=1000)
     defaultEnvironment: Environment = Environment.DEV
     stages: list[str] = Field(default_factory=list)
+    deploymentEnvironments: list[ModuleEnvironmentCreate] = Field(min_length=1, max_length=3)
+
+    @model_validator(mode="after")
+    def validate_deployment_environments(self) -> "ModuleCreate":
+        environments = [item.environment for item in self.deploymentEnvironments]
+        if len(environments) != len(set(environments)):
+            raise ValueError("deployment environments must be unique")
+        if self.defaultEnvironment not in environments:
+            raise ValueError("defaultEnvironment must be present in deploymentEnvironments")
+        if any(item.runtime != self.runtime for item in self.deploymentEnvironments):
+            raise ValueError("all deployment environments must use the application runtime")
+        expected_runtime = {
+            "container-ci-cd-v1": Runtime.DOCKER,
+            "kubernetes-ci-cd-v1": Runtime.KUBERNETES,
+            "systemd-ansible-ci-cd-v1": Runtime.SYSTEMD,
+        }.get(self.pipelineTemplate)
+        if expected_runtime is not None and expected_runtime != self.runtime:
+            raise ValueError("pipelineTemplate must match the application runtime")
+        return self
 
 
 class PortalApprovalRequest(BaseModel):
@@ -176,7 +271,13 @@ class VersionCiReport(BaseModel):
 async def http_exception_handler(request: Request, exc: StarletteHTTPException) -> JSONResponse:
     correlation_id = request.state.correlation_id
     detail = exc.detail if isinstance(exc.detail, dict) else {"code": "HTTP_ERROR", "message": str(exc.detail)}
-    return error(detail.get("code", "HTTP_ERROR"), detail.get("message", "request failed"), correlation_id, exc.status_code)
+    return error(
+        detail.get("code", "HTTP_ERROR"),
+        detail.get("message", "request failed"),
+        correlation_id,
+        exc.status_code,
+        dict(exc.headers) if exc.headers else None,
+    )
 
 
 @app.exception_handler(RequestValidationError)
@@ -270,11 +371,12 @@ def create_module(
         return portal.attach_module(
             system_id=systemId,
             module_id=payload.name,
-            name=payload.name,
+            name=payload.displayName or payload.name,
             module_type=payload.moduleType,
             description=payload.description,
             runtime=payload.runtime,
             application_id=application.id,
+            deployment_environments=[item.model_dump(mode="json") for item in payload.deploymentEnvironments],
         )
     except KeyError as exc:
         raise HTTPException(status_code=404, detail={"code": "SYSTEM_NOT_FOUND", "message": str(exc)}) from exc
@@ -466,7 +568,12 @@ def get_pipeline_logs(pipelineRunId: UUID) -> dict[str, object]:
 
 
 @app.post("/pipeline-runs/{pipelineRunId}/ci-result", status_code=status.HTTP_202_ACCEPTED)
-def record_ci_result(pipelineRunId: UUID, payload: CiResultRequest) -> dict[str, object]:
+def record_ci_result(
+    pipelineRunId: UUID,
+    payload: CiResultRequest,
+    authorization: str | None = Header(default=None, alias="Authorization"),
+) -> dict[str, object]:
+    require_pipeline_api_key(authorization)
     result: CiResult = platform.record_ci_result(
         pipelineRunId,
         payload.status.value,
@@ -490,7 +597,12 @@ def get_deployment(deploymentId: UUID) -> dict[str, object]:
 
 
 @app.post("/deployments/{deploymentId}/result", status_code=status.HTTP_202_ACCEPTED)
-def record_deployment_result(deploymentId: UUID, payload: DeploymentResultRequest) -> dict[str, object]:
+def record_deployment_result(
+    deploymentId: UUID,
+    payload: DeploymentResultRequest,
+    authorization: str | None = Header(default=None, alias="Authorization"),
+) -> dict[str, object]:
+    require_pipeline_api_key(authorization)
     return deployment_json(
         platform.record_deployment_result(deploymentId, payload.status, payload.message)
     )

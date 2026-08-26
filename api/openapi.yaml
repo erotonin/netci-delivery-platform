@@ -149,6 +149,29 @@ paths:
         - $ref: '#/components/parameters/ModuleId'
       responses:
         '200': { description: Module release versions and evidence }
+  /modules/{moduleId}/versions/{tag}/ci-report:
+    post:
+      operationId: publishModuleCiReport
+      description: Authenticated pipeline callback for version quality and security evidence.
+      security:
+        - PipelineBearer: []
+      parameters:
+        - $ref: '#/components/parameters/ModuleId'
+        - name: tag
+          in: path
+          required: true
+          schema: { type: string, minLength: 1 }
+        - $ref: '#/components/parameters/CorrelationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/VersionCiReport' }
+      responses:
+        '202': { description: CI report accepted }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/UnprocessableEntity' }
   /modules/{moduleId}/dora:
     get:
       operationId: getModuleDora
@@ -306,6 +329,8 @@ paths:
     post:
       operationId: recordCiResult
       description: Local callback seam for CI status and immutable artifact metadata; it performs no Jenkins or runtime I/O.
+      security:
+        - PipelineBearer: []
       parameters:
         - $ref: '#/components/parameters/PipelineRunId'
         - $ref: '#/components/parameters/CorrelationId'
@@ -322,6 +347,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/CiResultResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
         '404':
           $ref: '#/components/responses/NotFound'
         '409':
@@ -374,6 +401,8 @@ paths:
     post:
       operationId: recordDeploymentResult
       description: Local callback seam for a runtime adapter result; it performs no deployment itself.
+      security:
+        - PipelineBearer: []
       parameters:
         - $ref: '#/components/parameters/DeploymentId'
         - $ref: '#/components/parameters/CorrelationId'
@@ -390,6 +419,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Deployment'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
         '404':
           $ref: '#/components/responses/NotFound'
         '409':
@@ -423,6 +454,11 @@ paths:
           $ref: '#/components/responses/UnprocessableEntity'
 
 components:
+  securitySchemes:
+    PipelineBearer:
+      type: http
+      scheme: bearer
+      bearerFormat: API key
   parameters:
     SystemId:
       name: systemId
@@ -438,7 +474,7 @@ components:
       name: requestId
       in: path
       required: true
-      schema: { type: string, format: uuid }
+      schema: { type: string, minLength: 1 }
     ApplicationId:
       name: applicationId
       in: path
@@ -465,8 +501,29 @@ components:
       required: false
       schema: { type: string, maxLength: 128 }
   responses:
+    Unauthorized:
+      description: Missing or invalid machine callback credential
+      headers:
+        WWW-Authenticate:
+          schema: { type: string }
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    NotFound:
+      description: Requested resource was not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
     Conflict:
       description: Idempotency or domain conflict
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    UnprocessableEntity:
+      description: Request validation or domain validation failed
       content:
         application/json:
           schema:
@@ -474,9 +531,10 @@ components:
   schemas:
     ModuleCreate:
       type: object
-      required: [name, repositoryUrl, pipelineTemplate, runtime]
+      required: [name, repositoryUrl, pipelineTemplate, runtime, deploymentEnvironments]
       properties:
         name: { type: string, pattern: '^[a-z0-9][a-z0-9-]{2,62}$' }
+        displayName: { type: string, minLength: 1, maxLength: 255 }
         repositoryUrl: { type: string, format: uri }
         pipelineTemplate: { type: string, enum: [container-ci-cd-v1, kubernetes-ci-cd-v1, systemd-ansible-ci-cd-v1] }
         runtime: { $ref: '#/components/schemas/Runtime' }
@@ -484,6 +542,29 @@ components:
         description: { type: string }
         defaultEnvironment: { $ref: '#/components/schemas/Environment', default: dev }
         stages: { type: array, items: { type: string } }
+        deploymentEnvironments:
+          type: array
+          minItems: 1
+          maxItems: 3
+          items: { $ref: '#/components/schemas/DeploymentEnvironmentConfig' }
+    DeploymentEnvironmentConfig:
+      type: object
+      additionalProperties: false
+      required: [displayName, environment, runtime, servers, tasks]
+      properties:
+        displayName: { type: string, minLength: 1, maxLength: 120 }
+        environment: { $ref: '#/components/schemas/Environment' }
+        runtime: { $ref: '#/components/schemas/Runtime' }
+        servers:
+          type: array
+          maxItems: 200
+          items: { type: string }
+        tasks:
+          type: array
+          maxItems: 100
+          items: { type: string }
+        kubeconfigRef: { type: string, minLength: 1, maxLength: 255, nullable: true }
+        namespace: { type: string, pattern: '^[a-z0-9]([-a-z0-9]*[a-z0-9])?$', maxLength: 63, nullable: true }
     HealthResponse:
       type: object
       required: [status, version]
@@ -554,6 +635,27 @@ components:
         artifactDigest: { type: string, nullable: true }
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
+    CiResultRequest:
+      type: object
+      required: [status]
+      additionalProperties: false
+      properties:
+        status: { type: string, enum: [running, succeeded, failed] }
+        artifactDigest: { type: string, nullable: true, pattern: '^sha256:[0-9a-f]{64}$' }
+        logLines:
+          type: array
+          maxItems: 1000
+          items: { type: string }
+    CiResultResponse:
+      type: object
+      required: [pipelineRun, deployment]
+      additionalProperties: false
+      properties:
+        pipelineRun: { $ref: '#/components/schemas/PipelineRun' }
+        deployment:
+          allOf:
+            - $ref: '#/components/schemas/Deployment'
+          nullable: true
     Deployment:
       type: object
       required: [id, applicationId, runtime, environment, status]
@@ -565,6 +667,31 @@ components:
         status: { type: string, enum: [pending_approval, deploying, healthy, failed, rolled_back] }
         artifactDigest: { type: string }
         approvedBy: { type: string, nullable: true }
+    DeploymentResultRequest:
+      type: object
+      required: [status]
+      additionalProperties: false
+      properties:
+        status: { type: string, enum: [healthy, failed] }
+        message: { type: string, nullable: true, maxLength: 2000 }
+    VersionCiReport:
+      type: object
+      required: [coverage, autoTest, sast, sastIssues, vulnerabilities, commit]
+      additionalProperties: false
+      properties:
+        coverage: { type: number, minimum: 0, maximum: 100 }
+        autoTest: { type: string, enum: [passed, failed, skipped] }
+        sast: { type: string, enum: [passed, failed] }
+        sastIssues: { type: integer, minimum: 0 }
+        vulnerabilities:
+          type: object
+          required: [critical, high, medium]
+          additionalProperties: false
+          properties:
+            critical: { type: integer, minimum: 0 }
+            high: { type: integer, minimum: 0 }
+            medium: { type: integer, minimum: 0 }
+        commit: { type: string, pattern: '^[0-9a-fA-F]{7,64}$' }
     ApprovalRequest:
       type: object
       properties:

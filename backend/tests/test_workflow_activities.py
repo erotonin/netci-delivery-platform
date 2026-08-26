@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 
 import pytest
+import yaml
 
 from app.policy.rules import PolicyViolation
 from app.workflows.activities import (
@@ -90,3 +91,17 @@ def test_ansible_runner_builds_runtime_specific_immutable_command(tmp_path: Path
     assert extra_vars["artifact_digest"] == delivery().artifact_digest
     assert extra_vars["artifact_ref"].endswith(delivery().artifact_digest)
 
+
+def test_kubernetes_playbook_uses_explicit_kubeconfig_and_namespace():
+    project_root = Path(__file__).resolve().parents[2]
+    playbook = yaml.safe_load(
+        (project_root / "deploy/ansible/playbooks/deploy-kubernetes.yml").read_text(encoding="utf-8")
+    )[0]
+    tasks = playbook["tasks"]
+    helm = next(task["kubernetes.core.helm"] for task in tasks if "kubernetes.core.helm" in task)
+    workload = next(task["kubernetes.core.k8s_info"] for task in tasks if "kubernetes.core.k8s_info" in task)
+
+    assert "kubeconfig" in helm
+    assert "kubeconfig" in workload
+    assert helm["release_namespace"] == "{{ netci_target_namespace }}"
+    assert workload["namespace"] == "{{ netci_target_namespace }}"

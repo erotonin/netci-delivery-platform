@@ -31,6 +31,7 @@ A missing/invalid digest, SBOM, scan decision or signature is deny-by-default. S
 - Cleanup runs after success, failure and cancellation; caches are project-scoped and separate from workspaces.
 - Do not mount a host Docker socket in the production path.
 - Secrets are references/environment injection, never plaintext in Git, JCasC, logs or evidence.
+- Jenkins and runtime-adapter callbacks authenticate with a bearer API key; unauthenticated callers cannot change pipeline or deployment state.
 - Local default credentials are development-only and must be replaced before any shared environment.
 
 ## Evidence required

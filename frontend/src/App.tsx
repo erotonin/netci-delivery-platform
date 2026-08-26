@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { RefreshCw, WifiOff } from 'lucide-react'
-import { createModule, getPortalDashboard } from './api/netciClient'
+import { createModule, getPortalDashboard, type Runtime } from './api/netciClient'
 import { DashboardPage, ServersPage, SystemPage, SystemsPage } from './GeneralPages'
 import { ModulePage } from './ModulePage'
 import { ModuleSettings } from './ModuleSettings'
@@ -10,6 +10,12 @@ import { PortalShell, type Navigate } from './PortalShell'
 import { ProductionRequestsPage } from './ProductionRequestsPage'
 import { dcimModules, type PageId } from './portalData'
 import './styles.css'
+
+const pipelineTemplateForRuntime: Record<Runtime, string> = {
+  docker: 'container-ci-cd-v1',
+  kubernetes: 'kubernetes-ci-cd-v1',
+  systemd: 'systemd-ansible-ci-cd-v1',
+}
 
 type RouteState = { page: PageId; systemId: string; moduleId: string; settingsOpen: boolean }
 
@@ -80,17 +86,20 @@ function PortalApp() {
       {page === 'system' && <SystemPage systemId={systemId} navigate={navigate} />}
       {page === 'requests' && <ProductionRequestsPage />}
       {page === 'module' && <ModulePage moduleId={moduleId} onSettings={() => moveTo({ ...route, settingsOpen: true })} />}
-      {page === 'new-module' && <NewModuleWizard onCancel={() => navigate('system', { systemId })} onCreate={async (selectedId) => {
+      {page === 'new-module' && <NewModuleWizard onCancel={() => navigate('system', { systemId })} onCreate={async (selectedId, configuration) => {
         const selected = dcimModules.find((item) => item.id === selectedId)
         if (!selected) throw new Error('Không tìm thấy module đã chọn trong DCIM.')
         await createModule(systemId, {
           name: selected.id,
+          displayName: configuration.displayName,
           repositoryUrl: selected.repo,
-          pipelineTemplate: 'container-ci-cd-v1',
-          runtime: 'docker',
-          moduleType: selected.type,
-          description: `${selected.name} imported from DCIM (${selected.code}).`,
-          defaultEnvironment: 'dev',
+          pipelineTemplate: pipelineTemplateForRuntime[configuration.runtime],
+          runtime: configuration.runtime,
+          moduleType: configuration.moduleType,
+          description: configuration.description,
+          defaultEnvironment: configuration.defaultEnvironment,
+          deploymentEnvironments: configuration.deploymentEnvironments,
+          stages: configuration.stages,
         })
         navigate('module', { systemId, moduleId: selected.id })
       }} />}
