@@ -62,6 +62,6 @@
 - Ghi detection time, routing time, completion time và MTTR.
 - Khi A quay lại, verify config drift trước khi nhận build.
 
-## DORA-01 — Five metrics
+## DORA-01 - Four metrics
 
-Event model phải đủ cho Change Lead Time, Deployment Frequency, Failed Deployment Recovery Time, Change Fail Rate và Deployment Rework Rate. Mỗi event gắn `applicationId`, `commitSha`, `artifactDigest`, `environment`, `deploymentId`, `actor` và timestamp.
+Event model phải đủ cho Deployment Frequency, Lead Time for Changes, Change Failure Rate và Time to Restore Service. Mỗi event gắn `applicationId`, `commitSha`, `artifactDigest`, `environment`, `deploymentId`, `actor` và timestamp.

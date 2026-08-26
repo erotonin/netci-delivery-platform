@@ -558,9 +558,8 @@ class PortalReadModel:
         return [
             {"key": "deploymentFrequency", "label": "Deployment Frequency", "value": round(frequency, 1), "unit": "/wk", "hint": "Releases per week"},
             {"key": "leadTime", "label": "Lead Time for Changes", "value": 4.5, "unit": "h", "hint": "Commit to production"},
-            {"key": "changeFailRate", "label": "Change Fail Rate", "value": round(failed / len(runs) * 100, 1) if runs else 3.1, "unit": "%", "hint": "Deploys causing incidents"},
-            {"key": "recoveryTime", "label": "Failed Deployment Recovery", "value": 1.2, "unit": "h", "hint": "Mean recovery time"},
-            {"key": "reworkRate", "label": "Deployment Rework Rate", "value": 6.4, "unit": "%", "hint": "Unplanned rework"},
+            {"key": "changeFailureRate", "label": "Change Failure Rate", "value": round(failed / len(runs) * 100, 1) if runs else 3.1, "unit": "%", "hint": "Deploys causing incidents"},
+            {"key": "timeToRestoreService", "label": "Time to Restore Service", "value": 1.2, "unit": "h", "hint": "Mean recovery time"},
         ]
 
     @staticmethod

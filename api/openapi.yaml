@@ -104,7 +104,7 @@ paths:
       parameters:
         - $ref: '#/components/parameters/SystemId'
       responses:
-        '200': { description: Five DORA metrics for system }
+        '200': { description: Four DORA metrics for system }
   /modules/{moduleId}:
     get:
       operationId: getModule
@@ -155,7 +155,7 @@ paths:
       parameters:
         - $ref: '#/components/parameters/ModuleId'
       responses:
-        '200': { description: Five DORA metrics for module }
+        '200': { description: Four DORA metrics for module }
   /production-requests:
     get:
       operationId: listProductionRequests

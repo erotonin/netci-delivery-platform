@@ -11,7 +11,7 @@ def setup_function():
     portal.reset()
 
 
-def test_portal_dashboard_has_reference_systems_and_five_dora_ready_shape():
+def test_portal_dashboard_has_reference_systems_and_four_dora_metrics():
     response = client.get('/portal/dashboard')
 
     assert response.status_code == 200
@@ -23,7 +23,12 @@ def test_portal_dashboard_has_reference_systems_and_five_dora_ready_shape():
 
     dora = client.get('/modules/backend-api/dora')
     assert dora.status_code == 200
-    assert len(dora.json()['metrics']) == 5
+    assert [metric['label'] for metric in dora.json()['metrics']] == [
+        'Deployment Frequency',
+        'Lead Time for Changes',
+        'Change Failure Rate',
+        'Time to Restore Service',
+    ]
 
 
 def test_portal_system_detail_and_module_overview_are_hierarchical():

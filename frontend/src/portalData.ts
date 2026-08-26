@@ -68,8 +68,15 @@ export const servers: PortalServer[] = [
 export const dora = [
   { key: 'frequency', label: 'Deployment Frequency', value: '8.2', unit: '/wk', hint: 'Releases per week', trend: '+12%', tone: 'purple' },
   { key: 'lead', label: 'Lead Time for Changes', value: '4.5', unit: 'h', hint: 'Commit to production', trend: '-8%', tone: 'blue' },
-  { key: 'failure', label: 'Change Fail Rate', value: '3.1', unit: '%', hint: 'Deploys causing incidents', trend: '-1.2%', tone: 'red' },
-  { key: 'recovery', label: 'Failed Deployment Recovery', value: '1.2', unit: 'h', hint: 'Mean recovery time', trend: '-18%', tone: 'green' },
+  { key: 'failure', label: 'Change Failure Rate', value: '3.1', unit: '%', hint: 'Deploys causing incidents', trend: '-1.2%', tone: 'red' },
+  { key: 'recovery', label: 'Time to Restore Service', value: '1.2', unit: 'h', hint: 'Mean recovery time', trend: '-18%', tone: 'green' },
+]
+
+export const moduleDora = [
+  { key: 'frequency', label: 'Deployment Frequency', value: '8.5', unit: '/wk', hint: 'Deploys per week', trend: '↑ 1.1', tone: 'purple' },
+  { key: 'lead', label: 'Lead Time for Changes', value: '4.9', unit: 'h', hint: 'Commit to production', trend: '↓ 2.6', tone: 'blue' },
+  { key: 'failure', label: 'Change Failure Rate', value: '3.1', unit: '%', hint: 'Deploys causing incidents', trend: '↓ 0.9', tone: 'red' },
+  { key: 'recovery', label: 'Time to Restore Service', value: '1.2', unit: 'h', hint: 'Mean recovery time', trend: '↓ 0.5', tone: 'green' },
 ]
 
 export const pipelines = [

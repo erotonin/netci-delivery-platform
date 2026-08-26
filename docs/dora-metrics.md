@@ -4,11 +4,12 @@ Metrics are projections from immutable delivery events, not manually entered das
 
 | Metric | Local definition |
 |---|---|
-| Change lead time | First successful production deployment time minus commit time for the deployed SHA |
 | Deployment frequency | Count of successful production deployments per application and time window |
-| Failed deployment recovery time | First matched recovery time minus failure time for the same application/deployment/environment |
+| Change lead time | First successful production deployment time minus commit time for the deployed SHA |
 | Change fail rate | Production deployments causing failure/rollback divided by production deployments |
-| Deployment rework rate | Deployments superseded by corrective deployment/rollback within the agreed rework window |
+| Time to restore service | First matched recovery time minus failure time for the same application/deployment/environment |
+
+The dashboard exposes exactly these four metrics, matching the Claude artifact used as the portal design contract. Deployment rework may remain an internal operational measure, but it is not presented or described as a DORA metric.
 
 ## Minimum event fields
 

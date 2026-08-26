@@ -235,6 +235,7 @@ textarea { min-height: 78px; padding: 9px 10px; resize: vertical; font-size: 11p
 .segmented button.active { background: #fff; color: var(--text); box-shadow: 0 1px 3px rgba(25,29,37,.1); }
 
 .dora-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 13px; margin-bottom: 22px; }
+.dora-section-label { margin: 2px 0 9px; color: #737b87; font-size: 9px; font-weight: 700; letter-spacing: .09em; }
 .dora-card { position: relative; min-height: 112px; border: 1px solid var(--border); border-radius: 8px; background: #fff; display: flex; align-items: flex-start; gap: 12px; padding: 16px; }
 .metric-copy { display: flex; min-width: 0; flex-direction: column; }
 .metric-copy > span { color: var(--muted); font-size: 10px; white-space: nowrap; }

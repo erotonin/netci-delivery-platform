@@ -21,8 +21,8 @@ export function PageHeader({ title, description, action }: { title: string; desc
   return <div className="page-heading"><div><h1>{title}</h1><p>{description}</p></div>{action}</div>
 }
 
-export function DoraCards() {
-  return <div className="dora-grid">{dora.map((metric) => {
+export function DoraCards({ metrics = dora }: { metrics?: typeof dora }) {
+  return <div className="dora-grid">{metrics.map((metric) => {
     const MetricIcon = iconMap[metric.key as keyof typeof iconMap]
     return <article className="dora-card" key={metric.key}>
       <div className={`metric-icon tone-${metric.tone}`}><MetricIcon size={18} /></div>

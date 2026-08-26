@@ -7,7 +7,7 @@ import {
 import { createModuleVersion, getModule } from './api/netciClient'
 import { usePortalFeedback } from './PortalFeedback'
 import { DoraCards, Modal, StatusPill } from './PortalShell'
-import { dcimModules, dora, modules, pipelineStages, pipelines, versions, type ModuleTab } from './portalData'
+import { dcimModules, moduleDora, modules, pipelineStages, pipelines, versions, type ModuleTab } from './portalData'
 
 function EmptyModuleData({ title, description }: { title: string; description: string }) {
   return <section className="panel empty-tab-state"><Box size={29} /><h2>{title}</h2><p>{description}</p></section>
@@ -87,9 +87,9 @@ function VersionsTab({ moduleId, tags }: { moduleId: string; tags: string[] }) {
 }
 
 function DoraTab({ hasActivity }: { hasActivity: boolean }) {
-  const [range, setRange] = useState('Weekly')
+  const [range, setRange] = useState('Quarterly')
   if (!hasActivity) return <EmptyModuleData title="DORA metrics need deployment history" description="Metrics will be calculated after successful and failed deployments are reported for this module." />
-  return <><div className="dora-toolbar"><div><h2>DORA Metrics</h2><p>Delivery performance for Backend API.</p></div><div><select value={range} onChange={(event) => setRange(event.target.value)}><option>Weekly</option><option>Monthly</option><option>Quarterly</option></select><input type="date" defaultValue="2025-04-01" /><span>to</span><input type="date" defaultValue="2025-04-28" /><button className="secondary-button"><RotateCcw size={15} />Reset</button></div></div><DoraCards /><div className="dora-charts">{dora.map((metric, index) => <section className="panel metric-chart" key={metric.key}><div className="panel-heading"><div><h2>{metric.label}</h2><p>{metric.hint}</p></div><strong>{metric.value}{metric.unit}</strong></div><div className="line-chart"><div className="line-grid"><i /><i /><i /><i /></div><svg viewBox="0 0 500 130" preserveAspectRatio="none" aria-label={`${metric.label} chart`}><polyline points={index % 2 ? '0,25 70,44 140,38 210,60 280,72 350,86 430,93 500,105' : '0,100 70,88 140,94 210,65 280,72 350,42 430,48 500,24'} fill="none" stroke={index === 2 ? '#f2053f' : index === 3 ? '#16a36a' : '#6366f1'} strokeWidth="3" /></svg><div className="chart-x"><span>01 Apr</span><span>08 Apr</span><span>15 Apr</span><span>22 Apr</span><span>28 Apr</span></div></div></section>)}</div></>
+  return <><div className="dora-toolbar"><div><p>4 periods shown</p></div><div><select value={range} onChange={(event) => setRange(event.target.value)}><option>Weekly</option><option>Monthly</option><option>Quarterly</option></select><span>From</span><input type="date" defaultValue="2024-07-01" /><span>To</span><input type="date" defaultValue="2025-06-30" /><button className="secondary-button" aria-label="Refresh DORA metrics"><RotateCcw size={15} /></button></div></div><DoraCards metrics={moduleDora} /><div className="dora-charts">{moduleDora.map((metric, index) => <section className="panel metric-chart" key={metric.key}><div className="panel-heading"><div><h2>{metric.label}</h2><p>{metric.hint}</p></div></div><div className="line-chart"><div className="line-grid"><i /><i /><i /><i /></div><svg viewBox="0 0 500 130" preserveAspectRatio="none" aria-label={`${metric.label} chart`}><polyline points={index % 2 ? '0,25 165,52 330,78 500,105' : '0,100 165,78 330,52 500,24'} fill="none" stroke={index === 2 ? '#f2053f' : index === 3 ? '#16a36a' : index === 1 ? '#2da9d6' : '#8b5cf6'} strokeWidth="3" /></svg><div className="chart-x"><span>2024-Q3</span><span>2024-Q4</span><span>2025-Q1</span><span>2025-Q2</span></div></div></section>)}</div></>
 }
 
 export function ModulePage({ moduleId, onSettings }: { moduleId: string; onSettings: () => void }) {

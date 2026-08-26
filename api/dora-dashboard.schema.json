@@ -8,13 +8,13 @@
     "period": {"type": "object", "required": ["from", "to"], "properties": {"from": {"type": "string", "format": "date-time"}, "to": {"type": "string", "format": "date-time"}}},
     "metrics": {
       "type": "object",
-      "required": ["changeLeadTimeSecondsAvg", "deploymentFrequency", "failedDeploymentRecoveryTimeSecondsAvg", "changeFailRate", "deploymentReworkRate"],
+      "required": ["deploymentFrequency", "changeLeadTimeSecondsAvg", "changeFailRate", "timeToRestoreServiceSecondsAvg"],
+      "additionalProperties": false,
       "properties": {
-        "changeLeadTimeSecondsAvg": {"type": "number", "minimum": 0},
         "deploymentFrequency": {"type": "number", "minimum": 0},
-        "failedDeploymentRecoveryTimeSecondsAvg": {"type": "number", "minimum": 0},
+        "changeLeadTimeSecondsAvg": {"type": "number", "minimum": 0},
         "changeFailRate": {"type": "number", "minimum": 0, "maximum": 1},
-        "deploymentReworkRate": {"type": "number", "minimum": 0, "maximum": 1}
+        "timeToRestoreServiceSecondsAvg": {"type": "number", "minimum": 0}
       }
     },
     "sourceEvents": {"type": "integer", "minimum": 0}
