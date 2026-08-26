@@ -2,8 +2,8 @@
 
 | Chủ đề | Prototype local | Khi tích hợp production |
 |---|---|---|
-| Kubernetes | kind | Viettel-managed Kubernetes/AI Platform |
-| Jenkins topology | Hai controller cùng host, router mô phỏng multi-cluster | Nhiều cluster/failure domain thật |
+| Kubernetes | kind với namespace `dev`, `staging`, `prod` | Kubernetes API tương thích; kubeconfig/service account và target namespace được cấu hình riêng từng môi trường |
+| Jenkins topology | Hai controller cùng host được chấp nhận cho demo routing/failure drill | Nhiều host/failure domain thật |
 | Authentication | Mock role `developer`, `reviewer`, `platform-admin` | SSO/RBAC nội bộ |
 | Artifact store | Local Registry + MinIO | Registry/object storage nội bộ |
 | Secrets | Environment variables/secret references, không commit secret | Secret manager nội bộ |
@@ -35,8 +35,10 @@ Các quyết định dưới đây không còn là câu hỏi mở:
 | CI execution | Pipeline chạy trên Jenkins, được GitLab webhook kích hoạt; module chọn system/custom runner | Bước CI/CD Configuration của New Module |
 | Security presentation | Portal hiển thị kết quả coverage, automation test, SAST/SCA và vulnerabilities; không khóa UI vào tên vendor | Module Overview và Version history |
 
-## Chỉ còn cần mentor xác nhận
+## Ba quyết định mặc định không còn chờ mentor
 
-1. Hai Jenkins controller cùng một Ubuntu host có được chấp nhận là mô phỏng multi-controller local cho bài demo không?
-2. Viettel production dùng Kubernetes distribution, credential flow và namespace convention nào ngoài contract kubeconfig đã chốt?
-3. Có bắt buộc mô phỏng tên/cách tích hợp registry, secret manager, scanner hoặc signing tool nội bộ hay chấp nhận Registry + MinIO + Syft + Trivy + Cosign cho local reference implementation?
+1. Hai Jenkins controller cùng một Ubuntu host **được chấp nhận cho local reference demo** nếu tách controller/JCasC/port/queue/volume và failure drill chứng minh router chuyển request mới khi một controller dừng. Kết quả này không được gọi là production HA.
+2. Kubernetes production dùng contract trung lập distribution: Kubernetes API tương thích, kubeconfig gắn service account least-privilege và target namespace được khai báo rõ cho từng environment. Local dùng `dev`, `staging`, `prod`; core không tự đoán namespace production. Distribution, credential issuer và namespace là cấu hình có thể thay thế khi tích hợp thực tế.
+3. Registry + MinIO + Syft + Trivy + Cosign **được chấp nhận là toolchain chuẩn của local reference implementation**. UI, policy và evidence dùng contract trung lập vendor để có thể thay từng provider bằng công cụ nội bộ mà không sửa core domain.
+
+Ba quyết định này đủ để hoàn thành và nghiệm thu phạm vi local. Thông tin hạ tầng nội bộ cung cấp sau chỉ là production integration configuration, không làm thay đổi tiêu chí bàn giao local.
