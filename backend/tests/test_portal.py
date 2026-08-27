@@ -62,12 +62,18 @@ def test_portal_can_create_system_and_attach_a_delivery_application_as_module():
         'description': 'Billing API',
         'defaultEnvironment': 'dev',
         'stages': ['checkout', 'unit-test', 'build', 'publish'],
+        'pipelineConfig': {
+            'runner': 'docker-linux',
+            'strategy': 'Gitflow',
+            'pipelines': {'CI': {'branch': 'main', 'coverageReportPath': 'coverage/lcov.info', 'stages': ['checkout', 'unit-test']}},
+        },
         'deploymentEnvironments': [{
             'displayName': 'Development',
             'environment': 'dev',
             'runtime': 'docker',
             'servers': ['srv-dev-01'],
             'tasks': ['Restart service', 'Health check'],
+            'taskSettings': {'healthCheck': {'script': 'curl -f http://localhost/health', 'retries': 3, 'delay': '10s'}},
         }],
     })
     assert created_module.status_code == 201
@@ -80,12 +86,40 @@ def test_portal_can_create_system_and_attach_a_delivery_application_as_module():
         'runtime': 'docker',
         'servers': ['srv-dev-01'],
         'tasks': ['Restart service', 'Health check'],
+        'taskSettings': {'healthCheck': {'script': 'curl -f http://localhost/health', 'retries': 3, 'delay': '10s'}},
         'kubeconfigRef': None,
         'namespace': None,
     }]
+    assert created_module.json()['pipelineConfig']['runner'] == 'docker-linux'
     assert client.get('/systems/billing-platform').json()['moduleCount'] == 1
     application = next(item for item in client.get('/applications').json() if item['id'] == created_module.json()['applicationId'])
     assert application['stages'] == ['checkout', 'unit-test', 'build', 'publish']
+
+
+def test_invalid_system_does_not_provision_an_orphan_delivery_application():
+    before = len(platform.list_applications())
+
+    response = client.post('/systems/missing-system/modules', json={
+        'name': 'orphan-api',
+        'displayName': 'Orphan API',
+        'repositoryUrl': 'https://github.com/example/orphan-api',
+        'pipelineTemplate': 'container-ci-cd-v1',
+        'runtime': 'docker',
+        'moduleType': 'Backend',
+        'description': 'Must not be provisioned',
+        'defaultEnvironment': 'dev',
+        'stages': ['checkout', 'build'],
+        'deploymentEnvironments': [{
+            'displayName': 'Development',
+            'environment': 'dev',
+            'runtime': 'docker',
+            'servers': ['srv-dev-01'],
+            'tasks': ['Health check'],
+        }],
+    })
+
+    assert response.status_code == 404
+    assert len(platform.list_applications()) == before
 
 
 def test_module_environment_contract_rejects_mixed_runtime_and_incomplete_targets():
@@ -181,6 +215,20 @@ def test_module_pipeline_trigger_uses_the_delivery_application_contract():
     assert triggered.json()['applicationId'] == created.json()['applicationId']
 
 
+def test_reference_module_is_provisioned_and_can_trigger_the_demo_pipeline():
+    triggered = client.post('/modules/backend-api/pipeline-runs', json={
+        'commitSha': 'a1c4e2f',
+        'branch': 'main',
+        'environment': 'dev',
+        'parameters': {'portalPipeline': 'ci'},
+    })
+
+    assert triggered.status_code == 202
+    assert triggered.json()['status'] == 'queued'
+    assert triggered.json()['applicationId'] == client.get('/modules/backend-api').json()['applicationId']
+    assert triggered.json()['parameters'] == {'portalPipeline': 'ci'}
+
+
 def test_production_requests_are_queryable_and_approval_is_a_portal_command():
     requests = client.get('/production-requests')
     assert requests.status_code == 200
@@ -193,6 +241,89 @@ def test_production_requests_are_queryable_and_approval_is_a_portal_command():
     assert approved.status_code == 202
     assert approved.json()['status'] == 'approved'
     assert approved.json()['comment'] == 'approved for demo'
+
+
+def test_portal_can_create_a_scheduled_multi_module_production_request():
+    response = client.post('/production-requests', headers={'Idempotency-Key': 'prod-request-1'}, json={
+        'requestedBy': 'Admin',
+        'scheduledFor': '2026-08-30T03:00:00+07:00',
+        'rollbackStrategy': 'automatic',
+        'runAutomationTests': True,
+        'modules': [
+            {'moduleId': 'backend-api', 'version': 'v2.4.1', 'deploymentOrder': 1},
+            {'moduleId': 'web-client', 'version': 'v1.9.2', 'deploymentOrder': 2},
+        ],
+    })
+
+    assert response.status_code == 201
+    body = response.json()
+    assert body['status'] == 'waiting_approval'
+    assert body['requestedBy'] == 'Admin'
+    assert body['scheduledFor'] == '2026-08-30T03:00:00+07:00'
+    assert body['rollbackStrategy'] == 'automatic'
+    assert body['runAutomationTests'] is True
+    assert body['modules'] == [
+        {'moduleId': 'backend-api', 'moduleName': 'Backend API', 'version': 'v2.4.1', 'deploymentOrder': 1},
+        {'moduleId': 'web-client', 'moduleName': 'Web Client', 'version': 'v1.9.2', 'deploymentOrder': 2},
+    ]
+    assert any(item['id'] == body['id'] for item in client.get('/production-requests').json())
+
+
+def test_production_request_creation_is_idempotent_for_the_same_key():
+    payload = {
+        'requestedBy': 'Admin',
+        'scheduledFor': '2026-08-30T03:00:00+07:00',
+        'rollbackStrategy': 'automatic',
+        'runAutomationTests': True,
+        'modules': [{'moduleId': 'backend-api', 'version': 'v2.4.1', 'deploymentOrder': 1}],
+    }
+
+    first = client.post('/production-requests', headers={'Idempotency-Key': 'prod-request-repeat'}, json=payload)
+    repeated = client.post('/production-requests', headers={'Idempotency-Key': 'prod-request-repeat'}, json=payload)
+
+    assert first.status_code == 201
+    assert repeated.status_code == 201
+    assert repeated.json()['id'] == first.json()['id']
+    assert sum(item['id'] == first.json()['id'] for item in client.get('/production-requests').json()) == 1
+
+
+def test_portal_write_fails_closed_when_configured_persistence_is_unavailable(monkeypatch):
+    class FailingPortalStore:
+        def insert_system(self, record):
+            raise OSError('database connection refused')
+
+    monkeypatch.setattr(portal, 'store', FailingPortalStore())
+
+    response = client.post('/systems', json={
+        'id': 'persistence-check',
+        'unit': 'Technology Platform Center',
+        'description': 'Must not survive a failed write',
+        'owner': 'Admin',
+    })
+
+    assert response.status_code == 503
+    assert response.json()['code'] == 'PERSISTENCE_UNAVAILABLE'
+    assert client.get('/systems/persistence-check').status_code == 404
+
+
+def test_portal_persistence_bootstrap_failure_is_visible_in_health(monkeypatch):
+    class FailingPortalStore:
+        last_error = 'database connection refused'
+
+        def bootstrap(self):
+            return False
+
+    monkeypatch.setattr(portal, 'store', FailingPortalStore())
+    portal.reset()
+
+    health = client.get('/healthz')
+
+    assert health.status_code == 200
+    assert health.json()['dependencies']['portalPersistence'] == {
+        'mode': 'postgresql',
+        'status': 'degraded',
+        'message': 'database connection refused',
+    }
 
 
 def test_portal_returns_servers_and_scoped_audit_events():
@@ -293,3 +424,47 @@ def test_manual_version_registration_is_visible_to_the_portal():
     assert created.status_code == 201
     assert created.json()['version'] == 'v2.5.0'
     assert client.get('/modules/backend-api/versions').json()['items'][0]['version'] == 'v2.5.0'
+
+
+def test_version_registration_fails_closed_without_leaving_a_ghost_version(monkeypatch):
+    class FailingPortalStore:
+        def upsert_version(self, *_args):
+            raise RuntimeError('database offline')
+
+    monkeypatch.setattr(portal, 'store', FailingPortalStore())
+
+    response = client.post('/modules/backend-api/versions', json={
+        'tag': 'v9.9.9',
+        'gitTagUrl': 'https://git.example.net/netchat/backend-api/-/tags/v9.9.9',
+        'artifactUrl': 'https://artifacts.example.net/netchat/backend-api/v9.9.9',
+    })
+
+    assert response.status_code == 503
+    assert response.json()['code'] == 'PERSISTENCE_UNAVAILABLE'
+    assert 'v9.9.9' not in [item['version'] for item in client.get('/modules/backend-api/versions').json()['items']]
+
+
+def test_ci_report_fails_closed_without_mutating_the_projection(monkeypatch):
+    class FailingPortalStore:
+        def upsert_version(self, *_args):
+            raise RuntimeError('database offline')
+
+    monkeypatch.setenv('NETCI_PIPELINE_API_KEY', 'test-pipeline-key')
+    monkeypatch.setattr(portal, 'store', FailingPortalStore())
+
+    response = client.post(
+        '/modules/backend-api/versions/v2.4.1/ci-report',
+        headers={'Authorization': 'Bearer test-pipeline-key'},
+        json={
+            'coverage': 10,
+            'autoTest': 'failed',
+            'sast': 'failed',
+            'sastIssues': 2,
+            'vulnerabilities': {'critical': 1, 'high': 2, 'medium': 3},
+            'commit': 'deadbeef',
+        },
+    )
+
+    assert response.status_code == 503
+    version = next(item for item in client.get('/modules/backend-api/versions').json()['items'] if item['version'] == 'v2.4.1')
+    assert version['ciReport']['commit'] == 'a1c4e2f'

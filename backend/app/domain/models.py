@@ -58,6 +58,7 @@ class PipelineRun:
     commit_sha: str
     environment: Environment
     branch: str = "main"
+    parameters: dict[str, object] = field(default_factory=dict)
     correlation_id: str | None = None
     status: PipelineStatus = PipelineStatus.QUEUED
     id: UUID = field(default_factory=uuid4)

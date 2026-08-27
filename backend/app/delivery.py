@@ -224,6 +224,7 @@ class DeliveryPlatform:
             commit_sha=commit_sha,
             branch=branch,
             environment=environment,
+            parameters=dict(parameters),
             correlation_id=correlation_id,
         )
         self._pipeline_runs[run.id] = run

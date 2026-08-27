@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { RefreshCw, WifiOff } from 'lucide-react'
 import { createModule, getPortalDashboard, type Runtime } from './api/netciClient'
 import { DashboardPage, ServersPage, SystemPage, SystemsPage } from './GeneralPages'
+import { LoginPage, type AuthSession } from './LoginPage'
 import { ModulePage } from './ModulePage'
 import { ModuleSettings } from './ModuleSettings'
 import { NewModuleWizard } from './NewModuleWizard'
@@ -18,6 +19,19 @@ const pipelineTemplateForRuntime: Record<Runtime, string> = {
 }
 
 type RouteState = { page: PageId; systemId: string; moduleId: string; settingsOpen: boolean }
+const AUTH_SESSION_KEY = 'netci.auth-session'
+
+function readAuthSession(): AuthSession | null {
+  try {
+    const value = window.sessionStorage.getItem(AUTH_SESSION_KEY)
+    if (!value) return null
+    const parsed = JSON.parse(value) as Partial<AuthSession>
+    if (typeof parsed.displayName !== 'string' || typeof parsed.email !== 'string' || !['local-sso', 'local-password'].includes(parsed.method ?? '')) return null
+    return parsed as AuthSession
+  } catch {
+    return null
+  }
+}
 
 function readRoute(): RouteState {
   const parts = window.location.hash.replace(/^#\/?/, '').split('/').filter(Boolean)
@@ -42,7 +56,7 @@ function routePath(route: RouteState): string {
   return '/dashboard'
 }
 
-function PortalApp() {
+function PortalApp({ session, onLogout }: { session: AuthSession; onLogout: () => void }) {
   const [route, setRoute] = useState<RouteState>(readRoute)
   const [apiState, setApiState] = useState<'checking' | 'online' | 'offline'>('checking')
 
@@ -77,14 +91,14 @@ function PortalApp() {
   }
 
   const { page, systemId, moduleId, settingsOpen } = route
-  return <PortalShell page={page} systemId={systemId} moduleId={moduleId} navigate={navigate} onSettings={() => moveTo({ page: 'module', systemId: 'netChat', moduleId: 'backend-api', settingsOpen: true })}>
+  return <PortalShell page={page} systemId={systemId} moduleId={moduleId} session={session} navigate={navigate} onLogout={onLogout} onSettings={() => moveTo({ page: 'module', systemId, moduleId, settingsOpen: true })}>
     {apiState === 'offline' && <div className="connection-banner" role="status"><WifiOff size={16} /><span><strong>Backend chưa kết nối.</strong> Dữ liệu demo vẫn dùng được trong phiên; các thao tác cần tích hợp sẽ hiển thị lỗi rõ ràng.</span><button onClick={checkApi}><RefreshCw size={15} />Thử lại</button></div>}
     {settingsOpen ? <ModuleSettings systemId={systemId} moduleId={moduleId} onClose={() => moveTo({ ...route, settingsOpen: false })} /> : <>
       {page === 'dashboard' && <DashboardPage navigate={navigate} />}
       {page === 'systems' && <SystemsPage navigate={navigate} />}
       {page === 'servers' && <ServersPage />}
       {page === 'system' && <SystemPage systemId={systemId} navigate={navigate} />}
-      {page === 'requests' && <ProductionRequestsPage />}
+      {page === 'requests' && <ProductionRequestsPage systemId={systemId} />}
       {page === 'module' && <ModulePage moduleId={moduleId} onSettings={() => moveTo({ ...route, settingsOpen: true })} />}
       {page === 'new-module' && <NewModuleWizard onCancel={() => navigate('system', { systemId })} onCreate={async (selectedId, configuration) => {
         const selected = dcimModules.find((item) => item.id === selectedId)
@@ -100,6 +114,7 @@ function PortalApp() {
           defaultEnvironment: configuration.defaultEnvironment,
           deploymentEnvironments: configuration.deploymentEnvironments,
           stages: configuration.stages,
+          pipelineConfig: configuration.pipelineConfig,
         })
         navigate('module', { systemId, moduleId: selected.id })
       }} />}
@@ -108,7 +123,18 @@ function PortalApp() {
 }
 
 function App() {
-  return <PortalFeedbackProvider><PortalApp /></PortalFeedbackProvider>
+  const [session, setSession] = useState<AuthSession | null>(readAuthSession)
+  const login = (nextSession: AuthSession) => {
+    window.sessionStorage.setItem(AUTH_SESSION_KEY, JSON.stringify(nextSession))
+    setSession(nextSession)
+    if (!window.location.hash || window.location.hash === '#/login') window.history.replaceState(null, '', '#/dashboard')
+  }
+  const logout = () => {
+    window.sessionStorage.removeItem(AUTH_SESSION_KEY)
+    setSession(null)
+    window.history.replaceState(null, '', '#/login')
+  }
+  return <PortalFeedbackProvider>{session ? <PortalApp session={session} onLogout={logout} /> : <LoginPage onLogin={login} />}</PortalFeedbackProvider>
 }
 
 export default App

@@ -36,6 +36,7 @@ validate:
 
 test:
 	$(PYTHON) -m pytest backend/tests tests/contract -q
+	$(NPM) --prefix frontend test
 	$(NPM) --prefix frontend run build
 
 release-check:

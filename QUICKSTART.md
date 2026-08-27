@@ -53,12 +53,13 @@ Mở `http://localhost:5173`. Portal gọi `/api/*`; Vite bỏ prefix và proxy 
 
 Kết quả smoke test hiện tại:
 
-1. Catalog được tải từ `GET /stage-catalog`.
-2. Form gửi đúng template/runtime tới `POST /applications`.
-3. Sau khi tạo thành công, form thứ hai gửi commit/environment tới `POST /applications/{id}/pipeline-runs`.
-4. Loading, validation và structured API error được hiển thị trong Portal.
+1. Màn hình đăng nhập bảo vệ toàn bộ Portal; local preview chấp nhận tài khoản demo nhưng không lưu mật khẩu.
+2. Dashboard, Systems, Servers, Production Requests, module overview, pipeline, versions, DORA và settings đều có route và trạng thái tương tác đầy đủ.
+3. Wizard New Module tải DCIM candidates, lưu runner/branching/pipeline stages, deployment environment, server và health-check settings qua `POST /systems/{systemId}/modules`.
+4. Pipeline trigger, version registration và production request/approve/reject gọi netCI API; loading, validation và structured API error được hiển thị trong Portal.
+5. `npm --prefix frontend test` chạy component tests cho session guard, login/logout và settings interaction.
 
-Backend hiện lưu dữ liệu trong memory; restart process sẽ mất application và pipeline run. Đây là giới hạn đã biết, không phải hành vi production.
+Khi không có `DATABASE_URL`, backend lưu dữ liệu trong memory và restart process sẽ mất dữ liệu tạo thêm. Khi có PostgreSQL, Portal mutation fail closed nếu persistence lỗi; nghiệm thu restart/recovery vẫn thuộc gate Ubuntu.
 
 ## 2. Backstage experiment
 

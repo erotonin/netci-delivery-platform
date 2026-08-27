@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import yaml
+from app.main import app
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -73,3 +74,22 @@ def test_portal_module_contract_requires_bounded_deployment_environments():
         "items": {"$ref": "#/components/schemas/DeploymentEnvironmentConfig"},
     }
     assert schemas["DeploymentEnvironmentConfig"]["additionalProperties"] is False
+
+
+def test_checked_in_contract_covers_every_live_http_operation():
+    contract = load_contract()
+    http_methods = {"get", "post", "put", "patch", "delete"}
+    documented = {
+        (method, path)
+        for path, path_item in contract["paths"].items()
+        for method in path_item
+        if method in http_methods
+    }
+    live = {
+        (method, path)
+        for path, path_item in app.openapi()["paths"].items()
+        for method in path_item
+        if method in http_methods
+    }
+
+    assert documented == live

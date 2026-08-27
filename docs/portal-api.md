@@ -31,7 +31,9 @@ Các response read model có thể materialize từ PostgreSQL query hoặc proj
 
 ## Persistence rule
 
-Trong local source-only mode, read model có fallback in-memory để test deterministic. Khi `DATABASE_URL` tồn tại, service bootstrap các bảng `systems`, `modules`, `release_versions`, `production_requests`, load projection từ PostgreSQL và persist các create/approval command. Đây là compatibility path; trước khi mentor nghiệm thu runtime, cần kiểm tra migration/schema trên container Postgres và thay phần swallow lỗi persistence bằng health/error telemetry rõ ràng.
+Trong local source-only mode, read model có fallback in-memory để test deterministic. Khi `DATABASE_URL` tồn tại, service bootstrap các bảng `systems`, `modules`, `release_versions`, `production_requests`, load projection từ PostgreSQL và persist các create/approval command. Các mutation Portal fail closed trước khi đổi state in-memory nếu PostgreSQL lỗi; `/healthz` công bố trạng thái persistence. Trước khi mentor nghiệm thu runtime vẫn phải kiểm tra migration, restart/recovery và transaction behavior trên container PostgreSQL thật.
+
+Module lưu `pipelineConfig` gồm runner, branching strategy và cấu hình từng pipeline. Mỗi deployment environment lưu `taskSettings` có cấu hình health check có kiểu dữ liệu rõ ràng. Production request hỗ trợ nhiều module, version bất biến, deployment order, lịch có timezone, rollback strategy và automation-test policy. Pipeline run lưu `parameters.portalPipeline` để không trộn lịch sử của các pipeline dùng chung environment.
 
 ## UI states
 

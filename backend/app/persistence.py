@@ -8,6 +8,7 @@ when DATABASE_URL is absent, which keeps unit tests deterministic.
 from __future__ import annotations
 
 import json
+import logging
 import os
 from typing import Any
 from uuid import UUID
@@ -22,9 +23,13 @@ except ImportError:  # pragma: no cover - optional dependency for source-only te
     dict_row = None
 
 
+logger = logging.getLogger(__name__)
+
+
 class PostgresDeliveryStore:
     def __init__(self, url: str) -> None:
         self.url = url
+        self.last_error: str | None = None
 
     @classmethod
     def from_env(cls) -> "PostgresDeliveryStore | None":
@@ -44,12 +49,15 @@ class PostgresDeliveryStore:
                 with connection.cursor() as cursor:
                     cursor.execute("SELECT id, name, repository_url, pipeline_template, runtime, default_environment, stages, created_at FROM applications ORDER BY created_at")
                     applications = [Application(name=row["name"], repository_url=row["repository_url"], pipeline_template=row["pipeline_template"], runtime=Runtime(row["runtime"]), default_environment=Environment(row["default_environment"]), stages=tuple(row["stages"] or []), id=row["id"], created_at=row["created_at"]) for row in cursor.fetchall()]
-                    cursor.execute("SELECT id, application_id, status, commit_sha, branch, environment, correlation_id, jenkins_run_id, workflow_id, artifact_digest, created_at, updated_at FROM pipeline_runs ORDER BY created_at")
-                    runs = [PipelineRun(id=row["id"], application_id=row["application_id"], status=PipelineStatus(row["status"]), commit_sha=row["commit_sha"], branch=row["branch"], environment=Environment(row["environment"]), correlation_id=row["correlation_id"] or "", jenkins_run_id=row["jenkins_run_id"], workflow_id=row["workflow_id"], artifact_digest=row["artifact_digest"], created_at=row["created_at"], updated_at=row["updated_at"]) for row in cursor.fetchall()]
+                    cursor.execute("SELECT id, application_id, status, commit_sha, branch, environment, parameters, correlation_id, jenkins_run_id, workflow_id, artifact_digest, created_at, updated_at FROM pipeline_runs ORDER BY created_at")
+                    runs = [PipelineRun(id=row["id"], application_id=row["application_id"], status=PipelineStatus(row["status"]), commit_sha=row["commit_sha"], branch=row["branch"], environment=Environment(row["environment"]), parameters=dict(row["parameters"] or {}), correlation_id=row["correlation_id"] or "", jenkins_run_id=row["jenkins_run_id"], workflow_id=row["workflow_id"], artifact_digest=row["artifact_digest"], created_at=row["created_at"], updated_at=row["updated_at"]) for row in cursor.fetchall()]
                     cursor.execute("SELECT id, application_id, pipeline_run_id, runtime, environment, status, artifact_digest, previous_artifact_digest, approved_by, created_at, updated_at FROM deployments ORDER BY created_at")
                     deployments = [Deployment(id=row["id"], application_id=row["application_id"], pipeline_run_id=row["pipeline_run_id"], runtime=Runtime(row["runtime"]), environment=Environment(row["environment"]), status=DeploymentStatus(row["status"]), artifact_digest=row["artifact_digest"], previous_artifact_digest=row["previous_artifact_digest"], approved_by=row["approved_by"], created_at=row["created_at"], updated_at=row["updated_at"]) for row in cursor.fetchall()]
+            self.last_error = None
             return {"applications": applications, "runs": runs, "deployments": deployments}
-        except Exception:
+        except Exception as exc:
+            self.last_error = str(exc)
+            logger.exception("delivery persistence load failed")
             return None
 
     def save_application(self, item: Application) -> None:
@@ -65,10 +73,10 @@ class PostgresDeliveryStore:
         with self._connect() as connection:
             with connection.cursor() as cursor:
                 cursor.execute("""
-                    INSERT INTO pipeline_runs (id, application_id, commit_sha, branch, environment, status, jenkins_run_id, workflow_id, artifact_digest, correlation_id, created_at, updated_at)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                    ON CONFLICT (id) DO UPDATE SET status = EXCLUDED.status, jenkins_run_id = EXCLUDED.jenkins_run_id, workflow_id = EXCLUDED.workflow_id, artifact_digest = EXCLUDED.artifact_digest, updated_at = EXCLUDED.updated_at
-                """, (item.id, item.application_id, item.commit_sha, item.branch, item.environment.value, item.status.value, item.jenkins_run_id, item.workflow_id, item.artifact_digest, item.correlation_id, item.created_at, item.updated_at))
+                    INSERT INTO pipeline_runs (id, application_id, commit_sha, branch, environment, parameters, status, jenkins_run_id, workflow_id, artifact_digest, correlation_id, created_at, updated_at)
+                    VALUES (%s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (id) DO UPDATE SET parameters = EXCLUDED.parameters, status = EXCLUDED.status, jenkins_run_id = EXCLUDED.jenkins_run_id, workflow_id = EXCLUDED.workflow_id, artifact_digest = EXCLUDED.artifact_digest, updated_at = EXCLUDED.updated_at
+                """, (item.id, item.application_id, item.commit_sha, item.branch, item.environment.value, json.dumps(item.parameters), item.status.value, item.jenkins_run_id, item.workflow_id, item.artifact_digest, item.correlation_id, item.created_at, item.updated_at))
 
     def save_deployment(self, item: Deployment) -> None:
         with self._connect() as connection:
@@ -91,6 +99,7 @@ class PostgresDeliveryStore:
 class PostgresPortalStore:
     def __init__(self, url: str) -> None:
         self.url = url
+        self.last_error: str | None = None
 
     @classmethod
     def from_env(cls) -> "PostgresPortalStore | None":
@@ -148,8 +157,11 @@ class PostgresPortalStore:
                               ('alert-correlator', 'MinhNV', 'v0.8.4', 'blocked', 'blocked by vulnerability scan')
                             """
                         )
+            self.last_error = None
             return True
-        except Exception:
+        except Exception as exc:
+            self.last_error = str(exc)
+            logger.exception("portal persistence bootstrap failed")
             return False
 
     def load(self) -> dict[str, list[dict[str, Any]]] | None:
@@ -158,14 +170,19 @@ class PostgresPortalStore:
                 with connection.cursor() as cursor:
                     cursor.execute("SELECT id, unit, description, owner, status FROM systems ORDER BY created_at, id")
                     systems = list(cursor.fetchall())
-                    cursor.execute("SELECT id, system_id, application_id, runtime, name, module_type, description, deployment_config FROM modules ORDER BY created_at, id")
+                    cursor.execute("SELECT id, system_id, application_id, runtime, name, module_type, description, deployment_config, pipeline_config FROM modules ORDER BY created_at, id")
                     modules = list(cursor.fetchall())
-                    cursor.execute("SELECT module_id, version FROM release_versions ORDER BY created_at, version")
+                    cursor.execute("SELECT module_id, version, metadata FROM release_versions ORDER BY created_at DESC, version DESC")
                     versions = list(cursor.fetchall())
-                    cursor.execute("SELECT id, module_id, version, requested_by, status, deployment_id, comment FROM production_requests ORDER BY created_at, id")
+                    cursor.execute("SELECT id, module_id, version, requested_by, scheduled_for, rollback_strategy, run_automation_tests, status, deployment_id, comment FROM production_requests ORDER BY created_at, id")
                     requests = list(cursor.fetchall())
-            return {"systems": systems, "modules": modules, "versions": versions, "requests": requests}
-        except Exception:
+                    cursor.execute("SELECT request_id, module_id, version, deployment_order FROM production_request_modules ORDER BY request_id, deployment_order, module_id")
+                    request_modules = list(cursor.fetchall())
+            self.last_error = None
+            return {"systems": systems, "modules": modules, "versions": versions, "requests": requests, "request_modules": request_modules}
+        except Exception as exc:
+            self.last_error = str(exc)
+            logger.exception("portal persistence load failed")
             return None
 
     def insert_system(self, record: dict[str, Any]) -> None:
@@ -181,11 +198,48 @@ class PostgresPortalStore:
             with connection.cursor() as cursor:
                 cursor.execute(
                     """
-                    INSERT INTO modules (id, system_id, application_id, runtime, name, module_type, description, deployment_config)
-                    VALUES (%(id)s, %(system_id)s, %(application_id)s, %(runtime)s, %(name)s, %(module_type)s, %(description)s, %(deployment_config)s::jsonb)
+                    INSERT INTO modules (id, system_id, application_id, runtime, name, module_type, description, deployment_config, pipeline_config)
+                    VALUES (%(id)s, %(system_id)s, %(application_id)s, %(runtime)s, %(name)s, %(module_type)s, %(description)s, %(deployment_config)s::jsonb, %(pipeline_config)s::jsonb)
                     """,
-                    {**record, "deployment_config": json.dumps(record["deployment_config"])},
+                    {**record, "deployment_config": json.dumps(record["deployment_config"]), "pipeline_config": json.dumps(record["pipeline_config"])},
                 )
+
+    def upsert_version(self, module_id: str, version: str, metadata: dict[str, Any]) -> None:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    INSERT INTO release_versions (module_id, version, metadata)
+                    VALUES (%s, %s, %s::jsonb)
+                    ON CONFLICT (module_id, version) DO UPDATE SET metadata = EXCLUDED.metadata
+                    """,
+                    (module_id, version, json.dumps(metadata)),
+                )
+
+    def insert_request(self, record: dict[str, Any], modules: list[dict[str, Any]]) -> None:
+        primary = modules[0]
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    INSERT INTO production_requests (
+                        id, module_id, version, requested_by, scheduled_for,
+                        rollback_strategy, run_automation_tests, status
+                    ) VALUES (
+                        %(id)s, %(module_id)s, %(version)s, %(requested_by)s, %(scheduled_for)s,
+                        %(rollback_strategy)s, %(run_automation_tests)s, %(status)s
+                    )
+                    """,
+                    {**record, "id": UUID(str(record["id"])), "module_id": primary["module_id"], "version": primary["version"]},
+                )
+                for module in modules:
+                    cursor.execute(
+                        """
+                        INSERT INTO production_request_modules (request_id, module_id, version, deployment_order)
+                        VALUES (%(request_id)s, %(module_id)s, %(version)s, %(deployment_order)s)
+                        """,
+                        {**module, "request_id": UUID(str(module["request_id"]))},
+                    )
 
     def update_request(self, request_id: str, status: str, comment: str | None) -> None:
         with self._connect() as connection:

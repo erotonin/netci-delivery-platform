@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import secrets
+from datetime import datetime
 from typing import Literal
 from urllib.parse import urlsplit
 from uuid import UUID, uuid4
@@ -22,7 +23,7 @@ from .domain.models import (
     Runtime,
 )
 from .delivery import CiResult, DeliveryError, DeliveryPlatform
-from .portal import PortalReadModel
+from .portal import PortalError, PortalReadModel
 
 
 def configured_cors_origins() -> list[str]:
@@ -134,7 +135,7 @@ def application_json(item: Application) -> dict[str, object]:
 
 
 def pipeline_json(item: PipelineRun) -> dict[str, object]:
-    return {"id": str(item.id), "applicationId": str(item.application_id), "status": item.status.value, "commitSha": item.commit_sha, "branch": item.branch, "environment": item.environment.value, "correlationId": item.correlation_id, "jenkinsRunId": item.jenkins_run_id, "workflowId": item.workflow_id, "artifactDigest": item.artifact_digest, "createdAt": item.created_at.isoformat(), "updatedAt": item.updated_at.isoformat()}
+    return {"id": str(item.id), "applicationId": str(item.application_id), "status": item.status.value, "commitSha": item.commit_sha, "branch": item.branch, "environment": item.environment.value, "parameters": dict(item.parameters), "correlationId": item.correlation_id, "jenkinsRunId": item.jenkins_run_id, "workflowId": item.workflow_id, "artifactDigest": item.artifact_digest, "createdAt": item.created_at.isoformat(), "updatedAt": item.updated_at.isoformat()}
 
 
 def deployment_json(item: Deployment) -> dict[str, object]:
@@ -185,12 +186,35 @@ class SystemCreate(BaseModel):
     owner: str = Field(default="Admin", min_length=2, max_length=120)
 
 
+class HealthCheckSettings(BaseModel):
+    script: str = Field(min_length=1, max_length=4000)
+    retries: int = Field(default=3, ge=1, le=20)
+    delay: str = Field(default="10s", pattern=r"^\d+(ms|s|m)$")
+
+
+class ModuleTaskSettings(BaseModel):
+    healthCheck: HealthCheckSettings | None = None
+
+
+class ModulePipelineTabConfig(BaseModel):
+    branch: str = Field(min_length=1, max_length=500)
+    coverageReportPath: str = Field(min_length=1, max_length=500)
+    stages: list[str] = Field(default_factory=list, min_length=1, max_length=100)
+
+
+class ModulePipelineConfig(BaseModel):
+    runner: str = Field(min_length=1, max_length=255)
+    strategy: Literal["Gitflow", "Trunk-based", "Custom Pipeline"]
+    pipelines: dict[str, ModulePipelineTabConfig] = Field(min_length=1, max_length=10)
+
+
 class ModuleEnvironmentCreate(BaseModel):
     displayName: str = Field(min_length=1, max_length=120)
     environment: Environment
     runtime: Runtime
     servers: list[str] = Field(default_factory=list, max_length=200)
     tasks: list[str] = Field(default_factory=list, max_length=100)
+    taskSettings: ModuleTaskSettings = Field(default_factory=ModuleTaskSettings)
     kubeconfigRef: str | None = Field(default=None, min_length=1, max_length=255)
     namespace: str | None = Field(default=None, pattern=r"^[a-z0-9]([-a-z0-9]*[a-z0-9])?$", max_length=63)
 
@@ -219,6 +243,7 @@ class ModuleCreate(BaseModel):
     description: str = Field(default="", max_length=1000)
     defaultEnvironment: Environment = Environment.DEV
     stages: list[str] = Field(default_factory=list)
+    pipelineConfig: ModulePipelineConfig | None = None
     deploymentEnvironments: list[ModuleEnvironmentCreate] = Field(min_length=1, max_length=3)
 
     @model_validator(mode="after")
@@ -243,6 +268,29 @@ class ModuleCreate(BaseModel):
 class PortalApprovalRequest(BaseModel):
     actor: str = Field(default="local-reviewer", min_length=2, max_length=120)
     comment: str | None = Field(default=None, max_length=1000)
+
+
+class ProductionRequestModuleCreate(BaseModel):
+    moduleId: str = Field(pattern=r"^[a-z0-9][a-z0-9-]{2,62}$")
+    version: str = Field(pattern=r"^v?\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$")
+    deploymentOrder: int = Field(ge=1, le=100)
+
+
+class ProductionRequestCreate(BaseModel):
+    modules: list[ProductionRequestModuleCreate] = Field(min_length=1, max_length=20)
+    requestedBy: str = Field(default="Admin", min_length=2, max_length=120)
+    scheduledFor: datetime
+    rollbackStrategy: Literal["automatic", "manual"] = "automatic"
+    runAutomationTests: bool = True
+
+    @model_validator(mode="after")
+    def validate_modules(self) -> "ProductionRequestCreate":
+        module_ids = [item.moduleId for item in self.modules]
+        if len(module_ids) != len(set(module_ids)):
+            raise ValueError("production request modules must be unique")
+        if self.scheduledFor.tzinfo is None:
+            raise ValueError("scheduledFor must include a timezone offset")
+        return self
 
 
 class VersionCreate(BaseModel):
@@ -290,9 +338,18 @@ async def delivery_exception_handler(request: Request, exc: DeliveryError) -> JS
     return error(exc.code, exc.message, request.state.correlation_id, exc.status_code)
 
 
+@app.exception_handler(PortalError)
+async def portal_exception_handler(request: Request, exc: PortalError) -> JSONResponse:
+    return error(exc.code, exc.message, request.state.correlation_id, exc.status_code)
+
+
 @app.get("/healthz")
-def healthz() -> dict[str, str]:
-    return {"status": "ok", "version": "0.1.0"}
+def healthz() -> dict[str, object]:
+    return {
+        "status": "ok",
+        "version": "0.1.0",
+        "dependencies": {"portalPersistence": portal.persistence_health()},
+    }
 
 
 @app.get("/stage-catalog")
@@ -359,6 +416,9 @@ def create_module(
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key", min_length=1, max_length=128),
 ) -> dict[str, object]:
     try:
+        # Validate the Portal aggregate before provisioning its delivery application;
+        # otherwise an invalid system could leave an orphan application behind.
+        portal.validate_module_slot(systemId, payload.name)
         application = platform.create_application(
             name=payload.name,
             repository_url=str(payload.repositoryUrl),
@@ -377,6 +437,7 @@ def create_module(
             runtime=payload.runtime,
             application_id=application.id,
             deployment_environments=[item.model_dump(mode="json") for item in payload.deploymentEnvironments],
+            pipeline_config=payload.pipelineConfig.model_dump(mode="json") if payload.pipelineConfig else {},
         )
     except KeyError as exc:
         raise HTTPException(status_code=404, detail={"code": "SYSTEM_NOT_FOUND", "message": str(exc)}) from exc
@@ -491,6 +552,26 @@ def get_system_dora(systemId: str) -> dict[str, object]:
 @app.get("/production-requests")
 def list_production_requests() -> list[dict[str, object]]:
     return portal.production_requests()
+
+
+@app.post("/production-requests", status_code=status.HTTP_201_CREATED)
+def create_production_request(
+    payload: ProductionRequestCreate,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key", min_length=1, max_length=128),
+) -> dict[str, object]:
+    try:
+        return portal.create_production_request(
+            modules=[item.model_dump() for item in payload.modules],
+            requested_by=payload.requestedBy,
+            scheduled_for=payload.scheduledFor,
+            rollback_strategy=payload.rollbackStrategy,
+            run_automation_tests=payload.runAutomationTests,
+            idempotency_key=idempotency_key,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail={"code": "MODULE_NOT_FOUND", "message": str(exc)}) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail={"code": "VERSION_NOT_AVAILABLE", "message": str(exc)}) from exc
 
 
 @app.post("/production-requests/{requestId}/approve", status_code=status.HTTP_202_ACCEPTED)

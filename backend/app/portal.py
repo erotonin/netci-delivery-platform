@@ -17,6 +17,14 @@ from .domain.models import Environment, Runtime
 from .persistence import PostgresPortalStore
 
 
+class PortalError(RuntimeError):
+    def __init__(self, code: str, message: str, status_code: int) -> None:
+        super().__init__(message)
+        self.code = code
+        self.message = message
+        self.status_code = status_code
+
+
 @dataclass
 class PortalSystem:
     id: str
@@ -38,14 +46,24 @@ class PortalModule:
     application_id: UUID | None = None
     versions: list[str] = field(default_factory=list)
     deployment_environments: list[dict[str, object]] = field(default_factory=list)
+    pipeline_config: dict[str, object] = field(default_factory=dict)
+
+
+@dataclass
+class PortalProductionModule:
+    module_id: str
+    version: str
+    deployment_order: int = 1
 
 
 @dataclass
 class PortalProductionRequest:
     id: str
-    module_id: str
-    version: str
+    modules: list[PortalProductionModule]
     requested_by: str
+    scheduled_for: datetime
+    rollback_strategy: str
+    run_automation_tests: bool
     status: str
     deployment_id: UUID | None = None
     comment: str | None = None
@@ -60,7 +78,9 @@ class PortalReadModel:
         self._systems: dict[str, PortalSystem] = {}
         self._modules: dict[str, PortalModule] = {}
         self._requests: dict[str, PortalProductionRequest] = {}
+        self._request_idempotency: dict[str, tuple[tuple[object, ...], str]] = {}
         self._version_records: dict[tuple[str, str], dict[str, object]] = {}
+        self._persistence_error: str | None = None
         self._seed()
         self._load_persistent_state()
 
@@ -68,17 +88,23 @@ class PortalReadModel:
         self._systems.clear()
         self._modules.clear()
         self._requests.clear()
+        self._request_idempotency.clear()
         self._version_records.clear()
         self._seed()
         self._load_persistent_state()
 
     def _load_persistent_state(self) -> None:
+        self._persistence_error = None
         if self.store is None:
             return
         if not self.store.bootstrap():
+            self._persistence_error = getattr(self.store, "last_error", None) or "portal persistence bootstrap failed"
             return
         data = self.store.load()
-        if not data or not data["systems"]:
+        if data is None:
+            self._persistence_error = getattr(self.store, "last_error", None) or "portal persistence load failed"
+            return
+        if not data["systems"]:
             return
         self._systems.clear()
         self._modules.clear()
@@ -97,6 +123,7 @@ class PortalReadModel:
                 str(row["module_type"]), str(row["description"]), Runtime(str(row.get("runtime", "docker"))),
                 application_id=application_id,
                 deployment_environments=list(row.get("deployment_config") or []),
+                pipeline_config=dict(row.get("pipeline_config") or {}),
             )
             self._modules[module.id] = module
             if module.system_id in self._systems:
@@ -104,13 +131,55 @@ class PortalReadModel:
         for row in data.get("versions", []):
             module_id = str(row["module_id"])
             if module_id in self._modules:
-                self._modules[module_id].versions.append(str(row["version"]))
+                version = str(row["version"])
+                self._modules[module_id].versions.append(version)
+                metadata = row.get("metadata") or {}
+                if metadata:
+                    self._version_records[(module_id, version)] = dict(metadata)
+        persisted_modules: dict[str, list[PortalProductionModule]] = {}
+        for row in data.get("request_modules", []):
+            persisted_modules.setdefault(str(row["request_id"]), []).append(
+                PortalProductionModule(
+                    str(row["module_id"]),
+                    str(row["version"]),
+                    int(row["deployment_order"]),
+                )
+            )
         for row in data["requests"]:
             request_id = str(row["id"])
             self._requests[request_id] = PortalProductionRequest(
-                request_id, str(row["module_id"]), str(row.get("version", "v0.0.0")), str(row["requested_by"]),
-                str(row["status"]), row.get("deployment_id"), row.get("comment"),
+                id=request_id,
+                modules=persisted_modules.get(
+                    request_id,
+                    [PortalProductionModule(str(row["module_id"]), str(row.get("version", "v0.0.0")))],
+                ),
+                requested_by=str(row["requested_by"]),
+                scheduled_for=row.get("scheduled_for") or datetime.now(timezone.utc),
+                rollback_strategy=str(row.get("rollback_strategy", "automatic")),
+                run_automation_tests=bool(row.get("run_automation_tests", True)),
+                status=str(row["status"]),
+                deployment_id=row.get("deployment_id"),
+                comment=row.get("comment"),
             )
+
+    def persistence_health(self) -> dict[str, str]:
+        if self.store is None:
+            return {"mode": "memory", "status": "not_configured"}
+        if self._persistence_error:
+            return {"mode": "postgresql", "status": "degraded", "message": self._persistence_error}
+        return {"mode": "postgresql", "status": "ready"}
+
+    def _persist(self, method: str, *args: object) -> None:
+        if self.store is None:
+            return
+        try:
+            getattr(self.store, method)(*args)
+        except Exception as exc:
+            raise PortalError(
+                "PERSISTENCE_UNAVAILABLE",
+                f"cannot persist portal state: {exc}",
+                503,
+            ) from exc
 
     def _seed(self) -> None:
         for item in (
@@ -167,16 +236,38 @@ class PortalReadModel:
                 ),
             }
         )
+        templates = {
+            Runtime.DOCKER: "container-ci-cd-v1",
+            Runtime.KUBERNETES: "kubernetes-ci-cd-v1",
+            Runtime.SYSTEMD: "systemd-ansible-ci-cd-v1",
+        }
+        for module in self._modules.values():
+            application = self.platform.create_application(
+                name=module.id,
+                repository_url=f"https://git.example.net/{module.system_id.lower()}/{module.id}",
+                pipeline_template=templates[module.runtime],
+                runtime=module.runtime,
+                default_environment=Environment.DEV,
+                stages=[],
+                idempotency_key=f"portal-reference-{module.id}",
+            )
+            module.application_id = application.id
         self._requests.update(
             {
                 "pr-backend-241": PortalProductionRequest(
-                    "pr-backend-241", "backend-api", "v2.4.1", "TrungTT", "waiting_approval"
+                    "pr-backend-241", [PortalProductionModule("backend-api", "v2.4.1")], "TrungTT",
+                    datetime(2025, 4, 30, 3, 0, tzinfo=timezone(timedelta(hours=7))), "automatic", True,
+                    "waiting_approval",
                 ),
                 "pr-web-192": PortalProductionRequest(
-                    "pr-web-192", "web-client", "v1.9.2", "HaiNM", "approved"
+                    "pr-web-192", [PortalProductionModule("web-client", "v1.9.2")], "HaiNM",
+                    datetime(2025, 4, 29, 2, 0, tzinfo=timezone(timedelta(hours=7))), "automatic", True,
+                    "approved",
                 ),
                 "pr-alert-084": PortalProductionRequest(
-                    "pr-alert-084", "alert-correlator", "v0.8.4", "MinhNV", "blocked"
+                    "pr-alert-084", [PortalProductionModule("alert-correlator", "v0.8.4")], "MinhNV",
+                    datetime(2025, 4, 25, 22, 0, tzinfo=timezone(timedelta(hours=7))), "manual", False,
+                    "blocked",
                 ),
             }
         )
@@ -217,12 +308,11 @@ class PortalReadModel:
         if system_id in self._systems:
             raise ValueError("system already exists")
         record = PortalSystem(system_id, unit, description, owner, "healthy", [])
+        self._persist(
+            "insert_system",
+            {"id": system_id, "unit": unit, "description": description, "owner": owner, "status": "healthy"},
+        )
         self._systems[system_id] = record
-        if self.store is not None:
-            try:
-                self.store.insert_system({"id": system_id, "unit": unit, "description": description, "owner": owner, "status": "healthy"})
-            except Exception:
-                pass
         return self.system(system_id)
 
     def attach_module(
@@ -236,25 +326,29 @@ class PortalReadModel:
         runtime: Runtime,
         application_id: UUID,
         deployment_environments: list[dict[str, object]],
+        pipeline_config: dict[str, object],
     ) -> dict[str, object]:
-        system = self._systems.get(system_id)
-        if system is None:
-            raise KeyError("system not found")
-        if module_id in self._modules:
-            raise ValueError("module already exists")
+        self.validate_module_slot(system_id, module_id)
+        system = self._systems[system_id]
         module = PortalModule(
             module_id, system_id, name, module_type, description, runtime,
             application_id=application_id,
             deployment_environments=deployment_environments,
+            pipeline_config=dict(pipeline_config),
+        )
+        self._persist(
+            "insert_module",
+            {"id": module_id, "system_id": system_id, "application_id": application_id, "runtime": runtime.value, "name": name, "module_type": module_type, "description": description, "deployment_config": deployment_environments, "pipeline_config": pipeline_config},
         )
         self._modules[module_id] = module
         system.module_ids.append(module_id)
-        if self.store is not None:
-            try:
-                self.store.insert_module({"id": module_id, "system_id": system_id, "application_id": application_id, "runtime": runtime.value, "name": name, "module_type": module_type, "description": description, "deployment_config": deployment_environments})
-            except Exception:
-                pass
         return self.module(module_id)
+
+    def validate_module_slot(self, system_id: str, module_id: str) -> None:
+        if system_id not in self._systems:
+            raise KeyError("system not found")
+        if module_id in self._modules:
+            raise ValueError("module already exists")
 
     def systems(self) -> list[dict[str, object]]:
         return [self.system(item.id) for item in self._systems.values()]
@@ -294,6 +388,7 @@ class PortalReadModel:
             "applicationId": str(item.application_id) if item.application_id else None,
             "versions": list(item.versions),
             "deploymentEnvironments": list(item.deployment_environments),
+            "pipelineConfig": dict(item.pipeline_config),
             "environments": [
                 {
                     "name": environment.value,
@@ -391,7 +486,6 @@ class PortalReadModel:
             raise KeyError("module not found")
         if tag in module.versions:
             raise ValueError("version already exists")
-        module.versions.insert(0, tag)
         record = {
             "gitTagUrl": git_tag_url,
             "artifactUrl": artifact_url,
@@ -399,6 +493,8 @@ class PortalReadModel:
             "createdAt": datetime.now(timezone.utc).isoformat(),
             "ciReport": None,
         }
+        self._persist("upsert_version", module_id, tag, record)
+        module.versions.insert(0, tag)
         self._version_records[(module_id, tag)] = record
         return {"moduleId": module_id, "version": tag, **record}
 
@@ -406,18 +502,22 @@ class PortalReadModel:
         module = self._modules.get(module_id)
         if module is None:
             raise KeyError("module not found")
-        if tag not in module.versions:
-            module.versions.insert(0, tag)
-        record = self._version_records.setdefault(
-            (module_id, tag),
-            {
+        record = dict(
+            self._version_records.get(
+                (module_id, tag),
+                {
                 "gitTagUrl": None,
                 "artifactUrl": None,
                 "createdBy": "netCI Pipeline",
                 "createdAt": datetime.now(timezone.utc).isoformat(),
-            },
+                },
+            )
         )
         record["ciReport"] = dict(report)
+        self._persist("upsert_version", module_id, tag, record)
+        if tag not in module.versions:
+            module.versions.insert(0, tag)
+        self._version_records[(module_id, tag)] = record
         return {"moduleId": module_id, "version": tag, **dict(report)}
 
     def dora(self, scope_id: str) -> dict[str, object]:
@@ -432,21 +532,102 @@ class PortalReadModel:
     def production_requests(self) -> list[dict[str, object]]:
         output: list[dict[str, object]] = []
         for request in self._requests.values():
-            module = self._modules.get(request.module_id)
+            modules = []
+            for requested_module in sorted(request.modules, key=lambda item: item.deployment_order):
+                module = self._modules.get(requested_module.module_id)
+                modules.append(
+                    {
+                        "moduleId": requested_module.module_id,
+                        "moduleName": module.name if module else requested_module.module_id,
+                        "version": requested_module.version,
+                        "deploymentOrder": requested_module.deployment_order,
+                    }
+                )
             output.append(
                 {
                     "id": request.id,
-                    "moduleId": request.module_id,
-                    "moduleName": module.name if module else request.module_id,
-                    "systemId": module.system_id if module else None,
-                    "version": request.version,
+                    "modules": modules,
                     "requestedBy": request.requested_by,
+                    "scheduledFor": request.scheduled_for.isoformat(),
+                    "rollbackStrategy": request.rollback_strategy,
+                    "runAutomationTests": request.run_automation_tests,
                     "status": request.status,
                     "deploymentId": str(request.deployment_id) if request.deployment_id else None,
                     "comment": request.comment,
                 }
             )
         return output
+
+    def create_production_request(
+        self,
+        *,
+        modules: list[dict[str, object]],
+        requested_by: str,
+        scheduled_for: datetime,
+        rollback_strategy: str,
+        run_automation_tests: bool,
+        idempotency_key: str | None = None,
+    ) -> dict[str, object]:
+        signature: tuple[object, ...] = (
+            tuple((str(item["moduleId"]), str(item["version"]), int(item["deploymentOrder"])) for item in modules),
+            requested_by,
+            scheduled_for.isoformat(),
+            rollback_strategy,
+            run_automation_tests,
+        )
+        if idempotency_key and idempotency_key in self._request_idempotency:
+            existing_signature, existing_id = self._request_idempotency[idempotency_key]
+            if existing_signature != signature:
+                raise PortalError("IDEMPOTENCY_CONFLICT", "idempotency key was already used with a different request", 409)
+            return next(item for item in self.production_requests() if item["id"] == existing_id)
+
+        requested_modules: list[PortalProductionModule] = []
+        for item in modules:
+            module_id = str(item["moduleId"])
+            module = self._modules.get(module_id)
+            if module is None:
+                raise KeyError(f"module {module_id} not found")
+            version = str(item["version"])
+            if version not in module.versions:
+                raise ValueError(f"version {version} is not registered for module {module_id}")
+            requested_modules.append(
+                PortalProductionModule(module_id, version, int(item["deploymentOrder"]))
+            )
+
+        request_id = str(uuid4())
+        request = PortalProductionRequest(
+            id=request_id,
+            modules=requested_modules,
+            requested_by=requested_by,
+            scheduled_for=scheduled_for,
+            rollback_strategy=rollback_strategy,
+            run_automation_tests=run_automation_tests,
+            status="waiting_approval",
+        )
+        self._persist(
+            "insert_request",
+            {
+                "id": request.id,
+                "requested_by": request.requested_by,
+                "scheduled_for": request.scheduled_for,
+                "rollback_strategy": request.rollback_strategy,
+                "run_automation_tests": request.run_automation_tests,
+                "status": request.status,
+            },
+            [
+                {
+                    "request_id": request.id,
+                    "module_id": item.module_id,
+                    "version": item.version,
+                    "deployment_order": item.deployment_order,
+                }
+                for item in request.modules
+            ],
+        )
+        self._requests[request_id] = request
+        if idempotency_key:
+            self._request_idempotency[idempotency_key] = (signature, request_id)
+        return next(item for item in self.production_requests() if item["id"] == request_id)
 
     def approve_request(self, request_id: str, actor: str, comment: str | None = None) -> dict[str, object]:
         return self._set_request_status(request_id, "approved", actor, comment)
@@ -460,13 +641,10 @@ class PortalReadModel:
             raise KeyError("production request not found")
         if request.status != "waiting_approval":
             raise ValueError("production request is not waiting for approval")
+        next_comment = comment or f"{status} by {actor}"
+        self._persist("update_request", request_id, status, next_comment)
         request.status = status
-        request.comment = comment or f"{status} by {actor}"
-        if self.store is not None:
-            try:
-                self.store.update_request(request_id, request.status, request.comment)
-            except Exception:
-                pass
+        request.comment = next_comment
         return next(item for item in self.production_requests() if item["id"] == request_id)
 
     def servers(self) -> list[dict[str, object]]:
@@ -539,6 +717,7 @@ class PortalReadModel:
             "commitSha": run.commit_sha,
             "branch": run.branch,
             "environment": run.environment.value,
+            "parameters": dict(run.parameters),
             "createdAt": run.created_at.isoformat(),
             "updatedAt": run.updated_at.isoformat(),
             "jenkinsRunId": run.jenkins_run_id,

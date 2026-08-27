@@ -18,6 +18,7 @@ CREATE TABLE IF NOT EXISTS pipeline_runs (
     commit_sha VARCHAR(128) NOT NULL,
     branch VARCHAR(255) NOT NULL DEFAULT 'main',
     environment VARCHAR(32) NOT NULL CHECK (environment IN ('dev', 'staging', 'prod')),
+    parameters JSONB NOT NULL DEFAULT '{}'::jsonb,
     status VARCHAR(32) NOT NULL
         CHECK (status IN ('queued', 'running', 'waiting_approval', 'succeeded', 'failed', 'cancelled', 'rolled_back')),
     jenkins_run_id VARCHAR(255),
@@ -29,6 +30,8 @@ CREATE TABLE IF NOT EXISTS pipeline_runs (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (application_id, idempotency_key)
 );
+
+ALTER TABLE pipeline_runs ADD COLUMN IF NOT EXISTS parameters JSONB NOT NULL DEFAULT '{}'::jsonb;
 
 CREATE TABLE IF NOT EXISTS deployments (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -122,6 +125,9 @@ CREATE TABLE IF NOT EXISTS modules (
 ALTER TABLE modules
     ADD COLUMN IF NOT EXISTS deployment_config JSONB NOT NULL DEFAULT '[]'::jsonb;
 
+ALTER TABLE modules
+    ADD COLUMN IF NOT EXISTS pipeline_config JSONB NOT NULL DEFAULT '{}'::jsonb;
+
 ALTER TABLE modules ADD COLUMN IF NOT EXISTS runtime VARCHAR(32) NOT NULL DEFAULT 'docker';
 
 CREATE TABLE IF NOT EXISTS release_versions (
@@ -133,9 +139,12 @@ CREATE TABLE IF NOT EXISTS release_versions (
     signature_uri TEXT,
     signature_verified BOOLEAN NOT NULL DEFAULT false,
     vulnerability_status VARCHAR(32) NOT NULL DEFAULT 'not_available',
+    metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (module_id, version)
 );
+
+ALTER TABLE release_versions ADD COLUMN IF NOT EXISTS metadata JSONB NOT NULL DEFAULT '{}'::jsonb;
 
 CREATE TABLE IF NOT EXISTS production_requests (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -144,6 +153,10 @@ CREATE TABLE IF NOT EXISTS production_requests (
     deployment_id UUID REFERENCES deployments(id),
     requested_by VARCHAR(255) NOT NULL,
     version VARCHAR(128) NOT NULL DEFAULT 'v0.0.0',
+    scheduled_for TIMESTAMPTZ NOT NULL DEFAULT now(),
+    rollback_strategy VARCHAR(16) NOT NULL DEFAULT 'automatic'
+        CHECK (rollback_strategy IN ('automatic', 'manual')),
+    run_automation_tests BOOLEAN NOT NULL DEFAULT true,
     status VARCHAR(32) NOT NULL DEFAULT 'waiting_approval'
         CHECK (status IN ('waiting_approval', 'approved', 'rejected', 'blocked')),
     comment TEXT,
@@ -152,11 +165,23 @@ CREATE TABLE IF NOT EXISTS production_requests (
 );
 
 ALTER TABLE production_requests ADD COLUMN IF NOT EXISTS version VARCHAR(128) NOT NULL DEFAULT 'v0.0.0';
+ALTER TABLE production_requests ADD COLUMN IF NOT EXISTS scheduled_for TIMESTAMPTZ NOT NULL DEFAULT now();
+ALTER TABLE production_requests ADD COLUMN IF NOT EXISTS rollback_strategy VARCHAR(16) NOT NULL DEFAULT 'automatic';
+ALTER TABLE production_requests ADD COLUMN IF NOT EXISTS run_automation_tests BOOLEAN NOT NULL DEFAULT true;
+
+CREATE TABLE IF NOT EXISTS production_request_modules (
+    request_id UUID NOT NULL REFERENCES production_requests(id) ON DELETE CASCADE,
+    module_id VARCHAR(63) NOT NULL REFERENCES modules(id) ON DELETE RESTRICT,
+    version VARCHAR(128) NOT NULL,
+    deployment_order SMALLINT NOT NULL CHECK (deployment_order BETWEEN 1 AND 100),
+    PRIMARY KEY (request_id, module_id)
+);
 
 CREATE INDEX IF NOT EXISTS idx_modules_system ON modules(system_id);
 CREATE INDEX IF NOT EXISTS idx_release_versions_module ON release_versions(module_id);
 CREATE INDEX IF NOT EXISTS idx_production_requests_status ON production_requests(status);
 CREATE INDEX IF NOT EXISTS idx_production_requests_module ON production_requests(module_id);
+CREATE INDEX IF NOT EXISTS idx_production_request_modules_order ON production_request_modules(request_id, deployment_order);
 
 DROP TRIGGER IF EXISTS systems_set_updated_at ON systems;
 CREATE TRIGGER systems_set_updated_at

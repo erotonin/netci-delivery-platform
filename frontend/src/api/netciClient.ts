@@ -57,6 +57,7 @@ export type PipelineRun = {
   commitSha: string
   branch: string
   environment: Environment
+  parameters: Record<string, unknown>
   jenkinsRunId: string | null
   workflowId: string | null
   artifactDigest: string | null
@@ -169,8 +170,21 @@ export type DeploymentEnvironmentConfig = {
   runtime: Runtime
   servers: string[]
   tasks: string[]
+  taskSettings?: Record<string, unknown>
   kubeconfigRef?: string | null
   namespace?: string | null
+}
+
+export type ModulePipelineTabConfig = {
+  branch: string
+  coverageReportPath: string
+  stages: string[]
+}
+
+export type ModulePipelineConfig = {
+  runner: string
+  strategy: string
+  pipelines: Record<string, ModulePipelineTabConfig>
 }
 
 export type PortalModule = {
@@ -183,6 +197,7 @@ export type PortalModule = {
   applicationId: string | null
   versions: string[]
   deploymentEnvironments: DeploymentEnvironmentConfig[]
+  pipelineConfig: Partial<ModulePipelineConfig>
   environments: Array<{ name: Environment; status: string }>
   pipelineRuns: PipelineRun[]
   dora: PortalMetric[]
@@ -212,16 +227,31 @@ export type PortalDashboard = {
   systems: PortalSystem[]
 }
 
-export type ProductionRequest = {
-  id: string
+export type ProductionRequestModule = {
   moduleId: string
   moduleName: string
-  systemId: string | null
   version: string
+  deploymentOrder: number
+}
+
+export type ProductionRequest = {
+  id: string
+  modules: ProductionRequestModule[]
   requestedBy: string
+  scheduledFor: string
+  rollbackStrategy: 'automatic' | 'manual'
+  runAutomationTests: boolean
   status: string
   deploymentId: string | null
   comment: string | null
+}
+
+export type ProductionRequestCreate = {
+  modules: Array<{ moduleId: string; version: string; deploymentOrder: number }>
+  requestedBy: string
+  scheduledFor: string
+  rollbackStrategy: 'automatic' | 'manual'
+  runAutomationTests: boolean
 }
 
 export function getPortalDashboard(): Promise<PortalDashboard> {
@@ -248,6 +278,14 @@ export function listModulePipelineRuns(moduleId: string): Promise<{ moduleId: st
   return request<{ moduleId: string; items: PipelineRun[] }>(`/modules/${encodeURIComponent(moduleId)}/pipeline-runs`)
 }
 
+export function getPipelineRun(pipelineRunId: string): Promise<PipelineRun> {
+  return request<PipelineRun>(`/pipeline-runs/${encodeURIComponent(pipelineRunId)}`)
+}
+
+export function getPipelineLogs(pipelineRunId: string): Promise<{ pipelineRunId: string; correlationId: string; lines: string[] }> {
+  return request<{ pipelineRunId: string; correlationId: string; lines: string[] }>(`/pipeline-runs/${encodeURIComponent(pipelineRunId)}/logs`)
+}
+
 export function listModuleVersions(moduleId: string): Promise<Record<string, unknown>> {
   return request<Record<string, unknown>>(`/modules/${encodeURIComponent(moduleId)}/versions`)
 }
@@ -258,6 +296,14 @@ export function getDora(scope: 'systems' | 'modules', scopeId: string): Promise<
 
 export function listProductionRequests(): Promise<ProductionRequest[]> {
   return request<ProductionRequest[]>('/production-requests')
+}
+
+export function createProductionRequest(payload: ProductionRequestCreate): Promise<ProductionRequest> {
+  return request<ProductionRequest>('/production-requests', {
+    method: 'POST',
+    headers: { 'Idempotency-Key': requestId(), 'X-Correlation-Id': requestId() },
+    body: JSON.stringify(payload),
+  })
 }
 
 export function approveProductionRequest(productionRequestId: string, payload: { actor: string; comment?: string }): Promise<ProductionRequest> {
@@ -276,7 +322,7 @@ export function createSystem(payload: { id: string; unit: string; description: s
   })
 }
 
-export function createModule(systemId: string, payload: { name: string; displayName: string; repositoryUrl: string; pipelineTemplate: string; runtime: Runtime; moduleType: string; description: string; defaultEnvironment: Environment; deploymentEnvironments: DeploymentEnvironmentConfig[]; stages?: string[] }): Promise<PortalModule> {
+export function createModule(systemId: string, payload: { name: string; displayName: string; repositoryUrl: string; pipelineTemplate: string; runtime: Runtime; moduleType: string; description: string; defaultEnvironment: Environment; deploymentEnvironments: DeploymentEnvironmentConfig[]; stages?: string[]; pipelineConfig?: ModulePipelineConfig }): Promise<PortalModule> {
   return request<PortalModule>(`/systems/${encodeURIComponent(systemId)}/modules`, {
     method: 'POST',
     headers: { 'Idempotency-Key': requestId(), 'X-Correlation-Id': requestId() },

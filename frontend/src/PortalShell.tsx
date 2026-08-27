@@ -4,7 +4,8 @@ import {
   Gauge, Grid2X2, Layers3, LogOut, Menu, Search, Server, Settings,
   ShieldAlert, X,
 } from 'lucide-react'
-import { getSystem } from './api/netciClient'
+import { listSystems } from './api/netciClient'
+import type { AuthSession } from './LoginPage'
 import { dora, systems, type PageId } from './portalData'
 
 export type Navigate = (page: PageId, options?: { systemId?: string; moduleId?: string }) => void
@@ -78,8 +79,15 @@ export function Modal({ title, description, children, footer, onClose, wide = fa
 }
 
 type NavigationModule = { id: string; name: string }
+type NavigationSystem = { id: string; status: string; modules: NavigationModule[] }
 
-function Sidebar({ page, systemId, moduleId, moduleLinks, navigate, open, close }: { page: PageId; systemId: string; moduleId: string; moduleLinks: NavigationModule[]; navigate: Navigate; open: boolean; close: () => void }) {
+const initialNavigationSystems: NavigationSystem[] = systems.map((system) => ({
+  id: system.id,
+  status: system.status,
+  modules: system.modules.map((module) => ({ id: module.id, name: module.name })),
+}))
+
+function Sidebar({ page, systemId, moduleId, moduleLinks, navigationSystems, session, navigate, onLogout, open, close }: { page: PageId; systemId: string; moduleId: string; moduleLinks: NavigationModule[]; navigationSystems: NavigationSystem[]; session: AuthSession; navigate: Navigate; onLogout: () => void; open: boolean; close: () => void }) {
   const inSystem = ['system', 'requests', 'module', 'new-module'].includes(page)
   return <aside className={`sidebar ${open ? 'sidebar-open' : ''}`}>
     <button className="brand" onClick={() => navigate('dashboard')}>
@@ -99,52 +107,70 @@ function Sidebar({ page, systemId, moduleId, moduleLinks, navigate, open, close 
         <button aria-current={page === 'systems' ? 'page' : undefined} className={page === 'systems' ? 'nav-item active' : 'nav-item'} onClick={() => navigate('systems')}><Layers3 size={17} />Systems</button>
         <button aria-current={page === 'servers' ? 'page' : undefined} className={page === 'servers' ? 'nav-item active' : 'nav-item'} onClick={() => navigate('servers')}><Server size={17} />Servers</button>
         <span className="nav-label nav-label-spaced">Systems</span>
-        {systems.map((system) => <button key={system.id} className="nav-item system-link" onClick={() => navigate('system', { systemId: system.id })}><i className={`system-health health-${systemTone[system.status]}`} />{system.id}</button>)}
+        {navigationSystems.map((system) => <button key={system.id} className="nav-item system-link" onClick={() => navigate('system', { systemId: system.id })}><i className={`system-health health-${systemTone[system.status] ?? 'green'}`} />{system.id}</button>)}
       </>}
     </nav>
-    <div className="sidebar-user"><span className="avatar">AD</span><span><strong>Admin</strong><small>admin@netchat.io</small></span><LogOut size={17} /></div>
+    <button className="sidebar-user" onClick={onLogout} title="Đăng xuất"><span className="avatar">{session.displayName.slice(0, 2).toUpperCase()}</span><span><strong>{session.displayName}</strong><small>{session.email}</small></span><LogOut size={17} /></button>
     <button className="sidebar-close" aria-label="Đóng menu" onClick={close}><X size={20} /></button>
   </aside>
 }
 
-function TopBar({ page, systemId, moduleId, moduleLinks, onSettings, onMenu }: { page: PageId; systemId: string; moduleId: string; moduleLinks: NavigationModule[]; onSettings: () => void; onMenu: () => void }) {
+function TopBar({ page, systemId, moduleId, moduleLinks, navigationSystems, session, navigate, onSettings, onLogout, onMenu }: { page: PageId; systemId: string; moduleId: string; moduleLinks: NavigationModule[]; navigationSystems: NavigationSystem[]; session: AuthSession; navigate: Navigate; onSettings: () => void; onLogout: () => void; onMenu: () => void }) {
   const [notifications, setNotifications] = useState(false)
-  const moduleName = moduleLinks.find((item) => item.id === moduleId)?.name ?? systems.flatMap((system) => system.modules).find((item) => item.id === moduleId)?.name
+  const [notificationsRead, setNotificationsRead] = useState(false)
+  const [query, setQuery] = useState('')
+  const [searchOpen, setSearchOpen] = useState(false)
+  const moduleName = moduleLinks.find((item) => item.id === moduleId)?.name ?? navigationSystems.flatMap((system) => system.modules).find((item) => item.id === moduleId)?.name
   const labels: Partial<Record<PageId, string>> = { dashboard: 'Dashboard', systems: 'All Systems', servers: 'Servers', system: 'Overview', requests: 'Production Requests', module: moduleName, 'new-module': 'New Module' }
   const crumbs = ['system', 'requests', 'module', 'new-module'].includes(page) ? ['Systems', systemId, labels[page]] : [labels[page]]
+  const searchItems = [
+    { key: 'dashboard', label: 'Dashboard', detail: 'General', action: () => navigate('dashboard') },
+    { key: 'servers', label: 'Servers', detail: 'Infrastructure', action: () => navigate('servers') },
+    ...navigationSystems.flatMap((system) => [
+      { key: `system-${system.id}`, label: system.id, detail: 'System', action: () => navigate('system', { systemId: system.id }) },
+      ...system.modules.map((module) => ({ key: `module-${system.id}-${module.id}`, label: module.name, detail: `${system.id} · Module`, action: () => navigate('module', { systemId: system.id, moduleId: module.id }) })),
+    ]),
+  ]
+  const results = query.trim() ? searchItems.filter((item) => `${item.label} ${item.detail}`.toLowerCase().includes(query.trim().toLowerCase())).slice(0, 7) : searchItems.slice(0, 5)
+  const selectResult = (action: () => void) => { action(); setQuery(''); setSearchOpen(false) }
   return <header className="topbar">
     <button className="mobile-menu" aria-label="Mở menu" onClick={onMenu}><Menu size={20} /></button>
     <div className="breadcrumbs">{crumbs.filter(Boolean).map((crumb, index) => <span key={`${crumb}-${index}`}>{index > 0 && <i>/</i>}{crumb}</span>)}</div>
-    <label className="global-search"><Search size={16} /><input aria-label="Tìm kiếm toàn cục" placeholder="Search…" /></label>
+    <div className="global-search-wrap"><label className="global-search"><Search size={16} /><input aria-label="Tìm kiếm toàn cục" placeholder="Search systems, modules…" value={query} onFocus={() => setSearchOpen(true)} onChange={(event) => { setQuery(event.target.value); setSearchOpen(true) }} onKeyDown={(event) => { if (event.key === 'Escape') setSearchOpen(false); if (event.key === 'Enter' && results[0]) selectResult(results[0].action) }} /></label>{searchOpen && <section className="global-search-results" aria-label="Search results">{results.map((item) => <button key={item.key} onMouseDown={(event) => event.preventDefault()} onClick={() => selectResult(item.action)}><Search size={14} /><span><strong>{item.label}</strong><small>{item.detail}</small></span></button>)}{!results.length && <div><strong>No matching destination</strong><small>Try a system or module name.</small></div>}</section>}</div>
     <div className="topbar-actions">
-      <button className="icon-button notification-button" aria-label="Thông báo" onClick={() => setNotifications(!notifications)}><Bell size={18} /><i /></button>
+      <button className="icon-button notification-button" aria-label="Thông báo" aria-expanded={notifications} onClick={() => setNotifications(!notifications)}><Bell size={18} />{!notificationsRead && <i />}</button>
       <button className="icon-button" aria-label="Cài đặt" onClick={onSettings}><Settings size={18} /></button>
-      <span className="avatar">AD</span>
-      <button className="logout-button" aria-label="Đăng xuất"><LogOut size={17} /></button>
+      <span className="avatar" title={`${session.displayName} · ${session.email}`}>{session.displayName.slice(0, 2).toUpperCase()}</span>
+      <button className="logout-button" aria-label="Đăng xuất" onClick={onLogout}><LogOut size={17} /></button>
     </div>
     {notifications && <section className="notification-panel">
-      <div className="notification-title"><strong>Notifications</strong><button onClick={() => setNotifications(false)}>Mark all as read</button></div>
-      <div className="notification-row unread"><span className="notice-icon success"><CheckCircle2 size={16} /></span><div><strong>Deployment successful</strong><p>Backend API v2.4.1 deployed to Production.</p><small>12 minutes ago</small></div></div>
+      <div className="notification-title"><strong>Notifications</strong><button disabled={notificationsRead} onClick={() => setNotificationsRead(true)}>{notificationsRead ? 'All read' : 'Mark all as read'}</button></div>
+      <div className={`notification-row ${notificationsRead ? '' : 'unread'}`}><span className="notice-icon success"><CheckCircle2 size={16} /></span><div><strong>Deployment successful</strong><p>Backend API v2.4.1 deployed to Production.</p><small>12 minutes ago</small></div></div>
       <div className="notification-row"><span className="notice-icon warning"><ShieldAlert size={16} /></span><div><strong>Approval required</strong><p>PR-2025-0033 is waiting for GNOC checks.</p><small>42 minutes ago</small></div></div>
-      <button className="notification-footer">View all notifications</button>
+      <button className="notification-footer" onClick={() => { setNotifications(false); navigate('requests', { systemId }) }}>View approval requests</button>
     </section>}
   </header>
 }
 
-export function PortalShell({ children, page, systemId, moduleId, navigate, onSettings }: { children: ReactNode; page: PageId; systemId: string; moduleId: string; navigate: Navigate; onSettings: () => void }) {
+export function PortalShell({ children, page, systemId, moduleId, session, navigate, onSettings, onLogout }: { children: ReactNode; page: PageId; systemId: string; moduleId: string; session: AuthSession; navigate: Navigate; onSettings: () => void; onLogout: () => void }) {
   const [menuOpen, setMenuOpen] = useState(false)
   const [moduleLinks, setModuleLinks] = useState<NavigationModule[]>(systems.find((item) => item.id === systemId)?.modules ?? [])
+  const [navigationSystems, setNavigationSystems] = useState<NavigationSystem[]>(initialNavigationSystems)
   useEffect(() => {
     let active = true
     setModuleLinks(systems.find((item) => item.id === systemId)?.modules ?? [])
-    if (['system', 'requests', 'module', 'new-module'].includes(page)) {
-      getSystem(systemId).then((system) => { if (active) setModuleLinks(system.modules.map((module) => ({ id: module.id, name: module.name }))) }).catch(() => undefined)
-    }
+    listSystems().then((items) => {
+      if (!active) return
+      const next = items.map((system) => ({ id: system.id, status: system.status, modules: system.modules.map((module) => ({ id: module.id, name: module.name })) }))
+      setNavigationSystems(next)
+      const current = next.find((system) => system.id === systemId)
+      if (current) setModuleLinks(current.modules)
+    }).catch(() => undefined)
     return () => { active = false }
   }, [page, systemId, moduleId])
   return <div className="portal-shell">
-    <Sidebar page={page} systemId={systemId} moduleId={moduleId} moduleLinks={moduleLinks} navigate={(next, options) => { navigate(next, options); setMenuOpen(false) }} open={menuOpen} close={() => setMenuOpen(false)} />
+    <Sidebar page={page} systemId={systemId} moduleId={moduleId} moduleLinks={moduleLinks} navigationSystems={navigationSystems} session={session} navigate={(next, options) => { navigate(next, options); setMenuOpen(false) }} onLogout={onLogout} open={menuOpen} close={() => setMenuOpen(false)} />
     {menuOpen && <button className="mobile-overlay" aria-label="Đóng menu" onClick={() => setMenuOpen(false)} />}
-    <div className="portal-main"><TopBar page={page} systemId={systemId} moduleId={moduleId} moduleLinks={moduleLinks} onSettings={onSettings} onMenu={() => setMenuOpen(true)} /><main className="page-content">{children}</main></div>
+    <div className="portal-main"><TopBar page={page} systemId={systemId} moduleId={moduleId} moduleLinks={moduleLinks} navigationSystems={navigationSystems} session={session} navigate={navigate} onSettings={onSettings} onLogout={onLogout} onMenu={() => setMenuOpen(true)} /><main className="page-content">{children}</main></div>
   </div>
 }

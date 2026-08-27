@@ -32,6 +32,10 @@ checks:
     profiles: [windows, ubuntu]
     state: ready
     command: [npm, --prefix, frontend, run, build]
+  - id: frontend-tests
+    profiles: [windows, ubuntu]
+    state: ready
+    command: [npm, --prefix, frontend, test]
   - id: compose-config
     profiles: [ubuntu]
     state: ready

@@ -33,7 +33,7 @@ py -3 scripts/doctor.py --profile windows
 py -3 scripts/validate_release.py --profile windows --execute
 ```
 
-Gate Windows kiểm tra Git/Python/Node/npm, syntax và schema, catalog invariant, frontend typecheck/build, unit/contract tests, tài liệu và tính nhất quán của release checklist. Xem [QUICKSTART.md](QUICKSTART.md) để chạy API và Portal.
+Gate Windows kiểm tra Git/Python/Node/npm, syntax và schema, catalog invariant, frontend component tests/typecheck/build, backend unit/contract tests, tài liệu và tính nhất quán của release checklist. Xem [QUICKSTART.md](QUICKSTART.md) để chạy API và Portal.
 
 ## Runtime target
 

@@ -3,7 +3,7 @@ import {
   Activity, ArrowRight, Box, CheckCircle2, ChevronLeft, ChevronRight, CircleAlert,
   CloudDownload, Layers3, MoreHorizontal, Pencil, Plus, Search, Server, Trash2,
 } from 'lucide-react'
-import { createSystem, getSystem, listSystems, searchDcimServices, type DcimService } from './api/netciClient'
+import { createSystem, getPortalDashboard, getSystem, listServerInventory, listSystems, searchDcimServices, type DcimService, type PortalDashboard, type ServerInventoryItem } from './api/netciClient'
 import { usePortalFeedback } from './PortalFeedback'
 import { DoraCards, Modal, PageHeader, StatusPill, type Navigate } from './PortalShell'
 import { activity, servers as seedServers, systems, type PortalServer, type PortalSystem as PortalSystemView } from './portalData'
@@ -25,26 +25,46 @@ function isIpv4(value: string): boolean {
   return parts.length === 4 && parts.every((part) => /^\d{1,3}$/.test(part) && Number(part) <= 255)
 }
 
+function serverFromApi(item: ServerInventoryItem): PortalServer {
+  const environment: PortalServer['environment'] = item.environment === 'prod' ? 'Production' : item.environment === 'staging' ? 'Staging' : 'Dev'
+  const status: PortalServer['status'] = item.status === 'maintenance' ? 'Bảo trì' : item.status === 'offline' ? 'Offline' : 'Online'
+  return { id: item.hostname, systemId: item.systemId, ip: item.ipAddress, environment, status, lastChecked: 'API · vừa xong' }
+}
+
 export function DashboardPage({ navigate }: { navigate: Navigate }) {
+  const [dashboard, setDashboard] = useState<PortalDashboard>({
+    kpis: { systems: systems.length, modules: systems.reduce((total, system) => total + system.modules.length, 0), pipelineRuns: systems.reduce((total, system) => total + system.runs, 0), successRate: 73, failureRate: 27 },
+    pipelineActivity: activity.map((item, index) => ({ date: `2025-04-${String(index + 22).padStart(2, '0')}`, succeeded: item.success, failed: item.failed })),
+    systems: systems.map((system) => ({ id: system.id, unit: system.unit, description: system.description, owner: system.owner, status: system.status, moduleCount: system.modules.length, pipelineRuns: system.runs, failedRuns: system.failed, modules: [] })),
+  })
+  const [loadError, setLoadError] = useState(false)
+  useEffect(() => {
+    let active = true
+    getPortalDashboard().then((response) => { if (active) { setDashboard(response); setLoadError(false) } }).catch(() => { if (active) setLoadError(true) })
+    return () => { active = false }
+  }, [])
+  const successfulRuns = Math.max(0, Math.round(dashboard.kpis.pipelineRuns * dashboard.kpis.successRate / 100))
   const kpis = [
-    { label: 'Tổng số hệ thống', value: '3', sub: '5 module', icon: Layers3, tone: 'pink' },
-    { label: 'Mức độ hoạt động', value: '15', sub: 'Lượt chạy pipeline', icon: Activity, tone: 'blue' },
-    { label: 'Tỉ lệ thành công', value: '73%', sub: '11 lượt thành công', icon: CheckCircle2, tone: 'green' },
-    { label: 'Tỉ lệ thất bại', value: '27%', sub: '4 lượt thất bại', icon: CircleAlert, tone: 'red' },
+    { label: 'Tổng số hệ thống', value: String(dashboard.kpis.systems), sub: `${dashboard.kpis.modules} module`, icon: Layers3, tone: 'pink' },
+    { label: 'Mức độ hoạt động', value: String(dashboard.kpis.pipelineRuns), sub: 'Lượt chạy pipeline', icon: Activity, tone: 'blue' },
+    { label: 'Tỉ lệ thành công', value: `${dashboard.kpis.successRate}%`, sub: `${successfulRuns} lượt thành công`, icon: CheckCircle2, tone: 'green' },
+    { label: 'Tỉ lệ thất bại', value: `${dashboard.kpis.failureRate}%`, sub: `${Math.max(dashboard.kpis.pipelineRuns - successfulRuns, 0)} lượt thất bại`, icon: CircleAlert, tone: 'red' },
   ]
+  const maximumActivity = Math.max(1, ...dashboard.pipelineActivity.map((item) => item.succeeded + item.failed))
   return <>
     <PageHeader title="Dashboard" description="Monitor system activity and release health across the platform." />
+    {loadError && <div className="sync-note is-warning" role="status"><CircleAlert size={15} />Không thể đồng bộ dashboard từ API; đang hiển thị dữ liệu mẫu gần nhất.</div>}
     <div className="kpi-grid">{kpis.map((item) => <article className="kpi-card" key={item.label}><span className={`kpi-icon tone-${item.tone}`}><item.icon size={19} /></span><div><p>{item.label}</p><strong>{item.value}</strong><small>{item.sub}</small></div></article>)}</div>
     <section className="panel chart-panel">
       <div className="panel-heading"><div><h2>Hoạt động pipeline · 7 ngày gần nhất</h2><p>Release activity across all systems</p></div><div className="chart-legend"><span><i className="legend-success" />Thành công</span><span><i className="legend-failed" />Thất bại</span></div></div>
-      <div className="bar-chart"><div className="chart-y"><span>12</span><span>8</span><span>4</span><span>0</span></div><div className="chart-grid-lines"><i /><i /><i /><i /></div><div className="bar-groups">{activity.map((item) => <div className="bar-group" key={item.day}><div className="bar-stack"><i className="bar-success" style={{ height: `${item.success * 11}px` }} /><i className="bar-failed" style={{ height: `${item.failed * 16}px` }} /></div><span>{item.day}</span></div>)}</div></div>
+      <div className="bar-chart"><div className="chart-y"><span>{maximumActivity}</span><span>{Math.round(maximumActivity * 2 / 3)}</span><span>{Math.round(maximumActivity / 3)}</span><span>0</span></div><div className="chart-grid-lines"><i /><i /><i /><i /></div><div className="bar-groups">{dashboard.pipelineActivity.map((item) => <div className="bar-group" key={item.date}><div className="bar-stack"><i className="bar-success" style={{ height: `${item.succeeded / maximumActivity * 116}px` }} /><i className="bar-failed" style={{ height: `${item.failed / maximumActivity * 116}px` }} /></div><span>{new Intl.DateTimeFormat('vi-VN', { day: '2-digit', month: '2-digit', timeZone: 'UTC' }).format(new Date(`${item.date}T00:00:00Z`))}</span></div>)}</div></div>
     </section>
     <section className="panel activity-panel">
       <div className="panel-heading"><div><h2>Mức độ hoạt động theo hệ thống</h2><p>Pipeline activity by system and current health</p></div><button className="text-button" onClick={() => navigate('systems')}>Xem tất cả <ArrowRight size={15} /></button></div>
-      <div className="data-table dashboard-table"><div className="table-row table-head"><span>Hệ thống</span><span>Hoạt động</span><span>Thành công</span><span>Thất bại</span><span>Modules</span><span /></div>{systems.map((system) => {
-        const successRate = system.runs ? Math.round(system.succeeded / system.runs * 100) : 0
-        const failureRate = system.runs ? Math.round(system.failed / system.runs * 100) : 0
-        return <button className="table-row table-button" key={system.id} onClick={() => navigate('system', { systemId: system.id })}><span className="strong-cell"><i className={`system-health health-${system.status === 'healthy' ? 'green' : system.status === 'degraded' ? 'amber' : 'red'}`} />{system.id}</span><span><Activity size={15} />{system.runs ? `${system.runs} lượt chạy` : 'Chưa có dữ liệu'}</span><span className="progress-value"><i className="progress"><b className="success-fill" style={{ width: `${successRate}%` }} /></i>{system.runs ? `${successRate}%` : '—'}</span><span className="progress-value"><i className="progress"><b className="failed-fill" style={{ width: `${failureRate}%` }} /></i>{system.runs ? `${failureRate}%` : '—'}</span><span><Box size={15} />{system.modules.length} modules</span><ChevronRight size={16} /></button>
+      <div className="data-table dashboard-table"><div className="table-row table-head"><span>Hệ thống</span><span>Hoạt động</span><span>Thành công</span><span>Thất bại</span><span>Modules</span><span /></div>{dashboard.systems.map((system) => {
+        const successRate = system.pipelineRuns ? Math.round((system.pipelineRuns - system.failedRuns) / system.pipelineRuns * 100) : 0
+        const failureRate = system.pipelineRuns ? Math.round(system.failedRuns / system.pipelineRuns * 100) : 0
+        return <button className="table-row table-button" key={system.id} onClick={() => navigate('system', { systemId: system.id })}><span className="strong-cell"><i className={`system-health health-${system.status === 'healthy' ? 'green' : system.status === 'degraded' ? 'amber' : 'red'}`} />{system.id}</span><span><Activity size={15} />{system.pipelineRuns ? `${system.pipelineRuns} lượt chạy` : 'Chưa có dữ liệu'}</span><span className="progress-value"><i className="progress"><b className="success-fill" style={{ width: `${successRate}%` }} /></i>{system.pipelineRuns ? `${successRate}%` : '—'}</span><span className="progress-value"><i className="progress"><b className="failed-fill" style={{ width: `${failureRate}%` }} /></i>{system.pipelineRuns ? `${failureRate}%` : '—'}</span><span><Box size={15} />{system.moduleCount} modules</span><ChevronRight size={16} /></button>
       })}</div>
     </section>
   </>
@@ -129,23 +149,50 @@ export function ServersPage() {
   const [environment, setEnvironment] = useState('All environments')
   const [status, setStatus] = useState('All statuses')
   const [modal, setModal] = useState(false)
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [details, setDetails] = useState<PortalServer | null>(null)
+  const [selectedIds, setSelectedIds] = useState<string[]>([])
+  const [syncing, setSyncing] = useState(false)
   const [lastSync, setLastSync] = useState('28/04/2025 09:14')
-  const [newServer, setNewServer] = useState({ id: '', ip: '', environment: 'Dev' as PortalServer['environment'] })
+  const [pageSize, setPageSize] = useState(10)
+  const [page, setPage] = useState(1)
+  const [newServer, setNewServer] = useState({ id: '', systemId: 'netChat', ip: '', environment: 'Dev' as PortalServer['environment'] })
   useEffect(() => {
     window.sessionStorage.setItem(SERVER_SESSION_KEY, JSON.stringify(items))
   }, [items])
-  const duplicateServer = items.some((item) => item.id.toLowerCase() === newServer.id.trim().toLowerCase() || item.ip === newServer.ip.trim())
+  useEffect(() => {
+    let active = true
+    listServerInventory().then((result) => { if (active) { setItems(result.map(serverFromApi)); setLastSync('API · vừa xong') } }).catch((error) => { if (active) notify(error instanceof Error ? error.message : 'Không thể tải inventory từ netCI API.', 'error') })
+    return () => { active = false }
+  }, [])
+  const duplicateServer = items.some((item) => item.id !== editingId && (item.id.toLowerCase() === newServer.id.trim().toLowerCase() || item.ip === newServer.ip.trim()))
   const filtered = useMemo(() => items.filter((item) => `${item.id} ${item.systemId} ${item.ip}`.toLowerCase().includes(query.toLowerCase()) && (environment === 'All environments' || item.environment === environment) && (status === 'All statuses' || item.status === status)), [items, query, environment, status])
-  const addServer = () => { setItems((current) => [...current, { ...newServer, systemId: 'netChat', status: 'Online', lastChecked: 'Vừa xong' }]); setModal(false); notify(`${newServer.id} đã được thêm vào inventory.`); setNewServer({ id: '', ip: '', environment: 'Dev' }) }
-  const syncServers = () => { setLastSync('Vừa xong'); notify('Đã đồng bộ inventory từ DCIM.') }
+  const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize))
+  const visible = filtered.slice((page - 1) * pageSize, page * pageSize)
+  useEffect(() => setPage((current) => Math.min(current, totalPages)), [totalPages])
+  const saveServer = () => {
+    const next: PortalServer = { ...newServer, status: 'Online', lastChecked: 'Windows preview · vừa xong' }
+    setItems((current) => editingId ? current.map((item) => item.id === editingId ? next : item) : [...current, next])
+    setModal(false)
+    notify(`${next.id} đã được ${editingId ? 'cập nhật' : 'thêm'} trong Windows preview inventory.`)
+    setEditingId(null)
+    setNewServer({ id: '', systemId: 'netChat', ip: '', environment: 'Dev' })
+  }
+  const openEdit = (server: PortalServer) => { setEditingId(server.id); setNewServer({ id: server.id, systemId: server.systemId, ip: server.ip, environment: server.environment }); setModal(true) }
+  const syncServers = async () => {
+    setSyncing(true)
+    try { const result = await listServerInventory(); setItems(result.map(serverFromApi)); setSelectedIds([]); setLastSync('API · vừa xong'); notify('Đã đồng bộ inventory từ netCI API / DCIM fixture.') } catch (error) { notify(error instanceof Error ? error.message : 'Không thể đồng bộ inventory.', 'error') } finally { setSyncing(false) }
+  }
+  const toggleAll = () => setSelectedIds(visible.length > 0 && visible.every((item) => selectedIds.includes(item.id)) ? selectedIds.filter((id) => !visible.some((item) => item.id === id)) : [...new Set([...selectedIds, ...visible.map((item) => item.id)])])
   return <>
-    <PageHeader title="Servers" description="Quản lý máy chủ triển khai được đồng bộ từ DCIM." action={<div className="heading-actions"><button className="secondary-button" onClick={syncServers}><CloudDownload size={16} />Đồng bộ từ DCIM</button><button className="primary-button" onClick={() => setModal(true)}><Plus size={16} />Thêm server</button></div>} />
+    <PageHeader title="Servers" description="Danh sách server được đồng bộ từ DCIM, dùng để cấu hình deployment khi khởi tạo module." action={<div className="heading-actions"><button className="secondary-button" disabled={syncing} onClick={syncServers}><CloudDownload size={16} />{syncing ? 'Đang đồng bộ…' : 'Đồng bộ từ DCIM'}</button><button className="primary-button" onClick={() => { setEditingId(null); setNewServer({ id: '', systemId: 'netChat', ip: '', environment: 'Dev' }); setModal(true) }}><Plus size={16} />Thêm server</button></div>} />
     <div className="sync-note"><CheckCircle2 size={15} />Last sync: {lastSync} · {items.length} servers from DCIM</div>
     <section className="panel table-panel"><div className="table-toolbar server-filters"><label className="input-with-icon"><Search size={16} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Tìm hostname, IP, hệ thống…" /></label><select value={environment} onChange={(event) => setEnvironment(event.target.value)}><option>All environments</option><option>Dev</option><option>Staging</option><option>Production</option></select><select value={status} onChange={(event) => setStatus(event.target.value)}><option>All statuses</option><option>Online</option><option>Bảo trì</option><option>Offline</option></select></div>
-      <div className="data-table servers-table"><div className="table-row table-head"><span><input type="checkbox" aria-label="Chọn tất cả" /></span><span>Server</span><span>Hệ thống</span><span>IP address</span><span>Environment</span><span>Status</span><span>Last checked</span><span /></div>{filtered.map((server) => <div className="table-row" key={server.id}><span><input type="checkbox" aria-label={`Chọn ${server.id}`} /></span><span className="strong-cell"><Server size={16} />{server.id}</span><span>{server.systemId}</span><span className="mono">{server.ip}</span><span className={`env-badge env-${server.environment.toLowerCase()}`}>{server.environment}</span><StatusPill status={server.status} /><span>{server.lastChecked}</span><span className="row-actions"><button aria-label={`Sửa ${server.id}`}><Pencil size={15} /></button><button aria-label={`Xóa ${server.id}`} onClick={() => { setItems((current) => current.filter((item) => item.id !== server.id)); notify(`${server.id} đã được xóa.`, 'info') }}><Trash2 size={15} /></button><button aria-label={`Thêm thao tác ${server.id}`}><MoreHorizontal size={16} /></button></span></div>)}</div>{!filtered.length && <div className="empty-table"><Server size={22} /><strong>Không có server phù hợp</strong><span>Thử đổi môi trường, trạng thái hoặc từ khóa.</span></div>}
-      <div className="pagination"><span>Showing 1–{filtered.length} of {filtered.length}</span><div><select aria-label="Số dòng mỗi trang"><option>10 / page</option><option>20 / page</option></select><button disabled><ChevronLeft size={16} /></button><button className="page-active">1</button><button disabled><ChevronRight size={16} /></button></div></div>
+      <div className="data-table servers-table"><div className="table-row table-head"><span><input type="checkbox" aria-label="Chọn tất cả trên trang" checked={visible.length > 0 && visible.every((item) => selectedIds.includes(item.id))} onChange={toggleAll} /></span><span>Server</span><span>Hệ thống</span><span>IP address</span><span>Environment</span><span>Status</span><span>Last checked</span><span /></div>{visible.map((server) => <div className="table-row" key={server.id}><span><input type="checkbox" aria-label={`Chọn ${server.id}`} checked={selectedIds.includes(server.id)} onChange={() => setSelectedIds((current) => current.includes(server.id) ? current.filter((id) => id !== server.id) : [...current, server.id])} /></span><span className="strong-cell"><Server size={16} />{server.id}</span><span>{server.systemId}</span><span className="mono">{server.ip}</span><span className={`env-badge env-${server.environment.toLowerCase()}`}>{server.environment}</span><StatusPill status={server.status} /><span>{server.lastChecked}</span><span className="row-actions"><button aria-label={`Sửa ${server.id}`} onClick={() => openEdit(server)}><Pencil size={15} /></button><button aria-label={`Xóa ${server.id}`} onClick={() => { setItems((current) => current.filter((item) => item.id !== server.id)); setSelectedIds((current) => current.filter((id) => id !== server.id)); notify(`${server.id} đã được xóa khỏi Windows preview inventory.`, 'info') }}><Trash2 size={15} /></button><button aria-label={`Chi tiết ${server.id}`} onClick={() => setDetails(server)}><MoreHorizontal size={16} /></button></span></div>)}</div>{!filtered.length && <div className="empty-table"><Server size={22} /><strong>Không có server phù hợp</strong><span>Thử đổi môi trường, trạng thái hoặc từ khóa.</span></div>}
+      <div className="pagination"><span>Showing {filtered.length ? (page - 1) * pageSize + 1 : 0}–{Math.min(page * pageSize, filtered.length)} of {filtered.length}</span><div><select aria-label="Số dòng mỗi trang" value={pageSize} onChange={(event) => { setPageSize(Number(event.target.value)); setPage(1) }}><option value={10}>10 / page</option><option value={20}>20 / page</option></select><button disabled={page <= 1} aria-label="Trang trước" onClick={() => setPage((current) => Math.max(1, current - 1))}><ChevronLeft size={16} /></button><button className="page-active" disabled aria-current="page">{page}</button><button disabled={page >= totalPages} aria-label="Trang sau" onClick={() => setPage((current) => Math.min(totalPages, current + 1))}><ChevronRight size={16} /></button></div></div>
     </section>
-    {modal && <Modal title="Thêm server" description="Thêm một server thủ công vào inventory." onClose={() => setModal(false)} footer={<><button className="secondary-button" onClick={() => setModal(false)}>Hủy</button><button className="primary-button" disabled={!newServer.id || !isIpv4(newServer.ip) || duplicateServer} onClick={addServer}>Thêm server</button></>}><div className="form-grid"><label className="field full"><span>Server name</span><input value={newServer.id} onChange={(event) => setNewServer({ ...newServer, id: event.target.value })} placeholder="srv-app-01" /></label><label className="field full"><span>IP address</span><input value={newServer.ip} onChange={(event) => setNewServer({ ...newServer, ip: event.target.value })} placeholder="10.60.12.21" /></label>{newServer.ip && !isIpv4(newServer.ip) && <div className="inline-error full" role="alert"><CircleAlert size={15} />IP phải gồm 4 octet hợp lệ từ 0 đến 255.</div>}{duplicateServer && <div className="inline-error full" role="alert"><CircleAlert size={15} />Hostname hoặc IP đã tồn tại.</div>}<div className="field full"><span>Environment</span><div className="segmented">{(['Dev', 'Staging', 'Production'] as const).map((env) => <button className={newServer.environment === env ? 'active' : ''} onClick={() => setNewServer({ ...newServer, environment: env })} key={env}>{env}</button>)}</div></div></div></Modal>}
+    {modal && <Modal title={editingId ? `Sửa ${editingId}` : 'Thêm server'} description="Windows preview overlay; nguồn chính vẫn là DCIM adapter qua netCI API." onClose={() => setModal(false)} footer={<><button className="secondary-button" onClick={() => setModal(false)}>Hủy</button><button className="primary-button" disabled={!newServer.id || !isIpv4(newServer.ip) || duplicateServer} onClick={saveServer}>{editingId ? 'Lưu thay đổi' : 'Thêm server'}</button></>}><div className="form-grid"><label className="field full"><span>Server name</span><input value={newServer.id} onChange={(event) => setNewServer({ ...newServer, id: event.target.value })} placeholder="srv-app-01" /></label><label className="field full"><span>System</span><select value={newServer.systemId} onChange={(event) => setNewServer({ ...newServer, systemId: event.target.value })}>{systems.map((system) => <option key={system.id}>{system.id}</option>)}</select></label><label className="field full"><span>IP address</span><input value={newServer.ip} onChange={(event) => setNewServer({ ...newServer, ip: event.target.value })} placeholder="10.60.12.21" /></label>{newServer.ip && !isIpv4(newServer.ip) && <div className="inline-error full" role="alert"><CircleAlert size={15} />IP phải gồm 4 octet hợp lệ từ 0 đến 255.</div>}{duplicateServer && <div className="inline-error full" role="alert"><CircleAlert size={15} />Hostname hoặc IP đã tồn tại.</div>}<div className="field full"><span>Environment</span><div className="segmented">{(['Dev', 'Staging', 'Production'] as const).map((env) => <button className={newServer.environment === env ? 'active' : ''} onClick={() => setNewServer({ ...newServer, environment: env })} key={env}>{env}</button>)}</div></div></div></Modal>}
+    {details && <Modal title={details.id} description="Inventory details from the current Portal projection." onClose={() => setDetails(null)} footer={<button className="primary-button" onClick={() => setDetails(null)}>Close</button>}><div className="request-summary"><div><span>System</span><strong>{details.systemId}</strong></div><div><span>IP address</span><strong className="mono">{details.ip}</strong></div><div><span>Status</span><StatusPill status={details.status} /></div></div><div className="form-grid"><label className="field"><span>Environment</span><input readOnly value={details.environment} /></label><label className="field"><span>Last checked</span><input readOnly value={details.lastChecked} /></label></div></Modal>}
   </>
 }
 
