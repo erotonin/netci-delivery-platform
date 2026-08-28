@@ -744,6 +744,10 @@ def delete_system(systemId: str, _: Principal = DeveloperAccess):
         return Response(status_code=status.HTTP_204_NO_CONTENT)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail={"code": "SYSTEM_NOT_FOUND", "message": str(exc)}) from exc
+    except PortalError as exc:
+        # A refused delete has to reach the caller. Reporting 204 while the row survives
+        # is a delete the user is told worked, that comes back on the next restart.
+        raise HTTPException(status_code=exc.status_code, detail={"code": exc.code, "message": exc.message}) from exc
 
 
 @app.delete("/modules/{moduleId}", status_code=status.HTTP_204_NO_CONTENT)
@@ -753,6 +757,10 @@ def delete_module(moduleId: str, _: Principal = DeveloperAccess):
         return Response(status_code=status.HTTP_204_NO_CONTENT)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail={"code": "MODULE_NOT_FOUND", "message": str(exc)}) from exc
+    except PortalError as exc:
+        # A refused delete has to reach the caller. Reporting 204 while the row survives
+        # is a delete the user is told worked, that comes back on the next restart.
+        raise HTTPException(status_code=exc.status_code, detail={"code": exc.code, "message": exc.message}) from exc
 
 
 @app.get("/systems/{systemId}/modules")

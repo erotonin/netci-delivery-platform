@@ -14,7 +14,7 @@ from uuid import UUID, uuid4
 
 from .delivery import DeliveryPlatform
 from .domain.models import DeliveryEvent, Environment, Runtime
-from .persistence import PostgresPortalStore
+from .persistence import PostgresPortalStore, StillReferenced
 from .projections.dora import DoraEvent, project_dora
 
 #: Rolling window every DORA figure is computed over. Stated in the response so a
@@ -179,6 +179,11 @@ class PortalReadModel:
             return
         try:
             getattr(self.store, method)(*args)
+        except StillReferenced as exc:
+            # Not a storage failure: the write was refused because something still points
+            # at the row. 503 would send an operator to check the database when the answer
+            # is "remove the production request first".
+            raise PortalError("STILL_REFERENCED", str(exc), 409) from exc
         except Exception as exc:
             raise PortalError(
                 "PERSISTENCE_UNAVAILABLE",
@@ -277,33 +282,40 @@ class PortalReadModel:
         return self.system(system_id)
 
     def remove_system(self, system_id: str) -> None:
+        """Detach a system and its modules from the Portal.
+
+        Persisted first, then applied in memory -- the same order `DeliveryPlatform._commit`
+        uses, and for the same reason: a storage failure must never leave the API reporting
+        a state the database does not hold.
+        """
+
         if system_id not in self._systems:
             raise KeyError("system not found")
+        self._persist("delete_system", system_id)
+
         system = self._systems[system_id]
         for m_id in list(system.module_ids):
-            if m_id in self._modules:
-                del self._modules[m_id]
+            self._modules.pop(m_id, None)
         del self._systems[system_id]
-        if self.store is not None:
-            try:
-                self.store.delete_system(system_id)
-            except Exception:
-                pass
 
     def remove_module(self, module_id: str) -> None:
+        """Detach one module from the Portal.
+
+        Delivery history is deliberately preserved: the underlying application, its runs
+        and its deployments stay, because an audit trail that disappears when someone
+        tidies up the Portal is not an audit trail.
+        """
+
         if module_id not in self._modules:
             raise KeyError("module not found")
+        self._persist("delete_module", module_id)
+
         module = self._modules[module_id]
         if module.system_id in self._systems:
             sys_mods = self._systems[module.system_id].module_ids
             if module_id in sys_mods:
                 sys_mods.remove(module_id)
         del self._modules[module_id]
-        if self.store is not None:
-            try:
-                self.store.delete_module(module_id)
-            except Exception:
-                pass
 
 
     def attach_module(

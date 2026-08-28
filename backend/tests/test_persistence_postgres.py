@@ -262,3 +262,119 @@ def test_a_rollback_is_durable_and_keeps_the_superseded_digest(database):
     assert recovered.artifact_digest == ROLLBACK_DIGEST
     assert recovered.previous_artifact_digest == DIGEST
     assert restarted.get_pipeline(run.id).status == PipelineStatus.ROLLED_BACK
+
+
+# ------------------------------------------------------- deletes that must not lie
+
+
+def _portal_with_store():
+    """A PortalReadModel backed by the real database, as the API composes it."""
+
+    from app.persistence import PostgresPortalStore
+    from app.portal import PortalReadModel
+
+    platform = DeliveryPlatform()
+    portal = PortalReadModel(platform, store=PostgresPortalStore(DATABASE_URL))
+    return portal
+
+
+def _module_payload(name: str) -> dict:
+    return {
+        "name": name,
+        "displayName": name,
+        "repositoryUrl": "https://git.example.com/team/app",
+        "pipelineTemplate": "container-ci-cd-v1",
+        "runtime": Runtime.DOCKER,
+        "module_type": "Backend",
+        "description": "delete probe",
+    }
+
+
+@pytest.mark.skipif(not DATABASE_URL, reason="NETCI_TEST_DATABASE_URL is not set")
+def test_a_refused_delete_is_reported_instead_of_reappearing_after_a_restart():
+    """The bug this covers: `except Exception: pass` around the store delete.
+
+    A module named by a production request cannot be deleted -- the foreign key is ON
+    DELETE RESTRICT. Swallowing that returned 204, removed the module from memory, left
+    the row in the database, and brought it back on the next restart. A delete the user
+    is told worked, that silently undoes itself, is worse than one that refuses.
+    """
+
+    from app.persistence import PostgresPortalStore, StillReferenced
+
+    store = PostgresPortalStore(DATABASE_URL)
+    module_id = f"probe-{uuid.uuid4().hex[:8]}"
+
+    # Reach past the read model: this test is about the store's contract.
+    with store._connect() as connection:  # noqa: SLF001 - the contract under test
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "INSERT INTO systems (id, unit, description, owner, status) VALUES (%s,%s,%s,%s,%s)"
+                " ON CONFLICT (id) DO NOTHING",
+                (module_id, "probe", "delete probe", "tester", "healthy"),
+            )
+            cursor.execute(
+                "INSERT INTO modules (id, system_id, name, module_type, description, runtime)"
+                " VALUES (%s,%s,%s,%s,%s,%s)",
+                (module_id, module_id, module_id, "Backend", "delete probe", "docker"),
+            )
+            request_id = uuid.uuid4()
+            # production_requests still carries the legacy single-module column alongside
+            # the join table; both name the module, and both must be satisfied.
+            cursor.execute(
+                "INSERT INTO production_requests (id, module_id, requested_by, status)"
+                " VALUES (%s,%s,%s,%s)",
+                (request_id, module_id, "tester", "waiting_approval"),
+            )
+            cursor.execute(
+                "INSERT INTO production_request_modules (request_id, module_id, version, deployment_order)"
+                " VALUES (%s,%s,%s,%s)",
+                (request_id, module_id, "v1.0.0", 1),
+            )
+
+    with pytest.raises(StillReferenced, match="still referenced"):
+        store.delete_module(module_id)
+
+    # And the row is still there, so the refusal was honest.
+    with store._connect() as connection:  # noqa: SLF001
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT count(*) AS total FROM modules WHERE id = %s", (module_id,))
+            assert cursor.fetchone()["total"] == 1
+
+    # Clean up in dependency order.
+    with store._connect() as connection:  # noqa: SLF001
+        with connection.cursor() as cursor:
+            cursor.execute("DELETE FROM production_request_modules WHERE module_id = %s", (module_id,))
+            cursor.execute("DELETE FROM production_requests WHERE id = %s", (request_id,))
+            cursor.execute("DELETE FROM modules WHERE id = %s", (module_id,))
+            cursor.execute("DELETE FROM systems WHERE id = %s", (module_id,))
+
+
+@pytest.mark.skipif(not DATABASE_URL, reason="NETCI_TEST_DATABASE_URL is not set")
+def test_an_unreferenced_module_really_is_deleted():
+    """The other half: a refusal that refuses everything would be just as wrong."""
+
+    from app.persistence import PostgresPortalStore
+
+    store = PostgresPortalStore(DATABASE_URL)
+    module_id = f"probe-{uuid.uuid4().hex[:8]}"
+    with store._connect() as connection:  # noqa: SLF001
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "INSERT INTO systems (id, unit, description, owner, status) VALUES (%s,%s,%s,%s,%s)"
+                " ON CONFLICT (id) DO NOTHING",
+                (module_id, "probe", "delete probe", "tester", "healthy"),
+            )
+            cursor.execute(
+                "INSERT INTO modules (id, system_id, name, module_type, description, runtime)"
+                " VALUES (%s,%s,%s,%s,%s,%s)",
+                (module_id, module_id, module_id, "Backend", "delete probe", "docker"),
+            )
+
+    store.delete_module(module_id)
+
+    with store._connect() as connection:  # noqa: SLF001
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT count(*) AS total FROM modules WHERE id = %s", (module_id,))
+            assert cursor.fetchone()["total"] == 0
+            cursor.execute("DELETE FROM systems WHERE id = %s", (module_id,))

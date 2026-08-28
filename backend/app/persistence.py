@@ -104,6 +104,15 @@ class ConcurrentModification(RuntimeError):
     """Raised when a record changed between read and write."""
 
 
+class StillReferenced(RuntimeError):
+    """Raised when a row cannot be deleted because something still points at it.
+
+    Distinct from a storage failure, because the caller should say something different:
+    "the database is down" sends an operator to the wrong place when the truth is "a
+    production request still names this module".
+    """
+
+
 class PostgresDeliveryStore:
     def __init__(self, url: str) -> None:
         self.url = url
@@ -578,13 +587,31 @@ class PostgresPortalStore:
                 )
 
     def delete_system(self, system_id: str) -> None:
-        with self._connect() as connection:
-            with connection.cursor() as cursor:
-                cursor.execute("DELETE FROM modules WHERE system_id = %s", (system_id,))
-                cursor.execute("DELETE FROM systems WHERE id = %s", (system_id,))
+        """Delete a system and its modules, in one transaction.
+
+        `production_request_modules.module_id` is ON DELETE RESTRICT, so a module named by
+        a production request refuses to go. That refusal is the point -- a release request
+        that references a module nobody can look up is worse than a tidy Portal -- and it
+        has to reach the caller rather than being swallowed.
+        """
+
+        try:
+            with self._connect() as connection:
+                with connection.cursor() as cursor:
+                    cursor.execute("DELETE FROM modules WHERE system_id = %s", (system_id,))
+                    cursor.execute("DELETE FROM systems WHERE id = %s", (system_id,))
+        except psycopg.errors.ForeignKeyViolation as exc:
+            raise StillReferenced(
+                f"system {system_id} has a module that a production request still references"
+            ) from exc
 
     def delete_module(self, module_id: str) -> None:
-        with self._connect() as connection:
-            with connection.cursor() as cursor:
-                cursor.execute("DELETE FROM modules WHERE id = %s", (module_id,))
+        try:
+            with self._connect() as connection:
+                with connection.cursor() as cursor:
+                    cursor.execute("DELETE FROM modules WHERE id = %s", (module_id,))
+        except psycopg.errors.ForeignKeyViolation as exc:
+            raise StillReferenced(
+                f"module {module_id} is still referenced by a production request"
+            ) from exc
 
