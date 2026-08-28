@@ -27,8 +27,8 @@ def test_invalid_artifact_is_blocked(field):
 
 def test_developer_cannot_deploy_production():
     with pytest.raises(PolicyViolation):
-        require_environment_permission(Environment.PROD, Role.DEVELOPER)
+        require_environment_permission(Environment.PROD, {Role.DEVELOPER})
 
 
 def test_reviewer_can_approve_production():
-    require_environment_permission(Environment.PROD, Role.REVIEWER)
+    require_environment_permission(Environment.PROD, {Role.REVIEWER})

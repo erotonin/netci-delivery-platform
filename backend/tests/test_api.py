@@ -28,6 +28,19 @@ def test_healthz():
     assert response.headers['X-Correlation-Id'] == 'health-check-1'
 
 
+def test_healthz_reports_degraded_when_a_configured_dependency_is_unreachable(monkeypatch):
+    """Reporting healthy while writes would fail is the false-green this platform rejects."""
+
+    monkeypatch.setattr(platform, 'persistence_health', lambda: 'unavailable: connection refused')
+
+    response = client.get('/healthz')
+
+    assert response.status_code == 503
+    payload = response.json()
+    assert payload['status'] == 'degraded'
+    assert payload['dependencies']['deliveryPersistence'].startswith('unavailable')
+
+
 def test_cors_origins_are_loaded_normalized_and_deduplicated(monkeypatch):
     monkeypatch.setenv(
         'NETCI_ALLOWED_ORIGINS',
@@ -267,12 +280,14 @@ def test_approval_resumes_the_waiting_production_pipeline():
 
     approved = client.post(
         f"/deployments/{completed['deployment']['id']}/approve",
-        json={'actor': 'mentor-reviewer', 'comment': 'approved for production'},
+        # An actor in the body is deliberately not accepted: whoever holds the credential
+        # is the approver, and that is what the audit trail records.
+        json={'comment': 'approved for production'},
     )
 
     assert approved.status_code == 202
     assert approved.json()['status'] == 'deploying'
-    assert approved.json()['approvedBy'] == 'mentor-reviewer'
+    assert approved.json()['approvedBy'] == 'anonymous'  # NETCI_AUTH_MODE=none in tests
     assert client.get(f"/pipeline-runs/{run['id']}").json()['status'] == 'running'
 
 

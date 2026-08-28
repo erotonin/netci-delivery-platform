@@ -1,0 +1,277 @@
+{
+  "gate": "backstage-integration",
+  "description": "A running Backstage instance executes the checked-in Software Template through the documented proxy; netCI holds the resulting application and still enforces its rules.",
+  "result": "pass",
+  "error": null,
+  "commit": "d7a43b6c7017c0e48bd3359b6f7e81629dfc1f8e",
+  "host": {
+    "platform": "Linux-6.8.0-134-generic-x86_64-with-glibc2.39",
+    "python": "3.12.3",
+    "hostname": "openstack-aio"
+  },
+  "startedAt": "2026-08-28T02:25:36.257990+00:00",
+  "endedAt": "2026-08-28T02:25:40.431905+00:00",
+  "context": {
+    "apiUrl": "http://127.0.0.1:8100",
+    "pipelineApiKey": "netci-local-pipeline-key",
+    "backstageUrl": "http://127.0.0.1:7007",
+    "taskId": "aec2f8d7-92a8-4bab-8538-c53cf8797085"
+  },
+  "assertions": [
+    {
+      "assertion": "Backstage is reachable",
+      "passed": true,
+      "detail": "http://127.0.0.1:7007"
+    },
+    {
+      "assertion": "netCI is reachable",
+      "passed": true,
+      "detail": {
+        "expected": "ok",
+        "actual": "ok"
+      }
+    },
+    {
+      "assertion": "the checked-in netCI template is registered in the Backstage catalog",
+      "passed": true,
+      "detail": [
+        "example-nodejs-template",
+        "netci-application"
+      ]
+    },
+    {
+      "assertion": "the template has a single step that calls netCI over HTTP",
+      "passed": true,
+      "detail": {
+        "expected": 1,
+        "actual": 1
+      }
+    },
+    {
+      "assertion": "that step uses the Backstage HTTP action, not a bespoke plugin",
+      "passed": true,
+      "detail": {
+        "expected": "http:backstage:request",
+        "actual": "http:backstage:request"
+      }
+    },
+    {
+      "assertion": "the request goes through the documented proxy endpoint",
+      "passed": true,
+      "detail": "/proxy/netci/applications"
+    },
+    {
+      "assertion": "the template does not double-prefix /api, which would 404",
+      "passed": true,
+      "detail": "/proxy/netci/applications"
+    },
+    {
+      "assertion": "the scaffolder task completed",
+      "passed": true,
+      "detail": {
+        "expected": "completed",
+        "actual": "completed"
+      }
+    },
+    {
+      "assertion": "Backstage created the application in netCI, not in a store of its own",
+      "passed": true,
+      "detail": {
+        "created": "bs-bb068e67",
+        "newSince": [
+          "bs-bb068e67"
+        ]
+      }
+    },
+    {
+      "assertion": "the runtime the form asked for was recorded",
+      "passed": true,
+      "detail": {
+        "expected": "kubernetes",
+        "actual": "kubernetes"
+      }
+    },
+    {
+      "assertion": "the pipeline template the form asked for was recorded",
+      "passed": true,
+      "detail": {
+        "expected": "kubernetes-ci-cd-v1",
+        "actual": "kubernetes-ci-cd-v1"
+      }
+    },
+    {
+      "assertion": "the default environment the form asked for was recorded",
+      "passed": true,
+      "detail": {
+        "expected": "staging",
+        "actual": "staging"
+      }
+    },
+    {
+      "assertion": "netCI assigned the identity, so the application is a first-class netCI object",
+      "passed": true,
+      "detail": {
+        "id": "22fe46b1-bd7a-4210-8517-992649e1b82e",
+        "createdAt": "2026-08-28T02:25:36.357333+00:00"
+      }
+    },
+    {
+      "assertion": "the same domain defaults apply as for the Portal: stages come from the template",
+      "passed": true,
+      "detail": [
+        "checkout",
+        "unit-test",
+        "build",
+        "sbom",
+        "vulnerability-scan",
+        "sign",
+        "publish",
+        "deploy",
+        "health-check"
+      ]
+    },
+    {
+      "assertion": "a runtime that contradicts the template is rejected, the same as from the Portal",
+      "passed": true,
+      "detail": {
+        "expected": "failed",
+        "actual": "failed"
+      }
+    },
+    {
+      "assertion": "the rejected request created nothing in netCI",
+      "passed": true,
+      "detail": []
+    }
+  ],
+  "steps": [
+    {
+      "name": "netci-health",
+      "command": null,
+      "startedAt": "2026-08-28T02:25:36.290288+00:00",
+      "endedAt": "2026-08-28T02:25:36.290288+00:00",
+      "durationSeconds": 0.0,
+      "exitCode": 0,
+      "passed": true,
+      "stdout": "",
+      "stderr": "",
+      "detail": {
+        "status": "ok",
+        "version": "0.1.0",
+        "engines": {
+          "ci": "jenkins",
+          "cd": "none"
+        },
+        "dependencies": {
+          "portalPersistence": {
+            "mode": "postgresql",
+            "status": "ready"
+          },
+          "deliveryPersistence": "ok"
+        }
+      }
+    },
+    {
+      "name": "catalog-templates",
+      "command": null,
+      "startedAt": "2026-08-28T02:25:36.298843+00:00",
+      "endedAt": "2026-08-28T02:25:36.298843+00:00",
+      "durationSeconds": 0.0,
+      "exitCode": 0,
+      "passed": true,
+      "stdout": "",
+      "stderr": "",
+      "detail": {
+        "names": [
+          "example-nodejs-template",
+          "netci-application"
+        ]
+      }
+    },
+    {
+      "name": "scaffolder-values",
+      "command": null,
+      "startedAt": "2026-08-28T02:25:36.298917+00:00",
+      "endedAt": "2026-08-28T02:25:36.298917+00:00",
+      "durationSeconds": 0.0,
+      "exitCode": 0,
+      "passed": true,
+      "stdout": "",
+      "stderr": "",
+      "detail": {
+        "name": "bs-bb068e67",
+        "repositoryUrl": "https://github.com/example/bs-bb068e67",
+        "pipelineTemplate": "kubernetes-ci-cd-v1",
+        "runtime": "kubernetes",
+        "defaultEnvironment": "staging"
+      }
+    },
+    {
+      "name": "scaffolder-task",
+      "command": null,
+      "startedAt": "2026-08-28T02:25:38.352302+00:00",
+      "endedAt": "2026-08-28T02:25:38.352302+00:00",
+      "durationSeconds": 0.0,
+      "exitCode": 0,
+      "passed": true,
+      "stdout": "",
+      "stderr": "",
+      "detail": {
+        "id": "aec2f8d7-92a8-4bab-8538-c53cf8797085",
+        "status": "completed",
+        "log": [
+          "Starting up task with 1 steps",
+          "Beginning step Create application in netCI",
+          "\u001b[32minfo\u001b[39m: Creating POST request with http:backstage:request scaffolder action against /proxy/netci/applications",
+          "Finished step Create application in netCI"
+        ]
+      }
+    },
+    {
+      "name": "netci-application",
+      "command": null,
+      "startedAt": "2026-08-28T02:25:38.357009+00:00",
+      "endedAt": "2026-08-28T02:25:38.357009+00:00",
+      "durationSeconds": 0.0,
+      "exitCode": 0,
+      "passed": true,
+      "stdout": "",
+      "stderr": "",
+      "detail": {
+        "id": "22fe46b1-bd7a-4210-8517-992649e1b82e",
+        "name": "bs-bb068e67",
+        "repositoryUrl": "https://github.com/example/bs-bb068e67",
+        "pipelineTemplate": "kubernetes-ci-cd-v1",
+        "runtime": "kubernetes",
+        "defaultEnvironment": "staging",
+        "stages": [
+          "checkout",
+          "unit-test",
+          "build",
+          "sbom",
+          "vulnerability-scan",
+          "sign",
+          "publish",
+          "deploy",
+          "health-check"
+        ],
+        "createdAt": "2026-08-28T02:25:36.357333+00:00"
+      }
+    },
+    {
+      "name": "scaffolder-invalid-task",
+      "command": null,
+      "startedAt": "2026-08-28T02:25:40.419267+00:00",
+      "endedAt": "2026-08-28T02:25:40.419267+00:00",
+      "durationSeconds": 0.0,
+      "exitCode": 0,
+      "passed": true,
+      "stdout": "",
+      "stderr": "",
+      "detail": {
+        "id": "8a2c0cab-32b9-44a6-8f7b-08aeb323ecb4",
+        "status": "failed"
+      }
+    }
+  ]
+}

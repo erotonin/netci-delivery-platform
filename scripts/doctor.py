@@ -86,6 +86,44 @@ def ubuntu_version() -> str | None:
     return values.get("VERSION_ID") if values.get("ID") == "ubuntu" else None
 
 
+def kernel_limit(name: str, minimum: int) -> CheckResult:
+    """Check a sysctl the lab actually depends on.
+
+    kind nodes run kubelet, containerd and cAdvisor, each of which opens inotify
+    instances. On a host already running many containers the default
+    fs.inotify.max_user_instances is exhausted and the worker node never becomes Ready,
+    with only a "too many open files" line in the kubelet journal to explain it.
+    """
+
+    path = Path(f"/proc/sys/{name.replace('.', '/')}")
+    try:
+        actual = int(path.read_text(encoding="utf-8").strip())
+    except (OSError, ValueError) as exc:
+        return CheckResult(name, False, f"cannot read {path}: {exc}")
+    if actual < minimum:
+        return CheckResult(
+            name,
+            False,
+            f"{actual} is below the {minimum} kind needs; raise it with "
+            f"`sudo sysctl -w {name}={minimum}`",
+        )
+    return CheckResult(name, True, str(actual))
+
+
+def python_library(module: str, purpose: str) -> CheckResult:
+    """Ansible modules fail at run time, not at lint time, when these are absent."""
+
+    try:
+        __import__(module)
+    except ImportError:
+        return CheckResult(
+            f"python:{module}",
+            False,
+            f"missing; {purpose}. Install with `pip install -r deploy/ansible/requirements.txt`",
+        )
+    return CheckResult(f"python:{module}", True, "importable")
+
+
 def ubuntu_checks() -> list[CheckResult]:
     version = ubuntu_version()
     checks = [
@@ -116,6 +154,12 @@ def ubuntu_checks() -> list[CheckResult]:
             CheckResult("docker-engine", docker_ok, docker_detail),
             CheckResult("docker-compose-plugin", compose_ok, compose_detail),
             CheckResult("libvirt-connection", virsh_ok, virsh_detail),
+            # These two are the failures that cost the most time to diagnose, because
+            # neither reports itself as a missing prerequisite.
+            kernel_limit("fs.inotify.max_user_instances", 512),
+            kernel_limit("fs.inotify.max_user_watches", 262144),
+            python_library("kubernetes", "kubernetes.core Helm and k8s_info tasks need it"),
+            python_library("docker", "community.docker compose tasks need it"),
         ]
     )
     return checks

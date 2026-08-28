@@ -1,5 +1,16 @@
 # Merge this fragment into the Backstage app-config.yaml used for the local experiment.
-# The proxy plugin must be registered in the Backstage backend.
+#
+# Two prerequisites, both in the Backstage backend, not in netCI:
+#
+#   1. @backstage/plugin-proxy-backend  -- serves the /netci endpoint below.
+#   2. @roadiehq/scaffolder-backend-module-http-request -- provides the
+#      `http:backstage:request` action the Software Template uses. It is NOT built in:
+#      without it the scaffolder fails with "Template action ... is not registered".
+#
+#      yarn --cwd packages/backend add @roadiehq/scaffolder-backend-module-http-request
+#      backend.add(import('@roadiehq/scaffolder-backend-module-http-request/new-backend'));
+#
+# `scripts/backstage_lab.sh up` does all of this against a freshly scaffolded app.
 proxy:
   reviveConsumedRequestBodies: true
   endpoints:

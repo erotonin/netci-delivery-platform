@@ -163,6 +163,8 @@ function DoraTab({ moduleId }: { moduleId: string }) {
   const [metrics, setMetrics] = useState<(typeof moduleDora)[number][]>(moduleDora)
   const [loading, setLoading] = useState(false)
   const [updatedAt, setUpdatedAt] = useState('preview baseline')
+  // null until the API answers: the card must never imply these came from real events.
+  const [sourceEventCount, setSourceEventCount] = useState<number | null>(null)
 
   const load = async () => {
     setLoading(true)
@@ -174,6 +176,7 @@ function DoraTab({ moduleId }: { moduleId: string }) {
         return metric ? { ...fallback, label: metric.label, value: String(metric.value), unit: metric.unit, hint: metric.hint } : fallback
       })
       setMetrics(next)
+      setSourceEventCount(result.sourceEventCount ?? 0)
       setUpdatedAt(new Date().toLocaleTimeString('vi-VN'))
     } catch (error) {
       notify(error instanceof Error ? error.message : 'Không tải được DORA metrics.', 'error')
@@ -184,7 +187,13 @@ function DoraTab({ moduleId }: { moduleId: string }) {
 
   useEffect(() => { void load() }, [moduleId])
 
-  return <><div className="dora-toolbar"><div><p>4 DORA metrics · updated {updatedAt}</p></div><div><select value={range} onChange={(event) => setRange(event.target.value)}><option>Weekly</option><option>Monthly</option><option>Quarterly</option></select><span>From</span><input type="date" value={from} max={to} onChange={(event) => setFrom(event.target.value)} /><span>To</span><input type="date" value={to} min={from} onChange={(event) => setTo(event.target.value)} /><button className="secondary-button" disabled={loading} aria-label="Refresh DORA metrics" onClick={load}><RotateCcw size={15} />{loading ? 'Loading…' : 'Refresh'}</button></div></div><DoraCards metrics={metrics} /><div className="dora-charts">{metrics.map((metric, index) => <section className="panel metric-chart" key={metric.key}><div className="panel-heading"><div><h2>{metric.label}</h2><p>{metric.hint} · {range.toLowerCase()} view</p></div></div><div className="line-chart"><div className="line-grid"><i /><i /><i /><i /></div><svg viewBox="0 0 500 130" preserveAspectRatio="none" aria-label={`${metric.label} chart`}><polyline points={index % 2 ? '0,25 165,52 330,78 500,105' : '0,100 165,78 330,52 500,24'} fill="none" stroke={index === 2 ? '#f2053f' : index === 3 ? '#16a36a' : index === 1 ? '#2da9d6' : '#8b5cf6'} strokeWidth="3" /></svg><div className="chart-x"><span>{from}</span><span>{to}</span></div></div></section>)}</div></>
+  const provenance = sourceEventCount === null
+    ? 'preview data, not yet loaded from delivery events'
+    : sourceEventCount === 0
+      ? 'no delivery events recorded yet'
+      : `projected from ${sourceEventCount} delivery event${sourceEventCount === 1 ? '' : 's'}`
+
+  return <><div className="dora-toolbar"><div><p>4 DORA metrics · {provenance} · updated {updatedAt}</p></div><div><select value={range} onChange={(event) => setRange(event.target.value)}><option>Weekly</option><option>Monthly</option><option>Quarterly</option></select><span>From</span><input type="date" value={from} max={to} onChange={(event) => setFrom(event.target.value)} /><span>To</span><input type="date" value={to} min={from} onChange={(event) => setTo(event.target.value)} /><button className="secondary-button" disabled={loading} aria-label="Refresh DORA metrics" onClick={load}><RotateCcw size={15} />{loading ? 'Loading…' : 'Refresh'}</button></div></div><DoraCards metrics={metrics} /><div className="dora-charts">{metrics.map((metric, index) => <section className="panel metric-chart" key={metric.key}><div className="panel-heading"><div><h2>{metric.label}</h2><p>{metric.hint} · {range.toLowerCase()} view</p></div></div><div className="line-chart"><div className="line-grid"><i /><i /><i /><i /></div><svg viewBox="0 0 500 130" preserveAspectRatio="none" aria-label={`${metric.label} chart`}><polyline points={index % 2 ? '0,25 165,52 330,78 500,105' : '0,100 165,78 330,52 500,24'} fill="none" stroke={index === 2 ? '#f2053f' : index === 3 ? '#16a36a' : index === 1 ? '#2da9d6' : '#8b5cf6'} strokeWidth="3" /></svg><div className="chart-x"><span>{from}</span><span>{to}</span></div></div></section>)}</div></>
 }
 
 type ModuleView = { id: string; name: string; type: string; description: string; runtime: Runtime; versions: string[]; activityCount: number; pipelineConfig: Partial<ModulePipelineConfig> }

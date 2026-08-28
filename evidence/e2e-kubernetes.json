@@ -1,0 +1,807 @@
+{
+  "gate": "e2e-kubernetes",
+  "description": "Signed image promoted onto kind via Helm, with the running pod's digest compared to the approved artifact and a revision rollback verified.",
+  "result": "pass",
+  "error": null,
+  "commit": "d7a43b6c7017c0e48bd3359b6f7e81629dfc1f8e",
+  "host": {
+    "platform": "Linux-6.8.0-134-generic-x86_64-with-glibc2.39",
+    "python": "3.12.3",
+    "hostname": "openstack-aio"
+  },
+  "startedAt": "2026-08-27T15:51:13.323960+00:00",
+  "endedAt": "2026-08-27T15:51:44.227018+00:00",
+  "context": {
+    "apiUrl": "http://127.0.0.1:8100",
+    "pipelineApiKey": "netci-local-pipeline-key",
+    "registry": "localhost:55000",
+    "pullRepository": "localhost:55000/hello-kubernetes",
+    "pushRepository": "localhost:55000/hello-kubernetes",
+    "kubeContext": "kind-netci-local",
+    "forwardPort": 18083
+  },
+  "assertions": [
+    {
+      "assertion": "the netCI API is healthy",
+      "passed": true,
+      "detail": {
+        "expected": "ok",
+        "actual": "ok"
+      }
+    },
+    {
+      "assertion": "the kind cluster is reachable",
+      "passed": true,
+      "detail": null
+    },
+    {
+      "assertion": "v1: the registry returned an immutable digest",
+      "passed": true,
+      "detail": "sha256:57660324fa4c0c50bc77ef4db2d612559906642881160d6ca7ede6533b2e001b"
+    },
+    {
+      "assertion": "v1: Syft produced a CycloneDX SBOM",
+      "passed": true,
+      "detail": null
+    },
+    {
+      "assertion": "v1: Cosign verifies the published image",
+      "passed": true,
+      "detail": null
+    },
+    {
+      "assertion": "v2: the registry returned an immutable digest",
+      "passed": true,
+      "detail": "sha256:ccc030201b66490dcf91220b97955ce59f11a9012e2ae9a7a378a515940815f1"
+    },
+    {
+      "assertion": "v2: Syft produced a CycloneDX SBOM",
+      "passed": true,
+      "detail": null
+    },
+    {
+      "assertion": "v2: Cosign verifies the published image",
+      "passed": true,
+      "detail": null
+    },
+    {
+      "assertion": "the two releases are distinct artifacts",
+      "passed": true,
+      "detail": {
+        "v1": "sha256:57660324fa4c0c50bc77ef4db2d612559906642881160d6ca7ede6533b2e001b",
+        "v2": "sha256:ccc030201b66490dcf91220b97955ce59f11a9012e2ae9a7a378a515940815f1"
+      }
+    },
+    {
+      "assertion": "the v1 artifact satisfies the supply-chain policy",
+      "passed": true,
+      "detail": {
+        "expected": "allow",
+        "actual": "allow"
+      }
+    },
+    {
+      "assertion": "a staging deployment does not need approval",
+      "passed": true,
+      "detail": {
+        "expected": "deploying",
+        "actual": "deploying"
+      }
+    },
+    {
+      "assertion": "the deployment targets the Kubernetes runtime",
+      "passed": true,
+      "detail": {
+        "expected": "kubernetes",
+        "actual": "kubernetes"
+      }
+    },
+    {
+      "assertion": "the pod runs exactly the digest netCI approved",
+      "passed": true,
+      "detail": {
+        "expected": "localhost:55000/hello-kubernetes@sha256:57660324fa4c0c50bc77ef4db2d612559906642881160d6ca7ede6533b2e001b",
+        "actual": "localhost:55000/hello-kubernetes@sha256:57660324fa4c0c50bc77ef4db2d612559906642881160d6ca7ede6533b2e001b"
+      }
+    },
+    {
+      "assertion": "the service reports healthy inside the cluster",
+      "passed": true,
+      "detail": {
+        "expected": "ok",
+        "actual": "ok"
+      }
+    },
+    {
+      "assertion": "the promoted release runs the second digest",
+      "passed": true,
+      "detail": {
+        "expected": "localhost:55000/hello-kubernetes@sha256:ccc030201b66490dcf91220b97955ce59f11a9012e2ae9a7a378a515940815f1",
+        "actual": "localhost:55000/hello-kubernetes@sha256:ccc030201b66490dcf91220b97955ce59f11a9012e2ae9a7a378a515940815f1"
+      }
+    },
+    {
+      "assertion": "Helm kept a revision history to roll back to",
+      "passed": true,
+      "detail": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10
+      ]
+    },
+    {
+      "assertion": "netCI records the rollback",
+      "passed": true,
+      "detail": {
+        "expected": "rolled_back",
+        "actual": "rolled_back"
+      }
+    },
+    {
+      "assertion": "rolling back the Helm revision restores the previous digest without rebuilding",
+      "passed": true,
+      "detail": {
+        "expected": "localhost:55000/hello-kubernetes@sha256:57660324fa4c0c50bc77ef4db2d612559906642881160d6ca7ede6533b2e001b",
+        "actual": "localhost:55000/hello-kubernetes@sha256:57660324fa4c0c50bc77ef4db2d612559906642881160d6ca7ede6533b2e001b"
+      }
+    },
+    {
+      "assertion": "the rolled-back service is healthy",
+      "passed": true,
+      "detail": {
+        "expected": "ok",
+        "actual": "ok"
+      }
+    }
+  ],
+  "steps": [
+    {
+      "name": "tool-preflight",
+      "command": null,
+      "startedAt": "2026-08-27T15:51:13.324054+00:00",
+      "endedAt": "2026-08-27T15:51:13.324054+00:00",
+      "durationSeconds": 0.0,
+      "exitCode": 0,
+      "passed": true,
+      "stdout": "",
+      "stderr": "",
+      "detail": {
+        "required": [
+          "docker",
+          "kubectl",
+          "helm",
+          "syft",
+          "trivy",
+          "cosign"
+        ],
+        "missing": []
+      }
+    },
+    {
+      "name": "api-health",
+      "command": null,
+      "startedAt": "2026-08-27T15:51:13.345872+00:00",
+      "endedAt": "2026-08-27T15:51:13.345872+00:00",
+      "durationSeconds": 0.0,
+      "exitCode": 0,
+      "passed": true,
+      "stdout": "",
+      "stderr": "",
+      "detail": {
+        "status": "ok",
+        "version": "0.1.0",
+        "engines": {
+          "ci": "none",
+          "cd": "none"
+        },
+        "dependencies": {
+          "portalPersistence": {
+            "mode": "postgresql",
+            "status": "ready"
+          },
+          "deliveryPersistence": "ok"
+        }
+      }
+    },
+    {
+      "name": "helm-lint",
+      "command": [
+        "helm",
+        "lint",
+        "/home/deployer/netci-delivery-platform/deploy/helm/sample-kubernetes-app"
+      ],
+      "startedAt": "2026-08-27T15:51:13.345893+00:00",
+      "endedAt": "2026-08-27T15:51:13.382785+00:00",
+      "durationSeconds": 0.037,
+      "exitCode": 0,
+      "passed": true,
+      "stdout": "==> Linting /home/deployer/netci-delivery-platform/deploy/helm/sample-kubernetes-app\n[INFO] Chart.yaml: icon is recommended\n\n1 chart(s) linted, 0 chart(s) failed\n",
+      "stderr": "",
+      "detail": {}
+    },
+    {
+      "name": "cluster-nodes",
+      "command": [
+        "kubectl",
+        "--context",
+        "kind-netci-local",
+        "get",
+        "nodes",
+        "-o",
+        "json"
+      ],
+      "startedAt": "2026-08-27T15:51:13.382800+00:00",
+      "endedAt": "2026-08-27T15:51:13.426506+00:00",
+      "durationSeconds": 0.044,
+      "exitCode": 0,
+      "passed": true,
+      "stdout": "                 \"hugepages-2Mi\": \"0\",\n                    \"memory\": \"32458568Ki\",\n                    \"pods\": \"110\"\n                },\n                \"capacity\": {\n                    \"cpu\": \"22\",\n                    \"ephemeral-storage\": \"205313000Ki\",\n                    \"hugepages-1Gi\": \"0\",\n                    \"hugepages-2Mi\": \"0\",\n                    \"memory\": \"32458568Ki\",\n                    \"pods\": \"110\"\n                },\n                \"conditions\": [\n                    {\n                        \"lastHeartbeatTime\": \"2026-08-27T15:50:40Z\",\n                        \"lastTransitionTime\": \"2026-08-27T15:29:35Z\",\n                        \"message\": \"kubelet has sufficient memory available\",\n                        \"reason\": \"KubeletHasSufficientMemory\",\n                        \"status\": \"False\",\n                        \"type\": \"MemoryPressure\"\n                    },\n                    {\n                        \"lastHeartbeatTime\": \"2026-08-27T15:50:40Z\",\n                        \"lastTransitionTime\": \"2026-08-27T15:29:35Z\",\n                        \"message\": \"kubelet has no disk pressure\",\n                        \"reason\": \"KubeletHasNoDiskPressure\",\n                        \"status\": \"False\",\n                        \"type\": \"DiskPressure\"\n                    },\n                    {\n                        \"lastHeartbeatTime\": \"2026-08-27T15:50:40Z\",\n                        \"lastTransitionTime\": \"2026-08-27T15:29:35Z\",\n                        \"message\": \"kubelet has sufficient PID available\",\n                        \"reason\": \"KubeletHasSufficientPID\",\n                        \"status\": \"False\",\n                        \"type\": \"PIDPressure\"\n                    },\n                    {\n                        \"lastHeartbeatTime\": \"2026-08-27T15:50:40Z\",\n                        \"lastTransitionTime\": \"2026-08-27T15:29:48Z\",\n                        \"message\": \"kubelet is posting ready status\",\n                        \"reason\": \"KubeletReady\",\n                        \"status\": \"True\",\n                        \"type\": \"Ready\"\n                    }\n                ],\n                \"daemonEndpoints\": {\n                    \"kubeletEndpoint\": {\n                        \"Port\": 10250\n                    }\n                },\n                \"features\": {\n                    \"supplementalGroupsPolicy\": true\n                },\n                \"images\": [\n                    {\n                        \"names\": [\n                            \"registry.k8s.io/kube-apiserver-amd64:v1.34.0\",\n                            \"registry.k8s.io/kube-apiserver:v1.34.0\"\n                        ],\n                        \"sizeBytes\": 89044732\n                    },\n                    {\n                        \"names\": [\n                            \"registry.k8s.io/kube-controller-manager-amd64:v1.34.0\",\n                            \"registry.k8s.io/kube-controller-manager:v1.34.0\"\n                        ],\n                        \"sizeBytes\": 75998818\n                    },\n                    {\n                        \"names\": [\n                            \"registry.k8s.io/etcd:3.6.4-0\"\n                        ],\n                        \"sizeBytes\": 74311308\n                    },\n                    {\n                        \"names\": [\n                            \"registry.k8s.io/kube-proxy-amd64:v1.34.0\",\n                            \"registry.k8s.io/kube-proxy:v1.34.0\"\n                        ],\n                        \"sizeBytes\": 73135815\n                    },\n                    {\n                        \"names\": [\n                            \"registry.k8s.io/kube-scheduler-amd64:v1.34.0\",\n                            \"registry.k8s.io/kube-scheduler:v1.34.0\"\n                        ],\n                        \"sizeBytes\": 53839458\n                    },\n                    {\n                        \"names\": [\n                            \"docker.io/kindest/kindnetd:v20250512-df8de77b\"\n                        ],\n                        \"sizeBytes\": 44375501\n                    },\n                    {\n                        \"names\": [\n                            \"docker.io/kindest/local-path-provisioner:v20250214-acbabc1a\"\n                        ],\n                        \"sizeBytes\": 22540870\n                    },\n                    {\n                        \"names\": [\n                            \"registry.k8s.io/coredns/coredns:v1.12.1\"\n                        ],\n                        \"sizeBytes\": 22384805\n                    },\n                    {\n                        \"names\": [\n                            \"localhost:55000/hello-kubernetes@sha256:4a39ea7c0f194eaf70fd6d1b2f9db0c89b7f7339f7ab1a70b8560baae376ea21\",\n                            \"localhost:55000/hello-kubernetes@sha256:63b5364930e4467ffdc609e6ed8a342fb8285f0d86c700bf9c62e39b782c6f73\",\n                            \"localhost:55000/hello-kubernetes@sha256:6819d501aea364b43f27341f1c01c01a34347392395c397c36c68cbfdeaeee6f\",\n                            \"localhost:55000/hello-kubernetes@sha256:6d5581f7a83b12cc66aee83c13e3d9547f2202eeb0cd766135ad26a3c66b216a\"\n                        ],\n                        \"sizeBytes\": 21743405\n                    },\n                    {\n                        \"names\": [\n                            \"localhost:55000/hello-kubernetes@sha256:82d02499bb8461f1e8f58134a49709db738e6de9843400daa499cd94019decf3\",\n                            \"localhost:55000/hello-kubernetes@sha256:b7b78ffe24403170d3a08d96f863f76d71411eed1f22a2570c9d1ecc87b4240c\"\n                        ],\n                        \"sizeBytes\": 21743405\n                    },\n                    {\n                        \"names\": [\n                            \"localhost:55000/probe@sha256:7c8cb692ae09657cbc4a3f3cbd0e8d5a2690ba38386aaaf252dbb060bf5eb2e6\",\n                            \"localhost:55000/probe:v1\"\n                        ],\n                        \"sizeBytes\": 3789228\n                    },\n                    {\n                        \"names\": [\n                            \"docker.io/kindest/local-path-helper:v20241212-8ac705d0\"\n                        ],\n                        \"sizeBytes\": 3084671\n                    },\n                    {\n                        \"names\": [\n                            \"registry.k8s.io/pause:3.10\"\n                        ],\n                        \"sizeBytes\": 320368\n                    }\n                ],\n                \"nodeInfo\": {\n                    \"architecture\": \"amd64\",\n                    \"bootID\": \"0364c3b8-4e03-480e-99ac-72bd564bd110\",\n                    \"containerRuntimeVersion\": \"containerd://2.1.3\",\n                    \"kernelVersion\": \"6.8.0-134-generic\",\n                    \"kubeProxyVersion\": \"\",\n                    \"kubeletVersion\": \"v1.34.0\",\n                    \"machineID\": \"2387a864b59e4a86bc9d4f7dc9da145e\",\n                    \"operatingSystem\": \"linux\",\n                    \"osImage\": \"Debian GNU/Linux 12 (bookworm)\",\n                    \"systemUUID\": \"985ed407-56c3-496e-8687-12ad391aacea\"\n                },\n                \"runtimeHandlers\": [\n                    {\n                        \"features\": {\n                            \"recursiveReadOnlyMounts\": true,\n                            \"userNamespaces\": true\n                        },\n                        \"name\": \"runc\"\n                    },\n                    {\n                        \"features\": {\n                            \"recursiveReadOnlyMounts\": true,\n                            \"userNamespaces\": true\n                        },\n                        \"name\": \"\"\n                    },\n                    {\n                        \"features\": {\n                            \"recursiveReadOnlyMounts\": true,\n                            \"userNamespaces\": true\n                        },\n                        \"name\": \"test-handler\"\n                    }\n                ]\n            }\n        }\n    ],\n    \"kind\": \"List\",\n    \"metadata\": {\n        \"resourceVersion\": \"\"\n    }\n}\n",
+      "stderr": "",
+      "detail": {}
+    },
+    {
+      "name": "v1:build",
+      "command": [
+        "docker",
+        "build",
+        "--network",
+        "host",
+        "--build-arg",
+        "PYTHON_IMAGE=python:3.12-alpine",
+        "--label",
+        "org.netci.version=v1",
+        "-t",
+        "localhost:55000/hello-kubernetes:v1",
+        "/home/deployer/netci-delivery-platform/sample-apps/hello-kubernetes"
+      ],
+      "startedAt": "2026-08-27T15:51:13.427052+00:00",
+      "endedAt": "2026-08-27T15:51:14.452497+00:00",
+      "durationSeconds": 1.025,
+      "exitCode": 0,
+      "passed": true,
+      "stdout": "",
+      "stderr": "#0 building with \"default\" instance using docker driver\n\n#1 [internal] load build definition from Dockerfile\n#1 transferring dockerfile: 569B done\n#1 DONE 0.0s\n\n#2 [internal] load metadata for docker.io/library/python:3.12-alpine\n#2 DONE 0.8s\n\n#3 [internal] load .dockerignore\n#3 transferring context: 2B done\n#3 DONE 0.0s\n\n#4 [internal] load build context\n#4 transferring context: 28B done\n#4 DONE 0.0s\n\n#5 [1/4] FROM docker.io/library/python:3.12-alpine@sha256:d09d15e60962ca365d1cd544a48773bac9d33f2fb1b00f2aa0deec78ade7dc31\n#5 resolve docker.io/library/python:3.12-alpine@sha256:d09d15e60962ca365d1cd544a48773bac9d33f2fb1b00f2aa0deec78ade7dc31 0.0s done\n#5 DONE 0.0s\n\n#6 [2/4] RUN apk upgrade --no-cache\n#6 CACHED\n\n#7 [3/4] WORKDIR /app\n#7 CACHED\n\n#8 [4/4] COPY --chown=10001:10001 app.py /app/app.py\n#8 CACHED\n\n#9 exporting to image\n#9 exporting layers done\n#9 exporting manifest sha256:e5ef17f8bfc1143a2fa5a2fb5306541e4a3af0c1d8d837972c312296cf240d64 done\n#9 exporting config sha256:c889b4c6767bc62cef5864c49cd81bce7625ccbc35da59dc4ee5e11f79580e8a done\n#9 exporting attestation manifest sha256:bee01492b6b63ff221a347e42ccd9838da963075f4015d126dc5b30ff890fa22 done\n#9 exporting manifest list sha256:57660324fa4c0c50bc77ef4db2d612559906642881160d6ca7ede6533b2e001b done\n#9 naming to localhost:55000/hello-kubernetes:v1 done\n#9 unpacking to localhost:55000/hello-kubernetes:v1 done\n#9 DONE 0.0s\n",
+      "detail": {}
+    },
+    {
+      "name": "v1:push",
+      "command": [
+        "docker",
+        "push",
+        "localhost:55000/hello-kubernetes:v1"
+      ],
+      "startedAt": "2026-08-27T15:51:14.452517+00:00",
+      "endedAt": "2026-08-27T15:51:14.511116+00:00",
+      "durationSeconds": 0.059,
+      "exitCode": 0,
+      "passed": true,
+      "stdout": "The push refers to repository [localhost:55000/hello-kubernetes]\na2fe09303fab: Layer already exists\nf6dd9ae5ae0a: Pushed\n37141c428e4c: Layer already exists\n7eec6ed36766: Layer already exists\n5086b6265f8c: Layer already exists\n55afa1ecc21d: Layer already exists\n0021712cb493: Layer already exists\n373ea03ba5d0: Layer already exists\nv1: digest: sha256:57660324fa4c0c50bc77ef4db2d612559906642881160d6ca7ede6533b2e001b size: 856\n",
+      "stderr": "",
+      "detail": {}
+    },
+    {
+      "name": "v1:sbom",
+      "command": [
+        "syft",
+        "registry:localhost:55000/hello-kubernetes@sha256:57660324fa4c0c50bc77ef4db2d612559906642881160d6ca7ede6533b2e001b",
+        "--output",
+        "cyclonedx-json=/home/deployer/netci-delivery-platform/.netci-gate/e2e-kubernetes/v1/sbom.json"
+      ],
+      "startedAt": "2026-08-27T15:51:14.511218+00:00",
+      "endedAt": "2026-08-27T15:51:15.904510+00:00",
+      "durationSeconds": 1.393,
+      "exitCode": 0,
+      "passed": true,
+      "stdout": "",
+      "stderr": "",
+      "detail": {}
+    },
+    {
+      "name": "v1:vulnerability-scan",
+      "command": [
+        "trivy",
+        "image",
+        "--severity",
+        "HIGH,CRITICAL",
+        "--ignore-unfixed",
+        "--scanners",
+        "vuln",
+        "--format",
+        "json",
+        "--output",
+        "/home/deployer/netci-delivery-platform/.netci-gate/e2e-kubernetes/v1/scan-report.json",
+        "localhost:55000/hello-kubernetes@sha256:57660324fa4c0c50bc77ef4db2d612559906642881160d6ca7ede6533b2e001b"
+      ],
+      "startedAt": "2026-08-27T15:51:15.907825+00:00",
+      "endedAt": "2026-08-27T15:51:15.990123+00:00",
+      "durationSeconds": 0.082,
+      "exitCode": 0,
+      "passed": true,
+      "stdout": "",
+      "stderr": "2026-08-27T22:51:15+07:00\tINFO\t[vuln] Vulnerability scanning is enabled\n2026-08-27T22:51:15+07:00\tINFO\tDetected OS\tfamily=\"alpine\" version=\"3.24.1\"\n2026-08-27T22:51:15+07:00\tWARN\tThis OS version is not on the EOL list\tfamily=\"alpine\" version=\"3.24\"\n2026-08-27T22:51:15+07:00\tINFO\t[alpine] Detecting vulnerabilities...\tos_version=\"3.24\" repository=\"3.24\" pkg_num=38\n2026-08-27T22:51:15+07:00\tINFO\tNumber of language-specific files\tnum=1\n2026-08-27T22:51:15+07:00\tINFO\t[python-pkg] Detecting vulnerabilities...\n",
+      "detail": {}
+    },
+    {
+      "name": "v1:scan-counts",
+      "command": null,
+      "startedAt": "2026-08-27T15:51:15.990548+00:00",
+      "endedAt": "2026-08-27T15:51:15.990548+00:00",
+      "durationSeconds": 0.0,
+      "exitCode": 0,
+      "passed": true,
+      "stdout": "",
+      "stderr": "",
+      "detail": {
+        "critical": 0,
+        "high": 0,
+        "medium": 0
+      }
+    },
+    {
+      "name": "v1:sign",
+      "command": [
+        "cosign",
+        "sign",
+        "--yes",
+        "--key",
+        "/home/deployer/netci-delivery-platform/.netci-gate/keys/cosign.key",
+        "--allow-insecure-registry",
+        "--tlog-upload=false",
+        "localhost:55000/hello-kubernetes@sha256:57660324fa4c0c50bc77ef4db2d612559906642881160d6ca7ede6533b2e001b"
+      ],
+      "startedAt": "2026-08-27T15:51:15.990553+00:00",
+      "endedAt": "2026-08-27T15:51:16.170384+00:00",
+      "durationSeconds": 0.18,
+      "exitCode": 0,
+      "passed": true,
+      "stdout": "",
+      "stderr": "Pushing signature to: localhost:55000/hello-kubernetes\n",
+      "detail": {}
+    },
+    {
+      "name": "v1:verify-signature",
+      "command": [
+        "cosign",
+        "verify",
+        "--key",
+        "/home/deployer/netci-delivery-platform/.netci-gate/keys/cosign.pub",
+        "--allow-insecure-registry",
+        "--insecure-ignore-tlog=true",
+        "--output",
+        "json",
+        "localhost:55000/hello-kubernetes@sha256:57660324fa4c0c50bc77ef4db2d612559906642881160d6ca7ede6533b2e001b"
+      ],
+      "startedAt": "2026-08-27T15:51:16.170398+00:00",
+      "endedAt": "2026-08-27T15:51:16.193650+00:00",
+      "durationSeconds": 0.023,
+      "exitCode": 0,
+      "passed": true,
+      "stdout": "\n[{\"critical\":{\"identity\":{\"docker-reference\":\"localhost:55000/hello-kubernetes\"},\"image\":{\"docker-manifest-digest\":\"sha256:57660324fa4c0c50bc77ef4db2d612559906642881160d6ca7ede6533b2e001b\"},\"type\":\"cosign container image signature\"},\"optional\":null}]\n",
+      "stderr": "WARNING: Skipping tlog verification is an insecure practice that lacks of transparency and auditability verification for the signature.\n\nVerification for localhost:55000/hello-kubernetes@sha256:57660324fa4c0c50bc77ef4db2d612559906642881160d6ca7ede6533b2e001b --\nThe following checks were performed on each of these signatures:\n  - The cosign claims were validated\n  - The signatures were verified against the specified public key\n",
+      "detail": {}
+    },
+    {
+      "name": "v2:build",
+      "command": [
+        "docker",
+        "build",
+        "--network",
+        "host",
+        "--build-arg",
+        "PYTHON_IMAGE=python:3.12-alpine",
+        "--label",
+        "org.netci.version=v2",
+        "-t",
+        "localhost:55000/hello-kubernetes:v2",
+        "/home/deployer/netci-delivery-platform/sample-apps/hello-kubernetes"
+      ],
+      "startedAt": "2026-08-27T15:51:16.193870+00:00",
+      "endedAt": "2026-08-27T15:51:16.680544+00:00",
+      "durationSeconds": 0.487,
+      "exitCode": 0,
+      "passed": true,
+      "stdout": "",
+      "stderr": "#0 building with \"default\" instance using docker driver\n\n#1 [internal] load build definition from Dockerfile\n#1 transferring dockerfile: 569B done\n#1 DONE 0.0s\n\n#2 [internal] load metadata for docker.io/library/python:3.12-alpine\n#2 DONE 0.3s\n\n#3 [internal] load .dockerignore\n#3 transferring context: 2B done\n#3 DONE 0.0s\n\n#4 [internal] load build context\n#4 transferring context: 28B done\n#4 DONE 0.0s\n\n#5 [1/4] FROM docker.io/library/python:3.12-alpine@sha256:d09d15e60962ca365d1cd544a48773bac9d33f2fb1b00f2aa0deec78ade7dc31\n#5 resolve docker.io/library/python:3.12-alpine@sha256:d09d15e60962ca365d1cd544a48773bac9d33f2fb1b00f2aa0deec78ade7dc31 0.0s done\n#5 DONE 0.0s\n\n#6 [2/4] RUN apk upgrade --no-cache\n#6 CACHED\n\n#7 [3/4] WORKDIR /app\n#7 CACHED\n\n#8 [4/4] COPY --chown=10001:10001 app.py /app/app.py\n#8 CACHED\n\n#9 exporting to image\n#9 exporting layers done\n#9 exporting manifest sha256:25262c2e5bf413cb260a841dd8823b739fb3ff010b878715557202c535a78254 done\n#9 exporting config sha256:6d91881d2ceaae9334cd4ac04f4e852654ff74c6962db4257b982fcc884827b5 done\n#9 exporting attestation manifest sha256:b963fdd93f59aa735579a276763ed22b45eb9c3b07443a73451f362c4c58b3f8 done\n#9 exporting manifest list sha256:ccc030201b66490dcf91220b97955ce59f11a9012e2ae9a7a378a515940815f1 done\n#9 naming to localhost:55000/hello-kubernetes:v2 done\n#9 unpacking to localhost:55000/hello-kubernetes:v2 done\n#9 DONE 0.0s\n",
+      "detail": {}
+    },
+    {
+      "name": "v2:push",
+      "command": [
+        "docker",
+        "push",
+        "localhost:55000/hello-kubernetes:v2"
+      ],
+      "startedAt": "2026-08-27T15:51:16.680556+00:00",
+      "endedAt": "2026-08-27T15:51:16.731520+00:00",
+      "durationSeconds": 0.051,
+      "exitCode": 0,
+      "passed": true,
+      "stdout": "The push refers to repository [localhost:55000/hello-kubernetes]\n5086b6265f8c: Layer already exists\n0021712cb493: Layer already exists\n7eec6ed36766: Layer already exists\n373ea03ba5d0: Layer already exists\na2fe09303fab: Layer already exists\na9e4adb3d392: Pushed\n55afa1ecc21d: Layer already exists\n37141c428e4c: Layer already exists\nv2: digest: sha256:ccc030201b66490dcf91220b97955ce59f11a9012e2ae9a7a378a515940815f1 size: 856\n",
+      "stderr": "",
+      "detail": {}
+    },
+    {
+      "name": "v2:sbom",
+      "command": [
+        "syft",
+        "registry:localhost:55000/hello-kubernetes@sha256:ccc030201b66490dcf91220b97955ce59f11a9012e2ae9a7a378a515940815f1",
+        "--output",
+        "cyclonedx-json=/home/deployer/netci-delivery-platform/.netci-gate/e2e-kubernetes/v2/sbom.json"
+      ],
+      "startedAt": "2026-08-27T15:51:16.731623+00:00",
+      "endedAt": "2026-08-27T15:51:18.331358+00:00",
+      "durationSeconds": 1.6,
+      "exitCode": 0,
+      "passed": true,
+      "stdout": "",
+      "stderr": "",
+      "detail": {}
+    },
+    {
+      "name": "v2:vulnerability-scan",
+      "command": [
+        "trivy",
+        "image",
+        "--severity",
+        "HIGH,CRITICAL",
+        "--ignore-unfixed",
+        "--scanners",
+        "vuln",
+        "--format",
+        "json",
+        "--output",
+        "/home/deployer/netci-delivery-platform/.netci-gate/e2e-kubernetes/v2/scan-report.json",
+        "localhost:55000/hello-kubernetes@sha256:ccc030201b66490dcf91220b97955ce59f11a9012e2ae9a7a378a515940815f1"
+      ],
+      "startedAt": "2026-08-27T15:51:18.335447+00:00",
+      "endedAt": "2026-08-27T15:51:18.420174+00:00",
+      "durationSeconds": 0.085,
+      "exitCode": 0,
+      "passed": true,
+      "stdout": "",
+      "stderr": "2026-08-27T22:51:18+07:00\tINFO\t[vuln] Vulnerability scanning is enabled\n2026-08-27T22:51:18+07:00\tINFO\tDetected OS\tfamily=\"alpine\" version=\"3.24.1\"\n2026-08-27T22:51:18+07:00\tWARN\tThis OS version is not on the EOL list\tfamily=\"alpine\" version=\"3.24\"\n2026-08-27T22:51:18+07:00\tINFO\t[alpine] Detecting vulnerabilities...\tos_version=\"3.24\" repository=\"3.24\" pkg_num=38\n2026-08-27T22:51:18+07:00\tINFO\tNumber of language-specific files\tnum=1\n2026-08-27T22:51:18+07:00\tINFO\t[python-pkg] Detecting vulnerabilities...\n",
+      "detail": {}
+    },
+    {
+      "name": "v2:scan-counts",
+      "command": null,
+      "startedAt": "2026-08-27T15:51:18.420624+00:00",
+      "endedAt": "2026-08-27T15:51:18.420624+00:00",
+      "durationSeconds": 0.0,
+      "exitCode": 0,
+      "passed": true,
+      "stdout": "",
+      "stderr": "",
+      "detail": {
+        "critical": 0,
+        "high": 0,
+        "medium": 0
+      }
+    },
+    {
+      "name": "v2:sign",
+      "command": [
+        "cosign",
+        "sign",
+        "--yes",
+        "--key",
+        "/home/deployer/netci-delivery-platform/.netci-gate/keys/cosign.key",
+        "--allow-insecure-registry",
+        "--tlog-upload=false",
+        "localhost:55000/hello-kubernetes@sha256:ccc030201b66490dcf91220b97955ce59f11a9012e2ae9a7a378a515940815f1"
+      ],
+      "startedAt": "2026-08-27T15:51:18.420630+00:00",
+      "endedAt": "2026-08-27T15:51:18.601535+00:00",
+      "durationSeconds": 0.181,
+      "exitCode": 0,
+      "passed": true,
+      "stdout": "",
+      "stderr": "Pushing signature to: localhost:55000/hello-kubernetes\n",
+      "detail": {}
+    },
+    {
+      "name": "v2:verify-signature",
+      "command": [
+        "cosign",
+        "verify",
+        "--key",
+        "/home/deployer/netci-delivery-platform/.netci-gate/keys/cosign.pub",
+        "--allow-insecure-registry",
+        "--insecure-ignore-tlog=true",
+        "--output",
+        "json",
+        "localhost:55000/hello-kubernetes@sha256:ccc030201b66490dcf91220b97955ce59f11a9012e2ae9a7a378a515940815f1"
+      ],
+      "startedAt": "2026-08-27T15:51:18.601548+00:00",
+      "endedAt": "2026-08-27T15:51:18.622735+00:00",
+      "durationSeconds": 0.021,
+      "exitCode": 0,
+      "passed": true,
+      "stdout": "\n[{\"critical\":{\"identity\":{\"docker-reference\":\"localhost:55000/hello-kubernetes\"},\"image\":{\"docker-manifest-digest\":\"sha256:ccc030201b66490dcf91220b97955ce59f11a9012e2ae9a7a378a515940815f1\"},\"type\":\"cosign container image signature\"},\"optional\":null}]\n",
+      "stderr": "WARNING: Skipping tlog verification is an insecure practice that lacks of transparency and auditability verification for the signature.\n\nVerification for localhost:55000/hello-kubernetes@sha256:ccc030201b66490dcf91220b97955ce59f11a9012e2ae9a7a378a515940815f1 --\nThe following checks were performed on each of these signatures:\n  - The cosign claims were validated\n  - The signatures were verified against the specified public key\n",
+      "detail": {}
+    },
+    {
+      "name": "v1:policy-decision",
+      "command": null,
+      "startedAt": "2026-08-27T15:51:18.651669+00:00",
+      "endedAt": "2026-08-27T15:51:18.651669+00:00",
+      "durationSeconds": 0.0,
+      "exitCode": 0,
+      "passed": true,
+      "stdout": "",
+      "stderr": "",
+      "detail": {
+        "pipelineRunId": "551c2c2b-5bf5-417d-bc26-2553bda2f599",
+        "decision": "allow",
+        "reason": "artifact satisfies the netCI supply-chain policy",
+        "checks": {
+          "digest": "pass",
+          "evidenceDigest": "pass",
+          "sbom": "pass",
+          "vulnerabilityScan": "pass",
+          "signature": "pass"
+        }
+      }
+    },
+    {
+      "name": "deploy:v1",
+      "command": [
+        "/home/deployer/netci-delivery-platform/.venv/bin/ansible-playbook",
+        "-i",
+        "/home/deployer/netci-delivery-platform/deploy/ansible/inventories/localhost.ini",
+        "/home/deployer/netci-delivery-platform/deploy/ansible/playbooks/deploy-kubernetes.yml",
+        "--extra-vars",
+        "{\"artifact_digest\": \"sha256:57660324fa4c0c50bc77ef4db2d612559906642881160d6ca7ede6533b2e001b\", \"chart_path\": \"/home/deployer/netci-delivery-platform/deploy/helm/sample-kubernetes-app\", \"image_repository\": \"localhost:55000/hello-kubernetes\", \"kube_context\": \"kind-netci-local\", \"netci_action\": \"deploy\", \"release_name\": \"netci-gate-hello-kubernetes\", \"target_namespace\": \"staging\"}"
+      ],
+      "startedAt": "2026-08-27T15:51:18.662806+00:00",
+      "endedAt": "2026-08-27T15:51:24.221124+00:00",
+      "durationSeconds": 5.558,
+      "exitCode": 0,
+      "passed": true,
+      "stdout": "\nPLAY [Deploy sample application to Kubernetes through Helm] ********************\n\nTASK [Validate immutable Kubernetes release input] *****************************\nok: [localhost] => {\n    \"changed\": false,\n    \"msg\": \"All assertions passed\"\n}\n\nTASK [Deploy Helm release atomically] ******************************************\nchanged: [localhost]\n\nTASK [Read deployed workload after Helm health checks] *************************\nok: [localhost]\n\nTASK [Verify the requested digest is running] **********************************\nok: [localhost] => {\n    \"changed\": false,\n    \"msg\": \"All assertions passed\"\n}\n\nPLAY RECAP *********************************************************************\nlocalhost                  : ok=4    changed=1    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   \n\n",
+      "stderr": "[WARNING]: The default idempotency check can fail to report changes in certain\ncases. Install helm diff >= 3.4.1 for better results.\n",
+      "detail": {
+        "extraVars": {
+          "netci_action": "deploy",
+          "release_name": "netci-gate-hello-kubernetes",
+          "target_namespace": "staging",
+          "chart_path": "/home/deployer/netci-delivery-platform/deploy/helm/sample-kubernetes-app",
+          "image_repository": "localhost:55000/hello-kubernetes",
+          "artifact_digest": "sha256:57660324fa4c0c50bc77ef4db2d612559906642881160d6ca7ede6533b2e001b",
+          "kube_context": "kind-netci-local"
+        }
+      }
+    },
+    {
+      "name": "v1:running-image",
+      "command": [
+        "kubectl",
+        "--context",
+        "kind-netci-local",
+        "get",
+        "deployment",
+        "netci-gate-hello-kubernetes-sample-kubernetes-app",
+        "-n",
+        "staging",
+        "-o",
+        "json"
+      ],
+      "startedAt": "2026-08-27T15:51:24.221151+00:00",
+      "endedAt": "2026-08-27T15:51:24.265508+00:00",
+      "durationSeconds": 0.044,
+      "exitCode": 0,
+      "passed": true,
+      "stdout": "{\n    \"apiVersion\": \"apps/v1\",\n    \"kind\": \"Deployment\",\n    \"metadata\": {\n        \"annotations\": {\n            \"deployment.kubernetes.io/revision\": \"9\",\n            \"meta.helm.sh/release-name\": \"netci-gate-hello-kubernetes\",\n            \"meta.helm.sh/release-namespace\": \"staging\"\n        },\n        \"creationTimestamp\": \"2026-08-27T15:34:39Z\",\n        \"generation\": 9,\n        \"labels\": {\n            \"app.kubernetes.io/instance\": \"netci-gate-hello-kubernetes\",\n            \"app.kubernetes.io/managed-by\": \"Helm\",\n            \"app.kubernetes.io/name\": \"sample-kubernetes-app\",\n            \"netci/environment\": \"staging\"\n        },\n        \"name\": \"netci-gate-hello-kubernetes-sample-kubernetes-app\",\n        \"namespace\": \"staging\",\n        \"resourceVersion\": \"3062\",\n        \"uid\": \"99b5b062-dedd-4477-b13d-515387920a3b\"\n    },\n    \"spec\": {\n        \"progressDeadlineSeconds\": 600,\n        \"replicas\": 1,\n        \"revisionHistoryLimit\": 10,\n        \"selector\": {\n            \"matchLabels\": {\n                \"app.kubernetes.io/instance\": \"netci-gate-hello-kubernetes\",\n                \"app.kubernetes.io/name\": \"sample-kubernetes-app\"\n            }\n        },\n        \"strategy\": {\n            \"rollingUpdate\": {\n                \"maxSurge\": \"25%\",\n                \"maxUnavailable\": \"25%\"\n            },\n            \"type\": \"RollingUpdate\"\n        },\n        \"template\": {\n            \"metadata\": {\n                \"labels\": {\n                    \"app.kubernetes.io/instance\": \"netci-gate-hello-kubernetes\",\n                    \"app.kubernetes.io/name\": \"sample-kubernetes-app\"\n                }\n            },\n            \"spec\": {\n                \"containers\": [\n                    {\n                        \"env\": [\n                            {\n                                \"name\": \"NETCI_ENVIRONMENT\",\n                                \"value\": \"staging\"\n                            },\n                            {\n                                \"name\": \"APP_VERSION\",\n                                \"value\": \"sha256:57660324fa4c0c50bc77ef4db2d612559906642881160d6ca7ede6533b2e001b\"\n                            },\n                            {\n                                \"name\": \"PYTHONDONTWRITEBYTECODE\",\n                                \"value\": \"1\"\n                            }\n                        ],\n                        \"image\": \"localhost:55000/hello-kubernetes@sha256:57660324fa4c0c50bc77ef4db2d612559906642881160d6ca7ede6533b2e001b\",\n                        \"imagePullPolicy\": \"IfNotPresent\",\n                        \"livenessProbe\": {\n                            \"failureThreshold\": 3,\n                            \"httpGet\": {\n                                \"path\": \"/healthz\",\n                                \"port\": \"http\",\n                                \"scheme\": \"HTTP\"\n                            },\n                            \"initialDelaySeconds\": 10,\n                            \"periodSeconds\": 10,\n                            \"successThreshold\": 1,\n                            \"timeoutSeconds\": 1\n                        },\n                        \"name\": \"app\",\n                        \"ports\": [\n                            {\n                                \"containerPort\": 8080,\n                                \"name\": \"http\",\n                                \"protocol\": \"TCP\"\n                            }\n                        ],\n                        \"readinessProbe\": {\n                            \"failureThreshold\": 3,\n                            \"httpGet\": {\n                                \"path\": \"/healthz\",\n                                \"port\": \"http\",\n                                \"scheme\": \"HTTP\"\n                            },\n                            \"initialDelaySeconds\": 3,\n                            \"periodSeconds\": 5,\n                            \"successThreshold\": 1,\n                            \"timeoutSeconds\": 1\n                        },\n                        \"resources\": {\n                            \"limits\": {\n                                \"cpu\": \"250m\",\n                                \"memory\": \"256Mi\"\n                            },\n                            \"requests\": {\n                                \"cpu\": \"50m\",\n                                \"memory\": \"64Mi\"\n                            }\n                        },\n                        \"securityContext\": {\n                            \"allowPrivilegeEscalation\": false,\n                            \"capabilities\": {\n                                \"drop\": [\n                                    \"ALL\"\n                                ]\n                            },\n                            \"readOnlyRootFilesystem\": true\n                        },\n                        \"terminationMessagePath\": \"/dev/termination-log\",\n                        \"terminationMessagePolicy\": \"File\"\n                    }\n                ],\n                \"dnsPolicy\": \"ClusterFirst\",\n                \"restartPolicy\": \"Always\",\n                \"schedulerName\": \"default-scheduler\",\n                \"securityContext\": {\n                    \"runAsNonRoot\": true,\n                    \"seccompProfile\": {\n                        \"type\": \"RuntimeDefault\"\n                    }\n                },\n                \"terminationGracePeriodSeconds\": 30\n            }\n        }\n    },\n    \"status\": {\n        \"availableReplicas\": 1,\n        \"conditions\": [\n            {\n                \"lastTransitionTime\": \"2026-08-27T15:34:47Z\",\n                \"lastUpdateTime\": \"2026-08-27T15:34:47Z\",\n                \"message\": \"Deployment has minimum availability.\",\n                \"reason\": \"MinimumReplicasAvailable\",\n                \"status\": \"True\",\n                \"type\": \"Available\"\n            },\n            {\n                \"lastTransitionTime\": \"2026-08-27T15:34:39Z\",\n                \"lastUpdateTime\": \"2026-08-27T15:51:23Z\",\n                \"message\": \"ReplicaSet \\\"netci-gate-hello-kubernetes-sample-kubernetes-app-cbb888bcf\\\" has successfully progressed.\",\n                \"reason\": \"NewReplicaSetAvailable\",\n                \"status\": \"True\",\n                \"type\": \"Progressing\"\n            }\n        ],\n        \"observedGeneration\": 9,\n        \"readyReplicas\": 1,\n        \"replicas\": 1,\n        \"updatedReplicas\": 1\n    }\n}\n",
+      "stderr": "",
+      "detail": {}
+    },
+    {
+      "name": "v1:in-cluster-health",
+      "command": null,
+      "startedAt": "2026-08-27T15:51:25.279830+00:00",
+      "endedAt": "2026-08-27T15:51:25.279830+00:00",
+      "durationSeconds": 0.0,
+      "exitCode": 0,
+      "passed": true,
+      "stdout": "",
+      "stderr": "",
+      "detail": {
+        "command": [
+          "kubectl",
+          "--context",
+          "kind-netci-local",
+          "port-forward",
+          "service/netci-gate-hello-kubernetes-sample-kubernetes-app",
+          "18083:8080",
+          "-n",
+          "staging"
+        ],
+        "durationSeconds": 1.014,
+        "response": {
+          "service": "hello-kubernetes",
+          "status": "ok",
+          "version": "sha256:57660324fa4c0c50bc77ef4db2d612559906642881160d6ca7ede6533b2e001b",
+          "environment": "staging"
+        },
+        "error": null
+      }
+    },
+    {
+      "name": "v1:service-health",
+      "command": null,
+      "startedAt": "2026-08-27T15:51:25.279851+00:00",
+      "endedAt": "2026-08-27T15:51:25.279851+00:00",
+      "durationSeconds": 0.0,
+      "exitCode": 0,
+      "passed": true,
+      "stdout": "",
+      "stderr": "",
+      "detail": {
+        "service": "hello-kubernetes",
+        "status": "ok",
+        "version": "sha256:57660324fa4c0c50bc77ef4db2d612559906642881160d6ca7ede6533b2e001b",
+        "environment": "staging"
+      }
+    },
+    {
+      "name": "deploy:v2",
+      "command": [
+        "/home/deployer/netci-delivery-platform/.venv/bin/ansible-playbook",
+        "-i",
+        "/home/deployer/netci-delivery-platform/deploy/ansible/inventories/localhost.ini",
+        "/home/deployer/netci-delivery-platform/deploy/ansible/playbooks/deploy-kubernetes.yml",
+        "--extra-vars",
+        "{\"artifact_digest\": \"sha256:ccc030201b66490dcf91220b97955ce59f11a9012e2ae9a7a378a515940815f1\", \"chart_path\": \"/home/deployer/netci-delivery-platform/deploy/helm/sample-kubernetes-app\", \"image_repository\": \"localhost:55000/hello-kubernetes\", \"kube_context\": \"kind-netci-local\", \"netci_action\": \"deploy\", \"release_name\": \"netci-gate-hello-kubernetes\", \"target_namespace\": \"staging\"}"
+      ],
+      "startedAt": "2026-08-27T15:51:25.348309+00:00",
+      "endedAt": "2026-08-27T15:51:34.911892+00:00",
+      "durationSeconds": 9.564,
+      "exitCode": 0,
+      "passed": true,
+      "stdout": "\nPLAY [Deploy sample application to Kubernetes through Helm] ********************\n\nTASK [Validate immutable Kubernetes release input] *****************************\nok: [localhost] => {\n    \"changed\": false,\n    \"msg\": \"All assertions passed\"\n}\n\nTASK [Deploy Helm release atomically] ******************************************\nchanged: [localhost]\n\nTASK [Read deployed workload after Helm health checks] *************************\nok: [localhost]\n\nTASK [Verify the requested digest is running] **********************************\nok: [localhost] => {\n    \"changed\": false,\n    \"msg\": \"All assertions passed\"\n}\n\nPLAY RECAP *********************************************************************\nlocalhost                  : ok=4    changed=1    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   \n\n",
+      "stderr": "[WARNING]: The default idempotency check can fail to report changes in certain\ncases. Install helm diff >= 3.4.1 for better results.\n",
+      "detail": {
+        "extraVars": {
+          "netci_action": "deploy",
+          "release_name": "netci-gate-hello-kubernetes",
+          "target_namespace": "staging",
+          "chart_path": "/home/deployer/netci-delivery-platform/deploy/helm/sample-kubernetes-app",
+          "image_repository": "localhost:55000/hello-kubernetes",
+          "artifact_digest": "sha256:ccc030201b66490dcf91220b97955ce59f11a9012e2ae9a7a378a515940815f1",
+          "kube_context": "kind-netci-local"
+        }
+      }
+    },
+    {
+      "name": "v2:running-image",
+      "command": [
+        "kubectl",
+        "--context",
+        "kind-netci-local",
+        "get",
+        "deployment",
+        "netci-gate-hello-kubernetes-sample-kubernetes-app",
+        "-n",
+        "staging",
+        "-o",
+        "json"
+      ],
+      "startedAt": "2026-08-27T15:51:34.911910+00:00",
+      "endedAt": "2026-08-27T15:51:34.965542+00:00",
+      "durationSeconds": 0.054,
+      "exitCode": 0,
+      "passed": true,
+      "stdout": "{\n    \"apiVersion\": \"apps/v1\",\n    \"kind\": \"Deployment\",\n    \"metadata\": {\n        \"annotations\": {\n            \"deployment.kubernetes.io/revision\": \"10\",\n            \"meta.helm.sh/release-name\": \"netci-gate-hello-kubernetes\",\n            \"meta.helm.sh/release-namespace\": \"staging\"\n        },\n        \"creationTimestamp\": \"2026-08-27T15:34:39Z\",\n        \"generation\": 10,\n        \"labels\": {\n            \"app.kubernetes.io/instance\": \"netci-gate-hello-kubernetes\",\n            \"app.kubernetes.io/managed-by\": \"Helm\",\n            \"app.kubernetes.io/name\": \"sample-kubernetes-app\",\n            \"netci/environment\": \"staging\"\n        },\n        \"name\": \"netci-gate-hello-kubernetes-sample-kubernetes-app\",\n        \"namespace\": \"staging\",\n        \"resourceVersion\": \"3116\",\n        \"uid\": \"99b5b062-dedd-4477-b13d-515387920a3b\"\n    },\n    \"spec\": {\n        \"progressDeadlineSeconds\": 600,\n        \"replicas\": 1,\n        \"revisionHistoryLimit\": 10,\n        \"selector\": {\n            \"matchLabels\": {\n                \"app.kubernetes.io/instance\": \"netci-gate-hello-kubernetes\",\n                \"app.kubernetes.io/name\": \"sample-kubernetes-app\"\n            }\n        },\n        \"strategy\": {\n            \"rollingUpdate\": {\n                \"maxSurge\": \"25%\",\n                \"maxUnavailable\": \"25%\"\n            },\n            \"type\": \"RollingUpdate\"\n        },\n        \"template\": {\n            \"metadata\": {\n                \"labels\": {\n                    \"app.kubernetes.io/instance\": \"netci-gate-hello-kubernetes\",\n                    \"app.kubernetes.io/name\": \"sample-kubernetes-app\"\n                }\n            },\n            \"spec\": {\n                \"containers\": [\n                    {\n                        \"env\": [\n                            {\n                                \"name\": \"NETCI_ENVIRONMENT\",\n                                \"value\": \"staging\"\n                            },\n                            {\n                                \"name\": \"APP_VERSION\",\n                                \"value\": \"sha256:ccc030201b66490dcf91220b97955ce59f11a9012e2ae9a7a378a515940815f1\"\n                            },\n                            {\n                                \"name\": \"PYTHONDONTWRITEBYTECODE\",\n                                \"value\": \"1\"\n                            }\n                        ],\n                        \"image\": \"localhost:55000/hello-kubernetes@sha256:ccc030201b66490dcf91220b97955ce59f11a9012e2ae9a7a378a515940815f1\",\n                        \"imagePullPolicy\": \"IfNotPresent\",\n                        \"livenessProbe\": {\n                            \"failureThreshold\": 3,\n                            \"httpGet\": {\n                                \"path\": \"/healthz\",\n                                \"port\": \"http\",\n                                \"scheme\": \"HTTP\"\n                            },\n                            \"initialDelaySeconds\": 10,\n                            \"periodSeconds\": 10,\n                            \"successThreshold\": 1,\n                            \"timeoutSeconds\": 1\n                        },\n                        \"name\": \"app\",\n                        \"ports\": [\n                            {\n                                \"containerPort\": 8080,\n                                \"name\": \"http\",\n                                \"protocol\": \"TCP\"\n                            }\n                        ],\n                        \"readinessProbe\": {\n                            \"failureThreshold\": 3,\n                            \"httpGet\": {\n                                \"path\": \"/healthz\",\n                                \"port\": \"http\",\n                                \"scheme\": \"HTTP\"\n                            },\n                            \"initialDelaySeconds\": 3,\n                            \"periodSeconds\": 5,\n                            \"successThreshold\": 1,\n                            \"timeoutSeconds\": 1\n                        },\n                        \"resources\": {\n                            \"limits\": {\n                                \"cpu\": \"250m\",\n                                \"memory\": \"256Mi\"\n                            },\n                            \"requests\": {\n                                \"cpu\": \"50m\",\n                                \"memory\": \"64Mi\"\n                            }\n                        },\n                        \"securityContext\": {\n                            \"allowPrivilegeEscalation\": false,\n                            \"capabilities\": {\n                                \"drop\": [\n                                    \"ALL\"\n                                ]\n                            },\n                            \"readOnlyRootFilesystem\": true\n                        },\n                        \"terminationMessagePath\": \"/dev/termination-log\",\n                        \"terminationMessagePolicy\": \"File\"\n                    }\n                ],\n                \"dnsPolicy\": \"ClusterFirst\",\n                \"restartPolicy\": \"Always\",\n                \"schedulerName\": \"default-scheduler\",\n                \"securityContext\": {\n                    \"runAsNonRoot\": true,\n                    \"seccompProfile\": {\n                        \"type\": \"RuntimeDefault\"\n                    }\n                },\n                \"terminationGracePeriodSeconds\": 30\n            }\n        }\n    },\n    \"status\": {\n        \"availableReplicas\": 1,\n        \"conditions\": [\n            {\n                \"lastTransitionTime\": \"2026-08-27T15:34:47Z\",\n                \"lastUpdateTime\": \"2026-08-27T15:34:47Z\",\n                \"message\": \"Deployment has minimum availability.\",\n                \"reason\": \"MinimumReplicasAvailable\",\n                \"status\": \"True\",\n                \"type\": \"Available\"\n            },\n            {\n                \"lastTransitionTime\": \"2026-08-27T15:34:39Z\",\n                \"lastUpdateTime\": \"2026-08-27T15:51:33Z\",\n                \"message\": \"ReplicaSet \\\"netci-gate-hello-kubernetes-sample-kubernetes-app-697f5758dc\\\" has successfully progressed.\",\n                \"reason\": \"NewReplicaSetAvailable\",\n                \"status\": \"True\",\n                \"type\": \"Progressing\"\n            }\n        ],\n        \"observedGeneration\": 10,\n        \"readyReplicas\": 1,\n        \"replicas\": 1,\n        \"updatedReplicas\": 1\n    }\n}\n",
+      "stderr": "",
+      "detail": {}
+    },
+    {
+      "name": "helm-history",
+      "command": [
+        "helm",
+        "--kube-context",
+        "kind-netci-local",
+        "history",
+        "netci-gate-hello-kubernetes",
+        "-n",
+        "staging",
+        "-o",
+        "json"
+      ],
+      "startedAt": "2026-08-27T15:51:34.986609+00:00",
+      "endedAt": "2026-08-27T15:51:35.029355+00:00",
+      "durationSeconds": 0.043,
+      "exitCode": 0,
+      "passed": true,
+      "stdout": "[{\"revision\":1,\"updated\":\"2026-08-27T22:34:39.303931405+07:00\",\"status\":\"superseded\",\"chart\":\"sample-kubernetes-app-0.1.0\",\"app_version\":\"0.1.0\",\"description\":\"Install complete\"},{\"revision\":2,\"updated\":\"2026-08-27T22:35:39.133361969+07:00\",\"status\":\"superseded\",\"chart\":\"sample-kubernetes-app-0.1.0\",\"app_version\":\"0.1.0\",\"description\":\"Upgrade complete\"},{\"revision\":3,\"updated\":\"2026-08-27T22:37:26.265921412+07:00\",\"status\":\"superseded\",\"chart\":\"sample-kubernetes-app-0.1.0\",\"app_version\":\"0.1.0\",\"description\":\"Upgrade complete\"},{\"revision\":4,\"updated\":\"2026-08-27T22:37:36.958322898+07:00\",\"status\":\"superseded\",\"chart\":\"sample-kubernetes-app-0.1.0\",\"app_version\":\"0.1.0\",\"description\":\"Upgrade complete\"},{\"revision\":5,\"updated\":\"2026-08-27T22:37:45.966308473+07:00\",\"status\":\"superseded\",\"chart\":\"sample-kubernetes-app-0.1.0\",\"app_version\":\"0.1.0\",\"description\":\"Rollback to 3\"},{\"revision\":6,\"updated\":\"2026-08-27T22:45:42.496261919+07:00\",\"status\":\"superseded\",\"chart\":\"sample-kubernetes-app-0.1.0\",\"app_version\":\"0.1.0\",\"description\":\"Upgrade complete\"},{\"revision\":7,\"updated\":\"2026-08-27T22:45:53.213384289+07:00\",\"status\":\"superseded\",\"chart\":\"sample-kubernetes-app-0.1.0\",\"app_version\":\"0.1.0\",\"description\":\"Upgrade complete\"},{\"revision\":8,\"updated\":\"2026-08-27T22:46:02.236922117+07:00\",\"status\":\"superseded\",\"chart\":\"sample-kubernetes-app-0.1.0\",\"app_version\":\"0.1.0\",\"description\":\"Rollback to 6\"},{\"revision\":9,\"updated\":\"2026-08-27T22:51:19.358059178+07:00\",\"status\":\"superseded\",\"chart\":\"sample-kubernetes-app-0.1.0\",\"app_version\":\"0.1.0\",\"description\":\"Upgrade complete\"},{\"revision\":10,\"updated\":\"2026-08-27T22:51:26.050022586+07:00\",\"status\":\"deployed\",\"chart\":\"sample-kubernetes-app-0.1.0\",\"app_version\":\"0.1.0\",\"description\":\"Upgrade complete\"}]\n",
+      "stderr": "",
+      "detail": {}
+    },
+    {
+      "name": "helm-rollback",
+      "command": [
+        "helm",
+        "--kube-context",
+        "kind-netci-local",
+        "rollback",
+        "netci-gate-hello-kubernetes",
+        "9",
+        "-n",
+        "staging",
+        "--wait",
+        "--timeout",
+        "180s"
+      ],
+      "startedAt": "2026-08-27T15:51:35.042147+00:00",
+      "endedAt": "2026-08-27T15:51:43.160544+00:00",
+      "durationSeconds": 8.118,
+      "exitCode": 0,
+      "passed": true,
+      "stdout": "Rollback was a success! Happy Helming!\n",
+      "stderr": "",
+      "detail": {}
+    },
+    {
+      "name": "rollback:running-image",
+      "command": [
+        "kubectl",
+        "--context",
+        "kind-netci-local",
+        "get",
+        "deployment",
+        "netci-gate-hello-kubernetes-sample-kubernetes-app",
+        "-n",
+        "staging",
+        "-o",
+        "json"
+      ],
+      "startedAt": "2026-08-27T15:51:43.160577+00:00",
+      "endedAt": "2026-08-27T15:51:43.207226+00:00",
+      "durationSeconds": 0.047,
+      "exitCode": 0,
+      "passed": true,
+      "stdout": "{\n    \"apiVersion\": \"apps/v1\",\n    \"kind\": \"Deployment\",\n    \"metadata\": {\n        \"annotations\": {\n            \"deployment.kubernetes.io/revision\": \"11\",\n            \"meta.helm.sh/release-name\": \"netci-gate-hello-kubernetes\",\n            \"meta.helm.sh/release-namespace\": \"staging\"\n        },\n        \"creationTimestamp\": \"2026-08-27T15:34:39Z\",\n        \"generation\": 11,\n        \"labels\": {\n            \"app.kubernetes.io/instance\": \"netci-gate-hello-kubernetes\",\n            \"app.kubernetes.io/managed-by\": \"Helm\",\n            \"app.kubernetes.io/name\": \"sample-kubernetes-app\",\n            \"netci/environment\": \"staging\"\n        },\n        \"name\": \"netci-gate-hello-kubernetes-sample-kubernetes-app\",\n        \"namespace\": \"staging\",\n        \"resourceVersion\": \"3171\",\n        \"uid\": \"99b5b062-dedd-4477-b13d-515387920a3b\"\n    },\n    \"spec\": {\n        \"progressDeadlineSeconds\": 600,\n        \"replicas\": 1,\n        \"revisionHistoryLimit\": 10,\n        \"selector\": {\n            \"matchLabels\": {\n                \"app.kubernetes.io/instance\": \"netci-gate-hello-kubernetes\",\n                \"app.kubernetes.io/name\": \"sample-kubernetes-app\"\n            }\n        },\n        \"strategy\": {\n            \"rollingUpdate\": {\n                \"maxSurge\": \"25%\",\n                \"maxUnavailable\": \"25%\"\n            },\n            \"type\": \"RollingUpdate\"\n        },\n        \"template\": {\n            \"metadata\": {\n                \"labels\": {\n                    \"app.kubernetes.io/instance\": \"netci-gate-hello-kubernetes\",\n                    \"app.kubernetes.io/name\": \"sample-kubernetes-app\"\n                }\n            },\n            \"spec\": {\n                \"containers\": [\n                    {\n                        \"env\": [\n                            {\n                                \"name\": \"NETCI_ENVIRONMENT\",\n                                \"value\": \"staging\"\n                            },\n                            {\n                                \"name\": \"APP_VERSION\",\n                                \"value\": \"sha256:57660324fa4c0c50bc77ef4db2d612559906642881160d6ca7ede6533b2e001b\"\n                            },\n                            {\n                                \"name\": \"PYTHONDONTWRITEBYTECODE\",\n                                \"value\": \"1\"\n                            }\n                        ],\n                        \"image\": \"localhost:55000/hello-kubernetes@sha256:57660324fa4c0c50bc77ef4db2d612559906642881160d6ca7ede6533b2e001b\",\n                        \"imagePullPolicy\": \"IfNotPresent\",\n                        \"livenessProbe\": {\n                            \"failureThreshold\": 3,\n                            \"httpGet\": {\n                                \"path\": \"/healthz\",\n                                \"port\": \"http\",\n                                \"scheme\": \"HTTP\"\n                            },\n                            \"initialDelaySeconds\": 10,\n                            \"periodSeconds\": 10,\n                            \"successThreshold\": 1,\n                            \"timeoutSeconds\": 1\n                        },\n                        \"name\": \"app\",\n                        \"ports\": [\n                            {\n                                \"containerPort\": 8080,\n                                \"name\": \"http\",\n                                \"protocol\": \"TCP\"\n                            }\n                        ],\n                        \"readinessProbe\": {\n                            \"failureThreshold\": 3,\n                            \"httpGet\": {\n                                \"path\": \"/healthz\",\n                                \"port\": \"http\",\n                                \"scheme\": \"HTTP\"\n                            },\n                            \"initialDelaySeconds\": 3,\n                            \"periodSeconds\": 5,\n                            \"successThreshold\": 1,\n                            \"timeoutSeconds\": 1\n                        },\n                        \"resources\": {\n                            \"limits\": {\n                                \"cpu\": \"250m\",\n                                \"memory\": \"256Mi\"\n                            },\n                            \"requests\": {\n                                \"cpu\": \"50m\",\n                                \"memory\": \"64Mi\"\n                            }\n                        },\n                        \"securityContext\": {\n                            \"allowPrivilegeEscalation\": false,\n                            \"capabilities\": {\n                                \"drop\": [\n                                    \"ALL\"\n                                ]\n                            },\n                            \"readOnlyRootFilesystem\": true\n                        },\n                        \"terminationMessagePath\": \"/dev/termination-log\",\n                        \"terminationMessagePolicy\": \"File\"\n                    }\n                ],\n                \"dnsPolicy\": \"ClusterFirst\",\n                \"restartPolicy\": \"Always\",\n                \"schedulerName\": \"default-scheduler\",\n                \"securityContext\": {\n                    \"runAsNonRoot\": true,\n                    \"seccompProfile\": {\n                        \"type\": \"RuntimeDefault\"\n                    }\n                },\n                \"terminationGracePeriodSeconds\": 30\n            }\n        }\n    },\n    \"status\": {\n        \"availableReplicas\": 1,\n        \"conditions\": [\n            {\n                \"lastTransitionTime\": \"2026-08-27T15:34:47Z\",\n                \"lastUpdateTime\": \"2026-08-27T15:34:47Z\",\n                \"message\": \"Deployment has minimum availability.\",\n                \"reason\": \"MinimumReplicasAvailable\",\n                \"status\": \"True\",\n                \"type\": \"Available\"\n            },\n            {\n                \"lastTransitionTime\": \"2026-08-27T15:34:39Z\",\n                \"lastUpdateTime\": \"2026-08-27T15:51:42Z\",\n                \"message\": \"ReplicaSet \\\"netci-gate-hello-kubernetes-sample-kubernetes-app-cbb888bcf\\\" has successfully progressed.\",\n                \"reason\": \"NewReplicaSetAvailable\",\n                \"status\": \"True\",\n                \"type\": \"Progressing\"\n            }\n        ],\n        \"observedGeneration\": 11,\n        \"readyReplicas\": 1,\n        \"replicas\": 1,\n        \"updatedReplicas\": 1\n    }\n}\n",
+      "stderr": "",
+      "detail": {}
+    },
+    {
+      "name": "rollback:in-cluster-health",
+      "command": null,
+      "startedAt": "2026-08-27T15:51:44.221661+00:00",
+      "endedAt": "2026-08-27T15:51:44.221661+00:00",
+      "durationSeconds": 0.0,
+      "exitCode": 0,
+      "passed": true,
+      "stdout": "",
+      "stderr": "",
+      "detail": {
+        "command": [
+          "kubectl",
+          "--context",
+          "kind-netci-local",
+          "port-forward",
+          "service/netci-gate-hello-kubernetes-sample-kubernetes-app",
+          "18083:8080",
+          "-n",
+          "staging"
+        ],
+        "durationSeconds": 1.014,
+        "response": {
+          "service": "hello-kubernetes",
+          "status": "ok",
+          "version": "sha256:57660324fa4c0c50bc77ef4db2d612559906642881160d6ca7ede6533b2e001b",
+          "environment": "staging"
+        },
+        "error": null
+      }
+    }
+  ]
+}

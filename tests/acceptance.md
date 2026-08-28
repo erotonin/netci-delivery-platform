@@ -1,5 +1,29 @@
 # netCI acceptance scenarios
 
+Every scenario below has a runner. Each writes `evidence/<gate>.json` with the commands
+it ran, their timings and exit codes, and one line per assertion — so a green result can be
+re-read rather than trusted.
+
+| Scenario | Runner | Evidence |
+|---|---|---|
+| E2E-01 Container | `make e2e-container` | `evidence/e2e-container.json` |
+| E2E-02 Kubernetes | `make e2e-kubernetes` | `evidence/e2e-kubernetes.json` |
+| E2E-03 Systemd | `make e2e-systemd` | `evidence/e2e-systemd.json` |
+| ISO-01 Ephemeral agent | `make kind-up` (the guarantees) + `make jenkins-ci-loop` (a real build in a throwaway pod) | `evidence/kind-cluster.json`, `evidence/jenkins-ci-loop.json` |
+| SEC-01 Supply-chain deny | `make security-test` | `evidence/security-gate.json` |
+| REBUILD-01 Jenkins rebuild | `make jenkins-rebuild-gate` | `evidence/jenkins-rebuild.json` |
+| HA-01 Controller failure drill | `make failure-drill` | `evidence/failure-drill.json` |
+| BENCH-01 Isolation cost | `make benchmark` | `evidence/benchmark.json`, `evidence/benchmarks/report.json` |
+| BACKSTAGE-01 Second portal | `make backstage-test` | `evidence/backstage-integration.json` |
+| DORA-01 Four metrics | `make dora-dashboard` | `evidence/dora-dashboard.json` |
+
+The first five need `make lab-up` and `make kind-up`. REBUILD-01, HA-01, BENCH-01 and the
+CI half of ISO-01 additionally need `bash scripts/jenkins_lab.sh up`; BACKSTAGE-01 needs
+`bash scripts/backstage_lab.sh up`. `make gates-all` runs the lot.
+
+Each runner exits non-zero on the first failed assertion and writes its evidence either
+way, so a failed gate is as readable as a passing one.
+
 ## E2E-01 — Container
 
 1. Push commit lên GitHub hoặc bare Git.
@@ -41,10 +65,12 @@
 
 ## SEC-01 — Supply chain deny
 
-- Image có CVE HIGH/CRITICAL vượt policy phải bị chặn.
+- Image có CVE HIGH/CRITICAL **có bản vá** vượt policy phải bị chặn. Finding chưa có bản vá vẫn được ghi vào evidence nhưng không chặn — lý do trong [security model](../docs/security-model.md).
 - Artifact không có SBOM phải bị chặn.
 - Artifact chưa verify Cosign signature phải bị chặn.
+- Evidence thuộc digest khác không được phép cấp phép cho artifact đang deploy.
 - Deploy chỉ nhận immutable digest, không nhận tag mutable làm identity.
+- Khi `NETCI_REQUIRE_SECURITY_EVIDENCE=true`, artifact hoàn toàn không có evidence cũng bị chặn.
 
 ## REBUILD-01 — Jenkins rebuild
 
@@ -65,3 +91,5 @@
 ## DORA-01 - Four metrics
 
 Event model phải đủ cho Deployment Frequency, Lead Time for Changes, Change Failure Rate và Time to Restore Service. Mỗi event gắn `applicationId`, `commitSha`, `artifactDigest`, `environment`, `deploymentId`, `actor` và timestamp.
+
+Gate không chỉ đọc dashboard: nó tính lại cả bốn metric một cách độc lập từ `GET /delivery-events` rồi so sánh. Metric nào không tái lập được từ source event thì gate fail. Nó cũng assert recovery gắn đúng `deploymentId` của lần fail mà nó khôi phục, chứ không suy ra theo thứ tự thời gian.

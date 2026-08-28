@@ -49,6 +49,32 @@ REQUIRED = [
     "deploy/ansible/playbooks/deploy-systemd.yml",
     "scripts/doctor.py",
     "scripts/validate_release.py",
+    "scripts/migrate.py",
+    "scripts/netci_callback.py",
+    "scripts/lab.sh",
+    "scripts/jenkins_lab.sh",
+    "scripts/backstage_lab.sh",
+    "scripts/netci_gates/evidence.py",
+    "scripts/netci_gates/client.py",
+    "scripts/netci_gates/jenkins.py",
+    # One runner per executable gate in release-checklist.yaml. The checklist validator
+    # checks that each command's script exists; this list is the other direction, so a
+    # runner cannot be deleted while the checklist still claims the gate is ready.
+    "scripts/gate_kind.py",
+    "scripts/gate_security.py",
+    "scripts/gate_e2e_container.py",
+    "scripts/gate_e2e_kubernetes.py",
+    "scripts/gate_e2e_systemd.py",
+    "scripts/gate_dora.py",
+    "scripts/gate_jenkins_ci.py",
+    "scripts/gate_jenkins_rebuild.py",
+    "scripts/gate_failure_drill.py",
+    "scripts/gate_benchmark.py",
+    "scripts/gate_backstage.py",
+    "backend/migrations/0001_baseline.sql",
+    "deploy/ansible/requirements.yml",
+    "deploy/ansible/requirements.txt",
+    "deploy/ansible/inventories/localhost.ini",
     "release-checklist.yaml",
     *CORE_DOCS,
     *ADRS,
@@ -110,8 +136,11 @@ if "runtime" not in required_parameters:
 backstage_text = (ROOT / "backstage/netci-template.yaml").read_text(encoding="utf-8")
 if "runtime: docker" in backstage_text:
     errors.append("Backstage template hardcodes Docker runtime")
-if "/api/proxy/netci/applications" not in backstage_text:
-    errors.append("Backstage template does not use the documented netCI proxy")
+if "path: /proxy/netci/applications" not in backstage_text:
+    # The scaffolder action prefixes /api, so the template must not repeat it.
+    errors.append("Backstage template must post to /proxy/netci/applications")
+if "/api/proxy/netci" in backstage_text:
+    errors.append("Backstage template double-prefixes /api on the proxy path")
 if "output.body.url" in backstage_text:
     errors.append("Backstage output references URL not returned by netCI API")
 
@@ -122,15 +151,39 @@ for relative in script_references:
     if not (ROOT / relative).is_file():
         errors.append(f"Makefile references missing script: {relative}")
 
+def documented_make_targets(markdown: str) -> set[str]:
+    """Find `make <target>` only inside code spans and fenced blocks.
+
+    Matching plain prose would flag ordinary English ("make the gate red") as a
+    stale target reference, which trains readers to ignore this check.
+    """
+
+    code = re.findall(r"```.*?```", markdown, flags=re.DOTALL) + re.findall(r"`[^`\n]+`", markdown)
+    return {
+        target
+        for fragment in code
+        for target in re.findall(r"\bmake\s+([A-Za-z0-9_.-]+)", fragment)
+    }
+
+
 for relative in ["README.md", "QUICKSTART.md", *CORE_DOCS]:
     text = (ROOT / relative).read_text(encoding="utf-8")
-    for target in re.findall(r"\bmake\s+([A-Za-z0-9_.-]+)", text):
+    for target in documented_make_targets(text):
         if target not in targets:
             errors.append(f"{relative} references missing Makefile target: {target}")
 
 try:
-    errors.extend(validate_manifest(load_manifest()))
-except (OSError, ValueError, yaml.YAMLError) as exc:
+    manifest = load_manifest()
+    errors.extend(validate_manifest(manifest))
+    # A ready gate must point at a script that exists; a manifest that names a missing
+    # runner would pass its own schema check and fail only during the release run.
+    for check in manifest.get("checks", []):
+        if check.get("state") != "ready":
+            continue
+        for argument in check.get("command", []):
+            if argument.endswith((".py", ".sh")) and not (ROOT / argument).is_file():
+                errors.append(f"release check {check['id']} runs a missing script: {argument}")
+except (OSError, ValueError, KeyError, yaml.YAMLError) as exc:
     errors.append(f"invalid release checklist: {exc}")
 
 if errors:

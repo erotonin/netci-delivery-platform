@@ -1,0 +1,152 @@
+"""Seam between the delivery domain and the durable CD workflow engine.
+
+Per ADR-003 only the long-running deploy/approve/health/rollback process becomes a
+Temporal workflow.  The domain calls `start` once a deployment exists and `signal_approval`
+once a reviewer approves; everything else stays plain application state.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+import os
+from dataclasses import dataclass
+from typing import Protocol
+from uuid import UUID
+
+logger = logging.getLogger(__name__)
+
+
+class CdStartError(RuntimeError):
+    """Raised when the durable workflow could not be started or signalled."""
+
+
+@dataclass(frozen=True)
+class CdStartRequest:
+    application_id: UUID
+    pipeline_run_id: UUID
+    deployment_id: UUID
+    runtime: str
+    environment: str
+    artifact_digest: str
+    release_name: str
+    require_approval: bool
+    parameters: dict[str, object]
+
+    @property
+    def workflow_id(self) -> str:
+        """Deterministic id so a retried callback re-attaches instead of duplicating."""
+
+        return f"netci-deploy-{self.deployment_id}"
+
+
+class CdOrchestrator(Protocol):
+    def start(self, request: CdStartRequest) -> str | None: ...
+
+    def signal_approval(self, workflow_id: str, actor: str, comment: str) -> None: ...
+
+
+class NullCdOrchestrator:
+    """Default: netCI tracks deployment state and waits for an external result callback."""
+
+    mode = "none"
+
+    def start(self, request: CdStartRequest) -> str | None:
+        return None
+
+    def signal_approval(self, workflow_id: str, actor: str, comment: str) -> None:
+        return None
+
+
+class TemporalCdOrchestrator:
+    """Start and signal `ProvisionAndDeployWorkflow` on a real Temporal server."""
+
+    mode = "temporal"
+
+    def __init__(self, address: str, namespace: str, task_queue: str, *, timeout_seconds: float = 10.0) -> None:
+        self.address = address
+        self.namespace = namespace
+        self.task_queue = task_queue
+        self.timeout_seconds = timeout_seconds
+
+    def _run(self, coroutine):
+        """Bridge to Temporal's async client from the synchronous domain service."""
+
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return asyncio.run(asyncio.wait_for(coroutine, self.timeout_seconds))
+        # Called from inside a running loop (async test client): use a private loop
+        # in a worker thread so we never re-enter the caller's loop.
+        import concurrent.futures
+
+        def runner():
+            return asyncio.run(asyncio.wait_for(coroutine, self.timeout_seconds))
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+            return pool.submit(runner).result(timeout=self.timeout_seconds + 5)
+
+    async def _client(self):
+        from temporalio.client import Client
+
+        return await Client.connect(self.address, namespace=self.namespace)
+
+    def start(self, request: CdStartRequest) -> str:
+        from temporalio.common import WorkflowIDReusePolicy
+
+        from ..workflows.provision_and_deploy import DeliveryInput, ProvisionAndDeployWorkflow
+
+        delivery = DeliveryInput(
+            application_id=str(request.application_id),
+            pipeline_run_id=str(request.pipeline_run_id),
+            runtime=request.runtime,
+            environment=request.environment,
+            artifact_digest=request.artifact_digest,
+            release_name=request.release_name,
+            parameters=dict(request.parameters),
+            require_approval=request.require_approval,
+        )
+
+        async def start_workflow() -> str:
+            client = await self._client()
+            handle = await client.start_workflow(
+                ProvisionAndDeployWorkflow.run,
+                delivery,
+                id=request.workflow_id,
+                task_queue=self.task_queue,
+                id_reuse_policy=WorkflowIDReusePolicy.ALLOW_DUPLICATE_FAILED_ONLY,
+            )
+            return handle.id
+
+        try:
+            return self._run(start_workflow())
+        except Exception as exc:
+            raise CdStartError(f"cannot start delivery workflow {request.workflow_id}: {exc}") from exc
+
+    def signal_approval(self, workflow_id: str, actor: str, comment: str) -> None:
+        from ..workflows.provision_and_deploy import Approval, ProvisionAndDeployWorkflow
+
+        async def signal() -> None:
+            client = await self._client()
+            handle = client.get_workflow_handle(workflow_id)
+            await handle.signal(ProvisionAndDeployWorkflow.approve, Approval(actor=actor, comment=comment))
+
+        try:
+            self._run(signal())
+        except Exception as exc:
+            raise CdStartError(f"cannot signal approval to workflow {workflow_id}: {exc}") from exc
+
+
+def build_cd_orchestrator() -> CdOrchestrator:
+    """Compose the configured orchestrator from the environment."""
+
+    mode = os.getenv("NETCI_CD_MODE", "none").strip().lower()
+    if mode in {"", "none", "callback"}:
+        return NullCdOrchestrator()
+    if mode != "temporal":
+        raise ValueError(f"unsupported NETCI_CD_MODE: {mode}")
+    return TemporalCdOrchestrator(
+        address=os.getenv("TEMPORAL_ADDRESS", "localhost:7233"),
+        namespace=os.getenv("TEMPORAL_NAMESPACE", "default"),
+        task_queue=os.getenv("TEMPORAL_TASK_QUEUE", "netci-delivery"),
+    )

@@ -12,7 +12,13 @@ paths:
       operationId: healthCheck
       responses:
         '200':
-          description: Service is healthy
+          description: Service is healthy and every configured dependency is reachable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+        '503':
+          description: A configured dependency is unreachable; writes would fail
           content:
             application/json:
               schema:
@@ -279,6 +285,15 @@ paths:
         - { name: moduleId, in: query, required: false, schema: { type: string } }
       responses:
         '200': { description: Audit events }
+  /me:
+    get:
+      operationId: getCurrentUser
+      responses:
+        '200':
+          description: Current user identity and authentication status
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
   /applications:
     post:
       operationId: createApplication
@@ -313,6 +328,46 @@ paths:
                 type: array
                 items:
                   $ref: '#/components/schemas/Application'
+  /applications/{applicationId}/dora:
+    get:
+      operationId: getApplicationDora
+      description: >-
+        Four DORA metrics projected from durable delivery events. sourceEvents states
+        how many events the figures came from, so a dashboard number is always traceable.
+      parameters:
+        - $ref: '#/components/parameters/ApplicationId'
+      responses:
+        '200':
+          description: DORA dashboard payload matching api/dora-dashboard.schema.json
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DoraDashboard'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /delivery-events:
+    get:
+      operationId: listDeliveryEvents
+      description: Source events behind the DORA projection, for acceptance evidence.
+      parameters:
+        - name: applicationId
+          in: query
+          required: false
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Delivery source events
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [count, items]
+                properties:
+                  count: { type: integer, minimum: 0 }
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/DeliveryEvent'
   /applications/{applicationId}/pipeline-runs:
     post:
       operationId: startPipelineRun
@@ -425,6 +480,54 @@ paths:
           $ref: '#/components/responses/NotFound'
         '422':
           $ref: '#/components/responses/UnprocessableEntity'
+  /pipeline-runs/{pipelineRunId}/security-evidence:
+    post:
+      operationId: publishSecurityEvidence
+      description: >-
+        CI publishes SBOM, vulnerability-scan and signature evidence for one immutable
+        artifact. netCI returns the supply-chain policy verdict and re-applies the same
+        rules before any deployment is created.
+      security:
+        - pipelineApiKey: []
+      parameters:
+        - $ref: '#/components/parameters/PipelineRunId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SecurityEvidence'
+      responses:
+        '202':
+          description: Evidence recorded with a policy decision
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [pipelineRunId, decision, reason]
+                properties:
+                  pipelineRunId: { type: string, format: uuid }
+                  decision: { type: string, enum: [allow, deny] }
+                  reason: { type: string }
+                  checks: { type: object, additionalProperties: { type: string } }
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+    get:
+      operationId: getSecurityEvidence
+      parameters:
+        - $ref: '#/components/parameters/PipelineRunId'
+      responses:
+        '200':
+          description: Stored supply-chain evidence and its policy decision
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+        '404':
+          $ref: '#/components/responses/NotFound'
   /deployments/{deploymentId}/approve:
     post:
       operationId: approveDeployment
@@ -664,8 +767,83 @@ components:
       type: object
       required: [status, version]
       properties:
-        status: { type: string, enum: [ok] }
+        status: { type: string, enum: [ok, degraded] }
         version: { type: string }
+        engines:
+          type: object
+          description: Which CI/CD engines this instance is wired to.
+          properties:
+            ci: { type: string, enum: [none, jenkins] }
+            cd: { type: string, enum: [none, temporal] }
+        dependencies:
+          type: object
+          additionalProperties: true
+    SecurityEvidence:
+      type: object
+      required: [artifactDigest, sbom, vulnerabilityScan, signature]
+      properties:
+        artifactDigest: { type: string, pattern: '^sha256:[0-9a-f]{64}$' }
+        artifactRef: { type: string, nullable: true }
+        buildRunId: { type: string, nullable: true }
+        sbom:
+          type: object
+          required: [generatedBy, location]
+          properties:
+            generatedBy: { type: string, enum: [syft] }
+            location: { type: string }
+            format: { type: string, default: cyclonedx-json }
+        vulnerabilityScan:
+          type: object
+          required: [scanner, status]
+          properties:
+            scanner: { type: string, enum: [trivy] }
+            status: { type: string, enum: [passed, failed] }
+            critical: { type: integer, minimum: 0 }
+            high: { type: integer, minimum: 0 }
+            medium: { type: integer, minimum: 0 }
+            reportLocation: { type: string, nullable: true }
+        signature:
+          type: object
+          required: [provider, verified]
+          properties:
+            provider: { type: string, enum: [cosign] }
+            verified: { type: boolean }
+            certificateIdentity: { type: string, nullable: true }
+            bundleLocation: { type: string, nullable: true }
+    DeliveryEvent:
+      type: object
+      required: [id, eventType, applicationId, occurredAt]
+      properties:
+        id: { type: string, format: uuid }
+        eventType: { type: string, enum: [commit, deployment, recovery] }
+        applicationId: { type: string, format: uuid }
+        pipelineRunId: { type: string, format: uuid, nullable: true }
+        deploymentId: { type: string, format: uuid, nullable: true }
+        commitSha: { type: string, nullable: true }
+        environment: { $ref: '#/components/schemas/Environment' }
+        successful: { type: boolean, nullable: true }
+        requiresIntervention: { type: boolean }
+        occurredAt: { type: string, format: date-time }
+    DoraDashboard:
+      type: object
+      required: [applicationId, period, metrics, sourceEvents]
+      properties:
+        applicationId: { type: string, format: uuid }
+        period:
+          type: object
+          required: [from, to]
+          properties:
+            from: { type: string, format: date-time }
+            to: { type: string, format: date-time }
+        metrics:
+          type: object
+          required: [deploymentFrequency, changeLeadTimeSecondsAvg, changeFailRate, timeToRestoreServiceSecondsAvg]
+          properties:
+            deploymentFrequency: { type: number, minimum: 0 }
+            changeLeadTimeSecondsAvg: { type: number, minimum: 0 }
+            changeFailRate: { type: number, minimum: 0, maximum: 1 }
+            timeToRestoreServiceSecondsAvg: { type: number, minimum: 0 }
+        sourceEvents: { type: integer, minimum: 0 }
     Runtime:
       type: string
       enum: [docker, kubernetes, systemd]

@@ -25,6 +25,27 @@ For each artifact, CI must:
 
 A missing/invalid digest, SBOM, scan decision or signature is deny-by-default. Staging and production receive the same digest. Systemd binaries require equivalent blob digest/SBOM/scan/sign evidence, not an exemption from the gate.
 
+## What the vulnerability gate blocks, and why
+
+netCI blocks HIGH and CRITICAL findings **that have a published fix** (`trivy --ignore-unfixed`, overridable with `TRIVY_IGNORE_UNFIXED=false`).
+
+This is a deliberate choice, not a relaxation. A finding with no upstream fix cannot be resolved by rebuilding, so failing every build on it would make the gate permanently red and therefore ignored — the failure mode a security gate exists to avoid. Findings without a fix are still counted and stored in the evidence record, so they remain visible and can be reported on; they just do not block a release that has no action available to it.
+
+The corollary is that base images must be patched rather than merely pinned. The sample applications run `apk upgrade` on top of a pinned base for exactly this reason: pinning alone freezes a base at the vulnerabilities it shipped with, and the gate will (correctly) refuse it once fixes are published. When a build fails this gate, the fix is to rebuild on current packages — which is what the gate is asking for.
+
+An artifact that needs to ship despite a fixable finding needs a recorded, time-boxed exception with an owner. That mechanism is not implemented; until it is, such a release is blocked.
+
+## How the gate is enforced
+
+The policy is evaluated by one function, `evaluate_artifact_evidence`, and applied at two points:
+
+1. when CI publishes evidence (`POST /pipeline-runs/{id}/security-evidence`), which returns the verdict so a build can fail immediately; and
+2. when netCI is asked to create a deployment (`POST /pipeline-runs/{id}/ci-result`), which re-evaluates rather than trusting the earlier verdict.
+
+The Temporal `validate_artifact` activity evaluates the same rules a third time before touching a runtime, because a workflow may run long after CI finished. A verdict already recorded as `deny` is binding: re-evaluation can never turn it into an allow.
+
+With `NETCI_REQUIRE_SECURITY_EVIDENCE=true`, an artifact with no published evidence at all is refused as well. The local reference default is `false` so the platform is usable without a full supply-chain stack; the acceptance profile turns it on.
+
 ## Isolation and credentials
 
 - Controller executors remain disabled; each build gets a dedicated pod/workspace.

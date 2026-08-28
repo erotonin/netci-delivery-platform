@@ -1,0 +1,36 @@
+{
+  "schemaVersion": "1.0",
+  "applicationId": "netci-benchmark",
+  "environment": "ubuntu-24.04-kind-local",
+  "regressionThresholdPercent": 400.0,
+  "baseline": {
+    "runs": 3,
+    "successRate": 1.0,
+    "totalSecondsAvg": 7.74,
+    "queueSecondsAvg": 0.298,
+    "provisioningSecondsAvg": 0.0,
+    "checkoutSecondsAvg": 0.876,
+    "cacheRestoreSecondsAvg": 0.349,
+    "buildSecondsAvg": 3.201,
+    "cleanupSecondsAvg": 1.011,
+    "otherSecondsAvg": 0.109
+  },
+  "ephemeral": {
+    "runs": 3,
+    "successRate": 1.0,
+    "totalSecondsAvg": 46.837,
+    "queueSecondsAvg": 1.49,
+    "provisioningSecondsAvg": 1.379,
+    "checkoutSecondsAvg": 18.877,
+    "cacheRestoreSecondsAvg": 0.645,
+    "buildSecondsAvg": 6.4,
+    "cleanupSecondsAvg": 9.97,
+    "otherSecondsAvg": 0.108
+  },
+  "comparison": {
+    "totalDeltaPercent": 505.13,
+    "buildDeltaPercent": 99.94,
+    "cacheHitRate": 0.0,
+    "conclusion": "regression"
+  }
+}

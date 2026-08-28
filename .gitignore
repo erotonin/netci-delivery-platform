@@ -15,6 +15,12 @@ dist/
 .idea/
 .vscode/
 
+# Gate working directory: build outputs, generated signing keys, deployed release
+# trees and downloaded Ansible collections. Evidence files under evidence/ are
+# deliberately committed; the material they were produced from is not.
+.netci-gate/
+sample-apps/*/dist/
+
 # Runtime data
 postgres-data/
 registry-data/

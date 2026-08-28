@@ -13,8 +13,13 @@ from datetime import datetime, timedelta, timezone
 from uuid import UUID, uuid4
 
 from .delivery import DeliveryPlatform
-from .domain.models import Environment, Runtime
+from .domain.models import DeliveryEvent, Environment, Runtime
 from .persistence import PostgresPortalStore
+from .projections.dora import DoraEvent, project_dora
+
+#: Rolling window every DORA figure is computed over. Stated in the response so a
+#: number on screen can never be read without the period it belongs to.
+DORA_WINDOW_DAYS = 30
 
 
 class PortalError(RuntimeError):
@@ -522,11 +527,17 @@ class PortalReadModel:
 
     def dora(self, scope_id: str) -> dict[str, object]:
         if scope_id in self._modules:
-            return {"scope": "module", "scopeId": scope_id, "metrics": self._dora(scope_id)}
+            projection = self.dora_projection(self._module_application_ids(scope_id))
+            return {"scope": "module", "scopeId": scope_id, **projection}
         if scope_id in self._systems:
-            module_ids = self._systems[scope_id].module_ids
-            metric_sets = [self._dora(module_id) for module_id in module_ids]
-            return {"scope": "system", "scopeId": scope_id, "metrics": self._merge_metrics(metric_sets)}
+            # A system aggregates its modules' event streams rather than averaging
+            # their metrics -- averaging rates would weight a quiet module equally.
+            application_ids = [
+                application_id
+                for module_id in self._systems[scope_id].module_ids
+                for application_id in self._module_application_ids(module_id)
+            ]
+            return {"scope": "system", "scopeId": scope_id, **self.dora_projection(application_ids)}
         raise KeyError("scope not found")
 
     def production_requests(self) -> list[dict[str, object]]:
@@ -557,6 +568,15 @@ class PortalReadModel:
                 }
             )
         return output
+
+    def production_request(self, request_id: str) -> dict[str, object] | None:
+        """One request, or None. Used by the approval endpoint to learn who asked for it.
+
+        Reads the same projection as `production_requests()` so the two can never
+        disagree about who the requester was.
+        """
+
+        return next((item for item in self.production_requests() if item["id"] == request_id), None)
 
     def create_production_request(
         self,
@@ -732,29 +752,79 @@ class PortalReadModel:
                 return deployment.status.value.replace("pending_approval", "pending").replace("rolled_back", "rolled back")
         return "not_deployed"
 
-    def _dora(self, module_id: str) -> list[dict[str, object]]:
-        module = self._modules[module_id]
-        runs = self._module_runs_raw(module)
-        deployments = self.platform.list_deployments(module.application_id) if module.application_id else ()
-        production = [item for item in deployments if item.environment == Environment.PROD]
-        failed = sum(1 for item in runs if item.status.value == "failed")
-        frequency = len(production) / 4 if production else 8.2
-        return [
-            {"key": "deploymentFrequency", "label": "Deployment Frequency", "value": round(frequency, 1), "unit": "/wk", "hint": "Releases per week"},
-            {"key": "leadTime", "label": "Lead Time for Changes", "value": 4.5, "unit": "h", "hint": "Commit to production"},
-            {"key": "changeFailureRate", "label": "Change Failure Rate", "value": round(failed / len(runs) * 100, 1) if runs else 3.1, "unit": "%", "hint": "Deploys causing incidents"},
-            {"key": "timeToRestoreService", "label": "Time to Restore Service", "value": 1.2, "unit": "h", "hint": "Mean recovery time"},
-        ]
+    def dora_projection(self, application_ids: list[UUID]) -> dict[str, object]:
+        """Project the four DORA metrics from durable delivery events only.
+
+        Every figure is derived from `delivery_events` rows written in the same
+        transaction as the state change that produced them, so `sourceEventCount`
+        is the audit trail for the numbers beside it. With no events, the metrics
+        are zero -- the portal never invents a baseline.
+        """
+
+        now = datetime.now(timezone.utc)
+        since = now - timedelta(days=DORA_WINDOW_DAYS)
+        source: list[DeliveryEvent] = []
+        for application_id in application_ids:
+            source.extend(self.platform.delivery_events(application_id))
+        windowed = [event for event in source if event.occurred_at >= since]
+        projected = project_dora([self._as_dora_event(event) for event in windowed])
+        weeks = DORA_WINDOW_DAYS / 7
+        return {
+            "metrics": [
+                {
+                    "key": "deploymentFrequency",
+                    "label": "Deployment Frequency",
+                    "value": round(float(projected["deployment_frequency"]) / weeks, 1),
+                    "unit": "/wk",
+                    "hint": "Production deployments per week",
+                },
+                {
+                    "key": "leadTime",
+                    "label": "Lead Time for Changes",
+                    "value": round(float(projected["change_lead_time_seconds_avg"]) / 3600, 1),
+                    "unit": "h",
+                    "hint": "Commit to production",
+                },
+                {
+                    "key": "changeFailureRate",
+                    "label": "Change Failure Rate",
+                    "value": round(float(projected["change_fail_rate"]) * 100, 1),
+                    "unit": "%",
+                    "hint": "Production deployments needing intervention",
+                },
+                {
+                    "key": "timeToRestoreService",
+                    "label": "Time to Restore Service",
+                    "value": round(float(projected["time_to_restore_service_seconds_avg"]) / 3600, 1),
+                    "unit": "h",
+                    "hint": "Failure to restored service",
+                },
+            ],
+            "sourceEventCount": len(windowed),
+            "window": {"from": since.isoformat(), "to": now.isoformat(), "days": DORA_WINDOW_DAYS},
+        }
 
     @staticmethod
-    def _merge_metrics(metric_sets: list[list[dict[str, object]]]) -> list[dict[str, object]]:
-        if not metric_sets:
-            return []
-        result: list[dict[str, object]] = []
-        for index in range(len(metric_sets[0])):
-            values = [float(metrics[index]["value"]) for metrics in metric_sets]
-            result.append({**metric_sets[0][index], "value": round(sum(values) / len(values), 1)})
-        return result
+    def _as_dora_event(event: DeliveryEvent) -> DoraEvent:
+        return DoraEvent(
+            event_type=event.event_type.value,
+            application_id=str(event.application_id),
+            commit_sha=event.commit_sha,
+            deployment_id=str(event.deployment_id) if event.deployment_id else None,
+            environment=event.environment.value if event.environment else None,
+            occurred_at=event.occurred_at,
+            successful=event.successful,
+            requires_intervention=event.requires_intervention,
+        )
+
+    def _module_application_ids(self, module_id: str) -> list[UUID]:
+        module = self._modules[module_id]
+        return [module.application_id] if module.application_id else []
+
+    def _dora(self, module_id: str) -> list[dict[str, object]]:
+        metrics = self.dora_projection(self._module_application_ids(module_id))["metrics"]
+        assert isinstance(metrics, list)
+        return metrics
 
     def _activity_by_day(self) -> list[dict[str, object]]:
         today = datetime.now(timezone.utc).date()

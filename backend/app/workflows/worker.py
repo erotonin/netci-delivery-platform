@@ -7,7 +7,7 @@ from pathlib import Path
 from temporalio.client import Client
 from temporalio.worker import Worker
 
-from .activities import AnsibleRuntimeRunner, DeliveryActivities, FileEvidenceStore
+from .activities import AnsibleRuntimeRunner, DeliveryActivities, build_evidence_store
 from .provision_and_deploy import ProvisionAndDeployWorkflow
 
 
@@ -16,10 +16,9 @@ async def main() -> None:
     namespace = os.getenv('TEMPORAL_NAMESPACE', 'default')
     client = await Client.connect(address, namespace=namespace)
     project_root = Path(os.getenv('NETCI_PROJECT_ROOT', '/workspace'))
-    evidence_root = Path(os.getenv('NETCI_SECURITY_EVIDENCE_DIR', project_root / 'evidence/security'))
     inventory = Path(os.getenv('NETCI_ANSIBLE_INVENTORY', project_root / 'deploy/ansible/inventories/local.ini'))
     activities = DeliveryActivities(
-        FileEvidenceStore(evidence_root),
+        build_evidence_store(project_root),
         AnsibleRuntimeRunner(project_root=project_root, inventory=inventory),
     )
     worker = Worker(

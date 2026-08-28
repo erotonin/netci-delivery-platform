@@ -14,7 +14,7 @@ for service in {'postgres', 'registry', 'minio', 'temporalite', 'netci-api', 'je
     if service not in compose.get('services', {}):
         errors.append(f'missing compose service: {service}')
 for controller in ('a', 'b'):
-    expected = f'/var/jenkins_home/casc/ephemeral-agent.yaml'
+    expected = '/var/jenkins_home/casc/ephemeral-agent.yaml'
     if expected not in compose_text:
         errors.append(f'Jenkins {controller} does not load ephemeral agent config')
 

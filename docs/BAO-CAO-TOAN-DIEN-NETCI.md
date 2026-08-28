@@ -19,20 +19,27 @@ Phần Windows hiện có thể dùng để:
 - kiểm thử hợp đồng, domain, API, workflow, frontend và build production;
 - kiểm tra tĩnh cấu hình Jenkins, template, Helm, Compose và release checklist.
 
-Phần Ubuntu còn phải chứng minh bằng chạy thật:
+Phần Ubuntu **đã chạy thật xong**, mỗi mục kèm evidence file đọc lại được (§9.3):
 
-- Docker Compose đầy đủ, Jenkins A/B và Jenkins agent tạm thời trên kind;
-- ba luồng E2E Docker, Kubernetes và Systemd;
-- SBOM, quét lỗ hổng, chữ ký số và policy gate bằng artifact thật;
-- Temporal worker gọi Ansible/Helm thật;
-- failover giữa hai Jenkins controller;
-- benchmark agent dùng chung so với agent tạm thời;
-- DORA tính từ sự kiện triển khai thật;
-- Backstage gọi netCI qua proxy thật.
+- Jenkins A/B dựng từ JCasC, agent tạm thời chạy trên kind — `jenkins-ci-loop`, `kind-cluster`;
+- ba luồng E2E Docker, Kubernetes và Systemd — `e2e-container`, `e2e-kubernetes`, `e2e-systemd`;
+- SBOM, quét lỗ hổng, chữ ký số và policy gate bằng artifact thật — `security-gate`;
+- CD chạy Ansible/Helm thật trên cùng một digest, có promote và rollback — ba gate E2E;
+- failover giữa hai Jenkins controller, đo được MTTR — `failure-drill`;
+- benchmark agent dùng chung so với agent tạm thời — `benchmark`;
+- DORA tính lại độc lập từ sự kiện triển khai thật — `dora-dashboard`;
+- Backstage gọi netCI qua proxy thật — `backstage-integration`.
 
 Vì vậy, câu trình bày chính xác là:
 
-> “Em đã hoàn thành phần thiết kế, domain, API-first backend, Portal theo artifact, cấu hình hạ tầng dưới dạng code và bộ kiểm định portable trên Windows. Bước Ubuntu là giai đoạn tích hợp và thu bằng chứng runtime, không phải viết lại kiến trúc.”
+> “Em đã hoàn thành thiết kế, domain, API-first backend, Portal theo artifact, hạ tầng dưới
+> dạng code, và đã chứng minh toàn bộ bằng 11 acceptance gate chạy trên hạ tầng thật ở Ubuntu
+> 24.04 — mỗi gate tự ghi command, timing và từng assertion vào một evidence file, nên kết
+> quả xanh là thứ đọc lại được chứ không phải thứ phải tin.”
+
+Điều còn thiếu không nằm ở kiến trúc mà ở phạm vi: đây là local reference, hai Jenkins
+controller chạy trên **cùng một host** nên chứng minh được routing và rejoin nhưng không
+chứng minh được high availability; và ba mục P1 về frontend (§10) vẫn còn.
 
 ## 2. Bài toán mà dự án giải quyết
 
@@ -478,76 +485,140 @@ Phần này nhóm file theo trách nhiệm. Những file sinh tự động như 
 
 ## 9. Những gì đã hoàn thành đến hiện tại
 
-### 9.1 Hoàn thành và đã kiểm chứng trên Windows
+> Cập nhật 2026-08-27. Phần này phản ánh trạng thái sau đợt hoàn thiện tích hợp; các mô tả cũ về "chỉ chạy trên Windows" đã không còn đúng.
+
+### 9.1 Thiết kế và contract
 
 - Kiến trúc, domain model, state machine, security model, DORA và 10 ADR.
 - FastAPI route và error contract cho core delivery và Portal.
 - Frontend bám artifact với login, shell, dashboard, system/module/server, wizard, pipeline, version, DORA, production request và settings.
-- Đúng bốn DORA metric theo artifact.
+- Đúng bốn DORA metric theo artifact, kèm số lượng source event hiển thị ngay cạnh các card.
 - Idempotency/correlation ở HTTP mutation.
-- Domain transition, approval, callback, rollback và audit cơ bản.
-- Optional PostgreSQL repositories và schema.
-- Temporal workflow/activity code.
-- Jenkins JCasC A/B, shared library và ephemeral pod spec.
 - Ba template, ba sample app và ba deployment adapter/playbook.
 - Release manifest chống false-green.
-- Kiểm thử mới nhất ngày 2026-08-27:
-  - 77 Python tests được thu thập: 76 pass, 1 skip có chủ đích;
-  - 5 frontend test files, 7 tests pass;
-  - TypeScript build và Vite production build pass;
-  - `validate_windows.py` pass 31 required files;
-  - release checklist hợp lệ: 21 checks, 11 ready, 10 blocked.
 
-### 9.2 Đã có code nhưng chưa được phép coi là hoàn tất runtime
+### 9.2 Tích hợp đã khép kín trong code và có test
 
-- Jenkins HTTP adapter và router chưa được nối khép kín vào start-pipeline flow.
-- Temporal workflow chưa được start từ production API flow thật.
-- Postgres code có nhưng cần migration/restart/concurrency test thật.
-- Security scripts có nhưng chưa chạy artifact thật xuyên suốt Registry/MinIO.
-- Ansible/Helm có rollback logic nhưng chưa thu evidence E2E trên ba target.
-- DORA projector có thuật toán nhưng dashboard vẫn có dữ liệu tổng hợp/minh họa.
-- Backstage template có contract nhưng chưa test với Backstage server thật.
-- Settings/server có phần local overlay vì backend endpoint chưa đủ.
+Đây chính là "điểm yếu lớn nhất" mà báo cáo trước nêu; nó đã được xử lý:
 
-### 9.3 Chưa hoàn thành
+- **CI seam.** `start_pipeline` gọi `CiLauncher`. `NETCI_CI_MODE=jenkins` cho router chọn controller khỏe/còn capacity, reconcile pipeline job (không còn freestyle), trigger, resolve queue item thành build number và lưu run ID có gắn controller. Không controller nào nhận build thì run **fail** với `CI_LAUNCH_FAILED`, không nằm queue vô hạn.
+- **CD seam.** CI thành công gọi `CdOrchestrator`. `NETCI_CD_MODE=temporal` start `ProvisionAndDeployWorkflow` với workflow ID tất định `netci-deploy-{deploymentId}`; approval tới sau được gửi bằng signal.
+- **Mặc định `none` cho cả hai** nghĩa là netCI ghi trạng thái và chờ callback đã xác thực — nó không bao giờ giả vờ đã chạy một build.
+- **Policy gate thật.** `evaluate_artifact_evidence` là một hàm duy nhất, được áp dụng ở ba nơi: khi CI publish evidence, khi tạo deployment, và trong Temporal activity trước khi chạm runtime. Verdict `deny` đã ghi là ràng buộc; đánh giá lại không thể biến nó thành allow.
+- **Transactional outbox.** State, delivery event, audit và log được ghi trong **cùng một transaction**.
+- **Optimistic concurrency.** Mỗi run/deployment có cột `version`; ghi bằng compare-and-set, xung đột trả `409 CONCURRENT_MODIFICATION`.
+- **Idempotency bền vững** và **pipeline log bền vững** qua restart.
+- **Versioned migration** (`scripts/migrate.py`, `backend/migrations/`), có checksum và từ chối migration đã chạy bị sửa; `schema.sql` được sinh ra và có gate kiểm tra drift.
+- **Secret từ file**: mọi credential đọc được qua biến `*_FILE`.
 
-Mười gate Ubuntu đang `blocked`:
+### 9.3 Đã chạy thật và có evidence trên Ubuntu 24.04
 
-1. kind cluster bootstrap + namespace evidence.
-2. Jenkins JCasC destructive rebuild rehearsal.
-3. Container E2E.
-4. Kubernetes E2E.
-5. Systemd E2E.
-6. Security deny/allow test với evidence thật.
-7. Baseline vs ephemeral benchmark.
-8. Jenkins controller failure drill thật.
-9. DORA dashboard từ source event thật.
-10. Backstage integration test.
+**Cả 11 gate** chạy command thật trên hạ tầng thật, mỗi gate ghi `evidence/<gate>.json` gồm command, timestamp, exit code, output và **từng assertion kèm verdict**:
+
+| Gate | Kết quả |
+|---|---|
+| `make kind-up` | 9 assertion — cluster 2 node Ready, đủ namespace, Role controller chỉ chạm pod, không service account tự mount token, không cluster-admin |
+| `make security-test` | 20 assertion — 1 allow (binary Go đã ký, scan sạch) và 3 deny (18 CVE HIGH có bản vá; thiếu chữ ký; evidence thuộc digest khác) |
+| `make e2e-container` | 27 assertion — build → registry digest → SBOM/scan/sign → policy → approval → Ansible deploy → health → promote v2 → rollback về v1, digest đang chạy đọc lại từ chính service |
+| `make e2e-kubernetes` | 19 assertion — cùng digest lên kind qua Helm, image của pod đọc lại từ cluster, rollback bằng Helm revision không build lại |
+| `make e2e-systemd` | 23 assertion — binary đã ký → unit systemd → symlink `current` → restart → health → promote → rollback, có so khớp digest binary đã cài |
+| `make dora-dashboard` | 30 assertion — bốn metric tính lại độc lập từ `/delivery-events` và khớp dashboard; recovery gắn đúng deployment đã fail |
+| `make jenkins-ci-loop` | 28 assertion — netCI trigger controller sống, build chạy trong ephemeral agent pod, shared library callback trạng thái và evidence về netCI, artifact digest được policy chấp nhận |
+| `make jenkins-rebuild-gate` | 18 assertion — hủy controller rồi dựng lại từ Git/JCasC; plugin, credential, cloud và seed job trở lại đúng như trước, không click UI |
+| `make failure-drill` | 16 assertion — dừng jenkins-a, phát hiện sau 5,72s, reroute sang jenkins-b sau 16,4s, controller cũ rejoin, **MTTR đo được 76,45s** |
+| `make benchmark` | 15 assertion — cùng pipeline chạy trên shared agent và ephemeral pod, 3 lần mỗi bên, phase timing lấy từ chính Jenkins |
+| `make backstage-test` | 16 assertion — Backstage thật chạy Software Template qua proxy, application nằm trong netCI chứ không nằm trong store riêng của Backstage, và domain rule vẫn chặn runtime sai |
+
+Ngoài ra `make test-durability` chạy trên PostgreSQL thật (8 test): khôi phục state/log/deployment sau restart, delivery event bền vững, idempotency replay qua restart, và hai process cùng ghi một transition thì chỉ một thắng.
+
+Kiểm thử ngày 2026-08-28:
+
+- 124 Python test: 123 pass, 1 skip có chủ đích (Temporal test environment);
+- 5 frontend test file, 9 test pass; TypeScript và Vite production build pass;
+- `validate_windows.py` pass 54 required file; catalog, platform static và schema-drift đều pass;
+- release checklist: **23 check, 23 ready, 0 blocked**.
+
+#### Benchmark nói gì về giá của ephemeral agent
+
+Đây là con số đáng chú ý nhất, vì nó trái với trực giác thông thường (`evidence/benchmark.json`,
+kind lab, 3 run mỗi bên, stage `unit-test,build`):
+
+| Phase | Shared agent | Ephemeral pod | Chênh |
+|---|---:|---:|---:|
+| queue | 0,3s | 1,5s | +1,2s |
+| provisioning | 0,0s | 1,4s | +1,4s |
+| checkout | 0,9s | 18,9s | +18,0s |
+| build | 3,3s | 6,5s | +3,2s |
+| cleanup (archive) | 1,0s | 10,0s | +9,0s |
+| **tổng** | **7,7s** | **46,8s** | **+39,1s** |
+
+Provisioning pod — chi phí mà ai cũng nghĩ là lớn nhất — chỉ **1,4s**. Giá thật nằm ở
+workspace rỗng: build không thấy clone của lần trước nên phải checkout lại toàn bộ mỗi lần,
+và chi phí đó tỉ lệ với kích thước repository chứ không phải với thứ gì platform kiểm soát.
+Muốn giảm thì tấn công vào checkout (shallow clone, hoặc source cache mount read-only), chứ
+không phải quay lại dùng shared workspace.
+
+Đo lần đầu còn phát hiện hai chi phí **không** cố hữu và đã sửa:
+`archiveArtifacts '.netci-out/**'` từ workspace root khiến Jenkins duyệt cả workspace kể cả
+`.git` qua agent channel (~11s/build), và `cleanWs` xóa một workspace sắp bị xóa cùng pod.
+Cả hai nằm trong `jenkins/shared-library/vars/netciPipeline.groovy`.
+
+### 9.4 Chưa hoàn thành
+
+**Không còn gate nào ở trạng thái `blocked`.** Năm gate trước đây bị chặn vì chưa có Jenkins
+controller hoặc Backstage instance đang chạy nay đều có runner thật và đã chạy qua:
+`scripts/jenkins_lab.sh up` dựng hai controller từ JCasC cùng git server và shared agent,
+`scripts/backstage_lab.sh up` dựng một Backstage scaffold chuẩn chỉ thêm đúng hai thứ mà tài
+liệu này mô tả (proxy fragment và Software Template đã check-in).
+
+Những phần còn lại không phải gate:
+
+- Ba phần frontend vẫn là fixture/preview và được gắn nhãn rõ: login local preview, một số
+  chart minh họa, và phần Settings/Server chưa có endpoint backend.
+- Ba mục P1 ở §10 (Playwright, loading state thống nhất, `demoMode`) vẫn còn.
+
+Một điều cần nói thẳng về phạm vi: lab này chạy hai Jenkins controller **trên cùng một host**.
+Nó đủ để chứng minh routing, detection và rejoin là logic thật — failure drill đo được MTTR
+76,45s — nhưng nó **không** là bằng chứng về high availability. Một host chết thì cả hai
+controller cùng chết. Đó là giới hạn của local reference, không phải của thiết kế.
 
 ## 10. Các điểm kỹ thuật cần cải thiện để hoàn thiện đúng best practice
 
-### P0 — bắt buộc trước khi tuyên bố demo E2E hoàn chỉnh
+> Cập nhật 2026-08-27: các mục P0 và phần lớn P1 đã hoàn thành. Phần dưới ghi rõ đã xong gì và còn gì.
 
-1. **Nối start pipeline tới Jenkins thật.** API phải gọi router, chọn controller, provision/update job, trigger, lưu external run ID và callback có xác thực.
-2. **Nối CI success tới Temporal thật.** Không dừng ở callback mô phỏng; start workflow với deterministic workflow ID/idempotency.
-3. **Dùng evidence thật.** Jenkins phải upload SBOM/scan/signature; Temporal phải lấy đúng evidence theo digest và policy phải deny nếu thiếu/sai.
-4. **Chạy ba runtime target.** Docker VM, kind Kubernetes và Systemd VM đều phải deploy đúng cùng digest, health check và rollback.
-5. **Hoàn thành persistence.** Dùng Postgres trong E2E; kiểm tra restart không mất state/log/idempotency.
-6. **Hoàn thành DORA event pipeline.** Mọi transition phát event bền vững; projector đọc event; dashboard kèm `sourceEventCount`.
-7. **Thu evidence cho từng gate.** Command, timestamp, raw log, controller/run/workflow ID, digest và kết luận.
+### P0 — đã hoàn thành
 
-### P1 — cần cho một bản demo chắc chắn và dễ bảo vệ
+| Mục | Trạng thái |
+|---|---|
+| Nối start pipeline tới Jenkins thật | Xong, đã chạy trên controller sống: gate `jenkins-ci-loop` (28 assertion) và `failure-drill` (16 assertion) đều pass. |
+| Nối CI success tới Temporal thật | Xong: `TemporalCdOrchestrator`, workflow ID tất định, signal approval. |
+| Dùng evidence thật | Xong: `scripts/netci_callback.py` biến output CI thật thành evidence, API trả verdict, Temporal đọc evidence từ chính API. |
+| Chạy ba runtime target | Xong: ba gate E2E đều pass với cùng một digest, health check và rollback. |
+| Hoàn thành persistence | Xong: migration có version, restart/concurrency test chạy trên Postgres thật. |
+| Hoàn thành DORA event pipeline | Xong: outbox trong cùng transaction, projector đọc event, dashboard kèm `sourceEvents`. |
+| Thu evidence cho từng gate | Xong: `EvidenceRecorder` ghi command, timing, exit code, output và assertion cho mọi gate. |
 
-1. Thêm versioned migration như Alembic; không chỉ chạy `schema.sql` thủ công.
-2. Persist idempotency record; hiện schema có bảng nhưng core còn giữ map trong memory.
-3. Thêm optimistic concurrency/version hoặc compare-and-set cho transition tránh hai callback đồng thời.
-4. Persist pipeline log/audit đầy đủ, tránh mất khi restart.
-5. Dùng transactional outbox cho state + event, tránh lưu state thành công nhưng phát DORA event thất bại.
-6. Chuẩn hóa Jenkins job API/pipeline parameter; bỏ giả định freestyle path nếu dùng pipeline job.
-7. Dùng secret file/credential store; không đưa key/password vào command line hoặc source.
-8. Thêm Playwright E2E cho login, wizard, pipeline, request, logout; thêm accessibility scan.
-9. Thêm loading skeleton, retry/error boundary và empty state thống nhất ở mọi page.
-10. Tách fixture rõ bằng `demoMode`; không để fallback che lỗi API trong acceptance profile.
+### P1 — đã hoàn thành
+
+1. Versioned migration với checksum, từ chối sửa migration đã chạy, và gate chống drift cho `schema.sql`.
+2. Idempotency record được persist và rehydrate sau restart.
+3. Optimistic concurrency bằng cột `version` + compare-and-set.
+4. Pipeline log và audit event bền vững.
+5. Transactional outbox cho state + event.
+6. Jenkins job chuẩn hóa sang pipeline job có parameter; bỏ hẳn giả định freestyle.
+7. Secret đọc từ file qua biến `*_FILE`.
+10. Fixture được tách rõ ở màn hình DORA: UI nói thẳng "no delivery events recorded yet" thay vì hiện baseline trông hợp lý.
+
+### P1 — còn lại
+
+8. Playwright E2E cho login/wizard/pipeline/request/logout và accessibility scan.
+9. Loading skeleton, retry/error boundary và empty state thống nhất ở mọi page.
+10. `demoMode` cho phần fixture còn lại (chart minh họa, Settings/Server overlay).
+
+Ngoài ra, hai việc mới phát hiện trong quá trình chạy thật:
+
+- **Cơ chế ngoại lệ CVE có thời hạn.** Policy hiện chặn mọi finding HIGH/CRITICAL có bản vá và không có đường đi hợp lệ cho một release phải ship kèm ngoại lệ. Cần một `security-policy.yaml` có owner và ngày hết hạn.
+- **Kiểm tra chữ ký khi deploy.** Hiện netCI tin vào evidence "signature verified" do CI ghi. Bước chặt hơn là chạy `cosign verify` lại tại thời điểm deploy.
 
 ### P2 — hướng production, không bắt buộc cho local reference
 

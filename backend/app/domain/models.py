@@ -61,10 +61,14 @@ class PipelineRun:
     parameters: dict[str, object] = field(default_factory=dict)
     correlation_id: str | None = None
     status: PipelineStatus = PipelineStatus.QUEUED
+    # Subject of the verified principal that started the run. None only for runs created
+    # before authentication existed; it is never taken from a request body.
+    started_by: str | None = None
     id: UUID = field(default_factory=uuid4)
     jenkins_run_id: str | None = None
     workflow_id: str | None = None
     artifact_digest: str | None = None
+    version: int = 1
     created_at: datetime = field(default_factory=utc_now)
     updated_at: datetime = field(default_factory=utc_now)
 
@@ -80,8 +84,37 @@ class Deployment:
     status: DeploymentStatus = DeploymentStatus.PENDING_APPROVAL
     id: UUID = field(default_factory=uuid4)
     approved_by: str | None = None
+    version: int = 1
     created_at: datetime = field(default_factory=utc_now)
     updated_at: datetime = field(default_factory=utc_now)
+
+
+class DeliveryEventType(str, Enum):
+    """Source event kinds the DORA projection is allowed to read."""
+
+    COMMIT = "commit"
+    DEPLOYMENT = "deployment"
+    RECOVERY = "recovery"
+
+
+@dataclass(frozen=True)
+class DeliveryEvent:
+    """Durable delivery fact written in the same unit of work as the state change.
+
+    The DORA projection reads only these rows, so a metric can always be traced
+    back to the transition that produced it instead of to a UI fixture.
+    """
+
+    event_type: DeliveryEventType
+    application_id: UUID
+    occurred_at: datetime = field(default_factory=utc_now)
+    commit_sha: str | None = None
+    pipeline_run_id: UUID | None = None
+    deployment_id: UUID | None = None
+    environment: Environment | None = None
+    successful: bool | None = None
+    requires_intervention: bool = False
+    id: UUID = field(default_factory=uuid4)
 
 
 PIPELINE_TRANSITIONS: dict[PipelineStatus, frozenset[PipelineStatus]] = {

@@ -5,3 +5,6 @@ httpx==0.28.1
 temporalio==1.32.0
 PyYAML==6.0.3
 psycopg[binary]==3.2.9
+# Verifies identity-provider JWT signatures in NETCI_AUTH_MODE=oidc.
+# Pinned explicitly rather than relied on as a transitive dependency of temporalio.
+cryptography==50.0.1

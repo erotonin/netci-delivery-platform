@@ -1,3 +1,18 @@
+# Release gates for netCI.
+#
+# `state: ready` means the command runs real work and asserts on the result. Gates that
+# write an evidence file under evidence/ record every command, timing, output and
+# assertion, so a green result can be re-read rather than trusted.
+#
+# `state: blocked` means no runner exists yet, or the infrastructure it needs is not
+# available. A blocked gate is deliberate: `validate_release.py --execute` refuses to
+# pass the profile while one remains, which is what stops a demo from looking finished
+# before it is. Never flip a gate to ready without a command and an assertion behind it.
+#
+# No gate is blocked today. Every one of them runs, and the last five need the Jenkins and
+# Backstage labs up first -- see the comment above them. Keeping the `blocked` mechanism
+# documented matters more than the fact that nothing currently uses it: the next gate to
+# be added starts there.
 release: netci-local-rc1
 checks:
   - id: doctor-windows
@@ -24,6 +39,10 @@ checks:
     profiles: [windows, ubuntu]
     state: ready
     command: [python, scripts/validate_platform.py]
+  - id: schema-migrations
+    profiles: [windows, ubuntu]
+    state: ready
+    command: [python, scripts/migrate.py, --check-schema]
   - id: backend-and-contract-tests
     profiles: [windows, ubuntu]
     state: ready
@@ -44,53 +63,56 @@ checks:
     profiles: [ubuntu]
     state: ready
     command: [helm, lint, deploy/helm/sample-kubernetes-app]
+
+  # ------------------------------------------------------------ executable gates
+  # Each runs real infrastructure and writes evidence/<gate>.json.
   - id: kind-cluster
     profiles: [ubuntu]
-    state: blocked
-    reason: Cluster bootstrap and namespace evidence must be implemented and verified on Ubuntu 24.04.
-    command: [make, kind-up]
-  - id: jenkins-rebuild
-    profiles: [ubuntu]
-    state: blocked
-    reason: A destructive JCasC rebuild rehearsal with retained evidence has not run on Ubuntu.
-    command: [make, jenkins-rebuild]
-  - id: e2e-container
-    profiles: [ubuntu]
-    state: blocked
-    reason: No executable container E2E runner and evidence assertion exists yet.
-    command: [make, e2e-container]
-  - id: e2e-kubernetes
-    profiles: [ubuntu]
-    state: blocked
-    reason: No executable Kubernetes E2E runner and evidence assertion exists yet.
-    command: [make, e2e-kubernetes]
-  - id: e2e-systemd
-    profiles: [ubuntu]
-    state: blocked
-    reason: No executable Systemd E2E runner and evidence assertion exists yet.
-    command: [make, e2e-systemd]
+    state: ready
+    command: [python3, scripts/gate_kind.py]
   - id: security-gate
     profiles: [ubuntu]
-    state: blocked
-    reason: The deny test does not yet verify real SBOM, scan and signature evidence.
-    command: [make, security-test]
-  - id: benchmark
+    state: ready
+    command: [python3, scripts/gate_security.py]
+  - id: e2e-container
     profiles: [ubuntu]
-    state: blocked
-    reason: Shared and ephemeral benchmark commands and measured phase timings are not implemented.
-    command: [make, benchmark]
-  - id: failure-drill
+    state: ready
+    command: [python3, scripts/gate_e2e_container.py]
+  - id: e2e-kubernetes
     profiles: [ubuntu]
-    state: blocked
-    reason: The current harness does not stop, detect, reroute and rejoin real controllers.
-    command: [make, failure-drill]
+    state: ready
+    command: [python3, scripts/gate_e2e_kubernetes.py]
+  - id: e2e-systemd
+    profiles: [ubuntu]
+    state: ready
+    command: [python3, scripts/gate_e2e_systemd.py]
   - id: dora-dashboard
     profiles: [ubuntu]
-    state: blocked
-    reason: Dashboard runtime and source-event verification are not implemented.
-    command: [make, dora-dashboard]
+    state: ready
+    command: [python3, scripts/gate_dora.py]
+
+  # ------------------------------------------------- gates that need the Jenkins lab
+  # Same contract as the gates above -- real work, real assertions, evidence written --
+  # but they drive two live Jenkins controllers, so `bash scripts/jenkins_lab.sh up` (and
+  # `bash scripts/backstage_lab.sh up` for the last one) has to come first. Source
+  # .netci-gate/jenkins/lab.env to hand them the URLs and credentials.
+  - id: jenkins-ci-loop
+    profiles: [ubuntu]
+    state: ready
+    command: [python3, scripts/gate_jenkins_ci.py]
+  - id: jenkins-rebuild
+    profiles: [ubuntu]
+    state: ready
+    command: [python3, scripts/gate_jenkins_rebuild.py]
+  - id: failure-drill
+    profiles: [ubuntu]
+    state: ready
+    command: [python3, scripts/gate_failure_drill.py]
+  - id: benchmark
+    profiles: [ubuntu]
+    state: ready
+    command: [python3, scripts/gate_benchmark.py]
   - id: backstage-integration
     profiles: [ubuntu]
-    state: blocked
-    reason: The Software Template needs a real Backstage instance and proxy integration test.
-    command: [make, backstage-test]
+    state: ready
+    command: [python3, scripts/gate_backstage.py]

@@ -1,14 +1,15 @@
 from fastapi.testclient import TestClient
 
-from app.main import app, platform, portal
+import app.main as main
+from app.main import app
 
 
 client = TestClient(app)
 
 
 def setup_function():
-    platform.reset()
-    portal.reset()
+    main.platform.reset()
+    main.portal.reset()
 
 
 def test_portal_dashboard_has_reference_systems_and_four_dora_metrics():
@@ -97,7 +98,7 @@ def test_portal_can_create_system_and_attach_a_delivery_application_as_module():
 
 
 def test_invalid_system_does_not_provision_an_orphan_delivery_application():
-    before = len(platform.list_applications())
+    before = len(main.platform.list_applications())
 
     response = client.post('/systems/missing-system/modules', json={
         'name': 'orphan-api',
@@ -119,7 +120,7 @@ def test_invalid_system_does_not_provision_an_orphan_delivery_application():
     })
 
     assert response.status_code == 404
-    assert len(platform.list_applications()) == before
+    assert len(main.platform.list_applications()) == before
 
 
 def test_module_environment_contract_rejects_mixed_runtime_and_incomplete_targets():
@@ -245,7 +246,6 @@ def test_production_requests_are_queryable_and_approval_is_a_portal_command():
 
 def test_portal_can_create_a_scheduled_multi_module_production_request():
     response = client.post('/production-requests', headers={'Idempotency-Key': 'prod-request-1'}, json={
-        'requestedBy': 'Admin',
         'scheduledFor': '2026-08-30T03:00:00+07:00',
         'rollbackStrategy': 'automatic',
         'runAutomationTests': True,
@@ -258,7 +258,7 @@ def test_portal_can_create_a_scheduled_multi_module_production_request():
     assert response.status_code == 201
     body = response.json()
     assert body['status'] == 'waiting_approval'
-    assert body['requestedBy'] == 'Admin'
+    assert body['requestedBy'] == 'anonymous'  # from the credential, not the body
     assert body['scheduledFor'] == '2026-08-30T03:00:00+07:00'
     assert body['rollbackStrategy'] == 'automatic'
     assert body['runAutomationTests'] is True
@@ -292,7 +292,7 @@ def test_portal_write_fails_closed_when_configured_persistence_is_unavailable(mo
         def insert_system(self, record):
             raise OSError('database connection refused')
 
-    monkeypatch.setattr(portal, 'store', FailingPortalStore())
+    monkeypatch.setattr(main.portal, 'store', FailingPortalStore())
 
     response = client.post('/systems', json={
         'id': 'persistence-check',
@@ -313,12 +313,15 @@ def test_portal_persistence_bootstrap_failure_is_visible_in_health(monkeypatch):
         def bootstrap(self):
             return False
 
-    monkeypatch.setattr(portal, 'store', FailingPortalStore())
-    portal.reset()
+    monkeypatch.setattr(main.portal, 'store', FailingPortalStore())
+    main.portal.reset()
 
     health = client.get('/healthz')
 
-    assert health.status_code == 200
+    # A configured store that cannot be reached must not read as healthy: the status
+    # code has to carry the failure too, or a load balancer keeps sending writes here.
+    assert health.status_code == 503
+    assert health.json()['status'] == 'degraded'
     assert health.json()['dependencies']['portalPersistence'] == {
         'mode': 'postgresql',
         'status': 'degraded',
@@ -431,7 +434,7 @@ def test_version_registration_fails_closed_without_leaving_a_ghost_version(monke
         def upsert_version(self, *_args):
             raise RuntimeError('database offline')
 
-    monkeypatch.setattr(portal, 'store', FailingPortalStore())
+    monkeypatch.setattr(main.portal, 'store', FailingPortalStore())
 
     response = client.post('/modules/backend-api/versions', json={
         'tag': 'v9.9.9',
@@ -450,7 +453,7 @@ def test_ci_report_fails_closed_without_mutating_the_projection(monkeypatch):
             raise RuntimeError('database offline')
 
     monkeypatch.setenv('NETCI_PIPELINE_API_KEY', 'test-pipeline-key')
-    monkeypatch.setattr(portal, 'store', FailingPortalStore())
+    monkeypatch.setattr(main.portal, 'store', FailingPortalStore())
 
     response = client.post(
         '/modules/backend-api/versions/v2.4.1/ci-report',

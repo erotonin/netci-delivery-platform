@@ -15,6 +15,11 @@ if [[ -z "${ARTIFACT_BINARY_UPLOAD_URL:-}" || -z "${ARTIFACT_DOWNLOAD_URL:-}" ]]
 fi
 
 artifact_sha256="$(sha256sum "${ARTIFACT_PATH}" | awk '{print $1}')"
+built_digest="$(tr -d '\r\n' < "${NETCI_OUTPUT_DIR}/artifact-digest.txt" 2>/dev/null || true)"
+if [[ -n "${built_digest}" && "${built_digest}" != "sha256:${artifact_sha256}" ]]; then
+  echo "artifact changed after it was scanned and signed: ${built_digest} != sha256:${artifact_sha256}" >&2
+  exit 1
+fi
 curl --fail --show-error --silent \
   --upload-file "${ARTIFACT_PATH}" \
   "${ARTIFACT_BINARY_UPLOAD_URL}"

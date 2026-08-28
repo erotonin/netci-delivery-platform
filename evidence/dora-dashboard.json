@@ -1,0 +1,491 @@
+{
+  "gate": "dora-dashboard",
+  "description": "The four DORA metrics recomputed from recorded delivery events and checked against the dashboard the API serves.",
+  "result": "pass",
+  "error": null,
+  "commit": "d7a43b6c7017c0e48bd3359b6f7e81629dfc1f8e",
+  "host": {
+    "platform": "Linux-6.8.0-134-generic-x86_64-with-glibc2.39",
+    "python": "3.12.3",
+    "hostname": "openstack-aio"
+  },
+  "startedAt": "2026-08-28T02:25:33.964522+00:00",
+  "endedAt": "2026-08-28T02:25:36.133829+00:00",
+  "context": {
+    "apiUrl": "http://127.0.0.1:8100",
+    "pipelineApiKey": "netci-local-pipeline-key",
+    "applicationId": "6756642e-96ea-4a1a-86bc-e22bc16eed85"
+  },
+  "assertions": [
+    {
+      "assertion": "the netCI API is healthy",
+      "passed": true,
+      "detail": {
+        "expected": "ok",
+        "actual": "ok"
+      }
+    },
+    {
+      "assertion": "an application with no events reports no source events",
+      "passed": true,
+      "detail": {
+        "expected": 0,
+        "actual": 0
+      }
+    },
+    {
+      "assertion": "with no events every metric is zero rather than a plausible-looking baseline",
+      "passed": true,
+      "detail": {
+        "deploymentFrequency": 0.0,
+        "changeLeadTimeSecondsAvg": 0.0,
+        "changeFailRate": 0.0,
+        "timeToRestoreServiceSecondsAvg": 0.0
+      }
+    },
+    {
+      "assertion": "three releases produced three commit events",
+      "passed": true,
+      "detail": {
+        "expected": 3,
+        "actual": 3
+      }
+    },
+    {
+      "assertion": "three production releases produced three deployment events",
+      "passed": true,
+      "detail": {
+        "expected": 3,
+        "actual": 3
+      }
+    },
+    {
+      "assertion": "the failure was followed by exactly one recovery event",
+      "passed": true,
+      "detail": {
+        "expected": 1,
+        "actual": 1
+      }
+    },
+    {
+      "assertion": "the recovery is bound to the deployment that actually failed",
+      "passed": true,
+      "detail": {
+        "expected": "bcbe4b66-aa6a-4a20-b990-1c7ccf659230",
+        "actual": "bcbe4b66-aa6a-4a20-b990-1c7ccf659230"
+      }
+    },
+    {
+      "assertion": "the dashboard payload has every required field",
+      "passed": true,
+      "detail": []
+    },
+    {
+      "assertion": "the dashboard carries all four DORA metrics",
+      "passed": true,
+      "detail": []
+    },
+    {
+      "assertion": "the dashboard carries exactly four DORA metrics and no extras",
+      "passed": true,
+      "detail": {
+        "expected": [
+          "changeFailRate",
+          "changeLeadTimeSecondsAvg",
+          "deploymentFrequency",
+          "timeToRestoreServiceSecondsAvg"
+        ],
+        "actual": [
+          "changeFailRate",
+          "changeLeadTimeSecondsAvg",
+          "deploymentFrequency",
+          "timeToRestoreServiceSecondsAvg"
+        ]
+      }
+    },
+    {
+      "assertion": "deploymentFrequency is a number",
+      "passed": true,
+      "detail": 0.7
+    },
+    {
+      "assertion": "deploymentFrequency is at least 0",
+      "passed": true,
+      "detail": 0.7
+    },
+    {
+      "assertion": "changeLeadTimeSecondsAvg is a number",
+      "passed": true,
+      "detail": 7200.0
+    },
+    {
+      "assertion": "changeLeadTimeSecondsAvg is at least 0",
+      "passed": true,
+      "detail": 7200.0
+    },
+    {
+      "assertion": "changeFailRate is a number",
+      "passed": true,
+      "detail": 0.333
+    },
+    {
+      "assertion": "changeFailRate is at least 0",
+      "passed": true,
+      "detail": 0.333
+    },
+    {
+      "assertion": "changeFailRate is at most 1",
+      "passed": true,
+      "detail": 0.333
+    },
+    {
+      "assertion": "timeToRestoreServiceSecondsAvg is a number",
+      "passed": true,
+      "detail": 0.0
+    },
+    {
+      "assertion": "timeToRestoreServiceSecondsAvg is at least 0",
+      "passed": true,
+      "detail": 0.0
+    },
+    {
+      "assertion": "sourceEvents is a non-negative integer",
+      "passed": true,
+      "detail": 7
+    },
+    {
+      "assertion": "the dashboard counts exactly the events that were recorded",
+      "passed": true,
+      "detail": {
+        "expected": 7,
+        "actual": 7
+      }
+    },
+    {
+      "assertion": "deploymentFrequency on the dashboard matches the value recomputed from source events",
+      "passed": true,
+      "detail": {
+        "dashboard": 0.7,
+        "recomputedFromEvents": 0.7
+      }
+    },
+    {
+      "assertion": "changeLeadTimeSecondsAvg on the dashboard matches the value recomputed from source events",
+      "passed": true,
+      "detail": {
+        "dashboard": 7200.0,
+        "recomputedFromEvents": 7201.288
+      }
+    },
+    {
+      "assertion": "changeFailRate on the dashboard matches the value recomputed from source events",
+      "passed": true,
+      "detail": {
+        "dashboard": 0.333,
+        "recomputedFromEvents": 0.333
+      }
+    },
+    {
+      "assertion": "timeToRestoreServiceSecondsAvg on the dashboard matches the value recomputed from source events",
+      "passed": true,
+      "detail": {
+        "dashboard": 0.0,
+        "recomputedFromEvents": 0.922
+      }
+    },
+    {
+      "assertion": "change failure rate reflects the one failed release out of three",
+      "passed": true,
+      "detail": 0.333
+    },
+    {
+      "assertion": "time to restore service is measured, not assumed",
+      "passed": true,
+      "detail": 0.0
+    },
+    {
+      "assertion": "lead time reflects the supplied commit timestamps",
+      "passed": true,
+      "detail": 7200.0
+    },
+    {
+      "assertion": "the Portal view also reports four metrics",
+      "passed": true,
+      "detail": {
+        "expected": 4,
+        "actual": 4
+      }
+    },
+    {
+      "assertion": "the Portal view states how many source events it used",
+      "passed": true,
+      "detail": [
+        "metrics",
+        "scope",
+        "scopeId",
+        "sourceEventCount",
+        "window"
+      ]
+    }
+  ],
+  "steps": [
+    {
+      "name": "api-health",
+      "command": null,
+      "startedAt": "2026-08-28T02:25:33.994775+00:00",
+      "endedAt": "2026-08-28T02:25:33.994775+00:00",
+      "durationSeconds": 0.0,
+      "exitCode": 0,
+      "passed": true,
+      "stdout": "",
+      "stderr": "",
+      "detail": {
+        "status": "ok",
+        "version": "0.1.0",
+        "engines": {
+          "ci": "jenkins",
+          "cd": "none"
+        },
+        "dependencies": {
+          "portalPersistence": {
+            "mode": "postgresql",
+            "status": "ready"
+          },
+          "deliveryPersistence": "ok"
+        }
+      }
+    },
+    {
+      "name": "dora-before-any-release",
+      "command": null,
+      "startedAt": "2026-08-28T02:25:34.022490+00:00",
+      "endedAt": "2026-08-28T02:25:34.022490+00:00",
+      "durationSeconds": 0.0,
+      "exitCode": 0,
+      "passed": true,
+      "stdout": "",
+      "stderr": "",
+      "detail": {
+        "applicationId": "6756642e-96ea-4a1a-86bc-e22bc16eed85",
+        "period": {
+          "from": "2026-07-29T02:25:34.020768+00:00",
+          "to": "2026-08-28T02:25:34.020768+00:00"
+        },
+        "metrics": {
+          "deploymentFrequency": 0.0,
+          "changeLeadTimeSecondsAvg": 0.0,
+          "changeFailRate": 0.0,
+          "timeToRestoreServiceSecondsAvg": 0.0
+        },
+        "sourceEvents": 0
+      }
+    },
+    {
+      "name": "released",
+      "command": null,
+      "startedAt": "2026-08-28T02:25:36.122903+00:00",
+      "endedAt": "2026-08-28T02:25:36.122903+00:00",
+      "durationSeconds": 0.0,
+      "exitCode": 0,
+      "passed": true,
+      "stdout": "",
+      "stderr": "",
+      "detail": {
+        "failedDeploymentId": "bcbe4b66-aa6a-4a20-b990-1c7ccf659230"
+      }
+    },
+    {
+      "name": "delivery-events",
+      "command": null,
+      "startedAt": "2026-08-28T02:25:36.124792+00:00",
+      "endedAt": "2026-08-28T02:25:36.124792+00:00",
+      "durationSeconds": 0.0,
+      "exitCode": 0,
+      "passed": true,
+      "stdout": "",
+      "stderr": "",
+      "detail": {
+        "count": 7,
+        "items": [
+          {
+            "id": "33c27873-2798-4aca-832d-52e1e78e5022",
+            "eventType": "commit",
+            "applicationId": "6756642e-96ea-4a1a-86bc-e22bc16eed85",
+            "pipelineRunId": "d45caa6d-84fc-48fd-892f-d5bb1c21df80",
+            "deploymentId": null,
+            "commitSha": "d0raaa1",
+            "environment": "prod",
+            "successful": null,
+            "requiresIntervention": false,
+            "occurredAt": "2026-08-27T23:25:34.022541+00:00"
+          },
+          {
+            "id": "32f21c79-2b0f-4ac6-ab1c-74b2715140dc",
+            "eventType": "deployment",
+            "applicationId": "6756642e-96ea-4a1a-86bc-e22bc16eed85",
+            "pipelineRunId": "d45caa6d-84fc-48fd-892f-d5bb1c21df80",
+            "deploymentId": "606e44e9-e760-4808-8ca7-0da4ad34da00",
+            "commitSha": "d0raaa1",
+            "environment": "prod",
+            "successful": true,
+            "requiresIntervention": false,
+            "occurredAt": "2026-08-28T02:25:34.645507+00:00"
+          },
+          {
+            "id": "41f9c49a-c00e-4200-9219-c24c603f4cab",
+            "eventType": "commit",
+            "applicationId": "6756642e-96ea-4a1a-86bc-e22bc16eed85",
+            "pipelineRunId": "67cea54f-0980-4fd4-8825-b2a0ebe77bd8",
+            "deploymentId": null,
+            "commitSha": "d0rabb2",
+            "environment": "prod",
+            "successful": null,
+            "requiresIntervention": false,
+            "occurredAt": "2026-08-28T00:25:34.022541+00:00"
+          },
+          {
+            "id": "80f4c951-5371-4a28-8940-3db49eb13ca9",
+            "eventType": "deployment",
+            "applicationId": "6756642e-96ea-4a1a-86bc-e22bc16eed85",
+            "pipelineRunId": "67cea54f-0980-4fd4-8825-b2a0ebe77bd8",
+            "deploymentId": "bcbe4b66-aa6a-4a20-b990-1c7ccf659230",
+            "commitSha": "d0rabb2",
+            "environment": "prod",
+            "successful": false,
+            "requiresIntervention": true,
+            "occurredAt": "2026-08-28T02:25:35.181230+00:00"
+          },
+          {
+            "id": "6419a76d-98ae-4954-80bd-074ffc287e40",
+            "eventType": "commit",
+            "applicationId": "6756642e-96ea-4a1a-86bc-e22bc16eed85",
+            "pipelineRunId": "c33469f3-9b92-46ac-8eeb-0488236f8e26",
+            "deploymentId": null,
+            "commitSha": "d0racc3",
+            "environment": "prod",
+            "successful": null,
+            "requiresIntervention": false,
+            "occurredAt": "2026-08-28T01:25:34.022541+00:00"
+          },
+          {
+            "id": "838b8e52-e277-48d1-a323-9bb25cb23237",
+            "eventType": "deployment",
+            "applicationId": "6756642e-96ea-4a1a-86bc-e22bc16eed85",
+            "pipelineRunId": "c33469f3-9b92-46ac-8eeb-0488236f8e26",
+            "deploymentId": "82eecbda-94ff-4ab9-8138-26f1e96e98ec",
+            "commitSha": "d0racc3",
+            "environment": "prod",
+            "successful": true,
+            "requiresIntervention": false,
+            "occurredAt": "2026-08-28T02:25:36.103487+00:00"
+          },
+          {
+            "id": "3d791655-4bba-4306-96f9-38dc05ab3afd",
+            "eventType": "recovery",
+            "applicationId": "6756642e-96ea-4a1a-86bc-e22bc16eed85",
+            "pipelineRunId": "67cea54f-0980-4fd4-8825-b2a0ebe77bd8",
+            "deploymentId": "bcbe4b66-aa6a-4a20-b990-1c7ccf659230",
+            "commitSha": "d0rabb2",
+            "environment": "prod",
+            "successful": true,
+            "requiresIntervention": false,
+            "occurredAt": "2026-08-28T02:25:36.103487+00:00"
+          }
+        ]
+      }
+    },
+    {
+      "name": "dora-dashboard",
+      "command": null,
+      "startedAt": "2026-08-28T02:25:36.126579+00:00",
+      "endedAt": "2026-08-28T02:25:36.126579+00:00",
+      "durationSeconds": 0.0,
+      "exitCode": 0,
+      "passed": true,
+      "stdout": "",
+      "stderr": "",
+      "detail": {
+        "applicationId": "6756642e-96ea-4a1a-86bc-e22bc16eed85",
+        "period": {
+          "from": "2026-07-29T02:25:36.125628+00:00",
+          "to": "2026-08-28T02:25:36.125628+00:00"
+        },
+        "metrics": {
+          "deploymentFrequency": 0.7,
+          "changeLeadTimeSecondsAvg": 7200.0,
+          "changeFailRate": 0.333,
+          "timeToRestoreServiceSecondsAvg": 0.0
+        },
+        "sourceEvents": 7
+      }
+    },
+    {
+      "name": "recomputed-from-events",
+      "command": null,
+      "startedAt": "2026-08-28T02:25:36.126820+00:00",
+      "endedAt": "2026-08-28T02:25:36.126820+00:00",
+      "durationSeconds": 0.0,
+      "exitCode": 0,
+      "passed": true,
+      "stdout": "",
+      "stderr": "",
+      "detail": {
+        "deploymentFrequency": 0.7000000000000001,
+        "changeLeadTimeSecondsAvg": 7201.287533666667,
+        "changeFailRate": 0.3333333333333333,
+        "timeToRestoreServiceSecondsAvg": 0.922257
+      }
+    },
+    {
+      "name": "portal-module-dora",
+      "command": null,
+      "startedAt": "2026-08-28T02:25:36.128678+00:00",
+      "endedAt": "2026-08-28T02:25:36.128678+00:00",
+      "durationSeconds": 0.0,
+      "exitCode": 0,
+      "passed": true,
+      "stdout": "",
+      "stderr": "",
+      "detail": {
+        "scope": "module",
+        "scopeId": "backend-api",
+        "metrics": [
+          {
+            "key": "deploymentFrequency",
+            "label": "Deployment Frequency",
+            "value": 0.0,
+            "unit": "/wk",
+            "hint": "Production deployments per week"
+          },
+          {
+            "key": "leadTime",
+            "label": "Lead Time for Changes",
+            "value": 0.0,
+            "unit": "h",
+            "hint": "Commit to production"
+          },
+          {
+            "key": "changeFailureRate",
+            "label": "Change Failure Rate",
+            "value": 0.0,
+            "unit": "%",
+            "hint": "Production deployments needing intervention"
+          },
+          {
+            "key": "timeToRestoreService",
+            "label": "Time to Restore Service",
+            "value": 0.0,
+            "unit": "h",
+            "hint": "Failure to restored service"
+          }
+        ],
+        "sourceEventCount": 0,
+        "window": {
+          "from": "2026-07-29T02:25:36.127809+00:00",
+          "to": "2026-08-28T02:25:36.127809+00:00",
+          "days": 30
+        }
+      }
+    }
+  ]
+}

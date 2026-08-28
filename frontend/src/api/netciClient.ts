@@ -290,8 +290,18 @@ export function listModuleVersions(moduleId: string): Promise<Record<string, unk
   return request<Record<string, unknown>>(`/modules/${encodeURIComponent(moduleId)}/versions`)
 }
 
-export function getDora(scope: 'systems' | 'modules', scopeId: string): Promise<{ scope: string; scopeId: string; metrics: PortalMetric[] }> {
-  return request<{ scope: string; scopeId: string; metrics: PortalMetric[] }>(`/${scope}/${encodeURIComponent(scopeId)}/dora`)
+/** The reporting window and source-event count travel with the metrics on purpose:
+ *  a DORA figure shown without the events behind it is decoration, not measurement. */
+export type DoraProjection = {
+  scope: string
+  scopeId: string
+  metrics: PortalMetric[]
+  sourceEventCount: number
+  window: { from: string; to: string; days: number }
+}
+
+export function getDora(scope: 'systems' | 'modules', scopeId: string): Promise<DoraProjection> {
+  return request<DoraProjection>(`/${scope}/${encodeURIComponent(scopeId)}/dora`)
 }
 
 export function listProductionRequests(): Promise<ProductionRequest[]> {

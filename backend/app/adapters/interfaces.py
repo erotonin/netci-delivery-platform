@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 from uuid import UUID
 
 from ..domain.models import Environment, Runtime
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from .ci_launcher import CiLaunchRequest
 
 
 @dataclass(frozen=True)
@@ -15,8 +18,9 @@ class JenkinsRun:
 
 
 class JenkinsAdapter(Protocol):
+    def health_check(self) -> bool: ...
     def create_or_update_job(self, application_id: UUID, template_id: str) -> str: ...
-    def trigger_ci(self, job_name: str, commit_sha: str, correlation_id: str) -> JenkinsRun: ...
+    def trigger_ci_run(self, job_name: str, request: "CiLaunchRequest") -> JenkinsRun: ...
     def get_status(self, run_id: str) -> JenkinsRun: ...
     def get_logs(self, run_id: str) -> list[str]: ...
     def abort(self, run_id: str) -> None: ...

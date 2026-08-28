@@ -4,6 +4,7 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 VERSION = os.getenv("APP_VERSION", "dev")
+PORT = int(os.getenv("APP_PORT", "8080"))
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -26,7 +27,7 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def serve():
-    ThreadingHTTPServer(("0.0.0.0", 8080), Handler).serve_forever()
+    ThreadingHTTPServer(("0.0.0.0", PORT), Handler).serve_forever()
 
 
 if __name__ == "__main__":

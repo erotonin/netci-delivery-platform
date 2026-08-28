@@ -5,17 +5,20 @@ Wants=network-online.target
 
 [Service]
 Type=simple
+{% if netci_systemd_scope == 'system' %}
 User={{ netci_app_user }}
 Group={{ netci_app_user }}
+{% endif %}
 WorkingDirectory={{ netci_app_root }}/current
 ExecStart={{ netci_app_root }}/current/{{ netci_app_name }}
+Environment=APP_PORT={{ netci_app_port }}
 Restart=on-failure
 RestartSec=5
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
-ProtectHome=true
+ProtectHome={{ 'read-only' if netci_systemd_scope == 'user' else 'true' }}
 ReadWritePaths={{ netci_app_root }}
 
 [Install]
-WantedBy=multi-user.target
+WantedBy={{ 'default.target' if netci_systemd_scope == 'user' else 'multi-user.target' }}

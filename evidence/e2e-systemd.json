@@ -1,0 +1,670 @@
+{
+  "gate": "e2e-systemd",
+  "description": "Signed Go binary released through netCI to a systemd unit: install, restart, health check, promote and roll back by symlink.",
+  "result": "pass",
+  "error": null,
+  "commit": "d7a43b6c7017c0e48bd3359b6f7e81629dfc1f8e",
+  "host": {
+    "platform": "Linux-6.8.0-134-generic-x86_64-with-glibc2.39",
+    "python": "3.12.3",
+    "hostname": "openstack-aio"
+  },
+  "startedAt": "2026-08-27T15:50:09.705002+00:00",
+  "endedAt": "2026-08-27T15:50:27.393795+00:00",
+  "context": {
+    "apiUrl": "http://127.0.0.1:8100",
+    "pipelineApiKey": "netci-local-pipeline-key",
+    "appName": "netci-gate-hello-systemd",
+    "appRoot": "/home/deployer/netci-delivery-platform/.netci-gate/deploy/systemd",
+    "port": 18082,
+    "scope": "user"
+  },
+  "assertions": [
+    {
+      "assertion": "the netCI API is healthy",
+      "passed": true,
+      "detail": {
+        "expected": "ok",
+        "actual": "ok"
+      }
+    },
+    {
+      "assertion": "v0.1.0: the build produced a sha256 content digest",
+      "passed": true,
+      "detail": "sha256:c349a4a49b14b6905e64813c430678dc907ad3b7211ba019bf495fa0ab58ad33"
+    },
+    {
+      "assertion": "v0.1.0: Syft produced a CycloneDX SBOM",
+      "passed": true,
+      "detail": null
+    },
+    {
+      "assertion": "v0.1.0: no fixable critical vulnerabilities",
+      "passed": true,
+      "detail": {
+        "expected": 0,
+        "actual": 0
+      }
+    },
+    {
+      "assertion": "v0.1.0: no fixable high vulnerabilities",
+      "passed": true,
+      "detail": {
+        "expected": 0,
+        "actual": 0
+      }
+    },
+    {
+      "assertion": "v0.1.0: Cosign verifies the built binary",
+      "passed": true,
+      "detail": null
+    },
+    {
+      "assertion": "v0.2.0: the build produced a sha256 content digest",
+      "passed": true,
+      "detail": "sha256:e25aae9f4a5692aaa5e7ba2b421f10c38fb8a9cf61deabdd1a26cb0446ed9d7d"
+    },
+    {
+      "assertion": "v0.2.0: Syft produced a CycloneDX SBOM",
+      "passed": true,
+      "detail": null
+    },
+    {
+      "assertion": "v0.2.0: no fixable critical vulnerabilities",
+      "passed": true,
+      "detail": {
+        "expected": 0,
+        "actual": 0
+      }
+    },
+    {
+      "assertion": "v0.2.0: no fixable high vulnerabilities",
+      "passed": true,
+      "detail": {
+        "expected": 0,
+        "actual": 0
+      }
+    },
+    {
+      "assertion": "v0.2.0: Cosign verifies the built binary",
+      "passed": true,
+      "detail": null
+    },
+    {
+      "assertion": "two versions of the binary have different content digests",
+      "passed": true,
+      "detail": {
+        "v0.1.0": "sha256:c349a4a49b14b6905e64813c430678dc907ad3b7211ba019bf495fa0ab58ad33",
+        "v0.2.0": "sha256:e25aae9f4a5692aaa5e7ba2b421f10c38fb8a9cf61deabdd1a26cb0446ed9d7d"
+      }
+    },
+    {
+      "assertion": "the systemd template selects the binary stage list, not the container one",
+      "passed": true,
+      "detail": {
+        "expected": [
+          "checkout",
+          "unit-test",
+          "build",
+          "publish",
+          "deploy",
+          "health-check"
+        ],
+        "actual": [
+          "checkout",
+          "unit-test",
+          "build",
+          "publish",
+          "deploy",
+          "health-check"
+        ]
+      }
+    },
+    {
+      "assertion": "the signed binary satisfies the supply-chain policy",
+      "passed": true,
+      "detail": {
+        "expected": "allow",
+        "actual": "allow"
+      }
+    },
+    {
+      "assertion": "production waits for approval",
+      "passed": true,
+      "detail": {
+        "expected": "pending_approval",
+        "actual": "pending_approval"
+      }
+    },
+    {
+      "assertion": "the systemd service reports healthy",
+      "passed": true,
+      "detail": {
+        "expected": "ok",
+        "actual": "ok"
+      }
+    },
+    {
+      "assertion": "the current symlink points at the released version",
+      "passed": true,
+      "detail": {
+        "expected": "/home/deployer/netci-delivery-platform/.netci-gate/deploy/systemd/releases/v0.1.0",
+        "actual": "/home/deployer/netci-delivery-platform/.netci-gate/deploy/systemd/releases/v0.1.0"
+      }
+    },
+    {
+      "assertion": "the installed binary is byte-identical to the approved artifact",
+      "passed": true,
+      "detail": "c349a4a49b14b6905e64813c430678dc907ad3b7211ba019bf495fa0ab58ad33  /home/deployer/netci-delivery-platform/.netci-gate/deploy/systemd/current/netci-gate-hello-systemd"
+    },
+    {
+      "assertion": "the symlink moved to the promoted release",
+      "passed": true,
+      "detail": {
+        "expected": "/home/deployer/netci-delivery-platform/.netci-gate/deploy/systemd/releases/v0.2.0",
+        "actual": "/home/deployer/netci-delivery-platform/.netci-gate/deploy/systemd/releases/v0.2.0"
+      }
+    },
+    {
+      "assertion": "netCI records the rollback",
+      "passed": true,
+      "detail": {
+        "expected": "rolled_back",
+        "actual": "rolled_back"
+      }
+    },
+    {
+      "assertion": "the symlink is back on the previous release",
+      "passed": true,
+      "detail": {
+        "expected": "/home/deployer/netci-delivery-platform/.netci-gate/deploy/systemd/releases/v0.1.0",
+        "actual": "/home/deployer/netci-delivery-platform/.netci-gate/deploy/systemd/releases/v0.1.0"
+      }
+    },
+    {
+      "assertion": "the rolled-back service is healthy",
+      "passed": true,
+      "detail": {
+        "expected": "ok",
+        "actual": "ok"
+      }
+    },
+    {
+      "assertion": "systemd reports the unit as active",
+      "passed": true,
+      "detail": "ervice\n             \u2514\u2500213830 /home/deployer/netci-delivery-platform/.netci-gate/deploy/systemd/current/netci-gate-hello-systemd\n\nThg 8 27 22:50:26 openstack-aio systemd[11730]: Started netci-gate-hello-systemd.service - netci-gate-hello-systemd netCI demo service.\nThg 8 27 22:50:26 openstack-aio netci-gate-hello-systemd[213830]: 2026/08/27 22:50:26 hello-systemd listening on :18082 version=v0.1.0\n"
+    }
+  ],
+  "steps": [
+    {
+      "name": "tool-preflight",
+      "command": null,
+      "startedAt": "2026-08-27T15:50:09.705239+00:00",
+      "endedAt": "2026-08-27T15:50:09.705239+00:00",
+      "durationSeconds": 0.0,
+      "exitCode": 0,
+      "passed": true,
+      "stdout": "",
+      "stderr": "",
+      "detail": {
+        "required": [
+          "go",
+          "syft",
+          "trivy",
+          "cosign",
+          "systemctl"
+        ],
+        "missing": []
+      }
+    },
+    {
+      "name": "api-health",
+      "command": null,
+      "startedAt": "2026-08-27T15:50:09.737024+00:00",
+      "endedAt": "2026-08-27T15:50:09.737024+00:00",
+      "durationSeconds": 0.0,
+      "exitCode": 0,
+      "passed": true,
+      "stdout": "",
+      "stderr": "",
+      "detail": {
+        "status": "ok",
+        "version": "0.1.0",
+        "engines": {
+          "ci": "none",
+          "cd": "none"
+        },
+        "dependencies": {
+          "portalPersistence": {
+            "mode": "postgresql",
+            "status": "ready"
+          },
+          "deliveryPersistence": "ok"
+        }
+      }
+    },
+    {
+      "name": "v0.1.0:unit-test",
+      "command": [
+        "bash",
+        "/home/deployer/netci-delivery-platform/templates/systemd-ansible-ci-cd-v1/scripts/ci/test.sh"
+      ],
+      "startedAt": "2026-08-27T15:50:09.739179+00:00",
+      "endedAt": "2026-08-27T15:50:09.826431+00:00",
+      "durationSeconds": 0.087,
+      "exitCode": 0,
+      "passed": true,
+      "stdout": "ok  \texample.com/netci/hello-systemd\t(cached)\n",
+      "stderr": "",
+      "detail": {}
+    },
+    {
+      "name": "v0.1.0:build",
+      "command": [
+        "bash",
+        "/home/deployer/netci-delivery-platform/templates/systemd-ansible-ci-cd-v1/scripts/ci/build.sh"
+      ],
+      "startedAt": "2026-08-27T15:50:09.826525+00:00",
+      "endedAt": "2026-08-27T15:50:09.898294+00:00",
+      "durationSeconds": 0.072,
+      "exitCode": 0,
+      "passed": true,
+      "stdout": "c349a4a49b14b6905e64813c430678dc907ad3b7211ba019bf495fa0ab58ad33  dist/hello-systemd-v0.1.0\n",
+      "stderr": "",
+      "detail": {}
+    },
+    {
+      "name": "v0.1.0:sbom",
+      "command": [
+        "bash",
+        "/home/deployer/netci-delivery-platform/templates/systemd-ansible-ci-cd-v1/scripts/ci/sbom.sh"
+      ],
+      "startedAt": "2026-08-27T15:50:09.898468+00:00",
+      "endedAt": "2026-08-27T15:50:11.032342+00:00",
+      "durationSeconds": 1.134,
+      "exitCode": 0,
+      "passed": true,
+      "stdout": "",
+      "stderr": "",
+      "detail": {}
+    },
+    {
+      "name": "v0.1.0:vulnerability-scan",
+      "command": [
+        "bash",
+        "/home/deployer/netci-delivery-platform/templates/systemd-ansible-ci-cd-v1/scripts/ci/scan.sh"
+      ],
+      "startedAt": "2026-08-27T15:50:11.032793+00:00",
+      "endedAt": "2026-08-27T15:50:11.105146+00:00",
+      "durationSeconds": 0.072,
+      "exitCode": 0,
+      "passed": true,
+      "stdout": "",
+      "stderr": "2026-08-27T22:50:11+07:00\tINFO\t[vuln] Vulnerability scanning is enabled\n2026-08-27T22:50:11+07:00\tINFO\tNumber of language-specific files\tnum=1\n2026-08-27T22:50:11+07:00\tINFO\t[gobinary] Detecting vulnerabilities...\n",
+      "detail": {}
+    },
+    {
+      "name": "v0.1.0:scan-counts",
+      "command": null,
+      "startedAt": "2026-08-27T15:50:11.105273+00:00",
+      "endedAt": "2026-08-27T15:50:11.105273+00:00",
+      "durationSeconds": 0.0,
+      "exitCode": 0,
+      "passed": true,
+      "stdout": "",
+      "stderr": "",
+      "detail": {
+        "critical": 0,
+        "high": 0,
+        "medium": 0
+      }
+    },
+    {
+      "name": "v0.1.0:sign",
+      "command": [
+        "bash",
+        "/home/deployer/netci-delivery-platform/templates/systemd-ansible-ci-cd-v1/scripts/ci/sign.sh"
+      ],
+      "startedAt": "2026-08-27T15:50:11.105298+00:00",
+      "endedAt": "2026-08-27T15:50:11.780775+00:00",
+      "durationSeconds": 0.675,
+      "exitCode": 0,
+      "passed": true,
+      "stdout": "MEUCIBPfiYk87W1Vie8uZl0EKAcp1f3UJZ7ly8QfO+b+SkzZAiEAlPioqO3EvtWWH5v0EgejpwzxdDudiLdSz40h5ZR19eE=\n",
+      "stderr": "Using payload from: /home/deployer/netci-delivery-platform/sample-apps/hello-systemd-go/dist/hello-systemd-v0.1.0\n\n\tThe sigstore service, hosted by sigstore a Series of LF Projects, LLC, is provided pursuant to the Hosted Project Tools Terms of Use, available at https://lfprojects.org/policies/hosted-project-tools-terms-of-use/.\n\tNote that if your submission includes personal data associated with this signed artifact, it will be part of an immutable record.\n\tThis may include the email address associated with the account with which you authenticate your contractual Agreement.\n\tThis information will be used for signing this artifact and will be stored in public transparency logs and cannot be removed later, and is subject to the Immutable Record notice at https://lfprojects.org/policies/hosted-project-tools-immutable-records/.\n\nBy typing 'y', you attest that (1) you are not submitting the personal data of any other person; and (2) you understand and agree to the statement and the Agreement terms at the URLs listed above.\ntlog entry created with index: 2617776958\nWrote bundle to file /home/deployer/netci-delivery-platform/.netci-gate/e2e-systemd/v0.1.0/signature.bundle.json\n",
+      "detail": {}
+    },
+    {
+      "name": "v0.1.0:verify-signature",
+      "command": [
+        "cosign",
+        "verify-blob",
+        "--key",
+        "/home/deployer/netci-delivery-platform/.netci-gate/keys/cosign.pub",
+        "--bundle",
+        "/home/deployer/netci-delivery-platform/.netci-gate/e2e-systemd/v0.1.0/signature.bundle.json",
+        "--insecure-ignore-tlog=true",
+        "/home/deployer/netci-delivery-platform/sample-apps/hello-systemd-go/dist/hello-systemd-v0.1.0"
+      ],
+      "startedAt": "2026-08-27T15:50:11.780879+00:00",
+      "endedAt": "2026-08-27T15:50:11.807722+00:00",
+      "durationSeconds": 0.027,
+      "exitCode": 0,
+      "passed": true,
+      "stdout": "",
+      "stderr": "WARNING: Skipping tlog verification is an insecure practice that lacks of transparency and auditability verification for the blob.\nVerified OK\n",
+      "detail": {}
+    },
+    {
+      "name": "v0.2.0:unit-test",
+      "command": [
+        "bash",
+        "/home/deployer/netci-delivery-platform/templates/systemd-ansible-ci-cd-v1/scripts/ci/test.sh"
+      ],
+      "startedAt": "2026-08-27T15:50:11.810180+00:00",
+      "endedAt": "2026-08-27T15:50:11.879733+00:00",
+      "durationSeconds": 0.07,
+      "exitCode": 0,
+      "passed": true,
+      "stdout": "ok  \texample.com/netci/hello-systemd\t(cached)\n",
+      "stderr": "",
+      "detail": {}
+    },
+    {
+      "name": "v0.2.0:build",
+      "command": [
+        "bash",
+        "/home/deployer/netci-delivery-platform/templates/systemd-ansible-ci-cd-v1/scripts/ci/build.sh"
+      ],
+      "startedAt": "2026-08-27T15:50:11.879833+00:00",
+      "endedAt": "2026-08-27T15:50:11.950118+00:00",
+      "durationSeconds": 0.07,
+      "exitCode": 0,
+      "passed": true,
+      "stdout": "e25aae9f4a5692aaa5e7ba2b421f10c38fb8a9cf61deabdd1a26cb0446ed9d7d  dist/hello-systemd-v0.2.0\n",
+      "stderr": "",
+      "detail": {}
+    },
+    {
+      "name": "v0.2.0:sbom",
+      "command": [
+        "bash",
+        "/home/deployer/netci-delivery-platform/templates/systemd-ansible-ci-cd-v1/scripts/ci/sbom.sh"
+      ],
+      "startedAt": "2026-08-27T15:50:11.950256+00:00",
+      "endedAt": "2026-08-27T15:50:13.082830+00:00",
+      "durationSeconds": 1.133,
+      "exitCode": 0,
+      "passed": true,
+      "stdout": "",
+      "stderr": "",
+      "detail": {}
+    },
+    {
+      "name": "v0.2.0:vulnerability-scan",
+      "command": [
+        "bash",
+        "/home/deployer/netci-delivery-platform/templates/systemd-ansible-ci-cd-v1/scripts/ci/scan.sh"
+      ],
+      "startedAt": "2026-08-27T15:50:13.083063+00:00",
+      "endedAt": "2026-08-27T15:50:13.148794+00:00",
+      "durationSeconds": 0.066,
+      "exitCode": 0,
+      "passed": true,
+      "stdout": "",
+      "stderr": "2026-08-27T22:50:13+07:00\tINFO\t[vuln] Vulnerability scanning is enabled\n2026-08-27T22:50:13+07:00\tINFO\tNumber of language-specific files\tnum=1\n2026-08-27T22:50:13+07:00\tINFO\t[gobinary] Detecting vulnerabilities...\n",
+      "detail": {}
+    },
+    {
+      "name": "v0.2.0:scan-counts",
+      "command": null,
+      "startedAt": "2026-08-27T15:50:13.148967+00:00",
+      "endedAt": "2026-08-27T15:50:13.148967+00:00",
+      "durationSeconds": 0.0,
+      "exitCode": 0,
+      "passed": true,
+      "stdout": "",
+      "stderr": "",
+      "detail": {
+        "critical": 0,
+        "high": 0,
+        "medium": 0
+      }
+    },
+    {
+      "name": "v0.2.0:sign",
+      "command": [
+        "bash",
+        "/home/deployer/netci-delivery-platform/templates/systemd-ansible-ci-cd-v1/scripts/ci/sign.sh"
+      ],
+      "startedAt": "2026-08-27T15:50:13.149007+00:00",
+      "endedAt": "2026-08-27T15:50:13.881814+00:00",
+      "durationSeconds": 0.733,
+      "exitCode": 0,
+      "passed": true,
+      "stdout": "MEUCIQD6c+0TNi595rG2PZjlilsQjCXSN2rcqc0v3RU3RtFaWwIgQ4nUS2ZwDcoLZ7+emm4l2IRlOSlSLsRzHUzR/4Jrzdg=\n",
+      "stderr": "Using payload from: /home/deployer/netci-delivery-platform/sample-apps/hello-systemd-go/dist/hello-systemd-v0.2.0\n\n\tThe sigstore service, hosted by sigstore a Series of LF Projects, LLC, is provided pursuant to the Hosted Project Tools Terms of Use, available at https://lfprojects.org/policies/hosted-project-tools-terms-of-use/.\n\tNote that if your submission includes personal data associated with this signed artifact, it will be part of an immutable record.\n\tThis may include the email address associated with the account with which you authenticate your contractual Agreement.\n\tThis information will be used for signing this artifact and will be stored in public transparency logs and cannot be removed later, and is subject to the Immutable Record notice at https://lfprojects.org/policies/hosted-project-tools-immutable-records/.\n\nBy typing 'y', you attest that (1) you are not submitting the personal data of any other person; and (2) you understand and agree to the statement and the Agreement terms at the URLs listed above.\ntlog entry created with index: 2617777103\nWrote bundle to file /home/deployer/netci-delivery-platform/.netci-gate/e2e-systemd/v0.2.0/signature.bundle.json\n",
+      "detail": {}
+    },
+    {
+      "name": "v0.2.0:verify-signature",
+      "command": [
+        "cosign",
+        "verify-blob",
+        "--key",
+        "/home/deployer/netci-delivery-platform/.netci-gate/keys/cosign.pub",
+        "--bundle",
+        "/home/deployer/netci-delivery-platform/.netci-gate/e2e-systemd/v0.2.0/signature.bundle.json",
+        "--insecure-ignore-tlog=true",
+        "/home/deployer/netci-delivery-platform/sample-apps/hello-systemd-go/dist/hello-systemd-v0.2.0"
+      ],
+      "startedAt": "2026-08-27T15:50:13.881916+00:00",
+      "endedAt": "2026-08-27T15:50:13.916746+00:00",
+      "durationSeconds": 0.035,
+      "exitCode": 0,
+      "passed": true,
+      "stdout": "",
+      "stderr": "WARNING: Skipping tlog verification is an insecure practice that lacks of transparency and auditability verification for the blob.\nVerified OK\n",
+      "detail": {}
+    },
+    {
+      "name": "v0.1.0:policy-decision",
+      "command": null,
+      "startedAt": "2026-08-27T15:50:13.953051+00:00",
+      "endedAt": "2026-08-27T15:50:13.953051+00:00",
+      "durationSeconds": 0.0,
+      "exitCode": 0,
+      "passed": true,
+      "stdout": "",
+      "stderr": "",
+      "detail": {
+        "pipelineRunId": "0cc6cb32-f098-433a-9f1d-fc24d54903f7",
+        "decision": "allow",
+        "reason": "artifact satisfies the netCI supply-chain policy",
+        "checks": {
+          "digest": "pass",
+          "evidenceDigest": "pass",
+          "sbom": "pass",
+          "vulnerabilityScan": "pass",
+          "signature": "pass"
+        }
+      }
+    },
+    {
+      "name": "deploy:v0.1.0",
+      "command": [
+        "/home/deployer/netci-delivery-platform/.venv/bin/ansible-playbook",
+        "-i",
+        "/home/deployer/netci-delivery-platform/deploy/ansible/inventories/localhost.ini",
+        "/home/deployer/netci-delivery-platform/deploy/ansible/playbooks/deploy-systemd.yml",
+        "--extra-vars",
+        "{\"app_name\": \"netci-gate-hello-systemd\", \"app_port\": 18082, \"app_root\": \"/home/deployer/netci-delivery-platform/.netci-gate/deploy/systemd\", \"artifact_path\": \"/home/deployer/netci-delivery-platform/.netci-gate/e2e-systemd/v0.1.0/hello-systemd-v0.1.0\", \"artifact_sha256\": \"c349a4a49b14b6905e64813c430678dc907ad3b7211ba019bf495fa0ab58ad33\", \"health_url\": \"http://127.0.0.1:18082/healthz\", \"netci_action\": \"deploy\", \"netci_become\": false, \"release_version\": \"v0.1.0\", \"systemd_scope\": \"user\", \"target_environment\": \"staging\"}"
+      ],
+      "startedAt": "2026-08-27T15:50:13.973401+00:00",
+      "endedAt": "2026-08-27T15:50:18.404742+00:00",
+      "durationSeconds": 4.431,
+      "exitCode": 0,
+      "passed": true,
+      "stdout": "\nPLAY [Deploy netCI sample service with systemd] ********************************\n\nTASK [Gathering Facts] *********************************************************\nok: [netci-local]\n\nTASK [Validate immutable Systemd release input] ********************************\nok: [netci-local] => {\n    \"changed\": false,\n    \"msg\": \"All assertions passed\"\n}\n\nTASK [Verify local artifact before transfer] ***********************************\nok: [netci-local -> localhost]\n\nTASK [Reject a missing or mismatched local artifact] ***************************\nok: [netci-local] => {\n    \"changed\": false,\n    \"msg\": \"All assertions passed\"\n}\n\nTASK [Read current release symlink] ********************************************\nok: [netci-local]\n\nTASK [Ensure service user exists] **********************************************\nskipping: [netci-local]\n\nTASK [Ensure release directory exists] *****************************************\nok: [netci-local]\n\nTASK [Ensure the unit directory exists] ****************************************\nok: [netci-local]\n\nTASK [Install local binary] ****************************************************\nok: [netci-local]\n\nTASK [Download binary from artifact store] *************************************\nskipping: [netci-local]\n\nTASK [Verify installed binary digest] ******************************************\nok: [netci-local]\n\nTASK [Reject an altered binary] ************************************************\nok: [netci-local] => {\n    \"changed\": false,\n    \"msg\": \"All assertions passed\"\n}\n\nTASK [Point current release to requested version] ******************************\nok: [netci-local]\n\nTASK [Install systemd unit] ****************************************************\nok: [netci-local]\n\nTASK [Reload systemd and restart new release] **********************************\nchanged: [netci-local]\n\nTASK [Wait for new release health endpoint] ************************************\nok: [netci-local]\n\nTASK [Collect service status for evidence] *************************************\nok: [netci-local]\n\nTASK [Collect service journal for evidence] ************************************\nok: [netci-local]\n\nTASK [Remove failed release directory after a successful rollback] *************\nskipping: [netci-local]\n\nPLAY RECAP *********************************************************************\nnetci-local                : ok=16   changed=1    unreachable=0    failed=0    skipped=3    rescued=0    ignored=0   \n\n",
+      "stderr": "",
+      "detail": {
+        "extraVars": {
+          "netci_action": "deploy",
+          "app_name": "netci-gate-hello-systemd",
+          "app_root": "/home/deployer/netci-delivery-platform/.netci-gate/deploy/systemd",
+          "app_port": 18082,
+          "release_version": "v0.1.0",
+          "artifact_path": "/home/deployer/netci-delivery-platform/.netci-gate/e2e-systemd/v0.1.0/hello-systemd-v0.1.0",
+          "artifact_sha256": "c349a4a49b14b6905e64813c430678dc907ad3b7211ba019bf495fa0ab58ad33",
+          "health_url": "http://127.0.0.1:18082/healthz",
+          "systemd_scope": "user",
+          "netci_become": false,
+          "target_environment": "staging"
+        }
+      }
+    },
+    {
+      "name": "v0.1.0:service-health",
+      "command": null,
+      "startedAt": "2026-08-27T15:50:18.405771+00:00",
+      "endedAt": "2026-08-27T15:50:18.405771+00:00",
+      "durationSeconds": 0.0,
+      "exitCode": 0,
+      "passed": true,
+      "stdout": "",
+      "stderr": "",
+      "detail": {
+        "status": "ok",
+        "version": "v0.1.0"
+      }
+    },
+    {
+      "name": "v0.1.0:verify-installed-digest",
+      "command": [
+        "sha256sum",
+        "/home/deployer/netci-delivery-platform/.netci-gate/deploy/systemd/current/netci-gate-hello-systemd"
+      ],
+      "startedAt": "2026-08-27T15:50:18.405914+00:00",
+      "endedAt": "2026-08-27T15:50:18.413602+00:00",
+      "durationSeconds": 0.008,
+      "exitCode": 0,
+      "passed": true,
+      "stdout": "c349a4a49b14b6905e64813c430678dc907ad3b7211ba019bf495fa0ab58ad33  /home/deployer/netci-delivery-platform/.netci-gate/deploy/systemd/current/netci-gate-hello-systemd\n",
+      "stderr": "",
+      "detail": {}
+    },
+    {
+      "name": "deploy:v0.2.0",
+      "command": [
+        "/home/deployer/netci-delivery-platform/.venv/bin/ansible-playbook",
+        "-i",
+        "/home/deployer/netci-delivery-platform/deploy/ansible/inventories/localhost.ini",
+        "/home/deployer/netci-delivery-platform/deploy/ansible/playbooks/deploy-systemd.yml",
+        "--extra-vars",
+        "{\"app_name\": \"netci-gate-hello-systemd\", \"app_port\": 18082, \"app_root\": \"/home/deployer/netci-delivery-platform/.netci-gate/deploy/systemd\", \"artifact_path\": \"/home/deployer/netci-delivery-platform/.netci-gate/e2e-systemd/v0.2.0/hello-systemd-v0.2.0\", \"artifact_sha256\": \"e25aae9f4a5692aaa5e7ba2b421f10c38fb8a9cf61deabdd1a26cb0446ed9d7d\", \"health_url\": \"http://127.0.0.1:18082/healthz\", \"netci_action\": \"deploy\", \"netci_become\": false, \"release_version\": \"v0.2.0\", \"systemd_scope\": \"user\", \"target_environment\": \"staging\"}"
+      ],
+      "startedAt": "2026-08-27T15:50:18.490089+00:00",
+      "endedAt": "2026-08-27T15:50:22.882863+00:00",
+      "durationSeconds": 4.393,
+      "exitCode": 0,
+      "passed": true,
+      "stdout": "\nPLAY [Deploy netCI sample service with systemd] ********************************\n\nTASK [Gathering Facts] *********************************************************\nok: [netci-local]\n\nTASK [Validate immutable Systemd release input] ********************************\nok: [netci-local] => {\n    \"changed\": false,\n    \"msg\": \"All assertions passed\"\n}\n\nTASK [Verify local artifact before transfer] ***********************************\nok: [netci-local -> localhost]\n\nTASK [Reject a missing or mismatched local artifact] ***************************\nok: [netci-local] => {\n    \"changed\": false,\n    \"msg\": \"All assertions passed\"\n}\n\nTASK [Read current release symlink] ********************************************\nok: [netci-local]\n\nTASK [Ensure service user exists] **********************************************\nskipping: [netci-local]\n\nTASK [Ensure release directory exists] *****************************************\nok: [netci-local]\n\nTASK [Ensure the unit directory exists] ****************************************\nok: [netci-local]\n\nTASK [Install local binary] ****************************************************\nok: [netci-local]\n\nTASK [Download binary from artifact store] *************************************\nskipping: [netci-local]\n\nTASK [Verify installed binary digest] ******************************************\nok: [netci-local]\n\nTASK [Reject an altered binary] ************************************************\nok: [netci-local] => {\n    \"changed\": false,\n    \"msg\": \"All assertions passed\"\n}\n\nTASK [Point current release to requested version] ******************************\nchanged: [netci-local]\n\nTASK [Install systemd unit] ****************************************************\nok: [netci-local]\n\nTASK [Reload systemd and restart new release] **********************************\nchanged: [netci-local]\n\nTASK [Wait for new release health endpoint] ************************************\nok: [netci-local]\n\nTASK [Collect service status for evidence] *************************************\nok: [netci-local]\n\nTASK [Collect service journal for evidence] ************************************\nok: [netci-local]\n\nTASK [Remove failed release directory after a successful rollback] *************\nskipping: [netci-local]\n\nPLAY RECAP *********************************************************************\nnetci-local                : ok=16   changed=2    unreachable=0    failed=0    skipped=3    rescued=0    ignored=0   \n\n",
+      "stderr": "",
+      "detail": {
+        "extraVars": {
+          "netci_action": "deploy",
+          "app_name": "netci-gate-hello-systemd",
+          "app_root": "/home/deployer/netci-delivery-platform/.netci-gate/deploy/systemd",
+          "app_port": 18082,
+          "release_version": "v0.2.0",
+          "artifact_path": "/home/deployer/netci-delivery-platform/.netci-gate/e2e-systemd/v0.2.0/hello-systemd-v0.2.0",
+          "artifact_sha256": "e25aae9f4a5692aaa5e7ba2b421f10c38fb8a9cf61deabdd1a26cb0446ed9d7d",
+          "health_url": "http://127.0.0.1:18082/healthz",
+          "systemd_scope": "user",
+          "netci_become": false,
+          "target_environment": "staging"
+        }
+      }
+    },
+    {
+      "name": "deploy:rollback",
+      "command": [
+        "/home/deployer/netci-delivery-platform/.venv/bin/ansible-playbook",
+        "-i",
+        "/home/deployer/netci-delivery-platform/deploy/ansible/inventories/localhost.ini",
+        "/home/deployer/netci-delivery-platform/deploy/ansible/playbooks/deploy-systemd.yml",
+        "--extra-vars",
+        "{\"app_name\": \"netci-gate-hello-systemd\", \"app_port\": 18082, \"app_root\": \"/home/deployer/netci-delivery-platform/.netci-gate/deploy/systemd\", \"artifact_path\": \"/home/deployer/netci-delivery-platform/.netci-gate/e2e-systemd/v0.1.0/hello-systemd-v0.1.0\", \"artifact_sha256\": \"c349a4a49b14b6905e64813c430678dc907ad3b7211ba019bf495fa0ab58ad33\", \"health_url\": \"http://127.0.0.1:18082/healthz\", \"netci_action\": \"deploy\", \"netci_become\": false, \"release_version\": \"v0.1.0\", \"systemd_scope\": \"user\", \"target_environment\": \"staging\"}"
+      ],
+      "startedAt": "2026-08-27T15:50:22.916460+00:00",
+      "endedAt": "2026-08-27T15:50:27.379049+00:00",
+      "durationSeconds": 4.463,
+      "exitCode": 0,
+      "passed": true,
+      "stdout": "\nPLAY [Deploy netCI sample service with systemd] ********************************\n\nTASK [Gathering Facts] *********************************************************\nok: [netci-local]\n\nTASK [Validate immutable Systemd release input] ********************************\nok: [netci-local] => {\n    \"changed\": false,\n    \"msg\": \"All assertions passed\"\n}\n\nTASK [Verify local artifact before transfer] ***********************************\nok: [netci-local -> localhost]\n\nTASK [Reject a missing or mismatched local artifact] ***************************\nok: [netci-local] => {\n    \"changed\": false,\n    \"msg\": \"All assertions passed\"\n}\n\nTASK [Read current release symlink] ********************************************\nok: [netci-local]\n\nTASK [Ensure service user exists] **********************************************\nskipping: [netci-local]\n\nTASK [Ensure release directory exists] *****************************************\nok: [netci-local]\n\nTASK [Ensure the unit directory exists] ****************************************\nok: [netci-local]\n\nTASK [Install local binary] ****************************************************\nok: [netci-local]\n\nTASK [Download binary from artifact store] *************************************\nskipping: [netci-local]\n\nTASK [Verify installed binary digest] ******************************************\nok: [netci-local]\n\nTASK [Reject an altered binary] ************************************************\nok: [netci-local] => {\n    \"changed\": false,\n    \"msg\": \"All assertions passed\"\n}\n\nTASK [Point current release to requested version] ******************************\nchanged: [netci-local]\n\nTASK [Install systemd unit] ****************************************************\nok: [netci-local]\n\nTASK [Reload systemd and restart new release] **********************************\nchanged: [netci-local]\n\nTASK [Wait for new release health endpoint] ************************************\nok: [netci-local]\n\nTASK [Collect service status for evidence] *************************************\nok: [netci-local]\n\nTASK [Collect service journal for evidence] ************************************\nok: [netci-local]\n\nTASK [Remove failed release directory after a successful rollback] *************\nskipping: [netci-local]\n\nPLAY RECAP *********************************************************************\nnetci-local                : ok=16   changed=2    unreachable=0    failed=0    skipped=3    rescued=0    ignored=0   \n\n",
+      "stderr": "",
+      "detail": {
+        "extraVars": {
+          "netci_action": "deploy",
+          "app_name": "netci-gate-hello-systemd",
+          "app_root": "/home/deployer/netci-delivery-platform/.netci-gate/deploy/systemd",
+          "app_port": 18082,
+          "release_version": "v0.1.0",
+          "artifact_path": "/home/deployer/netci-delivery-platform/.netci-gate/e2e-systemd/v0.1.0/hello-systemd-v0.1.0",
+          "artifact_sha256": "c349a4a49b14b6905e64813c430678dc907ad3b7211ba019bf495fa0ab58ad33",
+          "health_url": "http://127.0.0.1:18082/healthz",
+          "systemd_scope": "user",
+          "netci_become": false,
+          "target_environment": "staging"
+        }
+      }
+    },
+    {
+      "name": "rollback:service-health",
+      "command": null,
+      "startedAt": "2026-08-27T15:50:27.380314+00:00",
+      "endedAt": "2026-08-27T15:50:27.380314+00:00",
+      "durationSeconds": 0.0,
+      "exitCode": 0,
+      "passed": true,
+      "stdout": "",
+      "stderr": "",
+      "detail": {
+        "status": "ok",
+        "version": "v0.1.0"
+      }
+    },
+    {
+      "name": "collect-unit-status",
+      "command": [
+        "systemctl",
+        "--user",
+        "status",
+        "netci-gate-hello-systemd",
+        "--no-pager"
+      ],
+      "startedAt": "2026-08-27T15:50:27.380473+00:00",
+      "endedAt": "2026-08-27T15:50:27.389355+00:00",
+      "durationSeconds": 0.009,
+      "exitCode": 0,
+      "passed": true,
+      "stdout": "\u25cf netci-gate-hello-systemd.service - netci-gate-hello-systemd netCI demo service\n     Loaded: loaded (/home/deployer/.config/systemd/user/netci-gate-hello-systemd.service; enabled; preset: enabled)\n     Active: active (running) since Thu 2026-08-27 22:50:26 +07; 803ms ago\n   Main PID: 213830 (netci-gate-hell)\n      Tasks: 5 (limit: 37935)\n     Memory: 2.0M (peak: 2.4M)\n        CPU: 5ms\n     CGroup: /user.slice/user-1001.slice/user@1001.service/app.slice/netci-gate-hello-systemd.service\n             \u2514\u2500213830 /home/deployer/netci-delivery-platform/.netci-gate/deploy/systemd/current/netci-gate-hello-systemd\n\nThg 8 27 22:50:26 openstack-aio systemd[11730]: Started netci-gate-hello-systemd.service - netci-gate-hello-systemd netCI demo service.\nThg 8 27 22:50:26 openstack-aio netci-gate-hello-systemd[213830]: 2026/08/27 22:50:26 hello-systemd listening on :18082 version=v0.1.0\n",
+      "stderr": "",
+      "detail": {}
+    },
+    {
+      "name": "unit-status",
+      "command": null,
+      "startedAt": "2026-08-27T15:50:27.389366+00:00",
+      "endedAt": "2026-08-27T15:50:27.389366+00:00",
+      "durationSeconds": 0.0,
+      "exitCode": 0,
+      "passed": true,
+      "stdout": "",
+      "stderr": "",
+      "detail": {
+        "stdout": "\u25cf netci-gate-hello-systemd.service - netci-gate-hello-systemd netCI demo service\n     Loaded: loaded (/home/deployer/.config/systemd/user/netci-gate-hello-systemd.service; enabled; preset: enabled)\n     Active: active (running) since Thu 2026-08-27 22:50:26 +07; 803ms ago\n   Main PID: 213830 (netci-gate-hell)\n      Tasks: 5 (limit: 37935)\n     Memory: 2.0M (peak: 2.4M)\n        CPU: 5ms\n     CGroup: /user.slice/user-1001.slice/user@1001.service/app.slice/netci-gate-hello-systemd.service\n             \u2514\u2500213830 /home/deployer/netci-delivery-platform/.netci-gate/deploy/systemd/current/netci-gate-hello-systemd\n\nThg 8 27 22:50:26 openstack-aio systemd[11730]: Started netci-gate-hello-systemd.service - netci-gate-hello-systemd netCI demo service.\nThg 8 27 22:50:26 openstack-aio netci-gate-hello-systemd[213830]: 2026/08/27 22:50:26 hello-systemd listening on :18082 version=v0.1.0\n"
+      }
+    }
+  ]
+}

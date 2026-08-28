@@ -1,7 +1,7 @@
 ---
 - name: Deploy sample container service to Docker VM
   hosts: docker_targets
-  become: true
+  become: "{{ netci_become | default(true) }}"
   vars:
     netci_app_name: "{{ app_name | default('hello-container') }}"
     netci_app_root: "{{ app_root | default('/opt/netci-docker-demo') }}"
@@ -9,6 +9,12 @@
     netci_image_repository: "{{ image_repository | default(netci_registry_url ~ '/hello-container') }}"
     netci_artifact_digest: "{{ artifact_digest | default('') }}"
     netci_host_port: "{{ host_port | default(18081) }}"
+    # On a host-networked lab the container binds this port directly, so the health
+    # check and the published port are the same number.
+    netci_network_mode: "{{ network_mode | default('bridge') }}"
+    netci_container_port: >-
+      {{ container_port | default(netci_host_port if netci_network_mode == 'host' else 8080) }}
+    netci_health_port: "{{ netci_container_port if netci_network_mode == 'host' else netci_host_port }}"
 
   pre_tasks:
     - name: Require immutable artifact digest
@@ -47,7 +53,7 @@
 
         - name: Wait for health endpoint
           ansible.builtin.uri:
-            url: "http://127.0.0.1:{{ netci_host_port }}/healthz"
+            url: "http://127.0.0.1:{{ netci_health_port }}/healthz"
             status_code: 200
             return_content: true
           register: docker_health

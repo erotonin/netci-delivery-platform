@@ -40,11 +40,15 @@ func main() {
     if runtimeVersion := os.Getenv("APP_VERSION"); runtimeVersion != "" {
         serviceVersion = runtimeVersion
     }
+    port := os.Getenv("APP_PORT")
+    if port == "" {
+        port = "18080"
+    }
     server := &http.Server{
-        Addr:              ":18080",
+        Addr:              ":" + port,
         Handler:           newHandler(serviceVersion),
         ReadHeaderTimeout: 5 * time.Second,
     }
-    log.Printf("hello-systemd listening on :18080 version=%s", serviceVersion)
+    log.Printf("hello-systemd listening on :%s version=%s", port, serviceVersion)
     log.Fatal(server.ListenAndServe())
 }

@@ -2,8 +2,12 @@ ARG JENKINS_AGENT_BASE=jenkins/inbound-agent:3386.v353e57a_1b_ea_0-1-jdk21
 FROM ${JENKINS_AGENT_BASE}
 
 USER root
+# netavark and aardvark-dns are Buildah's network backend: without them a rootless
+# build fails at the first FROM with "could not find netavark". fuse-overlayfs and
+# slirp4netns are what let that build run unprivileged in the first place.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     bash buildah ca-certificates curl git jq make python3 uidmap \
+    netavark aardvark-dns fuse-overlayfs slirp4netns \
     && rm -rf /var/lib/apt/lists/*
 
 # Tool versions and release checksums are intentionally explicit. Update both
@@ -44,10 +48,33 @@ RUN set -eux; \
     grep -q '^jenkins:' /etc/subuid || echo 'jenkins:100000:65536' >> /etc/subuid; \
     grep -q '^jenkins:' /etc/subgid || echo 'jenkins:100000:65536' >> /etc/subgid
 
+# An unprivileged pod cannot write a multi-range uid_map, so buildah falls back to a
+# single mapping and any layer that chowns to another uid fails. Granting the build
+# container SETUID/SETGID would fix that, but handing a build the ability to change
+# uid is exactly what ADR-007 is trying not to do. Telling the vfs driver to ignore
+# chown errors keeps the pod unprivileged; the cost is flattened file ownership inside
+# layers, which does not change the application content being published.
+#
+# Rootless buildah reads the *user's* storage configuration, not /etc, so the file has
+# to live in the agent's home directory to take effect.
+RUN mkdir -p /home/jenkins/.config/containers \
+    && printf '%s\n' \
+      '[storage]' \
+      'driver = "vfs"' \
+      'runroot = "/home/jenkins/.local/share/containers/storage"' \
+      'graphroot = "/home/jenkins/.local/share/containers/storage"' \
+      '[storage.options]' \
+      'ignore_chown_errors = "true"' \
+      '[storage.options.vfs]' \
+      'ignore_chown_errors = "true"' \
+      | tee /home/jenkins/.config/containers/storage.conf > /etc/containers/storage.conf \
+    && chown -R 1000:1000 /home/jenkins/.config
+
 ENV PATH="/usr/local/go/bin:${PATH}" \
     BUILDAH_ISOLATION=chroot \
     STORAGE_DRIVER=vfs
 
-RUN syft version && trivy --version && cosign version && go version && buildah version
+RUN syft version && trivy --version && cosign version && go version && buildah version \
+    && test -x /usr/libexec/podman/netavark || test -x /usr/lib/podman/netavark
 
 USER 1000

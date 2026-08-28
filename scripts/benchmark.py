@@ -17,9 +17,11 @@ TIMING_PREFIX = "NETCI_TIMING_JSON="
 PHASE_FIELDS = (
     "queue_seconds",
     "provisioning_seconds",
+    "checkout_seconds",
     "cache_restore_seconds",
     "build_seconds",
     "cleanup_seconds",
+    "other_seconds",
 )
 
 
@@ -33,9 +35,11 @@ class BenchmarkSample:
     total_seconds: float
     queue_seconds: float
     provisioning_seconds: float
+    checkout_seconds: float
     cache_restore_seconds: float
     build_seconds: float
     cleanup_seconds: float
+    other_seconds: float
     cache_hit: bool
     timing_complete: bool
     success: bool
@@ -63,9 +67,11 @@ def parse_timing(output: str) -> tuple[dict[str, float], bool, bool]:
         phases = {
             "queue_seconds": float(payload["queueSeconds"]),
             "provisioning_seconds": float(payload["provisioningSeconds"]),
+            "checkout_seconds": float(payload["checkoutSeconds"]),
             "cache_restore_seconds": float(payload["cacheRestoreSeconds"]),
             "build_seconds": float(payload["buildSeconds"]),
             "cleanup_seconds": float(payload["cleanupSeconds"]),
+            "other_seconds": float(payload["otherSeconds"]),
         }
         if any(value < 0 for value in phases.values()):
             raise ValueError("timing values cannot be negative")
@@ -106,9 +112,11 @@ def _mode_report(samples: list[BenchmarkSample]) -> dict[str, float | int]:
         "totalSecondsAvg": _average(samples, "total_seconds"),
         "queueSecondsAvg": _average(samples, "queue_seconds"),
         "provisioningSecondsAvg": _average(samples, "provisioning_seconds"),
+        "checkoutSecondsAvg": _average(samples, "checkout_seconds"),
         "cacheRestoreSecondsAvg": _average(samples, "cache_restore_seconds"),
         "buildSecondsAvg": _average(samples, "build_seconds"),
         "cleanupSecondsAvg": _average(samples, "cleanup_seconds"),
+        "otherSecondsAvg": _average(samples, "other_seconds"),
     }
 
 

@@ -43,10 +43,15 @@ spec:
   steps:
     - id: createNetciApplication
       name: Create application in netCI
+      # Requires @roadiehq/scaffolder-backend-module-http-request in the Backstage
+      # backend; http:backstage:request is not a built-in action.
+      #
+      # The path is relative to Backstage's /api root: the action prefixes /api itself,
+      # so writing /api/proxy/... here produces /api/api/proxy/... and a 404.
       action: http:backstage:request
       input:
         method: POST
-        path: /api/proxy/netci/applications
+        path: /proxy/netci/applications
         headers:
           content-type: application/json
         body:

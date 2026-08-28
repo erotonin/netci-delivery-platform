@@ -23,7 +23,35 @@ unclassified:
           modernSCM:
             scm:
               git:
+                # Point this at a real Git remote. The in-image file:// snapshot is only
+                # usable with hudson.plugins.git.GitSCM.ALLOW_LOCAL_CHECKOUT=true, because
+                # the git plugin refuses local-directory checkouts by default -- a guard
+                # worth keeping rather than switching off for convenience.
                 remote: ${JENKINS_SHARED_LIBRARY_REMOTE:-file:///opt/netci-shared-library}
+
+credentials:
+  system:
+    domainCredentials:
+      - credentials:
+          - string:
+              id: ${KUBERNETES_CREDENTIALS_ID:-netci-kind-token}
+              scope: SYSTEM
+              description: "Short-lived token for the local kind controller service account"
+              secret: ${KUBERNETES_SERVICE_ACCOUNT_TOKEN:-replace-me-local-only}
+          - string:
+              # The shared library binds this to call back into netCI. It never reaches
+              # the build log: Jenkins masks bound credentials in console output.
+              id: ${NETCI_CALLBACK_CREDENTIALS_ID:-netci-pipeline-api-key}
+              scope: GLOBAL
+              description: "netCI pipeline API key used by netciPipeline callbacks"
+              secret: ${NETCI_PIPELINE_API_KEY:-netci-local-pipeline-key}
+          - string:
+              # Artifact signing key. Bound only in the Sign stage, written to the
+              # ephemeral workspace, and removed before the stage ends.
+              id: ${NETCI_COSIGN_CREDENTIALS_ID:-netci-cosign-key}
+              scope: GLOBAL
+              description: "Cosign private key used to sign netCI artifacts"
+              secret: ${NETCI_COSIGN_PRIVATE_KEY:-replace-me-local-only}
 
 jobs:
   - script: |

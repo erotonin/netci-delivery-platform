@@ -1,0 +1,784 @@
+{
+  "gate": "jenkins-ci-loop",
+  "description": "netCI routes a run to a live Jenkins controller, the build executes on a throwaway agent pod, and the artifact plus its evidence come back through the API.",
+  "result": "pass",
+  "error": null,
+  "commit": "d7a43b6c7017c0e48bd3359b6f7e81629dfc1f8e",
+  "host": {
+    "platform": "Linux-6.8.0-134-generic-x86_64-with-glibc2.39",
+    "python": "3.12.3",
+    "hostname": "openstack-aio"
+  },
+  "startedAt": "2026-08-28T02:21:10.847265+00:00",
+  "endedAt": "2026-08-28T02:22:43.753368+00:00",
+  "context": {
+    "apiUrl": "http://127.0.0.1:8100",
+    "pipelineApiKey": "netci-local-pipeline-key",
+    "kubeContext": "kind-netci-local",
+    "controllers": {
+      "jenkins-a": "http://172.17.0.50:8080",
+      "jenkins-b": "http://172.17.0.51:8080"
+    },
+    "jenkinsUsername": "admin",
+    "jenkinsToken": "change-me-local-only",
+    "gitUrl": "http://172.17.0.52/netci.git",
+    "branch": "main",
+    "commit": "ac218c1a978cd93897196c7f309143a679d3fa0e",
+    "timeout": 900.0,
+    "chosenController": "jenkins-a",
+    "jenkinsJob": "netci-6e1aae73-a948-4cdb-b45a-41250a87ede5",
+    "agentPods": [
+      "netci-ephemeral-t06qh"
+    ]
+  },
+  "assertions": [
+    {
+      "assertion": "netCI is configured to drive Jenkins, not to wait for a hand-written callback",
+      "passed": true,
+      "detail": {
+        "expected": "jenkins",
+        "actual": "jenkins"
+      }
+    },
+    {
+      "assertion": "jenkins-a is reachable",
+      "passed": true,
+      "detail": "http://172.17.0.50:8080"
+    },
+    {
+      "assertion": "jenkins-b is reachable",
+      "passed": true,
+      "detail": "http://172.17.0.51:8080"
+    },
+    {
+      "assertion": "jenkins-a has no executors of its own",
+      "passed": true,
+      "detail": {
+        "expected": 0,
+        "actual": 0
+      }
+    },
+    {
+      "assertion": "jenkins-a can provision the ephemeral agent label from a cloud",
+      "passed": true,
+      "detail": [
+        "org.csanchez.jenkins.plugins.kubernetes.KubernetesCloud"
+      ]
+    },
+    {
+      "assertion": "jenkins-b has no executors of its own",
+      "passed": true,
+      "detail": {
+        "expected": 0,
+        "actual": 0
+      }
+    },
+    {
+      "assertion": "jenkins-b can provision the ephemeral agent label from a cloud",
+      "passed": true,
+      "detail": [
+        "org.csanchez.jenkins.plugins.kubernetes.KubernetesCloud"
+      ]
+    },
+    {
+      "assertion": "no build pods are lingering before the run",
+      "passed": true,
+      "detail": []
+    },
+    {
+      "assertion": "netCI recorded a controller-qualified external run id",
+      "passed": true,
+      "detail": "jenkins-a:netci-6e1aae73-a948-4cdb-b45a-41250a87ede5#1"
+    },
+    {
+      "assertion": "the chosen controller is one of the registered controllers",
+      "passed": true,
+      "detail": {
+        "chosen": "jenkins-a",
+        "registered": [
+          "jenkins-a",
+          "jenkins-b"
+        ]
+      }
+    },
+    {
+      "assertion": "the queue item resolved to a real build number",
+      "passed": true,
+      "detail": "netci-6e1aae73-a948-4cdb-b45a-41250a87ede5#1"
+    },
+    {
+      "assertion": "netCI provisioned a pipeline job, not a freestyle project",
+      "passed": true,
+      "detail": "org.jenkinsci.plugins.workflow.job.WorkflowJob"
+    },
+    {
+      "assertion": "an ephemeral agent pod was created for the build",
+      "passed": true,
+      "detail": [
+        "netci-ephemeral-t06qh"
+      ]
+    },
+    {
+      "assertion": "the agent pod does not auto-mount a Kubernetes API token",
+      "passed": true,
+      "detail": {
+        "expected": false,
+        "actual": false
+      }
+    },
+    {
+      "assertion": "the agent pod mounts no host path and no container socket",
+      "passed": true,
+      "detail": [
+        "workspace-volume"
+      ]
+    },
+    {
+      "assertion": "the agent pod runs as a non-root user",
+      "passed": true,
+      "detail": {
+        "expected": true,
+        "actual": true
+      }
+    },
+    {
+      "assertion": "the workspace is an emptyDir that dies with the pod",
+      "passed": true,
+      "detail": [
+        [
+          "emptyDir",
+          "name"
+        ]
+      ]
+    },
+    {
+      "assertion": "netCI recorded that it dispatched the build to a controller",
+      "passed": true,
+      "detail": [
+        "queued correlationId=26661c5f-5fa1-4c20-9282-7ddfac25b801",
+        "commit=ac218c1a978cd93897196c7f309143a679d3fa0e",
+        "ci-dispatched controller=jenkins-a run=netci-6e1aae73-a948-4cdb-b45a-41250a87ede5#1",
+        "jenkins build jenkins-netci-6e1aae73-a948-4cdb-b45a-41250a87ede5-1 started",
+        "security-evidence decision=allow reason=artifact satisfies the netCI supply-chain policy",
+        "policy=allow artifact satisfies the netCI supply-chain policy",
+        "jenkins build jenkins-netci-6e1aae73-a948-4cdb-b45a-41250a87ede5-1 succeeded"
+      ]
+    },
+    {
+      "assertion": "the build called back to move the run out of queued",
+      "passed": true,
+      "detail": [
+        "queued correlationId=26661c5f-5fa1-4c20-9282-7ddfac25b801",
+        "commit=ac218c1a978cd93897196c7f309143a679d3fa0e",
+        "ci-dispatched controller=jenkins-a run=netci-6e1aae73-a948-4cdb-b45a-41250a87ede5#1",
+        "jenkins build jenkins-netci-6e1aae73-a948-4cdb-b45a-41250a87ede5-1 started",
+        "security-evidence decision=allow reason=artifact satisfies the netCI supply-chain policy",
+        "policy=allow artifact satisfies the netCI supply-chain policy",
+        "jenkins build jenkins-netci-6e1aae73-a948-4cdb-b45a-41250a87ede5-1 succeeded"
+      ]
+    },
+    {
+      "assertion": "the build published an immutable digest through the callback",
+      "passed": true,
+      "detail": "sha256:d1efdc40f357e44e613efea8fdc302b456a12d5959e8e5e2987ba939fd2bbd17"
+    },
+    {
+      "assertion": "the evidence the build published describes the digest it reported",
+      "passed": true,
+      "detail": {
+        "expected": "sha256:d1efdc40f357e44e613efea8fdc302b456a12d5959e8e5e2987ba939fd2bbd17",
+        "actual": "sha256:d1efdc40f357e44e613efea8fdc302b456a12d5959e8e5e2987ba939fd2bbd17"
+      }
+    },
+    {
+      "assertion": "Syft generated the SBOM",
+      "passed": true,
+      "detail": {
+        "expected": "syft",
+        "actual": "syft"
+      }
+    },
+    {
+      "assertion": "Trivy produced the scan",
+      "passed": true,
+      "detail": {
+        "expected": "trivy",
+        "actual": "trivy"
+      }
+    },
+    {
+      "assertion": "Cosign signed the artifact",
+      "passed": true,
+      "detail": {
+        "expected": "cosign",
+        "actual": "cosign"
+      }
+    },
+    {
+      "assertion": "netCI allowed the artifact",
+      "passed": true,
+      "detail": {
+        "expected": "allow",
+        "actual": "allow"
+      }
+    },
+    {
+      "assertion": "the run moved past CI rather than staying queued",
+      "passed": true,
+      "detail": "running"
+    },
+    {
+      "assertion": "starting the run recorded the commit event DORA is measured from",
+      "passed": true,
+      "detail": [
+        "commit"
+      ]
+    },
+    {
+      "assertion": "the ephemeral agent pod was deleted once the build finished",
+      "passed": true,
+      "detail": []
+    }
+  ],
+  "steps": [
+    {
+      "name": "tool-preflight",
+      "command": null,
+      "startedAt": "2026-08-28T02:21:10.871600+00:00",
+      "endedAt": "2026-08-28T02:21:10.871600+00:00",
+      "durationSeconds": 0.0,
+      "exitCode": 0,
+      "passed": true,
+      "stdout": "",
+      "stderr": "",
+      "detail": {
+        "required": [
+          "kubectl",
+          "docker"
+        ],
+        "missing": []
+      }
+    },
+    {
+      "name": "api-health",
+      "command": null,
+      "startedAt": "2026-08-28T02:21:10.925044+00:00",
+      "endedAt": "2026-08-28T02:21:10.925044+00:00",
+      "durationSeconds": 0.0,
+      "exitCode": 0,
+      "passed": true,
+      "stdout": "",
+      "stderr": "",
+      "detail": {
+        "status": "ok",
+        "version": "0.1.0",
+        "engines": {
+          "ci": "jenkins",
+          "cd": "none"
+        },
+        "dependencies": {
+          "portalPersistence": {
+            "mode": "postgresql",
+            "status": "ready"
+          },
+          "deliveryPersistence": "ok"
+        }
+      }
+    },
+    {
+      "name": "agent-pods-before",
+      "command": [
+        "kubectl",
+        "--context",
+        "kind-netci-local",
+        "get",
+        "pods",
+        "-n",
+        "netci-build",
+        "-o",
+        "json"
+      ],
+      "startedAt": "2026-08-28T02:21:11.626585+00:00",
+      "endedAt": "2026-08-28T02:21:11.718662+00:00",
+      "durationSeconds": 0.092,
+      "exitCode": 0,
+      "passed": true,
+      "stdout": "{\n    \"apiVersion\": \"v1\",\n    \"items\": [],\n    \"kind\": \"List\",\n    \"metadata\": {\n        \"resourceVersion\": \"\"\n    }\n}\n",
+      "stderr": "",
+      "detail": {}
+    },
+    {
+      "name": "pipeline-run",
+      "command": null,
+      "startedAt": "2026-08-28T02:21:12.261499+00:00",
+      "endedAt": "2026-08-28T02:21:12.261499+00:00",
+      "durationSeconds": 0.0,
+      "exitCode": 0,
+      "passed": true,
+      "stdout": "",
+      "stderr": "",
+      "detail": {
+        "id": "7c3dc851-a2f6-42b4-b2a3-e87ee0f9f19e",
+        "applicationId": "6e1aae73-a948-4cdb-b45a-41250a87ede5",
+        "status": "queued",
+        "commitSha": "ac218c1a978cd93897196c7f309143a679d3fa0e",
+        "branch": "main",
+        "environment": "staging",
+        "parameters": {
+          "NETCI_APP_DIR": "sample-apps/hello-container"
+        },
+        "correlationId": "26661c5f-5fa1-4c20-9282-7ddfac25b801",
+        "jenkinsRunId": "jenkins-a:netci-6e1aae73-a948-4cdb-b45a-41250a87ede5#1",
+        "workflowId": null,
+        "artifactDigest": null,
+        "createdAt": "2026-08-28T02:21:11.745286+00:00",
+        "updatedAt": "2026-08-28T02:21:12.240143+00:00"
+      }
+    },
+    {
+      "name": "poll-agent-pods",
+      "command": [
+        "kubectl",
+        "--context",
+        "kind-netci-local",
+        "get",
+        "pods",
+        "-n",
+        "netci-build",
+        "-l",
+        "netci.io/agent=ephemeral",
+        "-o",
+        "json"
+      ],
+      "startedAt": "2026-08-28T02:21:12.351860+00:00",
+      "endedAt": "2026-08-28T02:21:12.432905+00:00",
+      "durationSeconds": 0.081,
+      "exitCode": 0,
+      "passed": true,
+      "stdout": "{\n    \"apiVersion\": \"v1\",\n    \"items\": [],\n    \"kind\": \"List\",\n    \"metadata\": {\n        \"resourceVersion\": \"\"\n    }\n}\n",
+      "stderr": "",
+      "detail": {}
+    },
+    {
+      "name": "poll-agent-pods",
+      "command": [
+        "kubectl",
+        "--context",
+        "kind-netci-local",
+        "get",
+        "pods",
+        "-n",
+        "netci-build",
+        "-l",
+        "netci.io/agent=ephemeral",
+        "-o",
+        "json"
+      ],
+      "startedAt": "2026-08-28T02:21:15.433330+00:00",
+      "endedAt": "2026-08-28T02:21:15.537162+00:00",
+      "durationSeconds": 0.104,
+      "exitCode": 0,
+      "passed": true,
+      "stdout": "           {\n                                \"mountPath\": \"/home/jenkins/agent\",\n                                \"name\": \"workspace-volume\"\n                            }\n                        ]\n                    }\n                ],\n                \"dnsPolicy\": \"ClusterFirst\",\n                \"enableServiceLinks\": true,\n                \"nodeName\": \"netci-local-worker\",\n                \"nodeSelector\": {\n                    \"kubernetes.io/os\": \"linux\"\n                },\n                \"preemptionPolicy\": \"PreemptLowerPriority\",\n                \"priority\": 0,\n                \"restartPolicy\": \"Never\",\n                \"schedulerName\": \"default-scheduler\",\n                \"securityContext\": {\n                    \"fsGroup\": 1000,\n                    \"runAsGroup\": 1000,\n                    \"runAsNonRoot\": true,\n                    \"runAsUser\": 1000\n                },\n                \"serviceAccount\": \"jenkins-agent\",\n                \"serviceAccountName\": \"jenkins-agent\",\n                \"terminationGracePeriodSeconds\": 30,\n                \"tolerations\": [\n                    {\n                        \"effect\": \"NoExecute\",\n                        \"key\": \"node.kubernetes.io/not-ready\",\n                        \"operator\": \"Exists\",\n                        \"tolerationSeconds\": 300\n                    },\n                    {\n                        \"effect\": \"NoExecute\",\n                        \"key\": \"node.kubernetes.io/unreachable\",\n                        \"operator\": \"Exists\",\n                        \"tolerationSeconds\": 300\n                    }\n                ],\n                \"volumes\": [\n                    {\n                        \"emptyDir\": {},\n                        \"name\": \"workspace-volume\"\n                    }\n                ]\n            },\n            \"status\": {\n                \"conditions\": [\n                    {\n                        \"lastProbeTime\": null,\n                        \"lastTransitionTime\": \"2026-08-28T02:21:14Z\",\n                        \"observedGeneration\": 1,\n                        \"status\": \"True\",\n                        \"type\": \"PodReadyToStartContainers\"\n                    },\n                    {\n                        \"lastProbeTime\": null,\n                        \"lastTransitionTime\": \"2026-08-28T02:21:13Z\",\n                        \"observedGeneration\": 1,\n                        \"status\": \"True\",\n                        \"type\": \"Initialized\"\n                    },\n                    {\n                        \"lastProbeTime\": null,\n                        \"lastTransitionTime\": \"2026-08-28T02:21:14Z\",\n                        \"observedGeneration\": 1,\n                        \"status\": \"True\",\n                        \"type\": \"Ready\"\n                    },\n                    {\n                        \"lastProbeTime\": null,\n                        \"lastTransitionTime\": \"2026-08-28T02:21:14Z\",\n                        \"observedGeneration\": 1,\n                        \"status\": \"True\",\n                        \"type\": \"ContainersReady\"\n                    },\n                    {\n                        \"lastProbeTime\": null,\n                        \"lastTransitionTime\": \"2026-08-28T02:21:13Z\",\n                        \"observedGeneration\": 1,\n                        \"status\": \"True\",\n                        \"type\": \"PodScheduled\"\n                    }\n                ],\n                \"containerStatuses\": [\n                    {\n                        \"allocatedResources\": {\n                            \"cpu\": \"500m\",\n                            \"memory\": \"1Gi\"\n                        },\n                        \"containerID\": \"containerd://bcf07e0386c0703acb414d09c4ad229cb407c65ba2557f24f184a18c92daa38e\",\n                        \"image\": \"localhost:55000/netci/ci-toolbox:0.4.0\",\n                        \"imageID\": \"localhost:55000/netci/ci-toolbox@sha256:8bc9ab912dfabe983c7d8c365cd60c3ae5994e88b2a447196f145f5a029a9aa6\",\n                        \"lastState\": {},\n                        \"name\": \"builder\",\n                        \"ready\": true,\n                        \"resources\": {\n                            \"limits\": {\n                                \"cpu\": \"2\",\n                                \"memory\": \"4Gi\"\n                            },\n                            \"requests\": {\n                                \"cpu\": \"500m\",\n                                \"memory\": \"1Gi\"\n                            }\n                        },\n                        \"restartCount\": 0,\n                        \"started\": true,\n                        \"state\": {\n                            \"running\": {\n                                \"startedAt\": \"2026-08-28T02:21:14Z\"\n                            }\n                        },\n                        \"user\": {\n                            \"linux\": {\n                                \"gid\": 1000,\n                                \"supplementalGroups\": [\n                                    1000\n                                ],\n                                \"uid\": 1000\n                            }\n                        },\n                        \"volumeMounts\": [\n                            {\n                                \"mountPath\": \"/home/jenkins/agent\",\n                                \"name\": \"workspace-volume\"\n                            }\n                        ]\n                    },\n                    {\n                        \"allocatedResources\": {\n                            \"cpu\": \"100m\",\n                            \"memory\": \"256Mi\"\n                        },\n                        \"containerID\": \"containerd://6b696948aec0776caab6e0c7fa1e662bac642c781adb9e8887d749d30dccea3d\",\n                        \"image\": \"localhost:55000/jenkins/inbound-agent:3386.v353e57a_1b_ea_0-1-jdk21\",\n                        \"imageID\": \"localhost:55000/jenkins/inbound-agent@sha256:18a5c2cc22847349e1542ff2c6184d7472913ae0d26d625aef82e41becb36342\",\n                        \"lastState\": {},\n                        \"name\": \"jnlp\",\n                        \"ready\": true,\n                        \"resources\": {\n                            \"limits\": {\n                                \"cpu\": \"500m\",\n                                \"memory\": \"1Gi\"\n                            },\n                            \"requests\": {\n                                \"cpu\": \"100m\",\n                                \"memory\": \"256Mi\"\n                            }\n                        },\n                        \"restartCount\": 0,\n                        \"started\": true,\n                        \"state\": {\n                            \"running\": {\n                                \"startedAt\": \"2026-08-28T02:21:14Z\"\n                            }\n                        },\n                        \"user\": {\n                            \"linux\": {\n                                \"gid\": 1000,\n                                \"supplementalGroups\": [\n                                    1000\n                                ],\n                                \"uid\": 1000\n                            }\n                        },\n                        \"volumeMounts\": [\n                            {\n                                \"mountPath\": \"/home/jenkins/agent\",\n                                \"name\": \"workspace-volume\"\n                            }\n                        ]\n                    }\n                ],\n                \"hostIP\": \"172.17.0.2\",\n                \"hostIPs\": [\n                    {\n                        \"ip\": \"172.17.0.2\"\n                    }\n                ],\n                \"observedGeneration\": 1,\n                \"phase\": \"Running\",\n                \"podIP\": \"10.244.1.52\",\n                \"podIPs\": [\n                    {\n                        \"ip\": \"10.244.1.52\"\n                    }\n                ],\n                \"qosClass\": \"Burstable\",\n                \"startTime\": \"2026-08-28T02:21:13Z\"\n            }\n        }\n    ],\n    \"kind\": \"List\",\n    \"metadata\": {\n        \"resourceVersion\": \"\"\n    }\n}\n",
+      "stderr": "",
+      "detail": {}
+    },
+    {
+      "name": "agent-pod-spec",
+      "command": [
+        "kubectl",
+        "--context",
+        "kind-netci-local",
+        "get",
+        "pod",
+        "netci-ephemeral-t06qh",
+        "-n",
+        "netci-build",
+        "-o",
+        "json"
+      ],
+      "startedAt": "2026-08-28T02:21:15.537502+00:00",
+      "endedAt": "2026-08-28T02:21:15.616355+00:00",
+      "durationSeconds": 0.079,
+      "exitCode": 0,
+      "passed": true,
+      "stdout": "            }\n                },\n                \"terminationMessagePath\": \"/dev/termination-log\",\n                \"terminationMessagePolicy\": \"File\",\n                \"volumeMounts\": [\n                    {\n                        \"mountPath\": \"/home/jenkins/agent\",\n                        \"name\": \"workspace-volume\"\n                    }\n                ]\n            },\n            {\n                \"args\": [\n                    \"99d\"\n                ],\n                \"command\": [\n                    \"sleep\"\n                ],\n                \"env\": [\n                    {\n                        \"name\": \"BUILDAH_ISOLATION\",\n                        \"value\": \"chroot\"\n                    },\n                    {\n                        \"name\": \"STORAGE_DRIVER\",\n                        \"value\": \"vfs\"\n                    }\n                ],\n                \"image\": \"localhost:55000/netci/ci-toolbox:0.4.0\",\n                \"imagePullPolicy\": \"IfNotPresent\",\n                \"name\": \"builder\",\n                \"resources\": {\n                    \"limits\": {\n                        \"cpu\": \"2\",\n                        \"memory\": \"4Gi\"\n                    },\n                    \"requests\": {\n                        \"cpu\": \"500m\",\n                        \"memory\": \"1Gi\"\n                    }\n                },\n                \"securityContext\": {\n                    \"allowPrivilegeEscalation\": true\n                },\n                \"terminationMessagePath\": \"/dev/termination-log\",\n                \"terminationMessagePolicy\": \"File\",\n                \"tty\": true,\n                \"volumeMounts\": [\n                    {\n                        \"mountPath\": \"/home/jenkins/agent\",\n                        \"name\": \"workspace-volume\"\n                    }\n                ]\n            }\n        ],\n        \"dnsPolicy\": \"ClusterFirst\",\n        \"enableServiceLinks\": true,\n        \"nodeName\": \"netci-local-worker\",\n        \"nodeSelector\": {\n            \"kubernetes.io/os\": \"linux\"\n        },\n        \"preemptionPolicy\": \"PreemptLowerPriority\",\n        \"priority\": 0,\n        \"restartPolicy\": \"Never\",\n        \"schedulerName\": \"default-scheduler\",\n        \"securityContext\": {\n            \"fsGroup\": 1000,\n            \"runAsGroup\": 1000,\n            \"runAsNonRoot\": true,\n            \"runAsUser\": 1000\n        },\n        \"serviceAccount\": \"jenkins-agent\",\n        \"serviceAccountName\": \"jenkins-agent\",\n        \"terminationGracePeriodSeconds\": 30,\n        \"tolerations\": [\n            {\n                \"effect\": \"NoExecute\",\n                \"key\": \"node.kubernetes.io/not-ready\",\n                \"operator\": \"Exists\",\n                \"tolerationSeconds\": 300\n            },\n            {\n                \"effect\": \"NoExecute\",\n                \"key\": \"node.kubernetes.io/unreachable\",\n                \"operator\": \"Exists\",\n                \"tolerationSeconds\": 300\n            }\n        ],\n        \"volumes\": [\n            {\n                \"emptyDir\": {},\n                \"name\": \"workspace-volume\"\n            }\n        ]\n    },\n    \"status\": {\n        \"conditions\": [\n            {\n                \"lastProbeTime\": null,\n                \"lastTransitionTime\": \"2026-08-28T02:21:14Z\",\n                \"observedGeneration\": 1,\n                \"status\": \"True\",\n                \"type\": \"PodReadyToStartContainers\"\n            },\n            {\n                \"lastProbeTime\": null,\n                \"lastTransitionTime\": \"2026-08-28T02:21:13Z\",\n                \"observedGeneration\": 1,\n                \"status\": \"True\",\n                \"type\": \"Initialized\"\n            },\n            {\n                \"lastProbeTime\": null,\n                \"lastTransitionTime\": \"2026-08-28T02:21:14Z\",\n                \"observedGeneration\": 1,\n                \"status\": \"True\",\n                \"type\": \"Ready\"\n            },\n            {\n                \"lastProbeTime\": null,\n                \"lastTransitionTime\": \"2026-08-28T02:21:14Z\",\n                \"observedGeneration\": 1,\n                \"status\": \"True\",\n                \"type\": \"ContainersReady\"\n            },\n            {\n                \"lastProbeTime\": null,\n                \"lastTransitionTime\": \"2026-08-28T02:21:13Z\",\n                \"observedGeneration\": 1,\n                \"status\": \"True\",\n                \"type\": \"PodScheduled\"\n            }\n        ],\n        \"containerStatuses\": [\n            {\n                \"allocatedResources\": {\n                    \"cpu\": \"500m\",\n                    \"memory\": \"1Gi\"\n                },\n                \"containerID\": \"containerd://bcf07e0386c0703acb414d09c4ad229cb407c65ba2557f24f184a18c92daa38e\",\n                \"image\": \"localhost:55000/netci/ci-toolbox:0.4.0\",\n                \"imageID\": \"localhost:55000/netci/ci-toolbox@sha256:8bc9ab912dfabe983c7d8c365cd60c3ae5994e88b2a447196f145f5a029a9aa6\",\n                \"lastState\": {},\n                \"name\": \"builder\",\n                \"ready\": true,\n                \"resources\": {\n                    \"limits\": {\n                        \"cpu\": \"2\",\n                        \"memory\": \"4Gi\"\n                    },\n                    \"requests\": {\n                        \"cpu\": \"500m\",\n                        \"memory\": \"1Gi\"\n                    }\n                },\n                \"restartCount\": 0,\n                \"started\": true,\n                \"state\": {\n                    \"running\": {\n                        \"startedAt\": \"2026-08-28T02:21:14Z\"\n                    }\n                },\n                \"user\": {\n                    \"linux\": {\n                        \"gid\": 1000,\n                        \"supplementalGroups\": [\n                            1000\n                        ],\n                        \"uid\": 1000\n                    }\n                },\n                \"volumeMounts\": [\n                    {\n                        \"mountPath\": \"/home/jenkins/agent\",\n                        \"name\": \"workspace-volume\"\n                    }\n                ]\n            },\n            {\n                \"allocatedResources\": {\n                    \"cpu\": \"100m\",\n                    \"memory\": \"256Mi\"\n                },\n                \"containerID\": \"containerd://6b696948aec0776caab6e0c7fa1e662bac642c781adb9e8887d749d30dccea3d\",\n                \"image\": \"localhost:55000/jenkins/inbound-agent:3386.v353e57a_1b_ea_0-1-jdk21\",\n                \"imageID\": \"localhost:55000/jenkins/inbound-agent@sha256:18a5c2cc22847349e1542ff2c6184d7472913ae0d26d625aef82e41becb36342\",\n                \"lastState\": {},\n                \"name\": \"jnlp\",\n                \"ready\": true,\n                \"resources\": {\n                    \"limits\": {\n                        \"cpu\": \"500m\",\n                        \"memory\": \"1Gi\"\n                    },\n                    \"requests\": {\n                        \"cpu\": \"100m\",\n                        \"memory\": \"256Mi\"\n                    }\n                },\n                \"restartCount\": 0,\n                \"started\": true,\n                \"state\": {\n                    \"running\": {\n                        \"startedAt\": \"2026-08-28T02:21:14Z\"\n                    }\n                },\n                \"user\": {\n                    \"linux\": {\n                        \"gid\": 1000,\n                        \"supplementalGroups\": [\n                            1000\n                        ],\n                        \"uid\": 1000\n                    }\n                },\n                \"volumeMounts\": [\n                    {\n                        \"mountPath\": \"/home/jenkins/agent\",\n                        \"name\": \"workspace-volume\"\n                    }\n                ]\n            }\n        ],\n        \"hostIP\": \"172.17.0.2\",\n        \"hostIPs\": [\n            {\n                \"ip\": \"172.17.0.2\"\n            }\n        ],\n        \"observedGeneration\": 1,\n        \"phase\": \"Running\",\n        \"podIP\": \"10.244.1.52\",\n        \"podIPs\": [\n            {\n                \"ip\": \"10.244.1.52\"\n            }\n        ],\n        \"qosClass\": \"Burstable\",\n        \"startTime\": \"2026-08-28T02:21:13Z\"\n    }\n}\n",
+      "stderr": "",
+      "detail": {}
+    },
+    {
+      "name": "pipeline-final",
+      "command": null,
+      "startedAt": "2026-08-28T02:22:15.666050+00:00",
+      "endedAt": "2026-08-28T02:22:15.666050+00:00",
+      "durationSeconds": 0.0,
+      "exitCode": 0,
+      "passed": true,
+      "stdout": "",
+      "stderr": "",
+      "detail": {
+        "id": "7c3dc851-a2f6-42b4-b2a3-e87ee0f9f19e",
+        "applicationId": "6e1aae73-a948-4cdb-b45a-41250a87ede5",
+        "status": "running",
+        "commitSha": "ac218c1a978cd93897196c7f309143a679d3fa0e",
+        "branch": "main",
+        "environment": "staging",
+        "parameters": {
+          "NETCI_APP_DIR": "sample-apps/hello-container"
+        },
+        "correlationId": "26661c5f-5fa1-4c20-9282-7ddfac25b801",
+        "jenkinsRunId": "jenkins-a:netci-6e1aae73-a948-4cdb-b45a-41250a87ede5#1",
+        "workflowId": null,
+        "artifactDigest": "sha256:d1efdc40f357e44e613efea8fdc302b456a12d5959e8e5e2987ba939fd2bbd17",
+        "createdAt": "2026-08-28T02:21:11.745286+00:00",
+        "updatedAt": "2026-08-28T02:22:11.766454+00:00",
+        "durationSeconds": 63.9
+      }
+    },
+    {
+      "name": "jenkins-console",
+      "command": null,
+      "startedAt": "2026-08-28T02:22:15.771640+00:00",
+      "endedAt": "2026-08-28T02:22:15.771640+00:00",
+      "durationSeconds": 0.0,
+      "exitCode": 0,
+      "passed": true,
+      "stdout": "",
+      "stderr": "",
+      "detail": {
+        "job": "netci-6e1aae73-a948-4cdb-b45a-41250a87ede5",
+        "build": "1",
+        "tail": "PaytCbUxPbGRLTWtw\n[2026-08-28T02:21:56.161Z] b1MrTU85MTFuU3F6aHFpQ2RSK3p5akE0eFh2Ykp6eUI2MzF4SWJ4TmxwNUdIZ0Fj\n[2026-08-28T02:21:56.162Z] eXZGelVDTTFPZTl0WTNrMGViNEdZdTFKZUE9PSJ9\n[2026-08-28T02:21:56.162Z] -----END ENCRYPTED SIGSTORE PRIVATE KEY-----\n[2026-08-28T02:21:56.162Z] + COSIGN_KEY_REF=/home/jenkins/agent/workspace/netci-6e1aae73-a948-4cdb-b45a-41250a87ede5/.netci-out/cosign.key COSIGN_PASSWORD= bash templates/container-ci-cd-v1/scripts/ci/sign.sh\n[2026-08-28T02:21:56.422Z] Flag --output-signature has been deprecated, please use --bundle to provide the output bundle location, which will include the signature\n[2026-08-28T02:21:56.422Z] Flag --output-certificate has been deprecated, please use --bundle to provide the output bundle location, which will include the certificate\n[2026-08-28T02:21:56.422Z] Flag --tlog-upload has been deprecated, prefer using a --signing-config file with no transparency log services\n[2026-08-28T02:21:56.422Z] WARNING: --output-signature is deprecated when using --new-bundle-format and will be ignored\n[2026-08-28T02:21:56.422Z] WARNING: --output-certificate is deprecated when using --new-bundle-format and will be ignored\n[2026-08-28T02:21:56.681Z] Signing artifact...\n[2026-08-28T02:21:56.681Z] Pushing signature to: 172.17.0.1:55000/hello-container\n[2026-08-28T02:21:56.940Z] WARNING: Skipping tlog verification is an insecure practice that lacks transparency and auditability verification for the signature.\n[2026-08-28T02:21:57.206Z] \n[2026-08-28T02:21:57.206Z] Verification for 172.17.0.1:55000/hello-container@sha256:d1efdc40f357e44e613efea8fdc302b456a12d5959e8e5e2987ba939fd2bbd17 --\n[2026-08-28T02:21:57.206Z] The following checks were performed on each of these signatures:\n[2026-08-28T02:21:57.206Z]   - The cosign claims were validated\n[2026-08-28T02:21:57.206Z]   - Existence of the claims in the transparency log was verified offline\n[2026-08-28T02:21:57.206Z]   - The signatures were verified against the specified public key\n[2026-08-28T02:21:57.206Z] + rm -f /home/jenkins/agent/workspace/netci-6e1aae73-a948-4cdb-b45a-41250a87ede5/.netci-out/cosign.key\n[Pipeline] }\n[Pipeline] // withCredentials\n[Pipeline] }\n[Pipeline] // container\n[Pipeline] }\n[Pipeline] // stage\n[Pipeline] stage\n[Pipeline] { (Publish)\n[Pipeline] container\n[Pipeline] {\n[Pipeline] sh\n[2026-08-28T02:21:58.615Z] + bash templates/container-ci-cd-v1/scripts/ci/publish.sh\n[2026-08-28T02:21:58.615Z] published 172.17.0.1:55000/hello-container@sha256:d1efdc40f357e44e613efea8fdc302b456a12d5959e8e5e2987ba939fd2bbd17\n[Pipeline] }\n[Pipeline] // container\n[Pipeline] }\n[Pipeline] // stage\n[Pipeline] stage\n[Pipeline] { (Publish Evidence)\n[Pipeline] container\n[Pipeline] {\n[Pipeline] withCredentials\n[2026-08-28T02:21:59.045Z] Masking supported pattern matches of $NETCI_PIPELINE_API_KEY\n[Pipeline] {\n[Pipeline] sh\n[2026-08-28T02:21:59.721Z] + python3 scripts/netci_callback.py evidence\n[2026-08-28T02:21:59.721Z] {\n[2026-08-28T02:21:59.721Z]   \"pipelineRunId\": \"7c3dc851-a2f6-42b4-b2a3-e87ee0f9f19e\",\n[2026-08-28T02:21:59.721Z]   \"decision\": \"allow\",\n[2026-08-28T02:21:59.721Z]   \"reason\": \"artifact satisfies the netCI supply-chain policy\",\n[2026-08-28T02:21:59.721Z]   \"checks\": {\n[2026-08-28T02:21:59.721Z]     \"digest\": \"pass\",\n[2026-08-28T02:21:59.721Z]     \"evidenceDigest\": \"pass\",\n[2026-08-28T02:21:59.721Z]     \"sbom\": \"pass\",\n[2026-08-28T02:21:59.721Z]     \"vulnerabilityScan\": \"pass\",\n[2026-08-28T02:21:59.721Z]     \"signature\": \"pass\"\n[2026-08-28T02:21:59.721Z]   }\n[2026-08-28T02:21:59.721Z] }\n[Pipeline] }\n[Pipeline] // withCredentials\n[Pipeline] }\n[Pipeline] // container\n[Pipeline] }\n[Pipeline] // stage\n[Pipeline] stage\n[Pipeline] { (Declarative: Post Actions)\n[Pipeline] container\n[Pipeline] {\n[Pipeline] dir\n[2026-08-28T02:22:00.469Z] Running in /home/jenkins/agent/workspace/netci-6e1aae73-a948-4cdb-b45a-41250a87ede5/.netci-out\n[Pipeline] {\n[Pipeline] archiveArtifacts\n[2026-08-28T02:22:00.622Z] Archiving artifacts\n[Pipeline] }\n[Pipeline] // dir\n[Pipeline] }\n[Pipeline] // container\n[Pipeline] script\n[Pipeline] {\n[Pipeline] container\n[Pipeline] {\n[Pipeline] withCredentials\n[2026-08-28T02:22:11.361Z] Masking supported pattern matches of $NETCI_PIPELINE_API_KEY\n[Pipeline] {\n[Pipeline] sh\n[2026-08-28T02:22:11.888Z] + python3 scripts/netci_callback.py status --status succeeded --log jenkins build jenkins-netci-6e1aae73-a948-4cdb-b45a-41250a87ede5-1 succeeded\n[2026-08-28T02:22:11.888Z] {\n[2026-08-28T02:22:11.888Z]   \"id\": \"7c3dc851-a2f6-42b4-b2a3-e87ee0f9f19e\",\n[2026-08-28T02:22:11.888Z]   \"applicationId\": \"6e1aae73-a948-4cdb-b45a-41250a87ede5\",\n[2026-08-28T02:22:11.888Z]   \"status\": \"running\",\n[2026-08-28T02:22:11.888Z]   \"commitSha\": \"ac218c1a978cd93897196c7f309143a679d3fa0e\",\n[2026-08-28T02:22:11.888Z]   \"branch\": \"main\",\n[2026-08-28T02:22:11.888Z]   \"environment\": \"staging\",\n[2026-08-28T02:22:11.888Z]   \"parameters\": {\n[2026-08-28T02:22:11.888Z]     \"NETCI_APP_DIR\": \"sample-apps/hello-container\"\n[2026-08-28T02:22:11.888Z]   },\n[2026-08-28T02:22:11.888Z]   \"correlationId\": \"26661c5f-5fa1-4c20-9282-7ddfac25b801\",\n[2026-08-28T02:22:11.888Z]   \"jenkinsRunId\": \"jenkins-a:netci-6e1aae73-a948-4cdb-b45a-41250a87ede5#1\",\n[2026-08-28T02:22:11.888Z]   \"workflowId\": null,\n[2026-08-28T02:22:11.888Z]   \"artifactDigest\": \"sha256:d1efdc40f357e44e613efea8fdc302b456a12d5959e8e5e2987ba939fd2bbd17\",\n[2026-08-28T02:22:11.888Z]   \"createdAt\": \"2026-08-28T02:21:11.745286+00:00\",\n[2026-08-28T02:22:11.888Z]   \"updatedAt\": \"2026-08-28T02:22:11.766454+00:00\"\n[2026-08-28T02:22:11.888Z] }\n[Pipeline] }\n[Pipeline] // withCredentials\n[Pipeline] }\n[Pipeline] // container\n[Pipeline] }\n[Pipeline] // script\n[Pipeline] script\n[Pipeline] {\n[Pipeline] echo\n[2026-08-28T02:22:12.034Z] workspace is destroyed with the agent; skipping cleanWs\n[Pipeline] }\n[Pipeline] // script\n[Pipeline] }\n[Pipeline] // stage\n[Pipeline] }\n[Pipeline] // timestamps\n[Pipeline] }\n[Pipeline] // withEnv\n[Pipeline] }\n[Pipeline] // node\n[Pipeline] End of Pipeline\nFinished: SUCCESS\n"
+      }
+    },
+    {
+      "name": "netci-pipeline-log",
+      "command": null,
+      "startedAt": "2026-08-28T02:22:15.775900+00:00",
+      "endedAt": "2026-08-28T02:22:15.775900+00:00",
+      "durationSeconds": 0.0,
+      "exitCode": 0,
+      "passed": true,
+      "stdout": "",
+      "stderr": "",
+      "detail": {
+        "lines": [
+          "queued correlationId=26661c5f-5fa1-4c20-9282-7ddfac25b801",
+          "commit=ac218c1a978cd93897196c7f309143a679d3fa0e",
+          "ci-dispatched controller=jenkins-a run=netci-6e1aae73-a948-4cdb-b45a-41250a87ede5#1",
+          "jenkins build jenkins-netci-6e1aae73-a948-4cdb-b45a-41250a87ede5-1 started",
+          "security-evidence decision=allow reason=artifact satisfies the netCI supply-chain policy",
+          "policy=allow artifact satisfies the netCI supply-chain policy",
+          "jenkins build jenkins-netci-6e1aae73-a948-4cdb-b45a-41250a87ede5-1 succeeded"
+        ]
+      }
+    },
+    {
+      "name": "published-evidence",
+      "command": null,
+      "startedAt": "2026-08-28T02:22:15.780642+00:00",
+      "endedAt": "2026-08-28T02:22:15.780642+00:00",
+      "durationSeconds": 0.0,
+      "exitCode": 0,
+      "passed": true,
+      "stdout": "",
+      "stderr": "",
+      "detail": {
+        "artifactDigest": "sha256:d1efdc40f357e44e613efea8fdc302b456a12d5959e8e5e2987ba939fd2bbd17",
+        "artifactRef": "172.17.0.1:55000/hello-container@sha256:d1efdc40f357e44e613efea8fdc302b456a12d5959e8e5e2987ba939fd2bbd17",
+        "sbom": {
+          "generatedBy": "syft",
+          "location": "/home/jenkins/agent/workspace/netci-6e1aae73-a948-4cdb-b45a-41250a87ede5/.netci-out/sbom.json",
+          "format": "cyclonedx-json"
+        },
+        "vulnerabilityScan": {
+          "scanner": "trivy",
+          "status": "passed",
+          "critical": 0,
+          "high": 0,
+          "medium": 0,
+          "reportLocation": "/home/jenkins/agent/workspace/netci-6e1aae73-a948-4cdb-b45a-41250a87ede5/.netci-out/scan-report.json"
+        },
+        "signature": {
+          "provider": "cosign",
+          "verified": true,
+          "certificateIdentity": null,
+          "bundleLocation": "/home/jenkins/agent/workspace/netci-6e1aae73-a948-4cdb-b45a-41250a87ede5/.netci-out/signature.bundle.json"
+        },
+        "buildRunId": "jenkins-netci-6e1aae73-a948-4cdb-b45a-41250a87ede5-1",
+        "pipelineRunId": "7c3dc851-a2f6-42b4-b2a3-e87ee0f9f19e",
+        "applicationId": "6e1aae73-a948-4cdb-b45a-41250a87ede5",
+        "decision": "allow",
+        "reason": "artifact satisfies the netCI supply-chain policy"
+      }
+    },
+    {
+      "name": "delivery-events",
+      "command": null,
+      "startedAt": "2026-08-28T02:22:15.783527+00:00",
+      "endedAt": "2026-08-28T02:22:15.783527+00:00",
+      "durationSeconds": 0.0,
+      "exitCode": 0,
+      "passed": true,
+      "stdout": "",
+      "stderr": "",
+      "detail": {
+        "count": 1,
+        "items": [
+          {
+            "id": "867325c2-0056-4be5-9209-aa7a871d3150",
+            "eventType": "commit",
+            "applicationId": "6e1aae73-a948-4cdb-b45a-41250a87ede5",
+            "pipelineRunId": "7c3dc851-a2f6-42b4-b2a3-e87ee0f9f19e",
+            "deploymentId": null,
+            "commitSha": "ac218c1a978cd93897196c7f309143a679d3fa0e",
+            "environment": "staging",
+            "successful": null,
+            "requiresIntervention": false,
+            "occurredAt": "2026-08-28T02:21:11.745286+00:00"
+          }
+        ]
+      }
+    },
+    {
+      "name": "agent-pods-after",
+      "command": [
+        "kubectl",
+        "--context",
+        "kind-netci-local",
+        "get",
+        "pods",
+        "-n",
+        "netci-build",
+        "-l",
+        "netci.io/agent=ephemeral",
+        "-o",
+        "json"
+      ],
+      "startedAt": "2026-08-28T02:22:15.783543+00:00",
+      "endedAt": "2026-08-28T02:22:15.893281+00:00",
+      "durationSeconds": 0.11,
+      "exitCode": 0,
+      "passed": true,
+      "stdout": "           {\n                                \"mountPath\": \"/home/jenkins/agent\",\n                                \"name\": \"workspace-volume\"\n                            }\n                        ]\n                    }\n                ],\n                \"dnsPolicy\": \"ClusterFirst\",\n                \"enableServiceLinks\": true,\n                \"nodeName\": \"netci-local-worker\",\n                \"nodeSelector\": {\n                    \"kubernetes.io/os\": \"linux\"\n                },\n                \"preemptionPolicy\": \"PreemptLowerPriority\",\n                \"priority\": 0,\n                \"restartPolicy\": \"Never\",\n                \"schedulerName\": \"default-scheduler\",\n                \"securityContext\": {\n                    \"fsGroup\": 1000,\n                    \"runAsGroup\": 1000,\n                    \"runAsNonRoot\": true,\n                    \"runAsUser\": 1000\n                },\n                \"serviceAccount\": \"jenkins-agent\",\n                \"serviceAccountName\": \"jenkins-agent\",\n                \"terminationGracePeriodSeconds\": 30,\n                \"tolerations\": [\n                    {\n                        \"effect\": \"NoExecute\",\n                        \"key\": \"node.kubernetes.io/not-ready\",\n                        \"operator\": \"Exists\",\n                        \"tolerationSeconds\": 300\n                    },\n                    {\n                        \"effect\": \"NoExecute\",\n                        \"key\": \"node.kubernetes.io/unreachable\",\n                        \"operator\": \"Exists\",\n                        \"tolerationSeconds\": 300\n                    }\n                ],\n                \"volumes\": [\n                    {\n                        \"emptyDir\": {},\n                        \"name\": \"workspace-volume\"\n                    }\n                ]\n            },\n            \"status\": {\n                \"conditions\": [\n                    {\n                        \"lastProbeTime\": null,\n                        \"lastTransitionTime\": \"2026-08-28T02:21:14Z\",\n                        \"observedGeneration\": 2,\n                        \"status\": \"True\",\n                        \"type\": \"PodReadyToStartContainers\"\n                    },\n                    {\n                        \"lastProbeTime\": null,\n                        \"lastTransitionTime\": \"2026-08-28T02:21:13Z\",\n                        \"observedGeneration\": 2,\n                        \"status\": \"True\",\n                        \"type\": \"Initialized\"\n                    },\n                    {\n                        \"lastProbeTime\": null,\n                        \"lastTransitionTime\": \"2026-08-28T02:21:14Z\",\n                        \"observedGeneration\": 2,\n                        \"status\": \"True\",\n                        \"type\": \"Ready\"\n                    },\n                    {\n                        \"lastProbeTime\": null,\n                        \"lastTransitionTime\": \"2026-08-28T02:21:14Z\",\n                        \"observedGeneration\": 2,\n                        \"status\": \"True\",\n                        \"type\": \"ContainersReady\"\n                    },\n                    {\n                        \"lastProbeTime\": null,\n                        \"lastTransitionTime\": \"2026-08-28T02:21:13Z\",\n                        \"observedGeneration\": 2,\n                        \"status\": \"True\",\n                        \"type\": \"PodScheduled\"\n                    }\n                ],\n                \"containerStatuses\": [\n                    {\n                        \"allocatedResources\": {\n                            \"cpu\": \"500m\",\n                            \"memory\": \"1Gi\"\n                        },\n                        \"containerID\": \"containerd://bcf07e0386c0703acb414d09c4ad229cb407c65ba2557f24f184a18c92daa38e\",\n                        \"image\": \"localhost:55000/netci/ci-toolbox:0.4.0\",\n                        \"imageID\": \"localhost:55000/netci/ci-toolbox@sha256:8bc9ab912dfabe983c7d8c365cd60c3ae5994e88b2a447196f145f5a029a9aa6\",\n                        \"lastState\": {},\n                        \"name\": \"builder\",\n                        \"ready\": true,\n                        \"resources\": {\n                            \"limits\": {\n                                \"cpu\": \"2\",\n                                \"memory\": \"4Gi\"\n                            },\n                            \"requests\": {\n                                \"cpu\": \"500m\",\n                                \"memory\": \"1Gi\"\n                            }\n                        },\n                        \"restartCount\": 0,\n                        \"started\": true,\n                        \"state\": {\n                            \"running\": {\n                                \"startedAt\": \"2026-08-28T02:21:14Z\"\n                            }\n                        },\n                        \"user\": {\n                            \"linux\": {\n                                \"gid\": 1000,\n                                \"supplementalGroups\": [\n                                    1000\n                                ],\n                                \"uid\": 1000\n                            }\n                        },\n                        \"volumeMounts\": [\n                            {\n                                \"mountPath\": \"/home/jenkins/agent\",\n                                \"name\": \"workspace-volume\"\n                            }\n                        ]\n                    },\n                    {\n                        \"allocatedResources\": {\n                            \"cpu\": \"100m\",\n                            \"memory\": \"256Mi\"\n                        },\n                        \"containerID\": \"containerd://6b696948aec0776caab6e0c7fa1e662bac642c781adb9e8887d749d30dccea3d\",\n                        \"image\": \"localhost:55000/jenkins/inbound-agent:3386.v353e57a_1b_ea_0-1-jdk21\",\n                        \"imageID\": \"localhost:55000/jenkins/inbound-agent@sha256:18a5c2cc22847349e1542ff2c6184d7472913ae0d26d625aef82e41becb36342\",\n                        \"lastState\": {},\n                        \"name\": \"jnlp\",\n                        \"ready\": true,\n                        \"resources\": {\n                            \"limits\": {\n                                \"cpu\": \"500m\",\n                                \"memory\": \"1Gi\"\n                            },\n                            \"requests\": {\n                                \"cpu\": \"100m\",\n                                \"memory\": \"256Mi\"\n                            }\n                        },\n                        \"restartCount\": 0,\n                        \"started\": true,\n                        \"state\": {\n                            \"running\": {\n                                \"startedAt\": \"2026-08-28T02:21:14Z\"\n                            }\n                        },\n                        \"user\": {\n                            \"linux\": {\n                                \"gid\": 1000,\n                                \"supplementalGroups\": [\n                                    1000\n                                ],\n                                \"uid\": 1000\n                            }\n                        },\n                        \"volumeMounts\": [\n                            {\n                                \"mountPath\": \"/home/jenkins/agent\",\n                                \"name\": \"workspace-volume\"\n                            }\n                        ]\n                    }\n                ],\n                \"hostIP\": \"172.17.0.2\",\n                \"hostIPs\": [\n                    {\n                        \"ip\": \"172.17.0.2\"\n                    }\n                ],\n                \"observedGeneration\": 2,\n                \"phase\": \"Running\",\n                \"podIP\": \"10.244.1.52\",\n                \"podIPs\": [\n                    {\n                        \"ip\": \"10.244.1.52\"\n                    }\n                ],\n                \"qosClass\": \"Burstable\",\n                \"startTime\": \"2026-08-28T02:21:13Z\"\n            }\n        }\n    ],\n    \"kind\": \"List\",\n    \"metadata\": {\n        \"resourceVersion\": \"\"\n    }\n}\n",
+      "stderr": "",
+      "detail": {}
+    },
+    {
+      "name": "agent-pods-after",
+      "command": [
+        "kubectl",
+        "--context",
+        "kind-netci-local",
+        "get",
+        "pods",
+        "-n",
+        "netci-build",
+        "-l",
+        "netci.io/agent=ephemeral",
+        "-o",
+        "json"
+      ],
+      "startedAt": "2026-08-28T02:22:18.893798+00:00",
+      "endedAt": "2026-08-28T02:22:18.979761+00:00",
+      "durationSeconds": 0.086,
+      "exitCode": 0,
+      "passed": true,
+      "stdout": "           {\n                                \"mountPath\": \"/home/jenkins/agent\",\n                                \"name\": \"workspace-volume\"\n                            }\n                        ]\n                    }\n                ],\n                \"dnsPolicy\": \"ClusterFirst\",\n                \"enableServiceLinks\": true,\n                \"nodeName\": \"netci-local-worker\",\n                \"nodeSelector\": {\n                    \"kubernetes.io/os\": \"linux\"\n                },\n                \"preemptionPolicy\": \"PreemptLowerPriority\",\n                \"priority\": 0,\n                \"restartPolicy\": \"Never\",\n                \"schedulerName\": \"default-scheduler\",\n                \"securityContext\": {\n                    \"fsGroup\": 1000,\n                    \"runAsGroup\": 1000,\n                    \"runAsNonRoot\": true,\n                    \"runAsUser\": 1000\n                },\n                \"serviceAccount\": \"jenkins-agent\",\n                \"serviceAccountName\": \"jenkins-agent\",\n                \"terminationGracePeriodSeconds\": 30,\n                \"tolerations\": [\n                    {\n                        \"effect\": \"NoExecute\",\n                        \"key\": \"node.kubernetes.io/not-ready\",\n                        \"operator\": \"Exists\",\n                        \"tolerationSeconds\": 300\n                    },\n                    {\n                        \"effect\": \"NoExecute\",\n                        \"key\": \"node.kubernetes.io/unreachable\",\n                        \"operator\": \"Exists\",\n                        \"tolerationSeconds\": 300\n                    }\n                ],\n                \"volumes\": [\n                    {\n                        \"emptyDir\": {},\n                        \"name\": \"workspace-volume\"\n                    }\n                ]\n            },\n            \"status\": {\n                \"conditions\": [\n                    {\n                        \"lastProbeTime\": null,\n                        \"lastTransitionTime\": \"2026-08-28T02:21:14Z\",\n                        \"observedGeneration\": 2,\n                        \"status\": \"True\",\n                        \"type\": \"PodReadyToStartContainers\"\n                    },\n                    {\n                        \"lastProbeTime\": null,\n                        \"lastTransitionTime\": \"2026-08-28T02:21:13Z\",\n                        \"observedGeneration\": 2,\n                        \"status\": \"True\",\n                        \"type\": \"Initialized\"\n                    },\n                    {\n                        \"lastProbeTime\": null,\n                        \"lastTransitionTime\": \"2026-08-28T02:21:14Z\",\n                        \"observedGeneration\": 2,\n                        \"status\": \"True\",\n                        \"type\": \"Ready\"\n                    },\n                    {\n                        \"lastProbeTime\": null,\n                        \"lastTransitionTime\": \"2026-08-28T02:21:14Z\",\n                        \"observedGeneration\": 2,\n                        \"status\": \"True\",\n                        \"type\": \"ContainersReady\"\n                    },\n                    {\n                        \"lastProbeTime\": null,\n                        \"lastTransitionTime\": \"2026-08-28T02:21:13Z\",\n                        \"observedGeneration\": 2,\n                        \"status\": \"True\",\n                        \"type\": \"PodScheduled\"\n                    }\n                ],\n                \"containerStatuses\": [\n                    {\n                        \"allocatedResources\": {\n                            \"cpu\": \"500m\",\n                            \"memory\": \"1Gi\"\n                        },\n                        \"containerID\": \"containerd://bcf07e0386c0703acb414d09c4ad229cb407c65ba2557f24f184a18c92daa38e\",\n                        \"image\": \"localhost:55000/netci/ci-toolbox:0.4.0\",\n                        \"imageID\": \"localhost:55000/netci/ci-toolbox@sha256:8bc9ab912dfabe983c7d8c365cd60c3ae5994e88b2a447196f145f5a029a9aa6\",\n                        \"lastState\": {},\n                        \"name\": \"builder\",\n                        \"ready\": true,\n                        \"resources\": {\n                            \"limits\": {\n                                \"cpu\": \"2\",\n                                \"memory\": \"4Gi\"\n                            },\n                            \"requests\": {\n                                \"cpu\": \"500m\",\n                                \"memory\": \"1Gi\"\n                            }\n                        },\n                        \"restartCount\": 0,\n                        \"started\": true,\n                        \"state\": {\n                            \"running\": {\n                                \"startedAt\": \"2026-08-28T02:21:14Z\"\n                            }\n                        },\n                        \"user\": {\n                            \"linux\": {\n                                \"gid\": 1000,\n                                \"supplementalGroups\": [\n                                    1000\n                                ],\n                                \"uid\": 1000\n                            }\n                        },\n                        \"volumeMounts\": [\n                            {\n                                \"mountPath\": \"/home/jenkins/agent\",\n                                \"name\": \"workspace-volume\"\n                            }\n                        ]\n                    },\n                    {\n                        \"allocatedResources\": {\n                            \"cpu\": \"100m\",\n                            \"memory\": \"256Mi\"\n                        },\n                        \"containerID\": \"containerd://6b696948aec0776caab6e0c7fa1e662bac642c781adb9e8887d749d30dccea3d\",\n                        \"image\": \"localhost:55000/jenkins/inbound-agent:3386.v353e57a_1b_ea_0-1-jdk21\",\n                        \"imageID\": \"localhost:55000/jenkins/inbound-agent@sha256:18a5c2cc22847349e1542ff2c6184d7472913ae0d26d625aef82e41becb36342\",\n                        \"lastState\": {},\n                        \"name\": \"jnlp\",\n                        \"ready\": true,\n                        \"resources\": {\n                            \"limits\": {\n                                \"cpu\": \"500m\",\n                                \"memory\": \"1Gi\"\n                            },\n                            \"requests\": {\n                                \"cpu\": \"100m\",\n                                \"memory\": \"256Mi\"\n                            }\n                        },\n                        \"restartCount\": 0,\n                        \"started\": true,\n                        \"state\": {\n                            \"running\": {\n                                \"startedAt\": \"2026-08-28T02:21:14Z\"\n                            }\n                        },\n                        \"user\": {\n                            \"linux\": {\n                                \"gid\": 1000,\n                                \"supplementalGroups\": [\n                                    1000\n                                ],\n                                \"uid\": 1000\n                            }\n                        },\n                        \"volumeMounts\": [\n                            {\n                                \"mountPath\": \"/home/jenkins/agent\",\n                                \"name\": \"workspace-volume\"\n                            }\n                        ]\n                    }\n                ],\n                \"hostIP\": \"172.17.0.2\",\n                \"hostIPs\": [\n                    {\n                        \"ip\": \"172.17.0.2\"\n                    }\n                ],\n                \"observedGeneration\": 2,\n                \"phase\": \"Running\",\n                \"podIP\": \"10.244.1.52\",\n                \"podIPs\": [\n                    {\n                        \"ip\": \"10.244.1.52\"\n                    }\n                ],\n                \"qosClass\": \"Burstable\",\n                \"startTime\": \"2026-08-28T02:21:13Z\"\n            }\n        }\n    ],\n    \"kind\": \"List\",\n    \"metadata\": {\n        \"resourceVersion\": \"\"\n    }\n}\n",
+      "stderr": "",
+      "detail": {}
+    },
+    {
+      "name": "agent-pods-after",
+      "command": [
+        "kubectl",
+        "--context",
+        "kind-netci-local",
+        "get",
+        "pods",
+        "-n",
+        "netci-build",
+        "-l",
+        "netci.io/agent=ephemeral",
+        "-o",
+        "json"
+      ],
+      "startedAt": "2026-08-28T02:22:21.980124+00:00",
+      "endedAt": "2026-08-28T02:22:22.068942+00:00",
+      "durationSeconds": 0.089,
+      "exitCode": 0,
+      "passed": true,
+      "stdout": "           {\n                                \"mountPath\": \"/home/jenkins/agent\",\n                                \"name\": \"workspace-volume\"\n                            }\n                        ]\n                    }\n                ],\n                \"dnsPolicy\": \"ClusterFirst\",\n                \"enableServiceLinks\": true,\n                \"nodeName\": \"netci-local-worker\",\n                \"nodeSelector\": {\n                    \"kubernetes.io/os\": \"linux\"\n                },\n                \"preemptionPolicy\": \"PreemptLowerPriority\",\n                \"priority\": 0,\n                \"restartPolicy\": \"Never\",\n                \"schedulerName\": \"default-scheduler\",\n                \"securityContext\": {\n                    \"fsGroup\": 1000,\n                    \"runAsGroup\": 1000,\n                    \"runAsNonRoot\": true,\n                    \"runAsUser\": 1000\n                },\n                \"serviceAccount\": \"jenkins-agent\",\n                \"serviceAccountName\": \"jenkins-agent\",\n                \"terminationGracePeriodSeconds\": 30,\n                \"tolerations\": [\n                    {\n                        \"effect\": \"NoExecute\",\n                        \"key\": \"node.kubernetes.io/not-ready\",\n                        \"operator\": \"Exists\",\n                        \"tolerationSeconds\": 300\n                    },\n                    {\n                        \"effect\": \"NoExecute\",\n                        \"key\": \"node.kubernetes.io/unreachable\",\n                        \"operator\": \"Exists\",\n                        \"tolerationSeconds\": 300\n                    }\n                ],\n                \"volumes\": [\n                    {\n                        \"emptyDir\": {},\n                        \"name\": \"workspace-volume\"\n                    }\n                ]\n            },\n            \"status\": {\n                \"conditions\": [\n                    {\n                        \"lastProbeTime\": null,\n                        \"lastTransitionTime\": \"2026-08-28T02:21:14Z\",\n                        \"observedGeneration\": 2,\n                        \"status\": \"True\",\n                        \"type\": \"PodReadyToStartContainers\"\n                    },\n                    {\n                        \"lastProbeTime\": null,\n                        \"lastTransitionTime\": \"2026-08-28T02:21:13Z\",\n                        \"observedGeneration\": 2,\n                        \"status\": \"True\",\n                        \"type\": \"Initialized\"\n                    },\n                    {\n                        \"lastProbeTime\": null,\n                        \"lastTransitionTime\": \"2026-08-28T02:21:14Z\",\n                        \"observedGeneration\": 2,\n                        \"status\": \"True\",\n                        \"type\": \"Ready\"\n                    },\n                    {\n                        \"lastProbeTime\": null,\n                        \"lastTransitionTime\": \"2026-08-28T02:21:14Z\",\n                        \"observedGeneration\": 2,\n                        \"status\": \"True\",\n                        \"type\": \"ContainersReady\"\n                    },\n                    {\n                        \"lastProbeTime\": null,\n                        \"lastTransitionTime\": \"2026-08-28T02:21:13Z\",\n                        \"observedGeneration\": 2,\n                        \"status\": \"True\",\n                        \"type\": \"PodScheduled\"\n                    }\n                ],\n                \"containerStatuses\": [\n                    {\n                        \"allocatedResources\": {\n                            \"cpu\": \"500m\",\n                            \"memory\": \"1Gi\"\n                        },\n                        \"containerID\": \"containerd://bcf07e0386c0703acb414d09c4ad229cb407c65ba2557f24f184a18c92daa38e\",\n                        \"image\": \"localhost:55000/netci/ci-toolbox:0.4.0\",\n                        \"imageID\": \"localhost:55000/netci/ci-toolbox@sha256:8bc9ab912dfabe983c7d8c365cd60c3ae5994e88b2a447196f145f5a029a9aa6\",\n                        \"lastState\": {},\n                        \"name\": \"builder\",\n                        \"ready\": true,\n                        \"resources\": {\n                            \"limits\": {\n                                \"cpu\": \"2\",\n                                \"memory\": \"4Gi\"\n                            },\n                            \"requests\": {\n                                \"cpu\": \"500m\",\n                                \"memory\": \"1Gi\"\n                            }\n                        },\n                        \"restartCount\": 0,\n                        \"started\": true,\n                        \"state\": {\n                            \"running\": {\n                                \"startedAt\": \"2026-08-28T02:21:14Z\"\n                            }\n                        },\n                        \"user\": {\n                            \"linux\": {\n                                \"gid\": 1000,\n                                \"supplementalGroups\": [\n                                    1000\n                                ],\n                                \"uid\": 1000\n                            }\n                        },\n                        \"volumeMounts\": [\n                            {\n                                \"mountPath\": \"/home/jenkins/agent\",\n                                \"name\": \"workspace-volume\"\n                            }\n                        ]\n                    },\n                    {\n                        \"allocatedResources\": {\n                            \"cpu\": \"100m\",\n                            \"memory\": \"256Mi\"\n                        },\n                        \"containerID\": \"containerd://6b696948aec0776caab6e0c7fa1e662bac642c781adb9e8887d749d30dccea3d\",\n                        \"image\": \"localhost:55000/jenkins/inbound-agent:3386.v353e57a_1b_ea_0-1-jdk21\",\n                        \"imageID\": \"localhost:55000/jenkins/inbound-agent@sha256:18a5c2cc22847349e1542ff2c6184d7472913ae0d26d625aef82e41becb36342\",\n                        \"lastState\": {},\n                        \"name\": \"jnlp\",\n                        \"ready\": true,\n                        \"resources\": {\n                            \"limits\": {\n                                \"cpu\": \"500m\",\n                                \"memory\": \"1Gi\"\n                            },\n                            \"requests\": {\n                                \"cpu\": \"100m\",\n                                \"memory\": \"256Mi\"\n                            }\n                        },\n                        \"restartCount\": 0,\n                        \"started\": true,\n                        \"state\": {\n                            \"running\": {\n                                \"startedAt\": \"2026-08-28T02:21:14Z\"\n                            }\n                        },\n                        \"user\": {\n                            \"linux\": {\n                                \"gid\": 1000,\n                                \"supplementalGroups\": [\n                                    1000\n                                ],\n                                \"uid\": 1000\n                            }\n                        },\n                        \"volumeMounts\": [\n                            {\n                                \"mountPath\": \"/home/jenkins/agent\",\n                                \"name\": \"workspace-volume\"\n                            }\n                        ]\n                    }\n                ],\n                \"hostIP\": \"172.17.0.2\",\n                \"hostIPs\": [\n                    {\n                        \"ip\": \"172.17.0.2\"\n                    }\n                ],\n                \"observedGeneration\": 2,\n                \"phase\": \"Running\",\n                \"podIP\": \"10.244.1.52\",\n                \"podIPs\": [\n                    {\n                        \"ip\": \"10.244.1.52\"\n                    }\n                ],\n                \"qosClass\": \"Burstable\",\n                \"startTime\": \"2026-08-28T02:21:13Z\"\n            }\n        }\n    ],\n    \"kind\": \"List\",\n    \"metadata\": {\n        \"resourceVersion\": \"\"\n    }\n}\n",
+      "stderr": "",
+      "detail": {}
+    },
+    {
+      "name": "agent-pods-after",
+      "command": [
+        "kubectl",
+        "--context",
+        "kind-netci-local",
+        "get",
+        "pods",
+        "-n",
+        "netci-build",
+        "-l",
+        "netci.io/agent=ephemeral",
+        "-o",
+        "json"
+      ],
+      "startedAt": "2026-08-28T02:22:25.069230+00:00",
+      "endedAt": "2026-08-28T02:22:25.154869+00:00",
+      "durationSeconds": 0.086,
+      "exitCode": 0,
+      "passed": true,
+      "stdout": "           {\n                                \"mountPath\": \"/home/jenkins/agent\",\n                                \"name\": \"workspace-volume\"\n                            }\n                        ]\n                    }\n                ],\n                \"dnsPolicy\": \"ClusterFirst\",\n                \"enableServiceLinks\": true,\n                \"nodeName\": \"netci-local-worker\",\n                \"nodeSelector\": {\n                    \"kubernetes.io/os\": \"linux\"\n                },\n                \"preemptionPolicy\": \"PreemptLowerPriority\",\n                \"priority\": 0,\n                \"restartPolicy\": \"Never\",\n                \"schedulerName\": \"default-scheduler\",\n                \"securityContext\": {\n                    \"fsGroup\": 1000,\n                    \"runAsGroup\": 1000,\n                    \"runAsNonRoot\": true,\n                    \"runAsUser\": 1000\n                },\n                \"serviceAccount\": \"jenkins-agent\",\n                \"serviceAccountName\": \"jenkins-agent\",\n                \"terminationGracePeriodSeconds\": 30,\n                \"tolerations\": [\n                    {\n                        \"effect\": \"NoExecute\",\n                        \"key\": \"node.kubernetes.io/not-ready\",\n                        \"operator\": \"Exists\",\n                        \"tolerationSeconds\": 300\n                    },\n                    {\n                        \"effect\": \"NoExecute\",\n                        \"key\": \"node.kubernetes.io/unreachable\",\n                        \"operator\": \"Exists\",\n                        \"tolerationSeconds\": 300\n                    }\n                ],\n                \"volumes\": [\n                    {\n                        \"emptyDir\": {},\n                        \"name\": \"workspace-volume\"\n                    }\n                ]\n            },\n            \"status\": {\n                \"conditions\": [\n                    {\n                        \"lastProbeTime\": null,\n                        \"lastTransitionTime\": \"2026-08-28T02:21:14Z\",\n                        \"observedGeneration\": 2,\n                        \"status\": \"True\",\n                        \"type\": \"PodReadyToStartContainers\"\n                    },\n                    {\n                        \"lastProbeTime\": null,\n                        \"lastTransitionTime\": \"2026-08-28T02:21:13Z\",\n                        \"observedGeneration\": 2,\n                        \"status\": \"True\",\n                        \"type\": \"Initialized\"\n                    },\n                    {\n                        \"lastProbeTime\": null,\n                        \"lastTransitionTime\": \"2026-08-28T02:21:14Z\",\n                        \"observedGeneration\": 2,\n                        \"status\": \"True\",\n                        \"type\": \"Ready\"\n                    },\n                    {\n                        \"lastProbeTime\": null,\n                        \"lastTransitionTime\": \"2026-08-28T02:21:14Z\",\n                        \"observedGeneration\": 2,\n                        \"status\": \"True\",\n                        \"type\": \"ContainersReady\"\n                    },\n                    {\n                        \"lastProbeTime\": null,\n                        \"lastTransitionTime\": \"2026-08-28T02:21:13Z\",\n                        \"observedGeneration\": 2,\n                        \"status\": \"True\",\n                        \"type\": \"PodScheduled\"\n                    }\n                ],\n                \"containerStatuses\": [\n                    {\n                        \"allocatedResources\": {\n                            \"cpu\": \"500m\",\n                            \"memory\": \"1Gi\"\n                        },\n                        \"containerID\": \"containerd://bcf07e0386c0703acb414d09c4ad229cb407c65ba2557f24f184a18c92daa38e\",\n                        \"image\": \"localhost:55000/netci/ci-toolbox:0.4.0\",\n                        \"imageID\": \"localhost:55000/netci/ci-toolbox@sha256:8bc9ab912dfabe983c7d8c365cd60c3ae5994e88b2a447196f145f5a029a9aa6\",\n                        \"lastState\": {},\n                        \"name\": \"builder\",\n                        \"ready\": true,\n                        \"resources\": {\n                            \"limits\": {\n                                \"cpu\": \"2\",\n                                \"memory\": \"4Gi\"\n                            },\n                            \"requests\": {\n                                \"cpu\": \"500m\",\n                                \"memory\": \"1Gi\"\n                            }\n                        },\n                        \"restartCount\": 0,\n                        \"started\": true,\n                        \"state\": {\n                            \"running\": {\n                                \"startedAt\": \"2026-08-28T02:21:14Z\"\n                            }\n                        },\n                        \"user\": {\n                            \"linux\": {\n                                \"gid\": 1000,\n                                \"supplementalGroups\": [\n                                    1000\n                                ],\n                                \"uid\": 1000\n                            }\n                        },\n                        \"volumeMounts\": [\n                            {\n                                \"mountPath\": \"/home/jenkins/agent\",\n                                \"name\": \"workspace-volume\"\n                            }\n                        ]\n                    },\n                    {\n                        \"allocatedResources\": {\n                            \"cpu\": \"100m\",\n                            \"memory\": \"256Mi\"\n                        },\n                        \"containerID\": \"containerd://6b696948aec0776caab6e0c7fa1e662bac642c781adb9e8887d749d30dccea3d\",\n                        \"image\": \"localhost:55000/jenkins/inbound-agent:3386.v353e57a_1b_ea_0-1-jdk21\",\n                        \"imageID\": \"localhost:55000/jenkins/inbound-agent@sha256:18a5c2cc22847349e1542ff2c6184d7472913ae0d26d625aef82e41becb36342\",\n                        \"lastState\": {},\n                        \"name\": \"jnlp\",\n                        \"ready\": true,\n                        \"resources\": {\n                            \"limits\": {\n                                \"cpu\": \"500m\",\n                                \"memory\": \"1Gi\"\n                            },\n                            \"requests\": {\n                                \"cpu\": \"100m\",\n                                \"memory\": \"256Mi\"\n                            }\n                        },\n                        \"restartCount\": 0,\n                        \"started\": true,\n                        \"state\": {\n                            \"running\": {\n                                \"startedAt\": \"2026-08-28T02:21:14Z\"\n                            }\n                        },\n                        \"user\": {\n                            \"linux\": {\n                                \"gid\": 1000,\n                                \"supplementalGroups\": [\n                                    1000\n                                ],\n                                \"uid\": 1000\n                            }\n                        },\n                        \"volumeMounts\": [\n                            {\n                                \"mountPath\": \"/home/jenkins/agent\",\n                                \"name\": \"workspace-volume\"\n                            }\n                        ]\n                    }\n                ],\n                \"hostIP\": \"172.17.0.2\",\n                \"hostIPs\": [\n                    {\n                        \"ip\": \"172.17.0.2\"\n                    }\n                ],\n                \"observedGeneration\": 2,\n                \"phase\": \"Running\",\n                \"podIP\": \"10.244.1.52\",\n                \"podIPs\": [\n                    {\n                        \"ip\": \"10.244.1.52\"\n                    }\n                ],\n                \"qosClass\": \"Burstable\",\n                \"startTime\": \"2026-08-28T02:21:13Z\"\n            }\n        }\n    ],\n    \"kind\": \"List\",\n    \"metadata\": {\n        \"resourceVersion\": \"\"\n    }\n}\n",
+      "stderr": "",
+      "detail": {}
+    },
+    {
+      "name": "agent-pods-after",
+      "command": [
+        "kubectl",
+        "--context",
+        "kind-netci-local",
+        "get",
+        "pods",
+        "-n",
+        "netci-build",
+        "-l",
+        "netci.io/agent=ephemeral",
+        "-o",
+        "json"
+      ],
+      "startedAt": "2026-08-28T02:22:28.155130+00:00",
+      "endedAt": "2026-08-28T02:22:28.241324+00:00",
+      "durationSeconds": 0.086,
+      "exitCode": 0,
+      "passed": true,
+      "stdout": "           {\n                                \"mountPath\": \"/home/jenkins/agent\",\n                                \"name\": \"workspace-volume\"\n                            }\n                        ]\n                    }\n                ],\n                \"dnsPolicy\": \"ClusterFirst\",\n                \"enableServiceLinks\": true,\n                \"nodeName\": \"netci-local-worker\",\n                \"nodeSelector\": {\n                    \"kubernetes.io/os\": \"linux\"\n                },\n                \"preemptionPolicy\": \"PreemptLowerPriority\",\n                \"priority\": 0,\n                \"restartPolicy\": \"Never\",\n                \"schedulerName\": \"default-scheduler\",\n                \"securityContext\": {\n                    \"fsGroup\": 1000,\n                    \"runAsGroup\": 1000,\n                    \"runAsNonRoot\": true,\n                    \"runAsUser\": 1000\n                },\n                \"serviceAccount\": \"jenkins-agent\",\n                \"serviceAccountName\": \"jenkins-agent\",\n                \"terminationGracePeriodSeconds\": 30,\n                \"tolerations\": [\n                    {\n                        \"effect\": \"NoExecute\",\n                        \"key\": \"node.kubernetes.io/not-ready\",\n                        \"operator\": \"Exists\",\n                        \"tolerationSeconds\": 300\n                    },\n                    {\n                        \"effect\": \"NoExecute\",\n                        \"key\": \"node.kubernetes.io/unreachable\",\n                        \"operator\": \"Exists\",\n                        \"tolerationSeconds\": 300\n                    }\n                ],\n                \"volumes\": [\n                    {\n                        \"emptyDir\": {},\n                        \"name\": \"workspace-volume\"\n                    }\n                ]\n            },\n            \"status\": {\n                \"conditions\": [\n                    {\n                        \"lastProbeTime\": null,\n                        \"lastTransitionTime\": \"2026-08-28T02:21:14Z\",\n                        \"observedGeneration\": 2,\n                        \"status\": \"True\",\n                        \"type\": \"PodReadyToStartContainers\"\n                    },\n                    {\n                        \"lastProbeTime\": null,\n                        \"lastTransitionTime\": \"2026-08-28T02:21:13Z\",\n                        \"observedGeneration\": 2,\n                        \"status\": \"True\",\n                        \"type\": \"Initialized\"\n                    },\n                    {\n                        \"lastProbeTime\": null,\n                        \"lastTransitionTime\": \"2026-08-28T02:21:14Z\",\n                        \"observedGeneration\": 2,\n                        \"status\": \"True\",\n                        \"type\": \"Ready\"\n                    },\n                    {\n                        \"lastProbeTime\": null,\n                        \"lastTransitionTime\": \"2026-08-28T02:21:14Z\",\n                        \"observedGeneration\": 2,\n                        \"status\": \"True\",\n                        \"type\": \"ContainersReady\"\n                    },\n                    {\n                        \"lastProbeTime\": null,\n                        \"lastTransitionTime\": \"2026-08-28T02:21:13Z\",\n                        \"observedGeneration\": 2,\n                        \"status\": \"True\",\n                        \"type\": \"PodScheduled\"\n                    }\n                ],\n                \"containerStatuses\": [\n                    {\n                        \"allocatedResources\": {\n                            \"cpu\": \"500m\",\n                            \"memory\": \"1Gi\"\n                        },\n                        \"containerID\": \"containerd://bcf07e0386c0703acb414d09c4ad229cb407c65ba2557f24f184a18c92daa38e\",\n                        \"image\": \"localhost:55000/netci/ci-toolbox:0.4.0\",\n                        \"imageID\": \"localhost:55000/netci/ci-toolbox@sha256:8bc9ab912dfabe983c7d8c365cd60c3ae5994e88b2a447196f145f5a029a9aa6\",\n                        \"lastState\": {},\n                        \"name\": \"builder\",\n                        \"ready\": true,\n                        \"resources\": {\n                            \"limits\": {\n                                \"cpu\": \"2\",\n                                \"memory\": \"4Gi\"\n                            },\n                            \"requests\": {\n                                \"cpu\": \"500m\",\n                                \"memory\": \"1Gi\"\n                            }\n                        },\n                        \"restartCount\": 0,\n                        \"started\": true,\n                        \"state\": {\n                            \"running\": {\n                                \"startedAt\": \"2026-08-28T02:21:14Z\"\n                            }\n                        },\n                        \"user\": {\n                            \"linux\": {\n                                \"gid\": 1000,\n                                \"supplementalGroups\": [\n                                    1000\n                                ],\n                                \"uid\": 1000\n                            }\n                        },\n                        \"volumeMounts\": [\n                            {\n                                \"mountPath\": \"/home/jenkins/agent\",\n                                \"name\": \"workspace-volume\"\n                            }\n                        ]\n                    },\n                    {\n                        \"allocatedResources\": {\n                            \"cpu\": \"100m\",\n                            \"memory\": \"256Mi\"\n                        },\n                        \"containerID\": \"containerd://6b696948aec0776caab6e0c7fa1e662bac642c781adb9e8887d749d30dccea3d\",\n                        \"image\": \"localhost:55000/jenkins/inbound-agent:3386.v353e57a_1b_ea_0-1-jdk21\",\n                        \"imageID\": \"localhost:55000/jenkins/inbound-agent@sha256:18a5c2cc22847349e1542ff2c6184d7472913ae0d26d625aef82e41becb36342\",\n                        \"lastState\": {},\n                        \"name\": \"jnlp\",\n                        \"ready\": true,\n                        \"resources\": {\n                            \"limits\": {\n                                \"cpu\": \"500m\",\n                                \"memory\": \"1Gi\"\n                            },\n                            \"requests\": {\n                                \"cpu\": \"100m\",\n                                \"memory\": \"256Mi\"\n                            }\n                        },\n                        \"restartCount\": 0,\n                        \"started\": true,\n                        \"state\": {\n                            \"running\": {\n                                \"startedAt\": \"2026-08-28T02:21:14Z\"\n                            }\n                        },\n                        \"user\": {\n                            \"linux\": {\n                                \"gid\": 1000,\n                                \"supplementalGroups\": [\n                                    1000\n                                ],\n                                \"uid\": 1000\n                            }\n                        },\n                        \"volumeMounts\": [\n                            {\n                                \"mountPath\": \"/home/jenkins/agent\",\n                                \"name\": \"workspace-volume\"\n                            }\n                        ]\n                    }\n                ],\n                \"hostIP\": \"172.17.0.2\",\n                \"hostIPs\": [\n                    {\n                        \"ip\": \"172.17.0.2\"\n                    }\n                ],\n                \"observedGeneration\": 2,\n                \"phase\": \"Running\",\n                \"podIP\": \"10.244.1.52\",\n                \"podIPs\": [\n                    {\n                        \"ip\": \"10.244.1.52\"\n                    }\n                ],\n                \"qosClass\": \"Burstable\",\n                \"startTime\": \"2026-08-28T02:21:13Z\"\n            }\n        }\n    ],\n    \"kind\": \"List\",\n    \"metadata\": {\n        \"resourceVersion\": \"\"\n    }\n}\n",
+      "stderr": "",
+      "detail": {}
+    },
+    {
+      "name": "agent-pods-after",
+      "command": [
+        "kubectl",
+        "--context",
+        "kind-netci-local",
+        "get",
+        "pods",
+        "-n",
+        "netci-build",
+        "-l",
+        "netci.io/agent=ephemeral",
+        "-o",
+        "json"
+      ],
+      "startedAt": "2026-08-28T02:22:31.241595+00:00",
+      "endedAt": "2026-08-28T02:22:31.326987+00:00",
+      "durationSeconds": 0.085,
+      "exitCode": 0,
+      "passed": true,
+      "stdout": "           {\n                                \"mountPath\": \"/home/jenkins/agent\",\n                                \"name\": \"workspace-volume\"\n                            }\n                        ]\n                    }\n                ],\n                \"dnsPolicy\": \"ClusterFirst\",\n                \"enableServiceLinks\": true,\n                \"nodeName\": \"netci-local-worker\",\n                \"nodeSelector\": {\n                    \"kubernetes.io/os\": \"linux\"\n                },\n                \"preemptionPolicy\": \"PreemptLowerPriority\",\n                \"priority\": 0,\n                \"restartPolicy\": \"Never\",\n                \"schedulerName\": \"default-scheduler\",\n                \"securityContext\": {\n                    \"fsGroup\": 1000,\n                    \"runAsGroup\": 1000,\n                    \"runAsNonRoot\": true,\n                    \"runAsUser\": 1000\n                },\n                \"serviceAccount\": \"jenkins-agent\",\n                \"serviceAccountName\": \"jenkins-agent\",\n                \"terminationGracePeriodSeconds\": 30,\n                \"tolerations\": [\n                    {\n                        \"effect\": \"NoExecute\",\n                        \"key\": \"node.kubernetes.io/not-ready\",\n                        \"operator\": \"Exists\",\n                        \"tolerationSeconds\": 300\n                    },\n                    {\n                        \"effect\": \"NoExecute\",\n                        \"key\": \"node.kubernetes.io/unreachable\",\n                        \"operator\": \"Exists\",\n                        \"tolerationSeconds\": 300\n                    }\n                ],\n                \"volumes\": [\n                    {\n                        \"emptyDir\": {},\n                        \"name\": \"workspace-volume\"\n                    }\n                ]\n            },\n            \"status\": {\n                \"conditions\": [\n                    {\n                        \"lastProbeTime\": null,\n                        \"lastTransitionTime\": \"2026-08-28T02:21:14Z\",\n                        \"observedGeneration\": 2,\n                        \"status\": \"True\",\n                        \"type\": \"PodReadyToStartContainers\"\n                    },\n                    {\n                        \"lastProbeTime\": null,\n                        \"lastTransitionTime\": \"2026-08-28T02:21:13Z\",\n                        \"observedGeneration\": 2,\n                        \"status\": \"True\",\n                        \"type\": \"Initialized\"\n                    },\n                    {\n                        \"lastProbeTime\": null,\n                        \"lastTransitionTime\": \"2026-08-28T02:21:14Z\",\n                        \"observedGeneration\": 2,\n                        \"status\": \"True\",\n                        \"type\": \"Ready\"\n                    },\n                    {\n                        \"lastProbeTime\": null,\n                        \"lastTransitionTime\": \"2026-08-28T02:21:14Z\",\n                        \"observedGeneration\": 2,\n                        \"status\": \"True\",\n                        \"type\": \"ContainersReady\"\n                    },\n                    {\n                        \"lastProbeTime\": null,\n                        \"lastTransitionTime\": \"2026-08-28T02:21:13Z\",\n                        \"observedGeneration\": 2,\n                        \"status\": \"True\",\n                        \"type\": \"PodScheduled\"\n                    }\n                ],\n                \"containerStatuses\": [\n                    {\n                        \"allocatedResources\": {\n                            \"cpu\": \"500m\",\n                            \"memory\": \"1Gi\"\n                        },\n                        \"containerID\": \"containerd://bcf07e0386c0703acb414d09c4ad229cb407c65ba2557f24f184a18c92daa38e\",\n                        \"image\": \"localhost:55000/netci/ci-toolbox:0.4.0\",\n                        \"imageID\": \"localhost:55000/netci/ci-toolbox@sha256:8bc9ab912dfabe983c7d8c365cd60c3ae5994e88b2a447196f145f5a029a9aa6\",\n                        \"lastState\": {},\n                        \"name\": \"builder\",\n                        \"ready\": true,\n                        \"resources\": {\n                            \"limits\": {\n                                \"cpu\": \"2\",\n                                \"memory\": \"4Gi\"\n                            },\n                            \"requests\": {\n                                \"cpu\": \"500m\",\n                                \"memory\": \"1Gi\"\n                            }\n                        },\n                        \"restartCount\": 0,\n                        \"started\": true,\n                        \"state\": {\n                            \"running\": {\n                                \"startedAt\": \"2026-08-28T02:21:14Z\"\n                            }\n                        },\n                        \"user\": {\n                            \"linux\": {\n                                \"gid\": 1000,\n                                \"supplementalGroups\": [\n                                    1000\n                                ],\n                                \"uid\": 1000\n                            }\n                        },\n                        \"volumeMounts\": [\n                            {\n                                \"mountPath\": \"/home/jenkins/agent\",\n                                \"name\": \"workspace-volume\"\n                            }\n                        ]\n                    },\n                    {\n                        \"allocatedResources\": {\n                            \"cpu\": \"100m\",\n                            \"memory\": \"256Mi\"\n                        },\n                        \"containerID\": \"containerd://6b696948aec0776caab6e0c7fa1e662bac642c781adb9e8887d749d30dccea3d\",\n                        \"image\": \"localhost:55000/jenkins/inbound-agent:3386.v353e57a_1b_ea_0-1-jdk21\",\n                        \"imageID\": \"localhost:55000/jenkins/inbound-agent@sha256:18a5c2cc22847349e1542ff2c6184d7472913ae0d26d625aef82e41becb36342\",\n                        \"lastState\": {},\n                        \"name\": \"jnlp\",\n                        \"ready\": true,\n                        \"resources\": {\n                            \"limits\": {\n                                \"cpu\": \"500m\",\n                                \"memory\": \"1Gi\"\n                            },\n                            \"requests\": {\n                                \"cpu\": \"100m\",\n                                \"memory\": \"256Mi\"\n                            }\n                        },\n                        \"restartCount\": 0,\n                        \"started\": true,\n                        \"state\": {\n                            \"running\": {\n                                \"startedAt\": \"2026-08-28T02:21:14Z\"\n                            }\n                        },\n                        \"user\": {\n                            \"linux\": {\n                                \"gid\": 1000,\n                                \"supplementalGroups\": [\n                                    1000\n                                ],\n                                \"uid\": 1000\n                            }\n                        },\n                        \"volumeMounts\": [\n                            {\n                                \"mountPath\": \"/home/jenkins/agent\",\n                                \"name\": \"workspace-volume\"\n                            }\n                        ]\n                    }\n                ],\n                \"hostIP\": \"172.17.0.2\",\n                \"hostIPs\": [\n                    {\n                        \"ip\": \"172.17.0.2\"\n                    }\n                ],\n                \"observedGeneration\": 2,\n                \"phase\": \"Running\",\n                \"podIP\": \"10.244.1.52\",\n                \"podIPs\": [\n                    {\n                        \"ip\": \"10.244.1.52\"\n                    }\n                ],\n                \"qosClass\": \"Burstable\",\n                \"startTime\": \"2026-08-28T02:21:13Z\"\n            }\n        }\n    ],\n    \"kind\": \"List\",\n    \"metadata\": {\n        \"resourceVersion\": \"\"\n    }\n}\n",
+      "stderr": "",
+      "detail": {}
+    },
+    {
+      "name": "agent-pods-after",
+      "command": [
+        "kubectl",
+        "--context",
+        "kind-netci-local",
+        "get",
+        "pods",
+        "-n",
+        "netci-build",
+        "-l",
+        "netci.io/agent=ephemeral",
+        "-o",
+        "json"
+      ],
+      "startedAt": "2026-08-28T02:22:34.327233+00:00",
+      "endedAt": "2026-08-28T02:22:34.418975+00:00",
+      "durationSeconds": 0.092,
+      "exitCode": 0,
+      "passed": true,
+      "stdout": "           {\n                                \"mountPath\": \"/home/jenkins/agent\",\n                                \"name\": \"workspace-volume\"\n                            }\n                        ]\n                    }\n                ],\n                \"dnsPolicy\": \"ClusterFirst\",\n                \"enableServiceLinks\": true,\n                \"nodeName\": \"netci-local-worker\",\n                \"nodeSelector\": {\n                    \"kubernetes.io/os\": \"linux\"\n                },\n                \"preemptionPolicy\": \"PreemptLowerPriority\",\n                \"priority\": 0,\n                \"restartPolicy\": \"Never\",\n                \"schedulerName\": \"default-scheduler\",\n                \"securityContext\": {\n                    \"fsGroup\": 1000,\n                    \"runAsGroup\": 1000,\n                    \"runAsNonRoot\": true,\n                    \"runAsUser\": 1000\n                },\n                \"serviceAccount\": \"jenkins-agent\",\n                \"serviceAccountName\": \"jenkins-agent\",\n                \"terminationGracePeriodSeconds\": 30,\n                \"tolerations\": [\n                    {\n                        \"effect\": \"NoExecute\",\n                        \"key\": \"node.kubernetes.io/not-ready\",\n                        \"operator\": \"Exists\",\n                        \"tolerationSeconds\": 300\n                    },\n                    {\n                        \"effect\": \"NoExecute\",\n                        \"key\": \"node.kubernetes.io/unreachable\",\n                        \"operator\": \"Exists\",\n                        \"tolerationSeconds\": 300\n                    }\n                ],\n                \"volumes\": [\n                    {\n                        \"emptyDir\": {},\n                        \"name\": \"workspace-volume\"\n                    }\n                ]\n            },\n            \"status\": {\n                \"conditions\": [\n                    {\n                        \"lastProbeTime\": null,\n                        \"lastTransitionTime\": \"2026-08-28T02:21:14Z\",\n                        \"observedGeneration\": 2,\n                        \"status\": \"True\",\n                        \"type\": \"PodReadyToStartContainers\"\n                    },\n                    {\n                        \"lastProbeTime\": null,\n                        \"lastTransitionTime\": \"2026-08-28T02:21:13Z\",\n                        \"observedGeneration\": 2,\n                        \"status\": \"True\",\n                        \"type\": \"Initialized\"\n                    },\n                    {\n                        \"lastProbeTime\": null,\n                        \"lastTransitionTime\": \"2026-08-28T02:21:14Z\",\n                        \"observedGeneration\": 2,\n                        \"status\": \"True\",\n                        \"type\": \"Ready\"\n                    },\n                    {\n                        \"lastProbeTime\": null,\n                        \"lastTransitionTime\": \"2026-08-28T02:21:14Z\",\n                        \"observedGeneration\": 2,\n                        \"status\": \"True\",\n                        \"type\": \"ContainersReady\"\n                    },\n                    {\n                        \"lastProbeTime\": null,\n                        \"lastTransitionTime\": \"2026-08-28T02:21:13Z\",\n                        \"observedGeneration\": 2,\n                        \"status\": \"True\",\n                        \"type\": \"PodScheduled\"\n                    }\n                ],\n                \"containerStatuses\": [\n                    {\n                        \"allocatedResources\": {\n                            \"cpu\": \"500m\",\n                            \"memory\": \"1Gi\"\n                        },\n                        \"containerID\": \"containerd://bcf07e0386c0703acb414d09c4ad229cb407c65ba2557f24f184a18c92daa38e\",\n                        \"image\": \"localhost:55000/netci/ci-toolbox:0.4.0\",\n                        \"imageID\": \"localhost:55000/netci/ci-toolbox@sha256:8bc9ab912dfabe983c7d8c365cd60c3ae5994e88b2a447196f145f5a029a9aa6\",\n                        \"lastState\": {},\n                        \"name\": \"builder\",\n                        \"ready\": true,\n                        \"resources\": {\n                            \"limits\": {\n                                \"cpu\": \"2\",\n                                \"memory\": \"4Gi\"\n                            },\n                            \"requests\": {\n                                \"cpu\": \"500m\",\n                                \"memory\": \"1Gi\"\n                            }\n                        },\n                        \"restartCount\": 0,\n                        \"started\": true,\n                        \"state\": {\n                            \"running\": {\n                                \"startedAt\": \"2026-08-28T02:21:14Z\"\n                            }\n                        },\n                        \"user\": {\n                            \"linux\": {\n                                \"gid\": 1000,\n                                \"supplementalGroups\": [\n                                    1000\n                                ],\n                                \"uid\": 1000\n                            }\n                        },\n                        \"volumeMounts\": [\n                            {\n                                \"mountPath\": \"/home/jenkins/agent\",\n                                \"name\": \"workspace-volume\"\n                            }\n                        ]\n                    },\n                    {\n                        \"allocatedResources\": {\n                            \"cpu\": \"100m\",\n                            \"memory\": \"256Mi\"\n                        },\n                        \"containerID\": \"containerd://6b696948aec0776caab6e0c7fa1e662bac642c781adb9e8887d749d30dccea3d\",\n                        \"image\": \"localhost:55000/jenkins/inbound-agent:3386.v353e57a_1b_ea_0-1-jdk21\",\n                        \"imageID\": \"localhost:55000/jenkins/inbound-agent@sha256:18a5c2cc22847349e1542ff2c6184d7472913ae0d26d625aef82e41becb36342\",\n                        \"lastState\": {},\n                        \"name\": \"jnlp\",\n                        \"ready\": true,\n                        \"resources\": {\n                            \"limits\": {\n                                \"cpu\": \"500m\",\n                                \"memory\": \"1Gi\"\n                            },\n                            \"requests\": {\n                                \"cpu\": \"100m\",\n                                \"memory\": \"256Mi\"\n                            }\n                        },\n                        \"restartCount\": 0,\n                        \"started\": true,\n                        \"state\": {\n                            \"running\": {\n                                \"startedAt\": \"2026-08-28T02:21:14Z\"\n                            }\n                        },\n                        \"user\": {\n                            \"linux\": {\n                                \"gid\": 1000,\n                                \"supplementalGroups\": [\n                                    1000\n                                ],\n                                \"uid\": 1000\n                            }\n                        },\n                        \"volumeMounts\": [\n                            {\n                                \"mountPath\": \"/home/jenkins/agent\",\n                                \"name\": \"workspace-volume\"\n                            }\n                        ]\n                    }\n                ],\n                \"hostIP\": \"172.17.0.2\",\n                \"hostIPs\": [\n                    {\n                        \"ip\": \"172.17.0.2\"\n                    }\n                ],\n                \"observedGeneration\": 2,\n                \"phase\": \"Running\",\n                \"podIP\": \"10.244.1.52\",\n                \"podIPs\": [\n                    {\n                        \"ip\": \"10.244.1.52\"\n                    }\n                ],\n                \"qosClass\": \"Burstable\",\n                \"startTime\": \"2026-08-28T02:21:13Z\"\n            }\n        }\n    ],\n    \"kind\": \"List\",\n    \"metadata\": {\n        \"resourceVersion\": \"\"\n    }\n}\n",
+      "stderr": "",
+      "detail": {}
+    },
+    {
+      "name": "agent-pods-after",
+      "command": [
+        "kubectl",
+        "--context",
+        "kind-netci-local",
+        "get",
+        "pods",
+        "-n",
+        "netci-build",
+        "-l",
+        "netci.io/agent=ephemeral",
+        "-o",
+        "json"
+      ],
+      "startedAt": "2026-08-28T02:22:37.419280+00:00",
+      "endedAt": "2026-08-28T02:22:37.506038+00:00",
+      "durationSeconds": 0.087,
+      "exitCode": 0,
+      "passed": true,
+      "stdout": "           {\n                                \"mountPath\": \"/home/jenkins/agent\",\n                                \"name\": \"workspace-volume\"\n                            }\n                        ]\n                    }\n                ],\n                \"dnsPolicy\": \"ClusterFirst\",\n                \"enableServiceLinks\": true,\n                \"nodeName\": \"netci-local-worker\",\n                \"nodeSelector\": {\n                    \"kubernetes.io/os\": \"linux\"\n                },\n                \"preemptionPolicy\": \"PreemptLowerPriority\",\n                \"priority\": 0,\n                \"restartPolicy\": \"Never\",\n                \"schedulerName\": \"default-scheduler\",\n                \"securityContext\": {\n                    \"fsGroup\": 1000,\n                    \"runAsGroup\": 1000,\n                    \"runAsNonRoot\": true,\n                    \"runAsUser\": 1000\n                },\n                \"serviceAccount\": \"jenkins-agent\",\n                \"serviceAccountName\": \"jenkins-agent\",\n                \"terminationGracePeriodSeconds\": 30,\n                \"tolerations\": [\n                    {\n                        \"effect\": \"NoExecute\",\n                        \"key\": \"node.kubernetes.io/not-ready\",\n                        \"operator\": \"Exists\",\n                        \"tolerationSeconds\": 300\n                    },\n                    {\n                        \"effect\": \"NoExecute\",\n                        \"key\": \"node.kubernetes.io/unreachable\",\n                        \"operator\": \"Exists\",\n                        \"tolerationSeconds\": 300\n                    }\n                ],\n                \"volumes\": [\n                    {\n                        \"emptyDir\": {},\n                        \"name\": \"workspace-volume\"\n                    }\n                ]\n            },\n            \"status\": {\n                \"conditions\": [\n                    {\n                        \"lastProbeTime\": null,\n                        \"lastTransitionTime\": \"2026-08-28T02:21:14Z\",\n                        \"observedGeneration\": 2,\n                        \"status\": \"True\",\n                        \"type\": \"PodReadyToStartContainers\"\n                    },\n                    {\n                        \"lastProbeTime\": null,\n                        \"lastTransitionTime\": \"2026-08-28T02:21:13Z\",\n                        \"observedGeneration\": 2,\n                        \"status\": \"True\",\n                        \"type\": \"Initialized\"\n                    },\n                    {\n                        \"lastProbeTime\": null,\n                        \"lastTransitionTime\": \"2026-08-28T02:21:14Z\",\n                        \"observedGeneration\": 2,\n                        \"status\": \"True\",\n                        \"type\": \"Ready\"\n                    },\n                    {\n                        \"lastProbeTime\": null,\n                        \"lastTransitionTime\": \"2026-08-28T02:21:14Z\",\n                        \"observedGeneration\": 2,\n                        \"status\": \"True\",\n                        \"type\": \"ContainersReady\"\n                    },\n                    {\n                        \"lastProbeTime\": null,\n                        \"lastTransitionTime\": \"2026-08-28T02:21:13Z\",\n                        \"observedGeneration\": 2,\n                        \"status\": \"True\",\n                        \"type\": \"PodScheduled\"\n                    }\n                ],\n                \"containerStatuses\": [\n                    {\n                        \"allocatedResources\": {\n                            \"cpu\": \"500m\",\n                            \"memory\": \"1Gi\"\n                        },\n                        \"containerID\": \"containerd://bcf07e0386c0703acb414d09c4ad229cb407c65ba2557f24f184a18c92daa38e\",\n                        \"image\": \"localhost:55000/netci/ci-toolbox:0.4.0\",\n                        \"imageID\": \"localhost:55000/netci/ci-toolbox@sha256:8bc9ab912dfabe983c7d8c365cd60c3ae5994e88b2a447196f145f5a029a9aa6\",\n                        \"lastState\": {},\n                        \"name\": \"builder\",\n                        \"ready\": true,\n                        \"resources\": {\n                            \"limits\": {\n                                \"cpu\": \"2\",\n                                \"memory\": \"4Gi\"\n                            },\n                            \"requests\": {\n                                \"cpu\": \"500m\",\n                                \"memory\": \"1Gi\"\n                            }\n                        },\n                        \"restartCount\": 0,\n                        \"started\": true,\n                        \"state\": {\n                            \"running\": {\n                                \"startedAt\": \"2026-08-28T02:21:14Z\"\n                            }\n                        },\n                        \"user\": {\n                            \"linux\": {\n                                \"gid\": 1000,\n                                \"supplementalGroups\": [\n                                    1000\n                                ],\n                                \"uid\": 1000\n                            }\n                        },\n                        \"volumeMounts\": [\n                            {\n                                \"mountPath\": \"/home/jenkins/agent\",\n                                \"name\": \"workspace-volume\"\n                            }\n                        ]\n                    },\n                    {\n                        \"allocatedResources\": {\n                            \"cpu\": \"100m\",\n                            \"memory\": \"256Mi\"\n                        },\n                        \"containerID\": \"containerd://6b696948aec0776caab6e0c7fa1e662bac642c781adb9e8887d749d30dccea3d\",\n                        \"image\": \"localhost:55000/jenkins/inbound-agent:3386.v353e57a_1b_ea_0-1-jdk21\",\n                        \"imageID\": \"localhost:55000/jenkins/inbound-agent@sha256:18a5c2cc22847349e1542ff2c6184d7472913ae0d26d625aef82e41becb36342\",\n                        \"lastState\": {},\n                        \"name\": \"jnlp\",\n                        \"ready\": true,\n                        \"resources\": {\n                            \"limits\": {\n                                \"cpu\": \"500m\",\n                                \"memory\": \"1Gi\"\n                            },\n                            \"requests\": {\n                                \"cpu\": \"100m\",\n                                \"memory\": \"256Mi\"\n                            }\n                        },\n                        \"restartCount\": 0,\n                        \"started\": true,\n                        \"state\": {\n                            \"running\": {\n                                \"startedAt\": \"2026-08-28T02:21:14Z\"\n                            }\n                        },\n                        \"user\": {\n                            \"linux\": {\n                                \"gid\": 1000,\n                                \"supplementalGroups\": [\n                                    1000\n                                ],\n                                \"uid\": 1000\n                            }\n                        },\n                        \"volumeMounts\": [\n                            {\n                                \"mountPath\": \"/home/jenkins/agent\",\n                                \"name\": \"workspace-volume\"\n                            }\n                        ]\n                    }\n                ],\n                \"hostIP\": \"172.17.0.2\",\n                \"hostIPs\": [\n                    {\n                        \"ip\": \"172.17.0.2\"\n                    }\n                ],\n                \"observedGeneration\": 2,\n                \"phase\": \"Running\",\n                \"podIP\": \"10.244.1.52\",\n                \"podIPs\": [\n                    {\n                        \"ip\": \"10.244.1.52\"\n                    }\n                ],\n                \"qosClass\": \"Burstable\",\n                \"startTime\": \"2026-08-28T02:21:13Z\"\n            }\n        }\n    ],\n    \"kind\": \"List\",\n    \"metadata\": {\n        \"resourceVersion\": \"\"\n    }\n}\n",
+      "stderr": "",
+      "detail": {}
+    },
+    {
+      "name": "agent-pods-after",
+      "command": [
+        "kubectl",
+        "--context",
+        "kind-netci-local",
+        "get",
+        "pods",
+        "-n",
+        "netci-build",
+        "-l",
+        "netci.io/agent=ephemeral",
+        "-o",
+        "json"
+      ],
+      "startedAt": "2026-08-28T02:22:40.506429+00:00",
+      "endedAt": "2026-08-28T02:22:40.629283+00:00",
+      "durationSeconds": 0.123,
+      "exitCode": 0,
+      "passed": true,
+      "stdout": "           {\n                                \"mountPath\": \"/home/jenkins/agent\",\n                                \"name\": \"workspace-volume\"\n                            }\n                        ]\n                    }\n                ],\n                \"dnsPolicy\": \"ClusterFirst\",\n                \"enableServiceLinks\": true,\n                \"nodeName\": \"netci-local-worker\",\n                \"nodeSelector\": {\n                    \"kubernetes.io/os\": \"linux\"\n                },\n                \"preemptionPolicy\": \"PreemptLowerPriority\",\n                \"priority\": 0,\n                \"restartPolicy\": \"Never\",\n                \"schedulerName\": \"default-scheduler\",\n                \"securityContext\": {\n                    \"fsGroup\": 1000,\n                    \"runAsGroup\": 1000,\n                    \"runAsNonRoot\": true,\n                    \"runAsUser\": 1000\n                },\n                \"serviceAccount\": \"jenkins-agent\",\n                \"serviceAccountName\": \"jenkins-agent\",\n                \"terminationGracePeriodSeconds\": 30,\n                \"tolerations\": [\n                    {\n                        \"effect\": \"NoExecute\",\n                        \"key\": \"node.kubernetes.io/not-ready\",\n                        \"operator\": \"Exists\",\n                        \"tolerationSeconds\": 300\n                    },\n                    {\n                        \"effect\": \"NoExecute\",\n                        \"key\": \"node.kubernetes.io/unreachable\",\n                        \"operator\": \"Exists\",\n                        \"tolerationSeconds\": 300\n                    }\n                ],\n                \"volumes\": [\n                    {\n                        \"emptyDir\": {},\n                        \"name\": \"workspace-volume\"\n                    }\n                ]\n            },\n            \"status\": {\n                \"conditions\": [\n                    {\n                        \"lastProbeTime\": null,\n                        \"lastTransitionTime\": \"2026-08-28T02:21:14Z\",\n                        \"observedGeneration\": 2,\n                        \"status\": \"True\",\n                        \"type\": \"PodReadyToStartContainers\"\n                    },\n                    {\n                        \"lastProbeTime\": null,\n                        \"lastTransitionTime\": \"2026-08-28T02:21:13Z\",\n                        \"observedGeneration\": 2,\n                        \"status\": \"True\",\n                        \"type\": \"Initialized\"\n                    },\n                    {\n                        \"lastProbeTime\": null,\n                        \"lastTransitionTime\": \"2026-08-28T02:21:14Z\",\n                        \"observedGeneration\": 2,\n                        \"status\": \"True\",\n                        \"type\": \"Ready\"\n                    },\n                    {\n                        \"lastProbeTime\": null,\n                        \"lastTransitionTime\": \"2026-08-28T02:21:14Z\",\n                        \"observedGeneration\": 2,\n                        \"status\": \"True\",\n                        \"type\": \"ContainersReady\"\n                    },\n                    {\n                        \"lastProbeTime\": null,\n                        \"lastTransitionTime\": \"2026-08-28T02:21:13Z\",\n                        \"observedGeneration\": 2,\n                        \"status\": \"True\",\n                        \"type\": \"PodScheduled\"\n                    }\n                ],\n                \"containerStatuses\": [\n                    {\n                        \"allocatedResources\": {\n                            \"cpu\": \"500m\",\n                            \"memory\": \"1Gi\"\n                        },\n                        \"containerID\": \"containerd://bcf07e0386c0703acb414d09c4ad229cb407c65ba2557f24f184a18c92daa38e\",\n                        \"image\": \"localhost:55000/netci/ci-toolbox:0.4.0\",\n                        \"imageID\": \"localhost:55000/netci/ci-toolbox@sha256:8bc9ab912dfabe983c7d8c365cd60c3ae5994e88b2a447196f145f5a029a9aa6\",\n                        \"lastState\": {},\n                        \"name\": \"builder\",\n                        \"ready\": true,\n                        \"resources\": {\n                            \"limits\": {\n                                \"cpu\": \"2\",\n                                \"memory\": \"4Gi\"\n                            },\n                            \"requests\": {\n                                \"cpu\": \"500m\",\n                                \"memory\": \"1Gi\"\n                            }\n                        },\n                        \"restartCount\": 0,\n                        \"started\": true,\n                        \"state\": {\n                            \"running\": {\n                                \"startedAt\": \"2026-08-28T02:21:14Z\"\n                            }\n                        },\n                        \"user\": {\n                            \"linux\": {\n                                \"gid\": 1000,\n                                \"supplementalGroups\": [\n                                    1000\n                                ],\n                                \"uid\": 1000\n                            }\n                        },\n                        \"volumeMounts\": [\n                            {\n                                \"mountPath\": \"/home/jenkins/agent\",\n                                \"name\": \"workspace-volume\"\n                            }\n                        ]\n                    },\n                    {\n                        \"allocatedResources\": {\n                            \"cpu\": \"100m\",\n                            \"memory\": \"256Mi\"\n                        },\n                        \"containerID\": \"containerd://6b696948aec0776caab6e0c7fa1e662bac642c781adb9e8887d749d30dccea3d\",\n                        \"image\": \"localhost:55000/jenkins/inbound-agent:3386.v353e57a_1b_ea_0-1-jdk21\",\n                        \"imageID\": \"localhost:55000/jenkins/inbound-agent@sha256:18a5c2cc22847349e1542ff2c6184d7472913ae0d26d625aef82e41becb36342\",\n                        \"lastState\": {},\n                        \"name\": \"jnlp\",\n                        \"ready\": true,\n                        \"resources\": {\n                            \"limits\": {\n                                \"cpu\": \"500m\",\n                                \"memory\": \"1Gi\"\n                            },\n                            \"requests\": {\n                                \"cpu\": \"100m\",\n                                \"memory\": \"256Mi\"\n                            }\n                        },\n                        \"restartCount\": 0,\n                        \"started\": true,\n                        \"state\": {\n                            \"running\": {\n                                \"startedAt\": \"2026-08-28T02:21:14Z\"\n                            }\n                        },\n                        \"user\": {\n                            \"linux\": {\n                                \"gid\": 1000,\n                                \"supplementalGroups\": [\n                                    1000\n                                ],\n                                \"uid\": 1000\n                            }\n                        },\n                        \"volumeMounts\": [\n                            {\n                                \"mountPath\": \"/home/jenkins/agent\",\n                                \"name\": \"workspace-volume\"\n                            }\n                        ]\n                    }\n                ],\n                \"hostIP\": \"172.17.0.2\",\n                \"hostIPs\": [\n                    {\n                        \"ip\": \"172.17.0.2\"\n                    }\n                ],\n                \"observedGeneration\": 2,\n                \"phase\": \"Running\",\n                \"podIP\": \"10.244.1.52\",\n                \"podIPs\": [\n                    {\n                        \"ip\": \"10.244.1.52\"\n                    }\n                ],\n                \"qosClass\": \"Burstable\",\n                \"startTime\": \"2026-08-28T02:21:13Z\"\n            }\n        }\n    ],\n    \"kind\": \"List\",\n    \"metadata\": {\n        \"resourceVersion\": \"\"\n    }\n}\n",
+      "stderr": "",
+      "detail": {}
+    },
+    {
+      "name": "agent-pods-after",
+      "command": [
+        "kubectl",
+        "--context",
+        "kind-netci-local",
+        "get",
+        "pods",
+        "-n",
+        "netci-build",
+        "-l",
+        "netci.io/agent=ephemeral",
+        "-o",
+        "json"
+      ],
+      "startedAt": "2026-08-28T02:22:43.629596+00:00",
+      "endedAt": "2026-08-28T02:22:43.748244+00:00",
+      "durationSeconds": 0.119,
+      "exitCode": 0,
+      "passed": true,
+      "stdout": "{\n    \"apiVersion\": \"v1\",\n    \"items\": [],\n    \"kind\": \"List\",\n    \"metadata\": {\n        \"resourceVersion\": \"\"\n    }\n}\n",
+      "stderr": "",
+      "detail": {}
+    }
+  ]
+}

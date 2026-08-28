@@ -1,0 +1,7 @@
+mode,project,run,started_at,finished_at,total_seconds,queue_seconds,provisioning_seconds,checkout_seconds,cache_restore_seconds,build_seconds,cleanup_seconds,other_seconds,cache_hit,timing_complete,success
+baseline,netci-benchmark,1,1787883475.3496492,1787883482.419797,7.070143532000657,0.303,0.0,0.873,0.345,2.729,1.054,0.105,True,True,True
+ephemeral,netci-benchmark,1,1787883482.419891,1787883528.6115797,46.191684597994026,3.656,3.55,19.175,0.624,5.86,9.637,0.102,False,True,True
+baseline,netci-benchmark,2,1787883528.61166,1787883537.7733433,9.161679592994915,0.313,0.0,0.806,0.36,3.619,1.007,0.112,True,True,True
+ephemeral,netci-benchmark,2,1787883537.7734256,1787883584.922312,47.1488831530005,0.384,0.289,18.659,0.682,6.49,10.864,0.129,False,True,True
+baseline,netci-benchmark,3,1787883584.9223826,1787883591.9092197,6.986834076997184,0.279,0.0,0.949,0.343,3.256,0.972,0.11,True,True,True
+ephemeral,netci-benchmark,3,1787883591.909311,1787883639.0803897,47.17107508800109,0.43,0.297,18.798,0.629,6.851,9.408,0.092,False,True,True

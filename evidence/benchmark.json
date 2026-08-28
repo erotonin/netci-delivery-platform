@@ -1,0 +1,293 @@
+{
+  "gate": "benchmark",
+  "description": "The same pipeline run repeatedly on a shared agent and on ephemeral pods, with Jenkins' own phase timings compared and the isolation cost quantified.",
+  "result": "pass",
+  "error": null,
+  "commit": "d7a43b6c7017c0e48bd3359b6f7e81629dfc1f8e",
+  "host": {
+    "platform": "Linux-6.8.0-134-generic-x86_64-with-glibc2.39",
+    "python": "3.12.3",
+    "hostname": "openstack-aio"
+  },
+  "startedAt": "2026-08-28T02:17:54.785662+00:00",
+  "endedAt": "2026-08-28T02:20:39.105473+00:00",
+  "context": {
+    "url": "http://172.17.0.50:8080",
+    "username": "admin",
+    "token": "change-me-local-only",
+    "runs": 3,
+    "gitUrl": "http://172.17.0.52/netci.git",
+    "branch": "main",
+    "applicationId": "netci-benchmark",
+    "threshold": 400.0,
+    "environment": "ubuntu-24.04-kind-local"
+  },
+  "assertions": [
+    {
+      "assertion": "a shared agent is online to serve as the baseline",
+      "passed": true,
+      "detail": [
+        "built-in",
+        "netci-shared"
+      ]
+    },
+    {
+      "assertion": "the report was produced for the environment it was measured in",
+      "passed": true,
+      "detail": {
+        "expected": "ubuntu-24.04-kind-local",
+        "actual": "ubuntu-24.04-kind-local"
+      }
+    },
+    {
+      "assertion": "the report has every required field",
+      "passed": true,
+      "detail": []
+    },
+    {
+      "assertion": "the baseline section is complete",
+      "passed": true,
+      "detail": []
+    },
+    {
+      "assertion": "the baseline mode ran every requested sample",
+      "passed": true,
+      "detail": {
+        "expected": 3,
+        "actual": 3
+      }
+    },
+    {
+      "assertion": "every baseline build succeeded",
+      "passed": true,
+      "detail": {
+        "expected": 1.0,
+        "actual": 1.0
+      }
+    },
+    {
+      "assertion": "the ephemeral section is complete",
+      "passed": true,
+      "detail": []
+    },
+    {
+      "assertion": "the ephemeral mode ran every requested sample",
+      "passed": true,
+      "detail": {
+        "expected": 3,
+        "actual": 3
+      }
+    },
+    {
+      "assertion": "every ephemeral build succeeded",
+      "passed": true,
+      "detail": {
+        "expected": 1.0,
+        "actual": 1.0
+      }
+    },
+    {
+      "assertion": "the comparison reached a conclusion rather than an inconclusive result",
+      "passed": true,
+      "detail": {
+        "totalDeltaPercent": 505.13,
+        "buildDeltaPercent": 99.94,
+        "cacheHitRate": 0.0,
+        "conclusion": "regression"
+      }
+    },
+    {
+      "assertion": "phase timings were measured, not defaulted to zero",
+      "passed": true,
+      "detail": {
+        "baselineTotal": 7.74,
+        "ephemeralTotal": 46.837
+      }
+    },
+    {
+      "assertion": "the ephemeral agent pays provisioning that the shared agent does not",
+      "passed": true,
+      "detail": {
+        "ephemeral": 1.379,
+        "baseline": 0.0
+      }
+    },
+    {
+      "assertion": "the ephemeral agent never reuses a previous build's cache",
+      "passed": true,
+      "detail": 0.0
+    },
+    {
+      "assertion": "the ephemeral agent starts from an empty workspace, so it pays a full checkout",
+      "passed": true,
+      "detail": {
+        "ephemeral": 18.877,
+        "baseline": 0.876
+      }
+    },
+    {
+      "assertion": "every measured second is attributed to a named phase",
+      "passed": true,
+      "detail": {
+        "baselineOtherSecondsAvg": 0.109,
+        "ephemeralOtherSecondsAvg": 0.108
+      }
+    }
+  ],
+  "steps": [
+    {
+      "name": "tool-preflight",
+      "command": null,
+      "startedAt": "2026-08-28T02:17:54.785720+00:00",
+      "endedAt": "2026-08-28T02:17:54.785720+00:00",
+      "durationSeconds": 0.0,
+      "exitCode": 0,
+      "passed": true,
+      "stdout": "",
+      "stderr": "",
+      "detail": {
+        "required": [
+          "kubectl"
+        ],
+        "missing": []
+      }
+    },
+    {
+      "name": "online-agent-labels",
+      "command": null,
+      "startedAt": "2026-08-28T02:17:54.887684+00:00",
+      "endedAt": "2026-08-28T02:17:54.887684+00:00",
+      "durationSeconds": 0.0,
+      "exitCode": 0,
+      "passed": true,
+      "stdout": "",
+      "stderr": "",
+      "detail": {
+        "labels": [
+          "built-in",
+          "netci-shared"
+        ]
+      }
+    },
+    {
+      "name": "ensure-benchmark-job",
+      "command": null,
+      "startedAt": "2026-08-28T02:17:55.287448+00:00",
+      "endedAt": "2026-08-28T02:17:55.287448+00:00",
+      "durationSeconds": 0.0,
+      "exitCode": 0,
+      "passed": true,
+      "stdout": "",
+      "stderr": "",
+      "detail": {
+        "job": "netci-benchmark",
+        "status": 200
+      }
+    },
+    {
+      "name": "run-benchmark",
+      "command": [
+        "/home/deployer/netci-delivery-platform/.venv/bin/python",
+        "/home/deployer/netci-delivery-platform/scripts/benchmark.py",
+        "--runs",
+        "3",
+        "--application-id",
+        "netci-benchmark",
+        "--environment",
+        "ubuntu-24.04-kind-local",
+        "--report",
+        "/home/deployer/netci-delivery-platform/evidence/benchmarks/report.json",
+        "--csv",
+        "/home/deployer/netci-delivery-platform/evidence/benchmarks/samples.csv",
+        "--regression-threshold",
+        "400.0",
+        "--baseline-command",
+        "/home/deployer/netci-delivery-platform/.venv/bin/python /home/deployer/netci-delivery-platform/scripts/jenkins_build.py --url http://172.17.0.50:8080 --username admin --token change-me-local-only --job netci-benchmark --git-url http://172.17.0.52/netci.git --branch main --label netci-shared",
+        "--ephemeral-command",
+        "/home/deployer/netci-delivery-platform/.venv/bin/python /home/deployer/netci-delivery-platform/scripts/jenkins_build.py --url http://172.17.0.50:8080 --username admin --token change-me-local-only --job netci-benchmark --git-url http://172.17.0.52/netci.git --branch main --label netci-ephemeral"
+      ],
+      "startedAt": "2026-08-28T02:17:55.287637+00:00",
+      "endedAt": "2026-08-28T02:20:39.097491+00:00",
+      "durationSeconds": 163.81,
+      "exitCode": 1,
+      "passed": true,
+      "stdout": "{\n  \"schemaVersion\": \"1.0\",\n  \"applicationId\": \"netci-benchmark\",\n  \"environment\": \"ubuntu-24.04-kind-local\",\n  \"regressionThresholdPercent\": 400.0,\n  \"baseline\": {\n    \"runs\": 3,\n    \"successRate\": 1.0,\n    \"totalSecondsAvg\": 7.74,\n    \"queueSecondsAvg\": 0.298,\n    \"provisioningSecondsAvg\": 0.0,\n    \"checkoutSecondsAvg\": 0.876,\n    \"cacheRestoreSecondsAvg\": 0.349,\n    \"buildSecondsAvg\": 3.201,\n    \"cleanupSecondsAvg\": 1.011,\n    \"otherSecondsAvg\": 0.109\n  },\n  \"ephemeral\": {\n    \"runs\": 3,\n    \"successRate\": 1.0,\n    \"totalSecondsAvg\": 46.837,\n    \"queueSecondsAvg\": 1.49,\n    \"provisioningSecondsAvg\": 1.379,\n    \"checkoutSecondsAvg\": 18.877,\n    \"cacheRestoreSecondsAvg\": 0.645,\n    \"buildSecondsAvg\": 6.4,\n    \"cleanupSecondsAvg\": 9.97,\n    \"otherSecondsAvg\": 0.108\n  },\n  \"comparison\": {\n    \"totalDeltaPercent\": 505.13,\n    \"buildDeltaPercent\": 99.94,\n    \"cacheHitRate\": 0.0,\n    \"conclusion\": \"regression\"\n  }\n}\n",
+      "stderr": "",
+      "detail": {}
+    },
+    {
+      "name": "benchmark-report",
+      "command": null,
+      "startedAt": "2026-08-28T02:20:39.097775+00:00",
+      "endedAt": "2026-08-28T02:20:39.097775+00:00",
+      "durationSeconds": 0.0,
+      "exitCode": 0,
+      "passed": true,
+      "stdout": "",
+      "stderr": "",
+      "detail": {
+        "schemaVersion": "1.0",
+        "applicationId": "netci-benchmark",
+        "environment": "ubuntu-24.04-kind-local",
+        "regressionThresholdPercent": 400.0,
+        "baseline": {
+          "runs": 3,
+          "successRate": 1.0,
+          "totalSecondsAvg": 7.74,
+          "queueSecondsAvg": 0.298,
+          "provisioningSecondsAvg": 0.0,
+          "checkoutSecondsAvg": 0.876,
+          "cacheRestoreSecondsAvg": 0.349,
+          "buildSecondsAvg": 3.201,
+          "cleanupSecondsAvg": 1.011,
+          "otherSecondsAvg": 0.109
+        },
+        "ephemeral": {
+          "runs": 3,
+          "successRate": 1.0,
+          "totalSecondsAvg": 46.837,
+          "queueSecondsAvg": 1.49,
+          "provisioningSecondsAvg": 1.379,
+          "checkoutSecondsAvg": 18.877,
+          "cacheRestoreSecondsAvg": 0.645,
+          "buildSecondsAvg": 6.4,
+          "cleanupSecondsAvg": 9.97,
+          "otherSecondsAvg": 0.108
+        },
+        "comparison": {
+          "totalDeltaPercent": 505.13,
+          "buildDeltaPercent": 99.94,
+          "cacheHitRate": 0.0,
+          "conclusion": "regression"
+        }
+      }
+    },
+    {
+      "name": "conclusion",
+      "command": null,
+      "startedAt": "2026-08-28T02:20:39.098130+00:00",
+      "endedAt": "2026-08-28T02:20:39.098130+00:00",
+      "durationSeconds": 0.0,
+      "exitCode": 0,
+      "passed": true,
+      "stdout": "",
+      "stderr": "",
+      "detail": {
+        "baselineTotalSecondsAvg": 7.74,
+        "ephemeralTotalSecondsAvg": 46.837,
+        "totalDeltaPercent": 505.13,
+        "verdict": "regression",
+        "extraSecondsByPhase": {
+          "queue": 1.192,
+          "provisioning": 1.379,
+          "checkout": 18.001,
+          "cacheRestore": 0.296,
+          "build": 3.199,
+          "cleanup": 8.959
+        },
+        "dominantPhase": "checkout",
+        "reading": "the delta is the price of per-build isolation, which ADR-007 accepts deliberately. The breakdown says which part of it is inherent -- provisioning a pod and cloning into an empty workspace -- and which is worth attacking."
+      }
+    }
+  ]
+}

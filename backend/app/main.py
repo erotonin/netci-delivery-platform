@@ -7,15 +7,19 @@ from typing import Literal
 from urllib.parse import urlsplit
 from uuid import UUID, uuid4
 
-from fastapi import FastAPI, Header, HTTPException, Request, status
+from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, HttpUrl, model_validator
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from .adapters.cd_orchestrator import build_cd_orchestrator
+from .adapters.ci_launcher import build_ci_launcher
+from .auth import AuthError, Principal, build_authenticator
 from .domain.models import (
     Application,
+    DeliveryEvent,
     Deployment,
     Environment,
     PipelineRun,
@@ -23,6 +27,12 @@ from .domain.models import (
     Runtime,
 )
 from .delivery import CiResult, DeliveryError, DeliveryPlatform
+from .policy.rules import (
+    PolicyViolation,
+    Role,
+    require_environment_permission,
+    require_separation_of_duties,
+)
 from .portal import PortalError, PortalReadModel
 
 
@@ -74,8 +84,12 @@ app.add_middleware(
     expose_headers=["X-Correlation-Id"],
 )
 
-platform = DeliveryPlatform()
+# Composition root: the engines are chosen here from configuration, never inside
+# the domain. NETCI_CI_MODE / NETCI_CD_MODE default to "none", which means netCI
+# records state and waits for authenticated callbacks instead of pretending work ran.
+platform = DeliveryPlatform(build_ci_launcher(), build_cd_orchestrator())
 portal = PortalReadModel(platform)
+authenticator = build_authenticator()
 
 
 @app.middleware("http")
@@ -104,15 +118,29 @@ def error(
     correlation_id: str | None = None,
     http_status: int = 400,
     headers: dict[str, str] | None = None,
+    detail: dict[str, object] | None = None,
 ) -> JSONResponse:
+    content: dict[str, object] = {"code": code, "message": message, "correlationId": correlation_id}
+    if detail is not None:
+        content["detail"] = detail
     return JSONResponse(
         status_code=http_status,
-        content={"code": code, "message": message, "correlationId": correlation_id},
+        content=content,
         headers=headers,
     )
 
 
-def require_pipeline_api_key(authorization: str | None) -> None:
+LOOPBACK_HOSTS = {"127.0.0.1", "::1", "localhost", "testclient"}
+
+
+def _pipeline_key_principal(authorization: str | None) -> Principal | None:
+    """Recognise the shared pipeline API key and turn it into a machine principal.
+
+    Jenkins and the Temporal worker authenticate with one key rather than per-identity
+    tokens, because they are one system, not a set of people. The key grants exactly the
+    PIPELINE role: enough to report what a build did, never enough to approve anything.
+    """
+
     expected = os.getenv("NETCI_PIPELINE_API_KEY")
     if not expected:
         if os.getenv("NETCI_ENVIRONMENT", "local") != "local":
@@ -123,11 +151,137 @@ def require_pipeline_api_key(authorization: str | None) -> None:
         expected = "netci-local-pipeline-key"
     supplied = authorization.removeprefix("Bearer ") if authorization and authorization.startswith("Bearer ") else ""
     if not supplied or not secrets.compare_digest(supplied, expected):
+        return None
+    return Principal(
+        subject="netci-pipeline",
+        display_name="netCI pipeline",
+        email="",
+        roles=frozenset({Role.PIPELINE}),
+        method="pipeline-key",
+    )
+
+
+def current_principal(
+    request: Request,
+    authorization: str | None = Header(default=None, alias="Authorization"),
+) -> Principal:
+    """Resolve the caller, or refuse the request.
+
+    The pipeline key is tried first so that machine callers keep working unchanged; only
+    then does the configured human authenticator run.
+    """
+
+    machine = _pipeline_key_principal(authorization)
+    if machine is not None:
+        return machine
+    try:
+        principal = authenticator.authenticate(authorization)
+    except AuthError as exc:
         raise HTTPException(
-            status_code=401,
-            detail={"code": "PIPELINE_UNAUTHORIZED", "message": "valid pipeline API key required"},
-            headers={"WWW-Authenticate": "Bearer"},
+            status_code=exc.status,
+            detail={"code": exc.code, "message": exc.message},
+            headers={"WWW-Authenticate": "Bearer"} if exc.status == 401 else None,
+        ) from exc
+
+    # An unauthenticated caller is a local developer, and nothing else. Without this,
+    # forgetting NETCI_AUTH_MODE on a host with an open port publishes production
+    # approval to the network -- a default that fails safe has to fail closed here.
+    if principal.is_anonymous:
+        client = request.client.host if request.client else ""
+        if client not in LOOPBACK_HOSTS:
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "code": "AUTH_NOT_CONFIGURED",
+                    "message": (
+                        "NETCI_AUTH_MODE=none serves loopback only. Set NETCI_AUTH_MODE=token "
+                        "or oidc to accept requests from the network."
+                    ),
+                },
+            )
+    return principal
+
+
+def requires(*roles: Role, unauthenticated_code: str = "UNAUTHENTICATED"):
+    """Dependency factory: the caller must hold at least one of these roles.
+
+    `unauthenticated_code` exists so the machine endpoints keep answering with the
+    PIPELINE_UNAUTHORIZED code that `scripts/netci_callback.py` and the CI templates
+    already recognise; changing it would break every build's error handling for a
+    cosmetic gain.
+    """
+
+    allowed = frozenset(roles)
+
+    def dependency(principal: Principal = Depends(current_principal)) -> Principal:
+        if principal.has_any(*allowed):
+            return principal
+        required = ", ".join(sorted(role.value for role in allowed))
+        # An anonymous caller presented no credential at all, so the answer is "identify
+        # yourself" (401), not "you may not" (403). The distinction matters to a client:
+        # one is fixed by authenticating, the other by asking for access.
+        if principal.is_anonymous:
+            raise HTTPException(
+                status_code=401,
+                detail={
+                    "code": unauthenticated_code,
+                    "message": f"this action requires one of: {required}",
+                },
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        held = ", ".join(sorted(role.value for role in principal.roles)) or "no roles"
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "code": "FORBIDDEN",
+                "message": f"this action requires one of: {required}; {principal.subject} holds: {held}",
+            },
         )
+
+    return dependency
+
+
+# Read access is the lowest bar; everything else is named where it is used.
+ReadAccess = Depends(requires(Role.VIEWER, Role.DEVELOPER, Role.REVIEWER, Role.PLATFORM_ADMIN, Role.PIPELINE))
+DeveloperAccess = Depends(requires(Role.DEVELOPER, Role.PLATFORM_ADMIN))
+ReviewerAccess = Depends(requires(Role.REVIEWER, Role.PLATFORM_ADMIN))
+AdminAccess = Depends(requires(Role.PLATFORM_ADMIN))
+PipelineStartAccess = Depends(requires(Role.DEVELOPER, Role.REVIEWER, Role.PLATFORM_ADMIN))
+# Machine-only, with no human escape hatch. These endpoints assert what a build or a
+# deployment actually did; a person holding platform-admin has no business forging one,
+# and including that role here would also make the pipeline key optional whenever
+# NETCI_AUTH_MODE=none, which is exactly when it is most needed.
+PipelineAccess = Depends(requires(Role.PIPELINE, unauthenticated_code="PIPELINE_UNAUTHORIZED"))
+
+
+def _require_environment_role(environment: Environment, principal: Principal) -> None:
+    """Apply the environment policy to the authenticated caller.
+
+    `require_environment_permission` has existed in the policy module since the start but
+    was never called, which made production role separation documentation rather than a
+    control. This is its call site.
+    """
+
+    try:
+        require_environment_permission(environment, principal.roles)
+    except PolicyViolation as exc:
+        raise HTTPException(
+            status_code=403, detail={"code": "ENVIRONMENT_FORBIDDEN", "message": str(exc)}
+        ) from exc
+
+
+def separation_of_duties_enabled(principal: Principal | None = None) -> bool:
+    """Whether the requester and the approver must be different people.
+
+    Off for an anonymous caller: with authentication disabled every caller is the same
+    subject, so the check would refuse every approval without separating anyone. That
+    is a reason to configure authentication, which `/healthz` reports, not a reason to
+    pretend the control is active.
+    """
+
+    if principal is not None and principal.is_anonymous:
+        return False
+    return os.getenv("NETCI_REQUIRE_SEPARATION_OF_DUTIES", "true").strip().lower() not in {"false", "0", "no"}
 
 
 def application_json(item: Application) -> dict[str, object]:
@@ -135,11 +289,26 @@ def application_json(item: Application) -> dict[str, object]:
 
 
 def pipeline_json(item: PipelineRun) -> dict[str, object]:
-    return {"id": str(item.id), "applicationId": str(item.application_id), "status": item.status.value, "commitSha": item.commit_sha, "branch": item.branch, "environment": item.environment.value, "parameters": dict(item.parameters), "correlationId": item.correlation_id, "jenkinsRunId": item.jenkins_run_id, "workflowId": item.workflow_id, "artifactDigest": item.artifact_digest, "createdAt": item.created_at.isoformat(), "updatedAt": item.updated_at.isoformat()}
+    return {"id": str(item.id), "applicationId": str(item.application_id), "status": item.status.value, "commitSha": item.commit_sha, "branch": item.branch, "environment": item.environment.value, "parameters": dict(item.parameters), "correlationId": item.correlation_id, "jenkinsRunId": item.jenkins_run_id, "workflowId": item.workflow_id, "artifactDigest": item.artifact_digest, "startedBy": item.started_by, "createdAt": item.created_at.isoformat(), "updatedAt": item.updated_at.isoformat()}
 
 
 def deployment_json(item: Deployment) -> dict[str, object]:
     return {"id": str(item.id), "applicationId": str(item.application_id), "pipelineRunId": str(item.pipeline_run_id) if item.pipeline_run_id else None, "runtime": item.runtime.value, "environment": item.environment.value, "status": item.status.value, "artifactDigest": item.artifact_digest, "previousArtifactDigest": item.previous_artifact_digest, "approvedBy": item.approved_by, "createdAt": item.created_at.isoformat(), "updatedAt": item.updated_at.isoformat()}
+
+
+def delivery_event_json(item: DeliveryEvent) -> dict[str, object]:
+    return {
+        "id": str(item.id),
+        "eventType": item.event_type.value,
+        "applicationId": str(item.application_id),
+        "pipelineRunId": str(item.pipeline_run_id) if item.pipeline_run_id else None,
+        "deploymentId": str(item.deployment_id) if item.deployment_id else None,
+        "commitSha": item.commit_sha,
+        "environment": item.environment.value if item.environment else None,
+        "successful": item.successful,
+        "requiresIntervention": item.requires_intervention,
+        "occurredAt": item.occurred_at.isoformat(),
+    }
 
 
 class ApplicationCreate(BaseModel):
@@ -165,8 +334,10 @@ class CiResultRequest(BaseModel):
 
 
 class ApprovalRequest(BaseModel):
+    # No actor field: the approver is the authenticated principal. A body-supplied actor
+    # would be a claim the server has no way to check, and an audit trail of claims is
+    # not an audit trail.
     comment: str | None = None
-    actor: str = "local-reviewer"
 
 
 class DeploymentResultRequest(BaseModel):
@@ -266,7 +437,6 @@ class ModuleCreate(BaseModel):
 
 
 class PortalApprovalRequest(BaseModel):
-    actor: str = Field(default="local-reviewer", min_length=2, max_length=120)
     comment: str | None = Field(default=None, max_length=1000)
 
 
@@ -278,7 +448,7 @@ class ProductionRequestModuleCreate(BaseModel):
 
 class ProductionRequestCreate(BaseModel):
     modules: list[ProductionRequestModuleCreate] = Field(min_length=1, max_length=20)
-    requestedBy: str = Field(default="Admin", min_length=2, max_length=120)
+    # requestedBy is the authenticated principal; see ApprovalRequest.
     scheduledFor: datetime
     rollbackStrategy: Literal["automatic", "manual"] = "automatic"
     runAutomationTests: bool = True
@@ -297,7 +467,39 @@ class VersionCreate(BaseModel):
     tag: str = Field(pattern=r"^v?\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$")
     gitTagUrl: HttpUrl
     artifactUrl: HttpUrl
-    createdBy: str = Field(default="Admin", min_length=2, max_length=120)
+
+
+class SbomEvidence(BaseModel):
+    generatedBy: Literal["syft"]
+    location: str = Field(min_length=1, max_length=1000)
+    format: str = Field(default="cyclonedx-json", max_length=64)
+
+
+class VulnerabilityScanEvidence(BaseModel):
+    scanner: Literal["trivy"]
+    status: Literal["passed", "failed"]
+    critical: int = Field(default=0, ge=0)
+    high: int = Field(default=0, ge=0)
+    medium: int = Field(default=0, ge=0)
+    reportLocation: str | None = Field(default=None, max_length=1000)
+
+
+class SignatureEvidence(BaseModel):
+    provider: Literal["cosign"]
+    verified: bool
+    certificateIdentity: str | None = Field(default=None, max_length=500)
+    bundleLocation: str | None = Field(default=None, max_length=1000)
+
+
+class SecurityEvidenceRequest(BaseModel):
+    """Supply-chain evidence a CI run publishes for one immutable artifact."""
+
+    artifactDigest: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+    artifactRef: str | None = Field(default=None, max_length=1000)
+    sbom: SbomEvidence
+    vulnerabilityScan: VulnerabilityScanEvidence
+    signature: SignatureEvidence
+    buildRunId: str | None = Field(default=None, max_length=255)
 
 
 class VulnerabilityCounts(BaseModel):
@@ -318,13 +520,14 @@ class VersionCiReport(BaseModel):
 @app.exception_handler(StarletteHTTPException)
 async def http_exception_handler(request: Request, exc: StarletteHTTPException) -> JSONResponse:
     correlation_id = request.state.correlation_id
-    detail = exc.detail if isinstance(exc.detail, dict) else {"code": "HTTP_ERROR", "message": str(exc.detail)}
+    detail_dict = exc.detail if isinstance(exc.detail, dict) else {"code": "HTTP_ERROR", "message": str(exc.detail)}
     return error(
-        detail.get("code", "HTTP_ERROR"),
-        detail.get("message", "request failed"),
+        detail_dict.get("code", "HTTP_ERROR"),
+        detail_dict.get("message", "request failed"),
         correlation_id,
         exc.status_code,
         dict(exc.headers) if exc.headers else None,
+        detail=detail_dict if isinstance(exc.detail, dict) else None,
     )
 
 
@@ -344,31 +547,69 @@ async def portal_exception_handler(request: Request, exc: PortalError) -> JSONRe
 
 
 @app.get("/healthz")
-def healthz() -> dict[str, object]:
+def healthz(response: Response) -> dict[str, object]:
+    """Report liveness and the state of each configured dependency.
+
+    A configured-but-unreachable database is reported as `degraded` with 503, not as
+    `ok`. Reporting healthy while writes would fail is precisely the false-green this
+    platform exists to prevent, and a load balancer needs to see it too.
+    """
+
+    portal_health = portal.persistence_health()
+    delivery_health = platform.persistence_health()
+    degraded = delivery_health.startswith("unavailable") or portal_health.get("status") == "degraded"
+    if degraded:
+        response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
     return {
-        "status": "ok",
+        "status": "degraded" if degraded else "ok",
         "version": "0.1.0",
-        "dependencies": {"portalPersistence": portal.persistence_health()},
+        "engines": {
+            "ci": getattr(platform.ci_launcher, "mode", "unknown"),
+            "cd": getattr(platform.cd_orchestrator, "mode", "unknown"),
+            # Reported so an operator can see from the outside that a deployment is
+            # running without authentication, instead of discovering it from an incident.
+            "auth": getattr(authenticator, "mode", "unknown"),
+        },
+        "dependencies": {
+            "portalPersistence": portal_health,
+            "deliveryPersistence": delivery_health,
+        },
+    }
+
+
+@app.get("/me")
+def whoami(principal: Principal = Depends(current_principal)) -> dict[str, object]:
+    """Who the presented credential belongs to, and what it may do.
+
+    The Portal calls this to turn a token into a session, so the browser never decides
+    who the user is or which controls to enable -- the server does, and the same answer
+    is what every other endpoint enforces.
+    """
+
+    return {
+        "principal": principal.as_json(),
+        "authMode": getattr(authenticator, "mode", "unknown"),
+        "separationOfDuties": separation_of_duties_enabled(principal),
     }
 
 
 @app.get("/stage-catalog")
-def stage_catalog() -> dict[str, list[dict[str, object]]]:
+def stage_catalog(_: Principal = ReadAccess) -> dict[str, list[dict[str, object]]]:
     return platform.stage_catalog()
 
 
 @app.get("/portal/dashboard")
-def portal_dashboard() -> dict[str, object]:
+def portal_dashboard(_: Principal = ReadAccess) -> dict[str, object]:
     return portal.dashboard()
 
 
 @app.get("/dcim/services")
-def search_dcim_services(query: str = "") -> dict[str, object]:
+def search_dcim_services(query: str = "", _: Principal = ReadAccess) -> dict[str, object]:
     return {"source": "fixture", "items": portal.dcim_services(query)}
 
 
 @app.get("/dcim/modules")
-def list_dcim_modules(systemId: str) -> dict[str, object]:
+def list_dcim_modules(systemId: str, _: Principal = ReadAccess) -> dict[str, object]:
     try:
         return {"source": "fixture", "systemId": systemId, "items": portal.dcim_modules(systemId)}
     except KeyError as exc:
@@ -376,12 +617,12 @@ def list_dcim_modules(systemId: str) -> dict[str, object]:
 
 
 @app.get("/systems")
-def list_systems() -> list[dict[str, object]]:
+def list_systems(_: Principal = ReadAccess) -> list[dict[str, object]]:
     return portal.systems()
 
 
 @app.post("/systems", status_code=status.HTTP_201_CREATED)
-def create_system(payload: SystemCreate) -> dict[str, object]:
+def create_system(payload: SystemCreate, _: Principal = DeveloperAccess) -> dict[str, object]:
     try:
         return portal.create_system(
             system_id=payload.id,
@@ -394,7 +635,7 @@ def create_system(payload: SystemCreate) -> dict[str, object]:
 
 
 @app.get("/systems/{systemId}")
-def get_system(systemId: str) -> dict[str, object]:
+def get_system(systemId: str, _: Principal = ReadAccess) -> dict[str, object]:
     try:
         return portal.system(systemId)
     except KeyError as exc:
@@ -402,7 +643,7 @@ def get_system(systemId: str) -> dict[str, object]:
 
 
 @app.get("/systems/{systemId}/modules")
-def list_system_modules(systemId: str) -> list[dict[str, object]]:
+def list_system_modules(systemId: str, _: Principal = ReadAccess) -> list[dict[str, object]]:
     try:
         return list(portal.system(systemId)["modules"])
     except KeyError as exc:
@@ -446,7 +687,7 @@ def create_module(
 
 
 @app.get("/modules/{moduleId}")
-def get_module(moduleId: str) -> dict[str, object]:
+def get_module(moduleId: str, _: Principal = ReadAccess) -> dict[str, object]:
     try:
         return portal.module(moduleId)
     except KeyError as exc:
@@ -454,7 +695,7 @@ def get_module(moduleId: str) -> dict[str, object]:
 
 
 @app.get("/modules/{moduleId}/overview")
-def get_module_overview(moduleId: str) -> dict[str, object]:
+def get_module_overview(moduleId: str, _: Principal = ReadAccess) -> dict[str, object]:
     try:
         return portal.module_overview(moduleId)
     except KeyError as exc:
@@ -467,7 +708,9 @@ def start_module_pipeline_run(
     payload: PipelineRunCreate,
     request: Request,
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key", min_length=1, max_length=128),
+    principal: Principal = PipelineStartAccess,
 ) -> dict[str, object]:
+    _require_environment_role(payload.environment, principal)
     try:
         module = portal.module(moduleId)
         application_id = module.get("applicationId")
@@ -481,6 +724,7 @@ def start_module_pipeline_run(
             parameters=payload.parameters,
             correlation_id=request.state.correlation_id,
             idempotency_key=idempotency_key,
+            started_by=principal.subject,
         )
         return pipeline_json(run)
     except KeyError as exc:
@@ -488,7 +732,7 @@ def start_module_pipeline_run(
 
 
 @app.get("/modules/{moduleId}/pipeline-runs")
-def list_module_pipeline_runs(moduleId: str) -> dict[str, object]:
+def list_module_pipeline_runs(moduleId: str, _: Principal = ReadAccess) -> dict[str, object]:
     try:
         return portal.pipeline_runs(moduleId)
     except KeyError as exc:
@@ -496,7 +740,7 @@ def list_module_pipeline_runs(moduleId: str) -> dict[str, object]:
 
 
 @app.get("/modules/{moduleId}/versions")
-def list_module_versions(moduleId: str) -> dict[str, object]:
+def list_module_versions(moduleId: str, _: Principal = ReadAccess) -> dict[str, object]:
     try:
         return portal.versions(moduleId)
     except KeyError as exc:
@@ -504,14 +748,18 @@ def list_module_versions(moduleId: str) -> dict[str, object]:
 
 
 @app.post("/modules/{moduleId}/versions", status_code=status.HTTP_201_CREATED)
-def create_module_version(moduleId: str, payload: VersionCreate) -> dict[str, object]:
+def create_module_version(
+    moduleId: str,
+    payload: VersionCreate,
+    principal: Principal = Depends(requires(Role.DEVELOPER, Role.PLATFORM_ADMIN, Role.PIPELINE)),
+) -> dict[str, object]:
     try:
         return portal.register_version(
             moduleId,
             tag=payload.tag,
             git_tag_url=str(payload.gitTagUrl),
             artifact_url=str(payload.artifactUrl),
-            created_by=payload.createdBy,
+            created_by=principal.subject,
         )
     except KeyError as exc:
         raise HTTPException(status_code=404, detail={"code": "MODULE_NOT_FOUND", "message": str(exc)}) from exc
@@ -524,9 +772,8 @@ def publish_module_ci_report(
     moduleId: str,
     tag: str,
     payload: VersionCiReport,
-    authorization: str | None = Header(default=None, alias="Authorization"),
+    _: Principal = PipelineAccess,
 ) -> dict[str, object]:
-    require_pipeline_api_key(authorization)
     try:
         return portal.record_ci_report(moduleId, tag, payload.model_dump())
     except KeyError as exc:
@@ -534,7 +781,7 @@ def publish_module_ci_report(
 
 
 @app.get("/modules/{moduleId}/dora")
-def get_module_dora(moduleId: str) -> dict[str, object]:
+def get_module_dora(moduleId: str, _: Principal = ReadAccess) -> dict[str, object]:
     try:
         return portal.dora(moduleId)
     except KeyError as exc:
@@ -542,7 +789,7 @@ def get_module_dora(moduleId: str) -> dict[str, object]:
 
 
 @app.get("/systems/{systemId}/dora")
-def get_system_dora(systemId: str) -> dict[str, object]:
+def get_system_dora(systemId: str, _: Principal = ReadAccess) -> dict[str, object]:
     try:
         return portal.dora(systemId)
     except KeyError as exc:
@@ -550,7 +797,7 @@ def get_system_dora(systemId: str) -> dict[str, object]:
 
 
 @app.get("/production-requests")
-def list_production_requests() -> list[dict[str, object]]:
+def list_production_requests(_: Principal = ReadAccess) -> list[dict[str, object]]:
     return portal.production_requests()
 
 
@@ -558,11 +805,14 @@ def list_production_requests() -> list[dict[str, object]]:
 def create_production_request(
     payload: ProductionRequestCreate,
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key", min_length=1, max_length=128),
+    principal: Principal = DeveloperAccess,
 ) -> dict[str, object]:
     try:
+        # requested_by comes from the verified identity, never from the body: it is the
+        # half of the separation-of-duties check that the approver is compared against.
         return portal.create_production_request(
             modules=[item.model_dump() for item in payload.modules],
-            requested_by=payload.requestedBy,
+            requested_by=principal.subject,
             scheduled_for=payload.scheduledFor,
             rollback_strategy=payload.rollbackStrategy,
             run_automation_tests=payload.runAutomationTests,
@@ -575,9 +825,23 @@ def create_production_request(
 
 
 @app.post("/production-requests/{requestId}/approve", status_code=status.HTTP_202_ACCEPTED)
-def approve_production_request(requestId: str, payload: PortalApprovalRequest) -> dict[str, object]:
+def approve_production_request(
+    requestId: str, payload: PortalApprovalRequest, principal: Principal = ReviewerAccess
+) -> dict[str, object]:
+    if separation_of_duties_enabled(principal):
+        existing = portal.production_request(requestId)
+        if existing is None:
+            raise HTTPException(
+                status_code=404, detail={"code": "REQUEST_NOT_FOUND", "message": "production request not found"}
+            )
+        try:
+            require_separation_of_duties(str(existing.get("requestedBy") or ""), principal.subject)
+        except PolicyViolation as exc:
+            raise HTTPException(
+                status_code=403, detail={"code": "SEPARATION_OF_DUTIES", "message": str(exc)}
+            ) from exc
     try:
-        return portal.approve_request(requestId, payload.actor, payload.comment)
+        return portal.approve_request(requestId, principal.subject, payload.comment)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail={"code": "REQUEST_NOT_FOUND", "message": str(exc)}) from exc
     except ValueError as exc:
@@ -585,9 +849,11 @@ def approve_production_request(requestId: str, payload: PortalApprovalRequest) -
 
 
 @app.post("/production-requests/{requestId}/reject", status_code=status.HTTP_202_ACCEPTED)
-def reject_production_request(requestId: str, payload: PortalApprovalRequest) -> dict[str, object]:
+def reject_production_request(
+    requestId: str, payload: PortalApprovalRequest, principal: Principal = ReviewerAccess
+) -> dict[str, object]:
     try:
-        return portal.reject_request(requestId, payload.actor, payload.comment)
+        return portal.reject_request(requestId, principal.subject, payload.comment)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail={"code": "REQUEST_NOT_FOUND", "message": str(exc)}) from exc
     except ValueError as exc:
@@ -595,17 +861,21 @@ def reject_production_request(requestId: str, payload: PortalApprovalRequest) ->
 
 
 @app.get("/servers")
-def list_servers() -> list[dict[str, object]]:
+def list_servers(_: Principal = ReadAccess) -> list[dict[str, object]]:
     return portal.servers()
 
 
 @app.get("/audit-events")
-def list_audit_events(systemId: str | None = None, moduleId: str | None = None) -> list[dict[str, object]]:
+def list_audit_events(systemId: str | None = None, moduleId: str | None = None, _: Principal = ReadAccess) -> list[dict[str, object]]:
     return portal.audit_events(system_id=systemId, module_id=moduleId)
 
 
 @app.post("/applications", status_code=status.HTTP_201_CREATED, response_model=None)
-def create_application(payload: ApplicationCreate, idempotency_key: str | None = Header(default=None, alias="Idempotency-Key", min_length=1, max_length=128)) -> dict[str, object]:
+def create_application(
+    payload: ApplicationCreate,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key", min_length=1, max_length=128),
+    _: Principal = DeveloperAccess,
+) -> dict[str, object]:
     application = platform.create_application(
         name=payload.name,
         repository_url=str(payload.repositoryUrl),
@@ -619,12 +889,53 @@ def create_application(payload: ApplicationCreate, idempotency_key: str | None =
 
 
 @app.get("/applications")
-def list_applications() -> list[dict[str, object]]:
+def list_applications(_: Principal = ReadAccess) -> list[dict[str, object]]:
     return [application_json(item) for item in platform.list_applications()]
 
 
+@app.get("/applications/{applicationId}/dora")
+def get_application_dora(applicationId: UUID, _: Principal = ReadAccess) -> dict[str, object]:
+    """DORA for one delivery application, in the api/dora-dashboard.schema.json shape.
+
+    `sourceEvents` is the number of durable delivery events the metrics were
+    projected from, so a dashboard figure can always be traced back to its input.
+    """
+
+    platform.get_application(applicationId)
+    projection = portal.dora_projection([applicationId])
+    window = projection["window"]
+    assert isinstance(window, dict)
+    values = {str(item["key"]): float(item["value"]) for item in projection["metrics"]}  # type: ignore[index,union-attr]
+    return {
+        "applicationId": str(applicationId),
+        "period": {"from": window["from"], "to": window["to"]},
+        "metrics": {
+            "deploymentFrequency": values["deploymentFrequency"],
+            "changeLeadTimeSecondsAvg": round(values["leadTime"] * 3600, 3),
+            "changeFailRate": round(values["changeFailureRate"] / 100, 6),
+            "timeToRestoreServiceSecondsAvg": round(values["timeToRestoreService"] * 3600, 3),
+        },
+        "sourceEvents": projection["sourceEventCount"],
+    }
+
+
+@app.get("/delivery-events")
+def list_delivery_events(applicationId: UUID | None = None, _: Principal = ReadAccess) -> dict[str, object]:
+    """Raw source events behind every DORA number, for evidence collection."""
+
+    events = platform.delivery_events(applicationId)
+    return {"count": len(events), "items": [delivery_event_json(item) for item in events]}
+
+
 @app.post("/applications/{applicationId}/pipeline-runs", status_code=status.HTTP_202_ACCEPTED, response_model=None)
-def start_pipeline_run(applicationId: UUID, payload: PipelineRunCreate, request: Request, idempotency_key: str | None = Header(default=None, alias="Idempotency-Key", min_length=1, max_length=128)) -> JSONResponse | dict[str, object]:
+def start_pipeline_run(
+    applicationId: UUID,
+    payload: PipelineRunCreate,
+    request: Request,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key", min_length=1, max_length=128),
+    principal: Principal = PipelineStartAccess,
+) -> JSONResponse | dict[str, object]:
+    _require_environment_role(payload.environment, principal)
     run = platform.start_pipeline(
         applicationId,
         commit_sha=payload.commitSha,
@@ -633,17 +944,18 @@ def start_pipeline_run(applicationId: UUID, payload: PipelineRunCreate, request:
         parameters=payload.parameters,
         correlation_id=request.state.correlation_id,
         idempotency_key=idempotency_key,
+        started_by=principal.subject,
     )
     return pipeline_json(run)
 
 
 @app.get("/pipeline-runs/{pipelineRunId}")
-def get_pipeline_run(pipelineRunId: UUID) -> dict[str, object]:
+def get_pipeline_run(pipelineRunId: UUID, _: Principal = ReadAccess) -> dict[str, object]:
     return pipeline_json(platform.get_pipeline(pipelineRunId))
 
 
 @app.get("/pipeline-runs/{pipelineRunId}/logs")
-def get_pipeline_logs(pipelineRunId: UUID) -> dict[str, object]:
+def get_pipeline_logs(pipelineRunId: UUID, _: Principal = ReadAccess) -> dict[str, object]:
     run, lines = platform.get_pipeline_logs(pipelineRunId)
     return {"pipelineRunId": str(pipelineRunId), "correlationId": run.correlation_id, "lines": list(lines)}
 
@@ -652,9 +964,8 @@ def get_pipeline_logs(pipelineRunId: UUID) -> dict[str, object]:
 def record_ci_result(
     pipelineRunId: UUID,
     payload: CiResultRequest,
-    authorization: str | None = Header(default=None, alias="Authorization"),
+    _: Principal = PipelineAccess,
 ) -> dict[str, object]:
-    require_pipeline_api_key(authorization)
     result: CiResult = platform.record_ci_result(
         pipelineRunId,
         payload.status.value,
@@ -667,13 +978,52 @@ def record_ci_result(
     }
 
 
+@app.post("/pipeline-runs/{pipelineRunId}/security-evidence", status_code=status.HTTP_202_ACCEPTED)
+def publish_security_evidence(
+    pipelineRunId: UUID,
+    payload: SecurityEvidenceRequest,
+    _: Principal = PipelineAccess,
+) -> dict[str, object]:
+    """CI publishes SBOM, scan and signature evidence; netCI returns the policy verdict.
+
+    The verdict is advisory here and binding at deploy time: `record_ci_result`
+    re-evaluates the same rules before any deployment is created.
+    """
+
+    decision = platform.record_security_evidence(pipelineRunId, payload.model_dump(mode="json"))
+    return {"pipelineRunId": str(pipelineRunId), **decision.as_json()}
+
+
+@app.get("/pipeline-runs/{pipelineRunId}/security-evidence")
+def get_security_evidence(pipelineRunId: UUID, _: Principal = ReadAccess) -> dict[str, object]:
+    return platform.security_evidence(pipelineRunId)
+
+
 @app.post("/deployments/{deploymentId}/approve", status_code=status.HTTP_202_ACCEPTED, response_model=None)
-def approve_deployment(deploymentId: UUID, payload: ApprovalRequest) -> JSONResponse | dict[str, object]:
-    return deployment_json(platform.approve_deployment(deploymentId, payload.actor))
+def approve_deployment(
+    deploymentId: UUID, payload: ApprovalRequest, principal: Principal = ReviewerAccess
+) -> JSONResponse | dict[str, object]:
+    """Release a deployment that is waiting for a human.
+
+    Three controls apply, in order: the caller must hold a reviewer role, production
+    additionally requires that role by environment policy, and the approver must not be
+    whoever started the run that produced this deployment.
+    """
+
+    deployment = platform.get_deployment(deploymentId)
+    _require_environment_role(deployment.environment, principal)
+    if separation_of_duties_enabled(principal):
+        try:
+            require_separation_of_duties(platform.deployment_requested_by(deploymentId), principal.subject)
+        except PolicyViolation as exc:
+            raise HTTPException(
+                status_code=403, detail={"code": "SEPARATION_OF_DUTIES", "message": str(exc)}
+            ) from exc
+    return deployment_json(platform.approve_deployment(deploymentId, principal.subject))
 
 
 @app.get("/deployments/{deploymentId}")
-def get_deployment(deploymentId: UUID) -> dict[str, object]:
+def get_deployment(deploymentId: UUID, _: Principal = ReadAccess) -> dict[str, object]:
     return deployment_json(platform.get_deployment(deploymentId))
 
 
@@ -681,16 +1031,17 @@ def get_deployment(deploymentId: UUID) -> dict[str, object]:
 def record_deployment_result(
     deploymentId: UUID,
     payload: DeploymentResultRequest,
-    authorization: str | None = Header(default=None, alias="Authorization"),
+    _: Principal = PipelineAccess,
 ) -> dict[str, object]:
-    require_pipeline_api_key(authorization)
     return deployment_json(
         platform.record_deployment_result(deploymentId, payload.status, payload.message)
     )
 
 
 @app.post("/deployments/{deploymentId}/rollback", status_code=status.HTTP_202_ACCEPTED, response_model=None)
-def rollback_deployment(deploymentId: UUID, payload: RollbackRequest) -> JSONResponse | dict[str, object]:
+def rollback_deployment(
+    deploymentId: UUID, payload: RollbackRequest, _: Principal = ReviewerAccess
+) -> JSONResponse | dict[str, object]:
     return deployment_json(
         platform.rollback_deployment(deploymentId, payload.targetArtifactDigest)
     )

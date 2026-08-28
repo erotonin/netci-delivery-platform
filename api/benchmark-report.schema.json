@@ -22,16 +22,18 @@
   "$defs": {
     "mode": {
       "type": "object",
-      "required": ["runs", "successRate", "totalSecondsAvg", "queueSecondsAvg", "provisioningSecondsAvg", "cacheRestoreSecondsAvg", "buildSecondsAvg", "cleanupSecondsAvg"],
+      "required": ["runs", "successRate", "totalSecondsAvg", "queueSecondsAvg", "provisioningSecondsAvg", "checkoutSecondsAvg", "cacheRestoreSecondsAvg", "buildSecondsAvg", "cleanupSecondsAvg", "otherSecondsAvg"],
       "properties": {
         "runs": {"type": "integer", "minimum": 1},
         "successRate": {"type": "number", "minimum": 0, "maximum": 1},
         "totalSecondsAvg": {"type": "number", "minimum": 0},
         "queueSecondsAvg": {"type": "number", "minimum": 0},
         "provisioningSecondsAvg": {"type": "number", "minimum": 0},
+        "checkoutSecondsAvg": {"type": "number", "minimum": 0, "description": "Fetching the source. An ephemeral agent clones from scratch every build; a shared one updates the clone it kept. Usually the largest single component of the difference."},
         "cacheRestoreSecondsAvg": {"type": "number", "minimum": 0},
         "buildSecondsAvg": {"type": "number", "minimum": 0},
-        "cleanupSecondsAvg": {"type": "number", "minimum": 0}
+        "cleanupSecondsAvg": {"type": "number", "minimum": 0},
+        "otherSecondsAvg": {"type": "number", "minimum": 0, "description": "Stages not attributed to a named phase. Non-zero means the pipeline grew a stage the classifier does not know about; it is reported rather than folded into cleanup."}
       }
     }
   }
