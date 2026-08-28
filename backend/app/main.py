@@ -18,6 +18,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from .adapters.cd_orchestrator import build_cd_orchestrator
 from .adapters.ci_launcher import build_ci_launcher
 from .auth import AuthError, Principal, build_authenticator
+from .client_address import LOOPBACK_HOSTS, resolve_client
 from .ratelimit import build_rate_limiter
 from .domain.models import (
     Application,
@@ -77,6 +78,9 @@ def configured_cors_origins() -> list[str]:
         raise ValueError("NETCI_ALLOWED_ORIGINS must contain at least one origin")
     return origins
 
+# Re-exported: tests and operators reason about which callers count as local.
+__all__ = ["app", "LOOPBACK_HOSTS", "resolve_client"]
+
 app = FastAPI(title="netCI Delivery API", version="0.1.0")
 app.add_middleware(
     CORSMiddleware,
@@ -122,7 +126,9 @@ async def correlation_id_middleware(request: Request, call_next):
         if authorization:
             caller = "credential:" + hashlib.sha256(authorization.encode()).hexdigest()[:32]
         else:
-            caller = "address:" + (request.client.host if request.client else "unknown")
+            # The forwarded client where a proxy chain is configured, so one noisy caller
+            # behind the proxy does not throttle everyone sharing the proxy's address.
+            caller = "address:" + (resolve_client(request.headers, request.client.host if request.client else "").address or "unknown")
         verdict = rate_limiter.check(caller)
         if not verdict.allowed:
             throttled = error(
@@ -158,9 +164,6 @@ def error(
         content=content,
         headers=headers,
     )
-
-
-LOOPBACK_HOSTS = {"127.0.0.1", "::1", "localhost", "testclient"}
 
 
 def _pipeline_key_principal(authorization: str | None) -> Principal | None:
@@ -216,18 +219,25 @@ def current_principal(
     # An unauthenticated caller is a local developer, and nothing else. Without this,
     # forgetting NETCI_AUTH_MODE on a host with an open port publishes production
     # approval to the network -- a default that fails safe has to fail closed here.
+    #
+    # `is_trusted_loopback`, not the socket address: behind a reverse proxy on the same
+    # host every request arrives from 127.0.0.1, and a naive check would see the whole
+    # network as loopback.
     if principal.is_anonymous:
-        client = request.client.host if request.client else ""
-        if client not in LOOPBACK_HOSTS:
+        client = resolve_client(request.headers, request.client.host if request.client else "")
+        if not client.is_trusted_loopback:
+            detail = (
+                "NETCI_AUTH_MODE=none serves loopback only. Set NETCI_AUTH_MODE=token "
+                "or oidc to accept requests from the network."
+            )
+            if client.forwarded and not client.trusted:
+                detail += (
+                    " This request came through a proxy, so netCI cannot tell where it "
+                    "originated; set NETCI_TRUSTED_PROXY_HOPS if netCI is behind one."
+                )
             raise HTTPException(
                 status_code=403,
-                detail={
-                    "code": "AUTH_NOT_CONFIGURED",
-                    "message": (
-                        "NETCI_AUTH_MODE=none serves loopback only. Set NETCI_AUTH_MODE=token "
-                        "or oidc to accept requests from the network."
-                    ),
-                },
+                detail={"code": "AUTH_NOT_CONFIGURED", "message": detail},
             )
     return principal
 

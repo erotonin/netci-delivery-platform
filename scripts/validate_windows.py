@@ -57,6 +57,7 @@ REQUIRED = [
     "scripts/netci_backup.py",
     "backend/app/auth.py",
     "backend/app/ratelimit.py",
+    "backend/app/client_address.py",
     "scripts/lab.sh",
     "scripts/jenkins_lab.sh",
     "scripts/backstage_lab.sh",

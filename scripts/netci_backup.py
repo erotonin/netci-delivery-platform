@@ -32,6 +32,7 @@ import getpass
 import hashlib
 import json
 import os
+import re
 import subprocess
 import sys
 import urllib.parse
@@ -99,6 +100,22 @@ def run_in_postgres(url: str, command: list[str], *, stdin: bytes | None = None,
         docker += ["-v", mount]
     docker += [POSTGRES_IMAGE, *command]
     return subprocess.run(docker, input=stdin, capture_output=True)
+
+
+def safe_identifier(name: str, *, what: str) -> str:
+    """A database name that can be interpolated into DDL without quoting games.
+
+    CREATE and DROP DATABASE cannot take a bind parameter, so the name goes into the
+    statement text. Restricting it to the shape PostgreSQL accepts unquoted means there
+    is nothing to escape -- rather than escaping carefully and hoping.
+    """
+
+    if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,62}", name):
+        fail(
+            f"{what} must be a plain PostgreSQL identifier (letters, digits and "
+            f"underscores, not starting with a digit): {name!r}"
+        )
+    return name
 
 
 def psql_value(url: str, sql: str) -> str:
@@ -224,7 +241,10 @@ def verify(arguments: argparse.Namespace) -> int:
 
     admin_url = database_url(arguments.database_url)
     parts = split(admin_url)
-    scratch = arguments.scratch_database or f"netci_verify_{datetime.now(timezone.utc).strftime('%H%M%S')}"
+    scratch = safe_identifier(
+        arguments.scratch_database or f"netci_verify_{datetime.now(timezone.utc).strftime('%H%M%S')}",
+        what="--scratch-database",
+    )
     maintenance = urllib.parse.urlunsplit((
         "postgresql",
         f"{urllib.parse.quote(parts['user'])}:{urllib.parse.quote(parts['password'])}@{parts['host']}:{parts['port']}",

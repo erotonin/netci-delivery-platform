@@ -295,18 +295,30 @@ def test_open_mode_serves_loopback_only():
     from app.auth import OpenAuthenticator
     from fastapi import HTTPException
 
-    class _Remote:
-        host = "10.1.2.3"
-
-    class _Request:
-        client = _Remote()
+    def request(host: str, headers: dict | None = None):
+        return type("_Request", (), {
+            "client": type("_Peer", (), {"host": host})(),
+            "headers": headers or {},
+        })()
 
     assert OpenAuthenticator().mode == "none"
     assert "testclient" in LOOPBACK_HOSTS  # so the rest of the suite still runs
+
     with pytest.raises(HTTPException) as raised:
-        current_principal(_Request(), authorization=None)
+        current_principal(request("10.1.2.3"), authorization=None)
     assert raised.value.status_code == 403
     assert raised.value.detail["code"] == "AUTH_NOT_CONFIGURED"
+
+    # The hole this guard had: behind a reverse proxy on the same host every request
+    # arrives from 127.0.0.1, so a check on the socket address alone would have served
+    # the entire network while reporting itself as loopback-only.
+    with pytest.raises(HTTPException) as proxied:
+        current_principal(request("127.0.0.1", {"X-Forwarded-For": "203.0.113.9"}), authorization=None)
+    assert proxied.value.status_code == 403
+    assert "proxy" in proxied.value.detail["message"]
+
+    # A genuinely local caller, with no proxy in the path, is still allowed.
+    assert current_principal(request("127.0.0.1"), authorization=None).is_anonymous
 
 
 # ------------------------------------------------------------- ownership by team

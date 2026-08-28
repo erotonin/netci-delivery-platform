@@ -138,9 +138,30 @@ field anyone could set to anything, which is a label rather than a control.
 netCI has no session cookies, no password store and no user database: it verifies a
 credential per request and holds no long-lived secret of its own beyond the token hashes.
 
+### Running behind a reverse proxy
+
+`NETCI_TRUSTED_PROXY_HOPS` is a security setting. Two controls read the caller's address —
+the `NETCI_AUTH_MODE=none` loopback guard and the rate limiter's per-address bucket — and
+behind a reverse proxy on the same host, which is how TLS is normally terminated, **every
+request arrives from 127.0.0.1**. A naive check would see the whole network as loopback and
+the guard's "fails closed" guarantee would be void.
+
+`X-Forwarded-For` cannot simply be trusted either: a client talking to netCI directly sends
+whatever it likes, and would then pick its own rate-limit bucket or claim to be local. So:
+
+- **Unset (default).** Any request carrying a forwarding header is treated as *not*
+  trustworthy as loopback and refused in `none` mode, with a message saying to set this.
+  Failing closed on a request we cannot place is the only safe reading.
+- **Set to the number of proxies.** netCI reads the client address from `X-Forwarded-For`
+  counting **from the right** — the last entry was written by the proxy nearest netCI;
+  everything to its left came from the client and is forgeable.
+
+A chain shorter than the configured hop count is not trusted either, because it did not
+come from the chain the operator described.
+
 `NETCI_RATE_LIMIT` caps requests per caller per window, keyed on the credential where
-there is one (hashed, so the limiter never holds a live token) and on the client address
-otherwise. It is a guard against a misconfigured client, not against an attacker: the
+there is one (hashed, so the limiter never holds a live token) and on the resolved client
+address otherwise. It is a guard against a misconfigured client, not against an attacker: the
 window is fixed, the counters are per process, and behind N replicas the effective limit
 is N times the configured one. Real abuse protection belongs in a gateway that sees
 traffic before netCI does. `/healthz` is never throttled, because throttling the
