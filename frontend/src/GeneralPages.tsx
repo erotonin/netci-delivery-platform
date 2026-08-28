@@ -5,6 +5,7 @@ import {
 } from 'lucide-react'
 import { createSystem, deleteSystem, getPortalDashboard, getSystem, listServerInventory, listSystems, searchDcimServices, type DcimService, type PortalDashboard, type ServerInventoryItem } from './api/netciClient'
 import { usePortalFeedback } from './PortalFeedback'
+import { AsyncPanel, LoadFailure, Skeleton, useAsyncData } from './AsyncState'
 import { DoraCards, Modal, PageHeader, StatusPill, type Navigate } from './PortalShell'
 import { activity, servers as seedServers, systems, type PortalServer, type PortalSystem as PortalSystemView } from './portalData'
 
@@ -32,17 +33,17 @@ function serverFromApi(item: ServerInventoryItem): PortalServer {
 }
 
 export function DashboardPage({ navigate }: { navigate: Navigate }) {
-  const [dashboard, setDashboard] = useState<PortalDashboard>({
-    kpis: { systems: systems.length, modules: systems.reduce((total, system) => total + system.modules.length, 0), pipelineRuns: systems.reduce((total, system) => total + system.runs, 0), successRate: 73, failureRate: 27 },
-    pipelineActivity: activity.map((item, index) => ({ date: `2025-04-${String(index + 22).padStart(2, '0')}`, succeeded: item.success, failed: item.failed })),
-    systems: systems.map((system) => ({ id: system.id, unit: system.unit, description: system.description, owner: system.owner, status: system.status, moduleCount: system.modules.length, pipelineRuns: system.runs, failedRuns: system.failed, modules: [] })),
-  })
-  const [loadError, setLoadError] = useState(false)
-  useEffect(() => {
-    let active = true
-    getPortalDashboard().then((response) => { if (active) { setDashboard(response); setLoadError(false) } }).catch(() => { if (active) setLoadError(true) })
-    return () => { active = false }
-  }, [])
+  // No seeded baseline while the request is in flight. Showing invented KPIs that are
+  // then replaced by real ones makes a slow API look like a healthy platform with
+  // different numbers, which is the false green this project exists to prevent.
+  const state = useAsyncData<PortalDashboard>(getPortalDashboard)
+  return <>
+    <PageHeader title="Dashboard" description="Monitor system activity and release health across the platform." />
+    <AsyncPanel state={state} skeletonRows={5}>{(dashboard) => <DashboardContent dashboard={dashboard} navigate={navigate} />}</AsyncPanel>
+  </>
+}
+
+function DashboardContent({ dashboard, navigate }: { dashboard: PortalDashboard; navigate: Navigate }) {
   const successfulRuns = Math.max(0, Math.round(dashboard.kpis.pipelineRuns * dashboard.kpis.successRate / 100))
   const kpis = [
     { label: 'Tổng số hệ thống', value: String(dashboard.kpis.systems), sub: `${dashboard.kpis.modules} module`, icon: Layers3, tone: 'pink' },
@@ -52,8 +53,6 @@ export function DashboardPage({ navigate }: { navigate: Navigate }) {
   ]
   const maximumActivity = Math.max(1, ...dashboard.pipelineActivity.map((item) => item.succeeded + item.failed))
   return <>
-    <PageHeader title="Dashboard" description="Monitor system activity and release health across the platform." />
-    {loadError && <div className="sync-note is-warning" role="status"><CircleAlert size={15} />Không thể đồng bộ dashboard từ API; đang hiển thị dữ liệu mẫu gần nhất.</div>}
     <div className="kpi-grid">{kpis.map((item) => <article className="kpi-card" key={item.label}><span className={`kpi-icon tone-${item.tone}`}><item.icon size={19} /></span><div><p>{item.label}</p><strong>{item.value}</strong><small>{item.sub}</small></div></article>)}</div>
     <section className="panel chart-panel">
       <div className="panel-heading"><div><h2>Hoạt động pipeline · 7 ngày gần nhất</h2><p>Release activity across all systems</p></div><div className="chart-legend"><span><i className="legend-success" />Thành công</span><span><i className="legend-failed" />Thất bại</span></div></div>
@@ -81,8 +80,15 @@ export function SystemsPage({ navigate }: { navigate: Navigate }) {
   const [searching, setSearching] = useState(false)
   const [saving, setSaving] = useState(false)
   const [formError, setFormError] = useState('')
+  // Tracked, not swallowed. `.catch(() => undefined)` made a failed load look exactly
+  // like an empty estate -- the one reading a delivery platform must never invite.
+  const [loadState, setLoadState] = useState<'loading' | 'ready' | 'error'>('loading')
+  const [loadError, setLoadError] = useState<Error | null>(null)
+  const [attempt, setAttempt] = useState(0)
   useEffect(() => {
-    listSystems().then((response) => setItems(response.map((item) => ({
+    let active = true
+    setLoadState('loading')
+    listSystems().then((response) => { if (!active) return; setLoadState('ready'); setItems(response.map((item) => ({
       id: item.id,
       code: systems.find((seed) => seed.id === item.id)?.code ?? '',
       unit: item.unit,
@@ -93,8 +99,13 @@ export function SystemsPage({ navigate }: { navigate: Navigate }) {
       runs: item.pipelineRuns,
       succeeded: Math.max(item.pipelineRuns - item.failedRuns, 0),
       failed: item.failedRuns,
-    })))).catch(() => undefined)
-  }, [])
+    }))) }).catch((cause) => {
+      if (!active) return
+      setLoadState('error')
+      setLoadError(cause instanceof Error ? cause : new Error(String(cause)))
+    })
+    return () => { active = false }
+  }, [attempt])
   const filtered = items.filter((system) => `${system.id} ${system.code} ${system.unit} ${system.description}`.toLowerCase().includes(query.toLowerCase()))
   const searchDcim = async () => {
     setSearching(true)
@@ -131,7 +142,9 @@ export function SystemsPage({ navigate }: { navigate: Navigate }) {
     <PageHeader title="Systems" description="Quản lý danh sách hệ thống trong Release Portal." action={<button className="primary-button" onClick={() => setModal(true)}><Plus size={16} />New System</button>} />
     <section className="panel table-panel">
       <div className="table-toolbar"><label className="input-with-icon"><Search size={16} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Tìm kiếm hệ thống…" /></label></div>
-      <div className="data-table systems-table"><div className="table-row table-head"><span>Hệ thống</span><span>Đơn vị</span><span>Mô tả</span><span>Modules</span><span>Trạng thái</span><span /></div>{filtered.map((system) => <button className="table-row table-button" key={system.id} onClick={() => navigate('system', { systemId: system.id })}><span className="strong-cell"><i className={`system-health health-${system.status === 'healthy' ? 'green' : system.status === 'degraded' ? 'amber' : 'red'}`} />{system.id}</span><span className="truncate">{system.unit}</span><span className="truncate">{system.description}</span><span><Box size={15} />{system.modules.length} modules</span><StatusPill status={system.status[0].toUpperCase() + system.status.slice(1)} /><ChevronRight size={16} /></button>)}</div>{!filtered.length && <div className="empty-table"><Search size={22} /><strong>Không tìm thấy hệ thống</strong><span>Thử tên, mã service hoặc đơn vị khác.</span></div>}
+      <div className="data-table systems-table"><div className="table-row table-head"><span>Hệ thống</span><span>Đơn vị</span><span>Mô tả</span><span>Modules</span><span>Trạng thái</span><span /></div>{filtered.map((system) => <button className="table-row table-button" key={system.id} onClick={() => navigate('system', { systemId: system.id })}><span className="strong-cell"><i className={`system-health health-${system.status === 'healthy' ? 'green' : system.status === 'degraded' ? 'amber' : 'red'}`} />{system.id}</span><span className="truncate">{system.unit}</span><span className="truncate">{system.description}</span><span><Box size={15} />{system.modules.length} modules</span><StatusPill status={system.status[0].toUpperCase() + system.status.slice(1)} /><ChevronRight size={16} /></button>)}</div>{!filtered.length && loadState === 'loading' && <Skeleton rows={4} />}
+      {!filtered.length && loadState === 'error' && <LoadFailure error={loadError} onRetry={() => setAttempt((value) => value + 1)} />}
+      {!filtered.length && loadState === 'ready' && <div className="empty-table"><Search size={22} /><strong>{query ? 'Không tìm thấy hệ thống' : 'Chưa có hệ thống nào'}</strong><span>{query ? 'Thử tên, mã service hoặc đơn vị khác.' : 'Thêm hệ thống đầu tiên từ DCIM để bắt đầu.'}</span></div>}
     </section>
     {modal && <Modal title="Create new system" description="Search a DCIM service and add it to Release Portal." onClose={() => setModal(false)} footer={<><button className="secondary-button" onClick={() => setModal(false)}>Cancel</button><button className="primary-button" disabled={!selected || saving} onClick={saveSystem}>{saving ? 'Creating…' : 'Create System'}</button></>}>
       <label className="field"><span>DCIM service</span><div className="search-action"><input value={dcimQuery} onChange={(event) => { setDcimQuery(event.target.value); setResults([]); setSelected(null); setFormError('') }} onKeyDown={(event) => { if (event.key === 'Enter' && dcimQuery.trim().length >= 2) searchDcim() }} placeholder="Search by service name or code" /><button className="secondary-button" disabled={dcimQuery.trim().length < 2 || searching} onClick={searchDcim}><Search size={15} />{searching ? 'Searching…' : 'Search'}</button></div></label>

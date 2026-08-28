@@ -137,8 +137,16 @@ field anyone could set to anything, which is a label rather than a control.
 
 netCI has no session cookies, no password store and no user database: it verifies a
 credential per request and holds no long-lived secret of its own beyond the token hashes.
-Rate limiting and tenant isolation are **not** implemented. Ownership is a single flat
-team per application — there is no hierarchy, no per-environment delegation ("team A may
+
+`NETCI_RATE_LIMIT` caps requests per caller per window, keyed on the credential where
+there is one (hashed, so the limiter never holds a live token) and on the client address
+otherwise. It is a guard against a misconfigured client, not against an attacker: the
+window is fixed, the counters are per process, and behind N replicas the effective limit
+is N times the configured one. Real abuse protection belongs in a gateway that sees
+traffic before netCI does. `/healthz` is never throttled, because throttling the
+health check turns a rate limit into an outage.
+
+Tenant isolation is **not** implemented. Ownership is a single flat team per application — there is no hierarchy, no per-environment delegation ("team A may
 deploy to staging but not production"), and no group nesting beyond whatever the identity
 provider flattens into the claim.
 

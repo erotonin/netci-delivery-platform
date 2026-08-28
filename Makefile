@@ -25,14 +25,14 @@ GATE_ENV = NETCI_API_URL=$(NETCI_API_URL) NETCI_REGISTRY=$(NETCI_REGISTRY)
 .PHONY: help doctor doctor-windows backend frontend frontend-install frontend-build \
 	lab-up lab-down lab-status \
 	compose-config compose-up up kind-up kind-down registry-connect jenkins-up jenkins-rebuild \
-	migrate migrate-status schema test test-durability validate release-check release-windows release-ubuntu \
+	migrate migrate-status schema test test-durability validate release-check release-portable release-windows release-ubuntu \
 	e2e-container e2e-kubernetes e2e-systemd security-test benchmark failure-drill dora-dashboard backstage-test \
 	jenkins-lab-up jenkins-lab-status jenkins-lab-down jenkins-ci-loop jenkins-rebuild-gate backstage-lab-up \
 	gates gates-all clean-gates
 
 help:
 	@printf '%s\n' \
-	  'Portable: validate test frontend-install frontend-build release-check release-windows' \
+	  'Portable: validate test frontend-install frontend-build release-check release-portable' \
 	  'Database: migrate migrate-status schema test-durability' \
 	  'Ubuntu lab: doctor lab-up lab-status lab-down compose-config kind-up registry-connect' \
 	  'Jenkins lab: jenkins-lab-up jenkins-lab-status jenkins-lab-down  Backstage lab: backstage-lab-up' \
@@ -93,6 +93,10 @@ test-durability:
 
 release-check:
 	$(PYTHON) scripts/validate_release.py
+
+# Everything that runs anywhere with only Python and Node -- exactly what CI runs.
+release-portable:
+	$(PYTHON) scripts/validate_release.py --profile portable --execute
 
 release-windows:
 	$(PYTHON) scripts/validate_release.py --profile windows --execute

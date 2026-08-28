@@ -655,19 +655,32 @@ Hai lỗi do chính đợt này tạo ra và bị test bắt lại — đáng gh
   báo "signature not found in transparency log" — trông như chữ ký hỏng nhưng thực ra là
   lệch cấu hình. Chỉ lộ ra khi chạy cosign thật, fake binary không thể phát hiện.
 
+### P1 — đã hoàn thành nốt
+
+| Mục | Trạng thái |
+|---|---|
+| Phân quyền theo application/team | Xong: `applications.owner_team` + team trên principal ([ADR-012](decisions/ADR-012-application-ownership.md)). Role nói **làm loại việc gì**, team nói **làm lên app nào**. |
+| Rate limiting | Xong: `NETCI_RATE_LIMIT` theo caller, key theo credential đã hash. Không phải chống tấn công — chống **một client cấu hình sai** làm sập platform cho mọi người. |
+| Playwright E2E + accessibility scan | Xong: 9 test chạy trên browser thật với API thật, gồm cả axe scan. |
+| Loading / retry / error boundary / empty state | Xong: `frontend/src/AsyncState.tsx`, một primitive dùng chung thay cho mỗi page tự xử lý. |
+| CI cho chính netCI | Xong: `.github/workflows/ci.yml`, 4 job, chạy profile `portable` của chính checklist. |
+
+Ba phát hiện đáng ghi từ đợt này:
+
+- **Systems list nuốt lỗi bằng `.catch(() => undefined)`** — API chết trông y hệt "chưa có
+  hệ thống nào". Đây chính là false green ở tầng giao diện.
+- **Dashboard tự seed KPI giả trong lúc đang tải**, nên API hỏng trông như một platform
+  khỏe mạnh với số khác. Đã bỏ; giờ là skeleton → dữ liệu thật, hoặc lỗi + nút thử lại.
+- **22 node vi phạm tương phản WCAG AA**, do các mã màu xám viết cứng rải rác trôi khỏi
+  token `--muted`/`--subtle`. Đã gộp về token và làm token đủ đậm. Không ai từng đo, nên
+  không ai từng biết.
+
 ### P1 — còn lại
 
-Bảo mật và quản trị:
-
-- **Phân quyền theo application/team.** Role hiện là toàn cục; "team A chỉ deploy được app
-  của team A" chưa có. Seam để mở rộng là `requires()` trong `backend/app/main.py`.
-- Rate limiting, quota, tenant isolation.
-
-Frontend:
-
-- Playwright E2E cho login/wizard/pipeline/request/logout và accessibility scan.
-- Loading skeleton, retry/error boundary và empty state thống nhất ở mọi page.
 - `demoMode` cho phần fixture còn lại (chart minh họa, Settings/Server overlay).
+- Phân quyền theo môi trường trong một team ("team A deploy được staging nhưng không
+  production") chưa biểu diễn được: role phủ trục môi trường, team phủ trục application,
+  hai trục không kết hợp sâu hơn.
 
 ### P2 — hướng production, không bắt buộc cho local reference
 

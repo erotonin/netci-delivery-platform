@@ -14,7 +14,10 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_MANIFEST = ROOT / "release-checklist.yaml"
-ALLOWED_PROFILES = {"windows", "ubuntu"}
+# `portable` is the subset that runs anywhere with only Python and Node: no Docker, no
+# cluster, no lab. It is what netCI's own CI runs, and what a developer can run on any
+# machine. `windows` and `ubuntu` add the host checks each of those needs.
+ALLOWED_PROFILES = {"portable", "windows", "ubuntu"}
 ALLOWED_STATES = {"ready", "blocked"}
 FALSE_GREEN_MARKERS = (
     "NETCI_E2E_READY",

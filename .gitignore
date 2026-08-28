@@ -28,3 +28,8 @@ minio-data/
 jenkins-*-home/
 evidence/raw/
 *.tsbuildinfo
+
+# Playwright output: reports, traces and screenshots are run artefacts, not source.
+frontend/test-results/
+frontend/playwright-report/
+frontend/blob-report/

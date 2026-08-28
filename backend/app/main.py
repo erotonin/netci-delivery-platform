@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import os
 import secrets
 from datetime import datetime
@@ -17,6 +18,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from .adapters.cd_orchestrator import build_cd_orchestrator
 from .adapters.ci_launcher import build_ci_launcher
 from .auth import AuthError, Principal, build_authenticator
+from .ratelimit import build_rate_limiter
 from .domain.models import (
     Application,
     DeliveryEvent,
@@ -91,6 +93,7 @@ app.add_middleware(
 platform = DeliveryPlatform(build_ci_launcher(), build_cd_orchestrator())
 portal = PortalReadModel(platform)
 authenticator = build_authenticator()
+rate_limiter = build_rate_limiter()
 
 
 @app.middleware("http")
@@ -109,6 +112,32 @@ async def correlation_id_middleware(request: Request, call_next):
         response.headers["X-Correlation-Id"] = correlation_id
         return response
     request.state.correlation_id = correlation_id
+
+    # Identify the caller by credential where there is one, so a shared NAT does not make
+    # a whole office look like a single client and throttle everyone because one person
+    # looped. The token is hashed, never stored: the limiter's map would otherwise be a
+    # list of live credentials sitting in memory.
+    if rate_limiter.enabled and request.url.path != "/healthz":
+        authorization = request.headers.get("Authorization", "")
+        if authorization:
+            caller = "credential:" + hashlib.sha256(authorization.encode()).hexdigest()[:32]
+        else:
+            caller = "address:" + (request.client.host if request.client else "unknown")
+        verdict = rate_limiter.check(caller)
+        if not verdict.allowed:
+            throttled = error(
+                "RATE_LIMITED",
+                f"more than {verdict.limit} requests in {int(rate_limiter.window_seconds)}s; "
+                "slow down or raise NETCI_RATE_LIMIT",
+                correlation_id,
+                429,
+                {"Retry-After": str(verdict.retry_after)},
+            )
+            throttled.headers["X-Correlation-Id"] = correlation_id
+            throttled.headers["X-RateLimit-Limit"] = str(verdict.limit)
+            throttled.headers["X-RateLimit-Remaining"] = "0"
+            return throttled
+
     response = await call_next(request)
     response.headers["X-Correlation-Id"] = correlation_id
     return response
@@ -622,6 +651,9 @@ def healthz(response: Response) -> dict[str, object]:
             # this is where an operator looks, and "are we re-verifying signatures?" is
             # not a question anyone should have to answer by reading a worker's env.
             "signatureVerification": os.getenv("NETCI_SIGNATURE_VERIFY_MODE", "none").strip().lower() or "none",
+            "rateLimit": (
+                f"{rate_limiter.limit}/{int(rate_limiter.window_seconds)}s" if rate_limiter.enabled else "off"
+            ),
         },
         "dependencies": {
             "portalPersistence": portal_health,

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { RefreshCw, WifiOff } from 'lucide-react'
 import { createModule, getPortalDashboard, setAuthToken, setUnauthenticatedHandler, type Runtime } from './api/netciClient'
 import { DashboardPage, ServersPage, SystemPage, SystemsPage } from './GeneralPages'
+import { ErrorBoundary } from './AsyncState'
 import { LoginPage, type AuthSession } from './LoginPage'
 import { ModulePage } from './ModulePage'
 import { ModuleSettings } from './ModuleSettings'
@@ -149,7 +150,12 @@ function App() {
     setUnauthenticatedHandler(logout)
     return () => setUnauthenticatedHandler(null)
   }, [logout])
-  return <PortalFeedbackProvider>{session ? <PortalApp session={session} onLogout={logout} /> : <LoginPage onLogin={login} />}</PortalFeedbackProvider>
+  // The boundary is outside the session split on purpose: a render error in the login
+  // screen would otherwise blank the page with no way back, which is the one place a
+  // user has no navigation to fall back on.
+  return <ErrorBoundary>
+    <PortalFeedbackProvider>{session ? <PortalApp session={session} onLogout={logout} /> : <LoginPage onLogin={login} />}</PortalFeedbackProvider>
+  </ErrorBoundary>
 }
 
 export default App

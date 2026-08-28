@@ -58,6 +58,48 @@ Gate Windows kiểm tra Git/Python/Node/npm, syntax và schema, catalog invarian
 | Kubernetes | `KubernetesRuntimeAdapter` | kind; namespaces `dev`, `staging`, `prod` |
 | Systemd | `SystemdRuntimeAdapter` | Ubuntu VM thật có systemd qua SSH/Ansible |
 
+## Portal trong browser thật
+
+Unit test mock `netciClient`, nên chúng chứng minh component xử lý đúng **một câu trả lời
+cho trước**. Chúng không chứng minh được Portal và API *đồng ý với nhau* về câu trả lời đó
+— đổi tên field, đổi status code, hay một endpoint giờ đòi role đều pass unit test và fail
+trước mặt người dùng. Đó là khoảng trống mà `frontend/e2e/` lấp.
+
+```bash
+make lab-up                                   # cần một netCI đang chạy thật
+NETCI_API_URL=http://127.0.0.1:8100 npm --prefix frontend run test:e2e
+```
+
+Bao gồm cả **axe accessibility scan**. Lần chạy đầu tiên tìm ra 22 node vi phạm tương phản
+màu WCAG AA — không phải lỗi mới, mà là lỗi chưa ai đo: các giá trị xám được viết cứng rải
+rác trong CSS, trôi dần khỏi token `--muted`/`--subtle`. Đã sửa bằng cách gộp chúng về
+token và làm token đủ đậm để đạt AA. Với một tập đoàn, accessibility thường là yêu cầu bắt
+buộc khi mua sắm, nên đây không phải chi tiết thẩm mỹ.
+
+## CI của chính netCI
+
+netCI gate thay đổi của người khác; `.github/workflows/ci.yml` gate thay đổi của chính
+netCI. Nó chạy profile `portable` trong `release-checklist.yaml` — **cùng một danh sách
+check, gọi theo cùng một cách**, nên xanh trên CI và `make release-portable` xanh ở máy có
+nghĩa giống hệt nhau. Không có danh sách bước thứ hai để lệch khỏi checklist.
+
+```bash
+make release-portable   # chính xác những gì job `portable` trên CI chạy
+```
+
+Ba job:
+
+| Job | Chạy gì | Vì sao tách ra |
+|---|---|---|
+| `portable` | profile `portable` + pyflakes | chỉ cần Python và Node, chạy được ở mọi nơi |
+| `database` | migrate từ DB rỗng, `--check-schema`, test durability | các test này **skip** khi không có PostgreSQL, nên CI là nơi duy nhất chúng chạy mọi lần |
+| `portal-browser` | Playwright + axe, với API và PostgreSQL thật | unit test mock client nên không bắt được Portal và API lệch nhau |
+| `supply-chain` | verifier chữ ký + OIDC với **cosign thật** | verifier tự skip khi thiếu cosign; thiếu job này thì suite xanh mà không chứng minh gì |
+
+11 acceptance gate **không** nằm trên CI: chúng cần kind cluster, hai Jenkins controller,
+registry và Backstage. Một workflow giả vờ chạy chúng chính là false green mà dự án này
+sinh ra để chống. Chạy bằng `make release-ubuntu` trên host có lab.
+
 ## Các lệnh chính trên Ubuntu
 
 ```bash

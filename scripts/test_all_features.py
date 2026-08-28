@@ -70,7 +70,7 @@ def run_tests():
 
     # 5. Create Module via Wizard API
     sub_name = f"submod-{uuid.uuid4().hex[:4]}"
-    st, mod_created = req(f"/systems/hello-container/modules", "POST", {
+    st, mod_created = req("/systems/hello-container/modules", "POST", {
         "name": sub_name,
         "displayName": f"Submodule {sub_name}",
         "repositoryUrl": f"https://github.com/example/{sub_name}",

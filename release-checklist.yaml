@@ -24,35 +24,35 @@ checks:
     state: ready
     command: [python3, scripts/doctor.py, --profile, ubuntu]
   - id: source-structure
-    profiles: [windows, ubuntu]
+    profiles: [portable, windows, ubuntu]
     state: ready
     command: [python, scripts/validate_windows.py]
   - id: release-manifest
-    profiles: [windows, ubuntu]
+    profiles: [portable, windows, ubuntu]
     state: ready
     command: [python, scripts/validate_release.py]
   - id: catalog
-    profiles: [windows, ubuntu]
+    profiles: [portable, windows, ubuntu]
     state: ready
     command: [python, scripts/validate_catalog.py]
   - id: platform-static
-    profiles: [windows, ubuntu]
+    profiles: [portable, windows, ubuntu]
     state: ready
     command: [python, scripts/validate_platform.py]
   - id: schema-migrations
-    profiles: [windows, ubuntu]
+    profiles: [portable, windows, ubuntu]
     state: ready
     command: [python, scripts/migrate.py, --check-schema]
   - id: backend-and-contract-tests
-    profiles: [windows, ubuntu]
+    profiles: [portable, windows, ubuntu]
     state: ready
     command: [python, -m, pytest, backend/tests, tests/contract, -q]
   - id: frontend-build
-    profiles: [windows, ubuntu]
+    profiles: [portable, windows, ubuntu]
     state: ready
     command: [npm, --prefix, frontend, run, build]
   - id: frontend-tests
-    profiles: [windows, ubuntu]
+    profiles: [portable, windows, ubuntu]
     state: ready
     command: [npm, --prefix, frontend, test]
   - id: compose-config
@@ -90,6 +90,13 @@ checks:
     profiles: [ubuntu]
     state: ready
     command: [python3, scripts/gate_dora.py]
+  # The Portal in a real browser against the running API, plus an axe accessibility scan.
+  # Not in the portable profile: it needs a live netCI, and a browser suite pointed at
+  # nothing would pass by testing nothing.
+  - id: portal-browser
+    profiles: [ubuntu]
+    state: ready
+    command: [npm, --prefix, frontend, run, test:e2e]
 
   # ------------------------------------------------- gates that need the Jenkins lab
   # Same contract as the gates above -- real work, real assertions, evidence written --

@@ -55,6 +55,7 @@ REQUIRED = [
     "scripts/netci_callback.py",
     "scripts/netci_token.py",
     "backend/app/auth.py",
+    "backend/app/ratelimit.py",
     "scripts/lab.sh",
     "scripts/jenkins_lab.sh",
     "scripts/backstage_lab.sh",
@@ -81,6 +82,10 @@ REQUIRED = [
     "deploy/ansible/inventories/localhost.ini",
     "release-checklist.yaml",
     "security-exceptions.example.yaml",
+    ".github/workflows/ci.yml",
+    "frontend/playwright.config.ts",
+    "frontend/e2e/portal.spec.ts",
+    "frontend/src/AsyncState.tsx",
     *CORE_DOCS,
     *ADRS,
 ]
