@@ -25,10 +25,10 @@ const defaultAccessUsers: AccessUser[] = [
 ]
 
 const defaultTeamUsers: TeamUser[] = [
-  { initials: 'AD', name: 'Admin', email: 'admin@netchat.io', role: 'Owner' },
-  { initials: 'TT', name: 'TrungTT', email: 'trung.tt@netchat.io', role: 'Maintainer' },
-  { initials: 'LP', name: 'LinhPT', email: 'linh.pt@netchat.io', role: 'Developer' },
-  { initials: 'HN', name: 'HaiNM', email: 'hai.nm@netchat.io', role: 'Viewer' },
+  { initials: 'AD', name: 'Admin', email: 'admin@netci.local', role: 'Owner' },
+  { initials: 'TT', name: 'TrungTT', email: 'trung.tt@netci.local', role: 'Maintainer' },
+  { initials: 'LP', name: 'LinhPT', email: 'linh.pt@netci.local', role: 'Developer' },
+  { initials: 'HN', name: 'HaiNM', email: 'hai.nm@netci.local', role: 'Viewer' },
 ]
 
 function previewKey(moduleId: string, section: string) {
@@ -63,7 +63,6 @@ function GeneralSettings({ module, moduleId }: { module: SettingsModule; moduleI
   return <>
     <div className="settings-toolbar"><div><h2>General</h2><p>Basic information synced with DCIM where applicable.</p></div></div>
     <section className="panel settings-card">
-      <div className="preview-notice">Windows preview · Display name, type and description are stored only in this browser session.</div>
       <div className="form-grid">
         <label className="field full"><span>Display name</span><input value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} /></label>
         <label className="field"><span>Module code</span><input value={module.code} readOnly /></label>
