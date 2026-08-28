@@ -466,9 +466,9 @@ class PostgresPortalStore:
                         """
                         INSERT INTO systems (id, unit, description, owner, status)
                         VALUES
-                          ('netChat', 'Trung tâm nền tảng Công nghệ và Chuyển đổi số', 'Real-time messaging platform for internal team communication.', 'Admin', 'healthy'),
-                          ('PCTT', 'Trung tâm Chăm sóc khách hàng', 'Ticketing & customer-support case tracking module.', 'Admin', 'degraded'),
-                          ('NocPro5', 'Trung tâm Vận hành khai thác mạng', 'Network operations alarm monitoring & correlation.', 'Admin', 'critical')
+                          ('hello-container', 'Local Infrastructure', 'Local container delivery application', 'Admin', 'healthy'),
+                          ('hello-kubernetes', 'Local Infrastructure', 'Local Kubernetes deployment application', 'Admin', 'healthy'),
+                          ('hello-systemd-go', 'Local Infrastructure', 'Local systemd service application', 'Admin', 'healthy')
                         ON CONFLICT (id) DO NOTHING
                         """
                     )
@@ -476,32 +476,12 @@ class PostgresPortalStore:
                         """
                         INSERT INTO modules (id, system_id, runtime, name, module_type, description)
                         VALUES
-                          ('backend-api', 'netChat', 'docker', 'Backend API', 'Backend', 'Node.js REST & WebSocket API for auth, messaging, presence.'),
-                          ('web-client', 'netChat', 'kubernetes', 'Web Client', 'Frontend', 'React SPA for desktop & mobile web messaging.'),
-                          ('pctt-api', 'PCTT', 'docker', 'PCTT API', 'Backend', 'Customer support API and ticketing workflow.'),
-                          ('pctt-web', 'PCTT', 'kubernetes', 'PCTT Web', 'Frontend', 'Customer support operations web application.'),
-                          ('alert-correlator', 'NocPro5', 'systemd', 'Alert Correlator', 'Backend', 'Network alarm correlation and notification service.')
+                          ('hello-container', 'hello-container', 'docker', 'Hello Container', 'Backend', 'Local container delivery application'),
+                          ('hello-kubernetes', 'hello-kubernetes', 'kubernetes', 'Hello Kubernetes', 'Workload', 'Local Kubernetes deployment application'),
+                          ('hello-systemd-go', 'hello-systemd-go', 'systemd', 'Hello Systemd Go', 'Backend', 'Local systemd service application')
                         ON CONFLICT (id) DO NOTHING
                         """
                     )
-                    cursor.execute("""
-                        INSERT INTO release_versions (module_id, version, vulnerability_status)
-                        VALUES
-                          ('backend-api', 'v2.4.1', 'passed'), ('backend-api', 'v2.4.0', 'passed'), ('backend-api', 'v2.3.8', 'failed'),
-                          ('web-client', 'v1.9.2', 'passed'), ('web-client', 'v1.9.1', 'passed')
-                        ON CONFLICT (module_id, version) DO NOTHING
-                    """)
-                    cursor.execute("SELECT count(*) AS total FROM production_requests")
-                    if int(cursor.fetchone()["total"]) == 0:
-                        cursor.execute(
-                            """
-                            INSERT INTO production_requests (module_id, requested_by, version, status, comment)
-                            VALUES
-                              ('backend-api', 'TrungTT', 'v2.4.1', 'waiting_approval', NULL),
-                              ('web-client', 'HaiNM', 'v1.9.2', 'approved', 'approved in previous release'),
-                              ('alert-correlator', 'MinhNV', 'v0.8.4', 'blocked', 'blocked by vulnerability scan')
-                            """
-                        )
             self.last_error = None
             return True
         except Exception as exc:

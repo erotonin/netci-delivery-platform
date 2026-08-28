@@ -187,127 +187,48 @@ class PortalReadModel:
             ) from exc
 
     def _seed(self) -> None:
-        for item in (
-            PortalSystem(
-                "netChat",
-                "Trung tâm nền tảng Công nghệ và Chuyển đổi số",
-                "Real-time messaging platform for internal team communication.",
-                "Admin",
-                "healthy",
-                ["backend-api", "web-client"],
-            ),
-            PortalSystem(
-                "PCTT",
-                "Trung tâm Chăm sóc khách hàng",
-                "Ticketing & customer-support case tracking module.",
-                "Admin",
-                "degraded",
-                ["pctt-api", "pctt-web"],
-            ),
-            PortalSystem(
-                "NocPro5",
-                "Trung tâm Vận hành khai thác mạng",
-                "Network operations alarm monitoring & correlation.",
-                "Admin",
-                "critical",
-                ["alert-correlator"],
-            ),
-        ):
-            self._systems[item.id] = item
-
-        self._modules.update(
-            {
-                "backend-api": PortalModule(
-                    "backend-api", "netChat", "Backend API", "Backend",
-                    "Node.js REST & WebSocket API for auth, messaging, presence.",
-                    Runtime.DOCKER, versions=["v2.4.1", "v2.4.0", "v2.3.8"],
-                ),
-                "web-client": PortalModule(
-                    "web-client", "netChat", "Web Client", "Frontend",
-                    "React SPA for desktop & mobile web messaging.",
-                    Runtime.KUBERNETES, versions=["v1.9.2", "v1.9.1"],
-                ),
-                "pctt-api": PortalModule(
-                    "pctt-api", "PCTT", "PCTT API", "Backend",
-                    "Customer support API and ticketing workflow.", Runtime.DOCKER,
-                ),
-                "pctt-web": PortalModule(
-                    "pctt-web", "PCTT", "PCTT Web", "Frontend",
-                    "Customer support operations web application.", Runtime.KUBERNETES,
-                ),
-                "alert-correlator": PortalModule(
-                    "alert-correlator", "NocPro5", "Alert Correlator", "Backend",
-                    "Network alarm correlation and notification service.", Runtime.SYSTEMD,
-                ),
-            }
-        )
-        templates = {
-            Runtime.DOCKER: "container-ci-cd-v1",
-            Runtime.KUBERNETES: "kubernetes-ci-cd-v1",
-            Runtime.SYSTEMD: "systemd-ansible-ci-cd-v1",
-        }
-        for module in self._modules.values():
-            application = self.platform.create_application(
-                name=module.id,
-                repository_url=f"https://git.example.net/{module.system_id.lower()}/{module.id}",
-                pipeline_template=templates[module.runtime],
-                runtime=module.runtime,
+        sample_apps = [
+            ("hello-container", "Hello Container", "Local container delivery application", Runtime.DOCKER, "container-ci-cd-v1"),
+            ("hello-kubernetes", "Hello Kubernetes", "Local Kubernetes deployment application", Runtime.KUBERNETES, "kubernetes-ci-cd-v1"),
+            ("hello-systemd-go", "Hello Systemd Go", "Local systemd service application", Runtime.SYSTEMD, "systemd-ansible-ci-cd-v1"),
+        ]
+        for app_id, app_name, desc, runtime, template in sample_apps:
+            self._systems[app_id] = PortalSystem(
+                id=app_id,
+                unit="Local Infrastructure",
+                description=desc,
+                owner="Admin",
+                status="healthy",
+                module_ids=[app_id],
+            )
+            app = self.platform.create_application(
+                name=app_id,
+                repository_url=f"https://github.com/example/{app_id}",
+                pipeline_template=template,
+                runtime=runtime,
                 default_environment=Environment.DEV,
                 stages=[],
-                idempotency_key=f"portal-reference-{module.id}",
+                idempotency_key=f"portal-app-{app_id}",
             )
-            module.application_id = application.id
-        self._requests.update(
-            {
-                "pr-backend-241": PortalProductionRequest(
-                    "pr-backend-241", [PortalProductionModule("backend-api", "v2.4.1")], "TrungTT",
-                    datetime(2025, 4, 30, 3, 0, tzinfo=timezone(timedelta(hours=7))), "automatic", True,
-                    "waiting_approval",
-                ),
-                "pr-web-192": PortalProductionRequest(
-                    "pr-web-192", [PortalProductionModule("web-client", "v1.9.2")], "HaiNM",
-                    datetime(2025, 4, 29, 2, 0, tzinfo=timezone(timedelta(hours=7))), "automatic", True,
-                    "approved",
-                ),
-                "pr-alert-084": PortalProductionRequest(
-                    "pr-alert-084", [PortalProductionModule("alert-correlator", "v0.8.4")], "MinhNV",
-                    datetime(2025, 4, 25, 22, 0, tzinfo=timezone(timedelta(hours=7))), "manual", False,
-                    "blocked",
-                ),
-            }
-        )
-        self._version_records.update(
-            {
-                ("backend-api", "v2.4.1"): {
-                    "gitTagUrl": "https://git.example.net/netchat/backend-api/-/tags/v2.4.1",
-                    "artifactUrl": "https://artifacts.example.net/netchat/backend-api/v2.4.1",
-                    "createdBy": "TrungTT",
-                    "createdAt": "2025-04-28T09:14:00+07:00",
-                    "ciReport": {
-                        "coverage": 87,
-                        "autoTest": "passed",
-                        "sast": "passed",
-                        "sastIssues": 0,
-                        "vulnerabilities": {"critical": 0, "high": 0, "medium": 2},
-                        "commit": "a1c4e2f",
-                    },
-                },
-                ("backend-api", "v2.4.0"): {
-                    "gitTagUrl": "https://git.example.net/netchat/backend-api/-/tags/v2.4.0",
-                    "artifactUrl": "https://artifacts.example.net/netchat/backend-api/v2.4.0",
-                    "createdBy": "HaiNM",
-                    "createdAt": "2025-04-10T14:22:00+07:00",
-                    "ciReport": {
-                        "coverage": 84,
-                        "autoTest": "passed",
-                        "sast": "passed",
-                        "sastIssues": 0,
-                        "vulnerabilities": {"critical": 0, "high": 1, "medium": 3},
-                        "commit": "7bd11ca",
-                    },
-                },
-            }
-        )
+            self._modules[app_id] = PortalModule(
+                id=app_id,
+                system_id=app_id,
+                name=app_name,
+                module_type="Backend" if runtime != Runtime.KUBERNETES else "Workload",
+                description=desc,
+                runtime=runtime,
+                application_id=app.id,
+                deployment_environments=[
+                    {
+                        "displayName": "Development",
+                        "environment": "dev",
+                        "runtime": runtime.value,
+                        "servers": ["localhost"],
+                        "tasks": ["Health check"],
+                    }
+                ],
+                pipeline_config={"runner": "local", "strategy": "Trunk-based"},
+            )
 
     def create_system(self, *, system_id: str, unit: str, description: str, owner: str) -> dict[str, object]:
         if system_id in self._systems:
@@ -668,57 +589,62 @@ class PortalReadModel:
         return next(item for item in self.production_requests() if item["id"] == request_id)
 
     def servers(self) -> list[dict[str, object]]:
-        return [
-            {"id": "srv-dev-01", "hostname": "srv-dev-01", "systemId": "netChat", "ipAddress": "10.60.12.21", "environment": "dev", "status": "online", "kind": "runtime-target", "runtime": "docker"},
-            {"id": "srv-dev-02", "hostname": "srv-dev-02", "systemId": "netChat", "ipAddress": "10.60.12.22", "environment": "dev", "status": "online", "kind": "runtime-target", "runtime": "docker"},
-            {"id": "srv-stg-01", "hostname": "srv-stg-01", "systemId": "netChat", "ipAddress": "10.60.18.31", "environment": "staging", "status": "maintenance", "kind": "runtime-target", "runtime": "docker"},
-            {"id": "srv-prod-01", "hostname": "srv-prod-01", "systemId": "netChat", "ipAddress": "10.60.24.41", "environment": "prod", "status": "online", "kind": "runtime-target", "runtime": "docker"},
-            {"id": "srv-prod-02", "hostname": "srv-prod-02", "systemId": "netChat", "ipAddress": "10.60.24.42", "environment": "prod", "status": "online", "kind": "runtime-target", "runtime": "docker"},
-            {"id": "pctt-app-01", "hostname": "pctt-app-01", "systemId": "PCTT", "ipAddress": "10.61.20.11", "environment": "prod", "status": "online", "kind": "runtime-target", "runtime": "kubernetes"},
-            {"id": "nocpro5-01", "hostname": "nocpro5-01", "systemId": "NocPro5", "ipAddress": "10.62.10.15", "environment": "prod", "status": "offline", "kind": "runtime-target", "runtime": "systemd"},
-            {"id": "nocpro5-02", "hostname": "nocpro5-02", "systemId": "NocPro5", "ipAddress": "10.62.10.16", "environment": "staging", "status": "online", "kind": "runtime-target", "runtime": "systemd"},
-            {"id": "jenkins-a", "hostname": "jenkins-a", "systemId": "netCI", "ipAddress": "10.60.2.10", "environment": "prod", "status": "online", "kind": "jenkins-controller", "executors": {"busy": 1, "total": 4}},
-            {"id": "jenkins-b", "hostname": "jenkins-b", "systemId": "netCI", "ipAddress": "10.60.2.11", "environment": "prod", "status": "online", "kind": "jenkins-controller", "executors": {"busy": 0, "total": 4}},
-            {"id": "kind-local", "hostname": "kind-local", "systemId": "netCI", "ipAddress": "127.0.0.1", "environment": "dev", "status": "online", "kind": "runtime-target", "runtime": "kubernetes"},
+        result: list[dict[str, object]] = [
+            {"id": "localhost", "hostname": "localhost", "systemId": "hello-container", "ipAddress": "127.0.0.1", "environment": "dev", "status": "online", "kind": "runtime-target", "runtime": "docker"},
+            {"id": "kind-local", "hostname": "kind-local", "systemId": "hello-kubernetes", "ipAddress": "127.0.0.1", "environment": "dev", "status": "online", "kind": "runtime-target", "runtime": "kubernetes"},
+            {"id": "jenkins-local", "hostname": "jenkins-local", "systemId": "netCI", "ipAddress": "127.0.0.1", "environment": "dev", "status": "online", "kind": "jenkins-controller", "executors": {"busy": 0, "total": 4}},
         ]
+        for sys_id in self._systems:
+            if sys_id not in [str(r["systemId"]) for r in result]:
+                result.append({"id": f"srv-{sys_id}", "hostname": f"srv-{sys_id}", "systemId": sys_id, "ipAddress": "127.0.0.1", "environment": "dev", "status": "online", "kind": "runtime-target", "runtime": "docker"})
+        return result
 
     def dcim_services(self, query: str) -> list[dict[str, object]]:
-        services = [
-            {"id": "svc-netchat", "name": "netChat", "code": "VTN_CNTT_MSS_686", "tenant": "Trung tâm nền tảng Công nghệ và Chuyển đổi số", "tier": "Tier 2", "description": "Real-time messaging platform for internal team communication."},
-            {"id": "svc-pctt", "name": "PCTT", "code": "VTN_CS_PCTT_210", "tenant": "Trung tâm Chăm sóc khách hàng", "tier": "Tier 2", "description": "Ticketing and customer support case tracking."},
-            {"id": "svc-nocpro5", "name": "NocPro5", "code": "VTN_NOC_PRO5_005", "tenant": "Trung tâm Vận hành khai thác mạng", "tier": "Tier 1", "description": "Network operations alarm monitoring and correlation."},
-            {"id": "svc-eoffice", "name": "eOffice", "code": "VTN_CNTT_EOFFICE_118", "tenant": "Trung tâm nền tảng Công nghệ và Chuyển đổi số", "tier": "Tier 3", "description": "Enterprise document workflow and digital office platform."},
-        ]
         normalized = query.strip().lower()
         if not normalized:
             return []
+        services = [
+            {"id": f"svc-{s.id}", "name": s.id, "code": f"VTN_{s.id.upper()}", "tenant": s.unit, "tier": "Tier 1", "description": s.description}
+            for s in self._systems.values()
+        ]
         return [item for item in services if normalized in str(item["name"]).lower() or normalized in str(item["code"]).lower()]
 
     def dcim_modules(self, system_id: str) -> list[dict[str, object]]:
         if system_id not in self._systems:
             raise KeyError("system not found")
-        fixtures = {
-            "netChat": [
-                {"id": "backend-api", "name": "Backend API", "code": "NETCHAT_BE", "type": "Backend", "repositoryUrl": "https://git.example.net/netchat/backend-api", "registered": True},
-                {"id": "web-client", "name": "Web Client", "code": "NETCHAT_WEB", "type": "Frontend", "repositoryUrl": "https://git.example.net/netchat/web-client", "registered": True},
-                {"id": "notification-worker", "name": "Notification Worker", "code": "NETCHAT_NOTIFY", "type": "Worker", "repositoryUrl": "https://git.example.net/netchat/notification-worker", "registered": False},
-                {"id": "media-service", "name": "Media Service", "code": "NETCHAT_MEDIA", "type": "Backend", "repositoryUrl": "https://git.example.net/netchat/media-service", "registered": False},
-                {"id": "edge-gateway", "name": "Edge Gateway", "code": "NETCHAT_EDGE", "type": "Gateway", "repositoryUrl": "https://git.example.net/netchat/edge-gateway", "registered": False},
-            ]
-        }
-        return fixtures.get(system_id, [])
+        sys_obj = self._systems[system_id]
+        modules = [self._modules[m_id] for m_id in sys_obj.module_ids if m_id in self._modules]
+        return [
+            {
+                "id": m.id,
+                "name": m.name,
+                "code": f"{m.id.upper()}_APP",
+                "type": m.module_type,
+                "repositoryUrl": f"https://github.com/example/{m.id}",
+                "registered": True,
+            }
+            for m in modules
+        ]
 
     def audit_events(self, *, system_id: str | None = None, module_id: str | None = None) -> list[dict[str, object]]:
-        events = [
-            {"id": "audit-1", "action": "pipeline.started", "actor": "TrungTT", "target": "backend-api", "createdAt": self._now(-2).isoformat()},
-            {"id": "audit-2", "action": "deployment.approved", "actor": "Admin", "target": "backend-api", "createdAt": self._now(-1).isoformat()},
-            {"id": "audit-3", "action": "security.scan.blocked", "actor": "netCI", "target": "alert-correlator", "createdAt": self._now(-3).isoformat()},
-        ]
+        events: list[dict[str, object]] = []
+        idx = 1
+        for mod in self._modules.values():
+            runs = self._module_runs_raw(mod)
+            for run in runs:
+                events.append({
+                    "id": f"audit-{idx}",
+                    "action": f"pipeline.{run.status.value}",
+                    "actor": str(run.parameters.get("started_by", "operator")),
+                    "target": mod.id,
+                    "createdAt": run.created_at.isoformat(),
+                })
+                idx += 1
         if system_id:
             module_ids = set(self._systems.get(system_id, PortalSystem("", "", "", "", "", [])).module_ids)
-            events = [event for event in events if event["target"] in module_ids or event["target"] == system_id]
+            events = [e for e in events if e["target"] in module_ids or e["target"] == system_id]
         if module_id:
-            events = [event for event in events if event["target"] == module_id]
+            events = [e for e in events if e["target"] == module_id]
         return events
 
     def _module_runs_raw(self, module: PortalModule):

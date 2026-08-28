@@ -38,12 +38,12 @@ function readRoute(): RouteState {
   if (parts[0] === 'systems' && parts[1] && parts[2] === 'modules' && parts[3]) {
     return { page: 'module', systemId: parts[1], moduleId: parts[3], settingsOpen: parts[4] === 'settings' }
   }
-  if (parts[0] === 'systems' && parts[1] && parts[2] === 'requests') return { page: 'requests', systemId: parts[1], moduleId: 'backend-api', settingsOpen: false }
-  if (parts[0] === 'systems' && parts[1] && parts[2] === 'new-module') return { page: 'new-module', systemId: parts[1], moduleId: 'backend-api', settingsOpen: false }
-  if (parts[0] === 'systems' && parts[1]) return { page: 'system', systemId: parts[1], moduleId: 'backend-api', settingsOpen: false }
-  if (parts[0] === 'systems') return { page: 'systems', systemId: 'netChat', moduleId: 'backend-api', settingsOpen: false }
-  if (parts[0] === 'servers') return { page: 'servers', systemId: 'netChat', moduleId: 'backend-api', settingsOpen: false }
-  return { page: 'dashboard', systemId: 'netChat', moduleId: 'backend-api', settingsOpen: false }
+  if (parts[0] === 'systems' && parts[1] && parts[2] === 'requests') return { page: 'requests', systemId: parts[1], moduleId: '', settingsOpen: false }
+  if (parts[0] === 'systems' && parts[1] && parts[2] === 'new-module') return { page: 'new-module', systemId: parts[1], moduleId: '', settingsOpen: false }
+  if (parts[0] === 'systems' && parts[1]) return { page: 'system', systemId: parts[1], moduleId: '', settingsOpen: false }
+  if (parts[0] === 'systems') return { page: 'systems', systemId: '', moduleId: '', settingsOpen: false }
+  if (parts[0] === 'servers') return { page: 'servers', systemId: '', moduleId: '', settingsOpen: false }
+  return { page: 'dashboard', systemId: '', moduleId: '', settingsOpen: false }
 }
 
 function routePath(route: RouteState): string {

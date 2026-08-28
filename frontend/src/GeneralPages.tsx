@@ -156,7 +156,7 @@ export function ServersPage() {
   const [lastSync, setLastSync] = useState('28/04/2025 09:14')
   const [pageSize, setPageSize] = useState(10)
   const [page, setPage] = useState(1)
-  const [newServer, setNewServer] = useState({ id: '', systemId: 'netChat', ip: '', environment: 'Dev' as PortalServer['environment'] })
+  const [newServer, setNewServer] = useState({ id: '', systemId: 'hello-container', ip: '', environment: 'Dev' as PortalServer['environment'] })
   useEffect(() => {
     window.sessionStorage.setItem(SERVER_SESSION_KEY, JSON.stringify(items))
   }, [items])
@@ -176,7 +176,7 @@ export function ServersPage() {
     setModal(false)
     notify(`${next.id} đã được ${editingId ? 'cập nhật' : 'thêm'} trong Windows preview inventory.`)
     setEditingId(null)
-    setNewServer({ id: '', systemId: 'netChat', ip: '', environment: 'Dev' })
+    setNewServer({ id: '', systemId: 'hello-container', ip: '', environment: 'Dev' })
   }
   const openEdit = (server: PortalServer) => { setEditingId(server.id); setNewServer({ id: server.id, systemId: server.systemId, ip: server.ip, environment: server.environment }); setModal(true) }
   const syncServers = async () => {
@@ -185,7 +185,7 @@ export function ServersPage() {
   }
   const toggleAll = () => setSelectedIds(visible.length > 0 && visible.every((item) => selectedIds.includes(item.id)) ? selectedIds.filter((id) => !visible.some((item) => item.id === id)) : [...new Set([...selectedIds, ...visible.map((item) => item.id)])])
   return <>
-    <PageHeader title="Servers" description="Danh sách server được đồng bộ từ DCIM, dùng để cấu hình deployment khi khởi tạo module." action={<div className="heading-actions"><button className="secondary-button" disabled={syncing} onClick={syncServers}><CloudDownload size={16} />{syncing ? 'Đang đồng bộ…' : 'Đồng bộ từ DCIM'}</button><button className="primary-button" onClick={() => { setEditingId(null); setNewServer({ id: '', systemId: 'netChat', ip: '', environment: 'Dev' }); setModal(true) }}><Plus size={16} />Thêm server</button></div>} />
+    <PageHeader title="Servers" description="Danh sách server được đồng bộ từ DCIM, dùng để cấu hình deployment khi khởi tạo module." action={<div className="heading-actions"><button className="secondary-button" disabled={syncing} onClick={syncServers}><CloudDownload size={16} />{syncing ? 'Đang đồng bộ…' : 'Đồng bộ từ DCIM'}</button><button className="primary-button" onClick={() => { setEditingId(null); setNewServer({ id: '', systemId: 'hello-container', ip: '', environment: 'Dev' }); setModal(true) }}><Plus size={16} />Thêm server</button></div>} />
     <div className="sync-note"><CheckCircle2 size={15} />Last sync: {lastSync} · {items.length} servers from DCIM</div>
     <section className="panel table-panel"><div className="table-toolbar server-filters"><label className="input-with-icon"><Search size={16} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Tìm hostname, IP, hệ thống…" /></label><select value={environment} onChange={(event) => setEnvironment(event.target.value)}><option>All environments</option><option>Dev</option><option>Staging</option><option>Production</option></select><select value={status} onChange={(event) => setStatus(event.target.value)}><option>All statuses</option><option>Online</option><option>Bảo trì</option><option>Offline</option></select></div>
       <div className="data-table servers-table"><div className="table-row table-head"><span><input type="checkbox" aria-label="Chọn tất cả trên trang" checked={visible.length > 0 && visible.every((item) => selectedIds.includes(item.id))} onChange={toggleAll} /></span><span>Server</span><span>Hệ thống</span><span>IP address</span><span>Environment</span><span>Status</span><span>Last checked</span><span /></div>{visible.map((server) => <div className="table-row" key={server.id}><span><input type="checkbox" aria-label={`Chọn ${server.id}`} checked={selectedIds.includes(server.id)} onChange={() => setSelectedIds((current) => current.includes(server.id) ? current.filter((id) => id !== server.id) : [...current, server.id])} /></span><span className="strong-cell"><Server size={16} />{server.id}</span><span>{server.systemId}</span><span className="mono">{server.ip}</span><span className={`env-badge env-${server.environment.toLowerCase()}`}>{server.environment}</span><StatusPill status={server.status} /><span>{server.lastChecked}</span><span className="row-actions"><button aria-label={`Sửa ${server.id}`} onClick={() => openEdit(server)}><Pencil size={15} /></button><button aria-label={`Xóa ${server.id}`} onClick={() => { setItems((current) => current.filter((item) => item.id !== server.id)); setSelectedIds((current) => current.filter((id) => id !== server.id)); notify(`${server.id} đã được xóa khỏi Windows preview inventory.`, 'info') }}><Trash2 size={15} /></button><button aria-label={`Chi tiết ${server.id}`} onClick={() => setDetails(server)}><MoreHorizontal size={16} /></button></span></div>)}</div>{!filtered.length && <div className="empty-table"><Server size={22} /><strong>Không có server phù hợp</strong><span>Thử đổi môi trường, trạng thái hoặc từ khóa.</span></div>}

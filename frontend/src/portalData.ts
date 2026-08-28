@@ -34,14 +34,14 @@ export type PortalServer = {
 }
 
 export const modules: PortalModule[] = [
-  { id: 'backend-api', name: 'Backend API', type: 'Backend', description: 'Node.js REST & WebSocket API for auth, messaging, presence.', versions: ['v2.4.1', 'v2.4.0', 'v2.3.8'], runtime: 'docker' },
-  { id: 'web-client', name: 'Web Client', type: 'Frontend', description: 'React SPA for desktop & mobile web messaging.', versions: ['v1.9.2', 'v1.9.1', 'v1.8.7'], runtime: 'kubernetes' },
+  { id: 'hello-container', name: 'Hello Container', type: 'Backend', description: 'Local container delivery application', versions: ['v1.0.0'], runtime: 'docker' },
+  { id: 'hello-kubernetes', name: 'Hello Kubernetes', type: 'Workload', description: 'Local Kubernetes deployment application', versions: ['v1.0.0'], runtime: 'kubernetes' },
 ]
 
 export const systems: PortalSystem[] = [
-  { id: 'netChat', code: 'VTN_CNTT_MSS_686', unit: 'Trung tâm nền tảng Công nghệ và Chuyển đổi số', description: 'Real-time messaging platform for internal team communication.', owner: 'Admin', status: 'healthy', modules, runs: 15, succeeded: 11, failed: 4 },
-  { id: 'PCTT', code: 'VTN_CS_PCTT_210', unit: 'Trung tâm Chăm sóc khách hàng', description: 'Ticketing & customer-support case tracking module.', owner: 'Admin', status: 'degraded', modules: [{ id: 'pctt-api', name: 'PCTT API', type: 'Backend', description: 'Customer support API and ticketing workflow.', versions: ['v1.5.4'], runtime: 'docker' }, { id: 'pctt-web', name: 'PCTT Web', type: 'Frontend', description: 'Customer support operations web application.', versions: ['v1.3.8'], runtime: 'kubernetes' }], runs: 0, succeeded: 0, failed: 0 },
-  { id: 'NocPro5', code: 'VTN_NOC_PRO5_005', unit: 'Trung tâm Vận hành khai thác mạng', description: 'Network operations alarm monitoring & correlation.', owner: 'Admin', status: 'critical', modules: [{ id: 'alert-correlator', name: 'Alert Correlator', type: 'Backend', description: 'Network alarm correlation and notification service.', versions: ['v0.8.4'], runtime: 'systemd' }], runs: 0, succeeded: 0, failed: 0 },
+  { id: 'hello-container', code: 'VTN_HELLO_CONTAINER', unit: 'Local Infrastructure', description: 'Local container delivery application', owner: 'Admin', status: 'healthy', modules, runs: 1, succeeded: 1, failed: 0 },
+  { id: 'hello-kubernetes', code: 'VTN_HELLO_KUBERNETES', unit: 'Local Infrastructure', description: 'Local Kubernetes deployment application', owner: 'Admin', status: 'healthy', modules: [{ id: 'hello-kubernetes', name: 'Hello Kubernetes', type: 'Workload', description: 'Local Kubernetes deployment application', versions: ['v1.0.0'], runtime: 'kubernetes' }], runs: 0, succeeded: 0, failed: 0 },
+  { id: 'hello-systemd-go', code: 'VTN_HELLO_SYSTEMD', unit: 'Local Infrastructure', description: 'Local systemd service application', owner: 'Admin', status: 'healthy', modules: [{ id: 'hello-systemd-go', name: 'Hello Systemd Go', type: 'Backend', description: 'Local systemd service application', versions: ['v1.0.0'], runtime: 'systemd' }], runs: 0, succeeded: 0, failed: 0 },
 ]
 
 export const activity = [
@@ -55,14 +55,8 @@ export const activity = [
 ]
 
 export const servers: PortalServer[] = [
-  { id: 'srv-dev-01', systemId: 'netChat', ip: '10.60.12.21', environment: 'Dev', status: 'Online', lastChecked: '28/04/2025 09:14' },
-  { id: 'srv-dev-02', systemId: 'netChat', ip: '10.60.12.22', environment: 'Dev', status: 'Online', lastChecked: '28/04/2025 09:14' },
-  { id: 'srv-stg-01', systemId: 'netChat', ip: '10.60.18.31', environment: 'Staging', status: 'Bảo trì', lastChecked: '28/04/2025 09:12' },
-  { id: 'srv-prod-01', systemId: 'netChat', ip: '10.60.24.41', environment: 'Production', status: 'Online', lastChecked: '28/04/2025 09:14' },
-  { id: 'srv-prod-02', systemId: 'netChat', ip: '10.60.24.42', environment: 'Production', status: 'Online', lastChecked: '28/04/2025 09:14' },
-  { id: 'pctt-app-01', systemId: 'PCTT', ip: '10.61.20.11', environment: 'Production', status: 'Online', lastChecked: '28/04/2025 09:10' },
-  { id: 'nocpro5-01', systemId: 'NocPro5', ip: '10.62.10.15', environment: 'Production', status: 'Offline', lastChecked: '28/04/2025 08:54' },
-  { id: 'nocpro5-02', systemId: 'NocPro5', ip: '10.62.10.16', environment: 'Staging', status: 'Online', lastChecked: '28/04/2025 09:09' },
+  { id: 'localhost', systemId: 'hello-container', ip: '127.0.0.1', environment: 'Dev', status: 'Online', lastChecked: '28/04/2025 09:14' },
+  { id: 'kind-local', systemId: 'hello-kubernetes', ip: '127.0.0.1', environment: 'Dev', status: 'Online', lastChecked: '28/04/2025 09:14' },
 ]
 
 export const dora = [
