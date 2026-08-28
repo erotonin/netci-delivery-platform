@@ -86,6 +86,7 @@ REQUIRED = [
     "frontend/playwright.config.ts",
     "frontend/e2e/portal.spec.ts",
     "frontend/src/AsyncState.tsx",
+    "frontend/src/DemoMode.tsx",
     *CORE_DOCS,
     *ADRS,
 ]

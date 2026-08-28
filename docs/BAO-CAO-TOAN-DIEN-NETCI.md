@@ -675,12 +675,19 @@ Ba phát hiện đáng ghi từ đợt này:
   token `--muted`/`--subtle`. Đã gộp về token và làm token đủ đậm. Không ai từng đo, nên
   không ai từng biết.
 
+| `demoMode` cho phần fixture còn lại | Xong: `frontend/src/DemoMode.tsx`. Panel nào đọc fixture thì **nói ra**, panel nào chỉ lưu trong trình duyệt thì nói rõ là sẽ mất khi tải lại — hai lời hứa khác nhau, không gộp làm một. |
+
+Nhân tiện sửa luôn một chỗ sai chữ: khắp UI ghi "Windows preview", vừa sai vì Portal cũng
+chạy trên Ubuntu, vừa sai trọng tâm — vấn đề chưa bao giờ là hệ điều hành mà là **dữ liệu
+chỉ nằm trong trình duyệt**.
+
 ### P1 — còn lại
 
-- `demoMode` cho phần fixture còn lại (chart minh họa, Settings/Server overlay).
-- Phân quyền theo môi trường trong một team ("team A deploy được staging nhưng không
+Không còn mục P1 nào. Còn lại đúng một giới hạn thiết kế đã biết:
+
+- Phân quyền theo môi trường **trong một team** ("team A deploy được staging nhưng không
   production") chưa biểu diễn được: role phủ trục môi trường, team phủ trục application,
-  hai trục không kết hợp sâu hơn.
+  hai trục không kết hợp sâu hơn. Xem [ADR-012](decisions/ADR-012-application-ownership.md).
 
 ### P2 — hướng production, không bắt buộc cho local reference
 

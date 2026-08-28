@@ -552,3 +552,19 @@ textarea { min-height: 78px; padding: 9px 10px; resize: vertical; font-size: 11p
   max-width: 640px; padding: 10px 14px; border-radius: 6px;
   background: var(--surface-alt, #f2f4f7); font-size: 11px; word-break: break-word;
 }
+
+/* ------------------------------------------------------------------- demo mode
+   What is fixture-backed or browser-only, said plainly. See src/DemoMode.tsx. */
+.demo-badge {
+  display: inline-flex; align-items: center; gap: 5px; vertical-align: middle;
+  margin-left: 8px; padding: 2px 8px; border-radius: 999px;
+  border: 1px solid var(--border); background: var(--canvas);
+  color: var(--muted); font-size: 10px; font-weight: 600; letter-spacing: .01em;
+}
+.demo-note {
+  display: flex; align-items: center; gap: 9px; margin: 0 0 14px;
+  padding: 9px 13px; border-radius: 7px;
+  border: 1px dashed var(--border); background: var(--canvas);
+  color: var(--muted); font-size: 11px;
+}
+.demo-note > svg { flex: none; }
