@@ -3,14 +3,14 @@
   "description": "Source to running container: real build, registry digest, SBOM, scan, signature, approval, Ansible deploy, health check and rollback.",
   "result": "pass",
   "error": null,
-  "commit": "d7a43b6c7017c0e48bd3359b6f7e81629dfc1f8e",
+  "commit": "cb2c3c310111392dbe827bb44d91c5f7a1bcf3b2",
   "host": {
     "platform": "Linux-6.8.0-134-generic-x86_64-with-glibc2.39",
     "python": "3.12.3",
     "hostname": "openstack-aio"
   },
-  "startedAt": "2026-08-27T15:50:27.452901+00:00",
-  "endedAt": "2026-08-27T15:51:13.261270+00:00",
+  "startedAt": "2026-08-28T06:34:20.315837+00:00",
+  "endedAt": "2026-08-28T06:35:08.877376+00:00",
   "context": {
     "apiUrl": "http://127.0.0.1:8100",
     "pipelineApiKey": "netci-local-pipeline-key",
@@ -18,9 +18,9 @@
     "repository": "127.0.0.1:55000/hello-container",
     "appName": "netci-gate-hello-container",
     "appRoot": "/home/deployer/netci-delivery-platform/.netci-gate/deploy/docker",
-    "port": 18081,
+    "port": 18090,
     "networkMode": "host",
-    "applicationId": "e0f7d957-c815-4c4d-913e-f416a57d4819"
+    "applicationId": "51d44951-5fbc-4993-9cc0-257bb32f5e43"
   },
   "assertions": [
     {
@@ -45,7 +45,7 @@
     {
       "assertion": "v1: the registry returned an immutable digest",
       "passed": true,
-      "detail": "sha256:59fb6dc24a50a2147c798f340b735056fc36862d80a448dad1d3561672b78447"
+      "detail": "sha256:b2d0859a00dafc52ba127fba46705450c6fc441d071040693d911e2c363b0458"
     },
     {
       "assertion": "v1: Syft produced a CycloneDX SBOM",
@@ -60,7 +60,7 @@
     {
       "assertion": "v2: the registry returned an immutable digest",
       "passed": true,
-      "detail": "sha256:5597c4f85af353ec4e0af4246ed3fee4e5c43fcae9b3e28936d13a79df328ccc"
+      "detail": "sha256:16ce1fe4f71605fb10f7d84423250165b3ef7f219dad70726ec34575c15e0501"
     },
     {
       "assertion": "v2: Syft produced a CycloneDX SBOM",
@@ -76,8 +76,8 @@
       "assertion": "two builds of different source produce two different digests",
       "passed": true,
       "detail": {
-        "v1": "sha256:59fb6dc24a50a2147c798f340b735056fc36862d80a448dad1d3561672b78447",
-        "v2": "sha256:5597c4f85af353ec4e0af4246ed3fee4e5c43fcae9b3e28936d13a79df328ccc"
+        "v1": "sha256:b2d0859a00dafc52ba127fba46705450c6fc441d071040693d911e2c363b0458",
+        "v2": "sha256:16ce1fe4f71605fb10f7d84423250165b3ef7f219dad70726ec34575c15e0501"
       }
     },
     {
@@ -92,8 +92,8 @@
       "assertion": "replaying the same idempotency key returns the same run",
       "passed": true,
       "detail": {
-        "expected": "5c1cf780-aa41-422b-a667-cae78f5f9742",
-        "actual": "5c1cf780-aa41-422b-a667-cae78f5f9742"
+        "expected": "31c1af60-0d14-4e19-8fc5-b9d2618c1b20",
+        "actual": "31c1af60-0d14-4e19-8fc5-b9d2618c1b20"
       }
     },
     {
@@ -129,11 +129,11 @@
       }
     },
     {
-      "assertion": "approval is attributed to the reviewer",
+      "assertion": "approval is attributed to the authenticated caller",
       "passed": true,
       "detail": {
-        "expected": "gate-reviewer",
-        "actual": "gate-reviewer"
+        "expected": "anonymous",
+        "actual": "anonymous"
       }
     },
     {
@@ -148,8 +148,8 @@
       "assertion": "the running service reports the digest that was approved",
       "passed": true,
       "detail": {
-        "expected": "sha256:59fb6dc24a50a2147c798f340b735056fc36862d80a448dad1d3561672b78447",
-        "actual": "sha256:59fb6dc24a50a2147c798f340b735056fc36862d80a448dad1d3561672b78447"
+        "expected": "sha256:b2d0859a00dafc52ba127fba46705450c6fc441d071040693d911e2c363b0458",
+        "actual": "sha256:b2d0859a00dafc52ba127fba46705450c6fc441d071040693d911e2c363b0458"
       }
     },
     {
@@ -164,8 +164,8 @@
       "assertion": "the promoted release runs the second digest",
       "passed": true,
       "detail": {
-        "expected": "sha256:5597c4f85af353ec4e0af4246ed3fee4e5c43fcae9b3e28936d13a79df328ccc",
-        "actual": "sha256:5597c4f85af353ec4e0af4246ed3fee4e5c43fcae9b3e28936d13a79df328ccc"
+        "expected": "sha256:16ce1fe4f71605fb10f7d84423250165b3ef7f219dad70726ec34575c15e0501",
+        "actual": "sha256:16ce1fe4f71605fb10f7d84423250165b3ef7f219dad70726ec34575c15e0501"
       }
     },
     {
@@ -180,16 +180,16 @@
       "assertion": "the rollback keeps the superseded digest for audit",
       "passed": true,
       "detail": {
-        "expected": "sha256:5597c4f85af353ec4e0af4246ed3fee4e5c43fcae9b3e28936d13a79df328ccc",
-        "actual": "sha256:5597c4f85af353ec4e0af4246ed3fee4e5c43fcae9b3e28936d13a79df328ccc"
+        "expected": "sha256:16ce1fe4f71605fb10f7d84423250165b3ef7f219dad70726ec34575c15e0501",
+        "actual": "sha256:16ce1fe4f71605fb10f7d84423250165b3ef7f219dad70726ec34575c15e0501"
       }
     },
     {
       "assertion": "the service is serving the rolled-back digest again",
       "passed": true,
       "detail": {
-        "expected": "sha256:59fb6dc24a50a2147c798f340b735056fc36862d80a448dad1d3561672b78447",
-        "actual": "sha256:59fb6dc24a50a2147c798f340b735056fc36862d80a448dad1d3561672b78447"
+        "expected": "sha256:b2d0859a00dafc52ba127fba46705450c6fc441d071040693d911e2c363b0458",
+        "actual": "sha256:b2d0859a00dafc52ba127fba46705450c6fc441d071040693d911e2c363b0458"
       }
     },
     {
@@ -232,8 +232,8 @@
     {
       "name": "tool-preflight",
       "command": null,
-      "startedAt": "2026-08-27T15:50:27.452995+00:00",
-      "endedAt": "2026-08-27T15:50:27.452995+00:00",
+      "startedAt": "2026-08-28T06:34:20.315927+00:00",
+      "endedAt": "2026-08-28T06:34:20.315927+00:00",
       "durationSeconds": 0.0,
       "exitCode": 0,
       "passed": true,
@@ -252,8 +252,8 @@
     {
       "name": "api-health",
       "command": null,
-      "startedAt": "2026-08-27T15:50:27.480546+00:00",
-      "endedAt": "2026-08-27T15:50:27.480546+00:00",
+      "startedAt": "2026-08-28T06:34:20.334969+00:00",
+      "endedAt": "2026-08-28T06:34:20.334969+00:00",
       "durationSeconds": 0.0,
       "exitCode": 0,
       "passed": true,
@@ -264,7 +264,9 @@
         "version": "0.1.0",
         "engines": {
           "ci": "none",
-          "cd": "none"
+          "cd": "none",
+          "auth": "none",
+          "signatureVerification": "none"
         },
         "dependencies": {
           "portalPersistence": {
@@ -276,10 +278,33 @@
       }
     },
     {
+      "name": "golden-base:build",
+      "command": [
+        "docker",
+        "build",
+        "--network",
+        "host",
+        "--pull",
+        "--build-arg",
+        "PYTHON_IMAGE=python:3.12-alpine",
+        "-t",
+        "netci/python-base:3.12-alpine",
+        "/home/deployer/netci-delivery-platform/sample-apps/base-python"
+      ],
+      "startedAt": "2026-08-28T06:34:20.335045+00:00",
+      "endedAt": "2026-08-28T06:34:21.508632+00:00",
+      "durationSeconds": 1.174,
+      "exitCode": 0,
+      "passed": true,
+      "stdout": "",
+      "stderr": "#0 building with \"default\" instance using docker driver\n\n#1 [internal] load build definition from Dockerfile\n#1 transferring dockerfile: 946B done\n#1 DONE 0.0s\n\n#2 [internal] load metadata for docker.io/library/python:3.12-alpine\n#2 DONE 0.9s\n\n#3 [internal] load .dockerignore\n#3 transferring context: 2B done\n#3 DONE 0.0s\n\n#4 [1/2] FROM docker.io/library/python:3.12-alpine@sha256:d09d15e60962ca365d1cd544a48773bac9d33f2fb1b00f2aa0deec78ade7dc31\n#4 resolve docker.io/library/python:3.12-alpine@sha256:d09d15e60962ca365d1cd544a48773bac9d33f2fb1b00f2aa0deec78ade7dc31 0.0s done\n#4 DONE 0.0s\n\n#5 [2/2] RUN apk upgrade --no-cache\n#5 CACHED\n\n#6 exporting to image\n#6 exporting layers done\n#6 exporting manifest sha256:adb0ed8cbeec55765e0acb3e6c8645e6a765ac7ee5de75379fd14bc25a918dff done\n#6 exporting config sha256:f68344de5fa5ae9565af3f9bada16f45250e16066209b293e1ff0c8330027d53 done\n#6 exporting attestation manifest sha256:0b454b7bd43da2167132d4e18418d788d6ae1aca860e92b13cd1c45cc288d0c1 done\n#6 exporting manifest list sha256:ace691a1951de7795bb78d504aa123a426d9e4088a1467a59f86b87124ba7cab done\n#6 naming to docker.io/netci/python-base:3.12-alpine done\n#6 unpacking to docker.io/netci/python-base:3.12-alpine done\n#6 DONE 0.0s\n",
+      "detail": {}
+    },
+    {
       "name": "registry-probe",
       "command": null,
-      "startedAt": "2026-08-27T15:50:27.480557+00:00",
-      "endedAt": "2026-08-27T15:50:27.480557+00:00",
+      "startedAt": "2026-08-28T06:34:21.508658+00:00",
+      "endedAt": "2026-08-28T06:34:21.508658+00:00",
       "durationSeconds": 0.0,
       "exitCode": 0,
       "passed": true,
@@ -296,13 +321,13 @@
         "bash",
         "/home/deployer/netci-delivery-platform/templates/container-ci-cd-v1/scripts/ci/test.sh"
       ],
-      "startedAt": "2026-08-27T15:50:27.481562+00:00",
-      "endedAt": "2026-08-27T15:50:28.100651+00:00",
-      "durationSeconds": 0.619,
+      "startedAt": "2026-08-28T06:34:21.510700+00:00",
+      "endedAt": "2026-08-28T06:34:22.113082+00:00",
+      "durationSeconds": 0.602,
       "exitCode": 0,
       "passed": true,
       "stdout": "",
-      "stderr": "..\n----------------------------------------------------------------------\nRan 2 tests in 0.517s\n\nOK\n",
+      "stderr": "..\n----------------------------------------------------------------------\nRan 2 tests in 0.515s\n\nOK\n",
       "detail": {}
     },
     {
@@ -313,20 +338,20 @@
         "--network",
         "host",
         "--build-arg",
-        "PYTHON_IMAGE=python:3.12-alpine",
+        "PYTHON_IMAGE=netci/python-base:3.12-alpine",
         "--label",
         "org.netci.version=v1",
         "-t",
         "127.0.0.1:55000/hello-container:v1",
         "/home/deployer/netci-delivery-platform/sample-apps/hello-container"
       ],
-      "startedAt": "2026-08-27T15:50:28.100696+00:00",
-      "endedAt": "2026-08-27T15:50:28.698979+00:00",
-      "durationSeconds": 0.598,
+      "startedAt": "2026-08-28T06:34:22.113110+00:00",
+      "endedAt": "2026-08-28T06:34:22.342711+00:00",
+      "durationSeconds": 0.23,
       "exitCode": 0,
       "passed": true,
       "stdout": "",
-      "stderr": "#0 building with \"default\" instance using docker driver\n\n#1 [internal] load build definition from Dockerfile\n#1 transferring dockerfile: 569B done\n#1 DONE 0.0s\n\n#2 [internal] load metadata for docker.io/library/python:3.12-alpine\n#2 DONE 0.4s\n\n#3 [internal] load .dockerignore\n#3 transferring context: 2B done\n#3 DONE 0.0s\n\n#4 [internal] load build context\n#4 transferring context: 28B done\n#4 DONE 0.0s\n\n#5 [1/4] FROM docker.io/library/python:3.12-alpine@sha256:d09d15e60962ca365d1cd544a48773bac9d33f2fb1b00f2aa0deec78ade7dc31\n#5 resolve docker.io/library/python:3.12-alpine@sha256:d09d15e60962ca365d1cd544a48773bac9d33f2fb1b00f2aa0deec78ade7dc31 0.0s done\n#5 DONE 0.0s\n\n#6 [2/4] RUN apk upgrade --no-cache\n#6 CACHED\n\n#7 [3/4] WORKDIR /app\n#7 CACHED\n\n#8 [4/4] COPY --chown=10001:10001 app.py /app/app.py\n#8 CACHED\n\n#9 exporting to image\n#9 exporting layers done\n#9 exporting manifest sha256:4620442b0c4f819f5a07c5b1416fbed2444547667722010e06d7542b55478c58 done\n#9 exporting config sha256:0a6cd30aa2bcca07f895e0e998a33f0e140ffda044e10037847f5d854279ca00 done\n#9 exporting attestation manifest sha256:33de463f5bc1a8b581a384f7ae49e5ed8fc298eef091b44700d782a7e35ea78b done\n#9 exporting manifest list sha256:59fb6dc24a50a2147c798f340b735056fc36862d80a448dad1d3561672b78447 done\n#9 naming to 127.0.0.1:55000/hello-container:v1 done\n#9 unpacking to 127.0.0.1:55000/hello-container:v1 done\n#9 DONE 0.0s\n",
+      "stderr": "#0 building with \"default\" instance using docker driver\n\n#1 [internal] load build definition from Dockerfile\n#1 transferring dockerfile: 672B done\n#1 DONE 0.0s\n\n#2 [internal] load metadata for docker.io/netci/python-base:3.12-alpine\n#2 DONE 0.0s\n\n#3 [internal] load .dockerignore\n#3 transferring context: 2B done\n#3 DONE 0.0s\n\n#4 [internal] load build context\n#4 transferring context: 28B done\n#4 DONE 0.0s\n\n#5 [1/3] FROM docker.io/netci/python-base:3.12-alpine@sha256:ace691a1951de7795bb78d504aa123a426d9e4088a1467a59f86b87124ba7cab\n#5 resolve docker.io/netci/python-base:3.12-alpine@sha256:ace691a1951de7795bb78d504aa123a426d9e4088a1467a59f86b87124ba7cab done\n#5 DONE 0.0s\n\n#6 [2/3] WORKDIR /app\n#6 CACHED\n\n#7 [3/3] COPY app.py /app/app.py\n#7 CACHED\n\n#8 exporting to image\n#8 exporting layers done\n#8 exporting manifest sha256:8be3f27744c821b7e23e48e614a1f9ecb39895334aa386dfa035ca8f92a0b11c done\n#8 exporting config sha256:d49b2042a9190870323482b27bfa2616eb097ea4a113f433bcafd0f8aa3d252f done\n#8 exporting attestation manifest sha256:38403904047c4342e037ae2b3a51df1bd1dd6c2ff78aa36feb71358e11f97ee1 done\n#8 exporting manifest list sha256:b2d0859a00dafc52ba127fba46705450c6fc441d071040693d911e2c363b0458 done\n#8 naming to 127.0.0.1:55000/hello-container:v1 done\n#8 unpacking to 127.0.0.1:55000/hello-container:v1 done\n#8 DONE 0.0s\n",
       "detail": {}
     },
     {
@@ -336,12 +361,12 @@
         "push",
         "127.0.0.1:55000/hello-container:v1"
       ],
-      "startedAt": "2026-08-27T15:50:28.698996+00:00",
-      "endedAt": "2026-08-27T15:50:28.763076+00:00",
-      "durationSeconds": 0.064,
+      "startedAt": "2026-08-28T06:34:22.342728+00:00",
+      "endedAt": "2026-08-28T06:34:22.396023+00:00",
+      "durationSeconds": 0.053,
       "exitCode": 0,
       "passed": true,
-      "stdout": "The push refers to repository [127.0.0.1:55000/hello-container]\n0021712cb493: Layer already exists\na2fe09303fab: Layer already exists\n7eec6ed36766: Layer already exists\nec4d683652e1: Pushed\n55afa1ecc21d: Layer already exists\n8e1998497ac2: Layer already exists\n5086b6265f8c: Layer already exists\n373ea03ba5d0: Layer already exists\nv1: digest: sha256:59fb6dc24a50a2147c798f340b735056fc36862d80a448dad1d3561672b78447 size: 856\n",
+      "stdout": "The push refers to repository [127.0.0.1:55000/hello-container]\n7eec6ed36766: Layer already exists\n55afa1ecc21d: Layer already exists\n6c360e1113d4: Layer already exists\n0021712cb493: Layer already exists\n5086b6265f8c: Layer already exists\n49aa67038306: Layer already exists\nf38cb3d30562: Pushed\na1cd137fb928: Layer already exists\nv1: digest: sha256:b2d0859a00dafc52ba127fba46705450c6fc441d071040693d911e2c363b0458 size: 856\n",
       "stderr": "",
       "detail": {}
     },
@@ -349,13 +374,13 @@
       "name": "v1:sbom",
       "command": [
         "syft",
-        "registry:127.0.0.1:55000/hello-container@sha256:59fb6dc24a50a2147c798f340b735056fc36862d80a448dad1d3561672b78447",
+        "registry:127.0.0.1:55000/hello-container@sha256:b2d0859a00dafc52ba127fba46705450c6fc441d071040693d911e2c363b0458",
         "--output",
         "cyclonedx-json=/home/deployer/netci-delivery-platform/.netci-gate/e2e-container/v1/sbom.json"
       ],
-      "startedAt": "2026-08-27T15:50:28.763281+00:00",
-      "endedAt": "2026-08-27T15:50:30.333526+00:00",
-      "durationSeconds": 1.57,
+      "startedAt": "2026-08-28T06:34:22.396244+00:00",
+      "endedAt": "2026-08-28T06:34:23.998321+00:00",
+      "durationSeconds": 1.602,
       "exitCode": 0,
       "passed": true,
       "stdout": "",
@@ -376,22 +401,22 @@
         "json",
         "--output",
         "/home/deployer/netci-delivery-platform/.netci-gate/e2e-container/v1/scan-report.json",
-        "127.0.0.1:55000/hello-container@sha256:59fb6dc24a50a2147c798f340b735056fc36862d80a448dad1d3561672b78447"
+        "127.0.0.1:55000/hello-container@sha256:b2d0859a00dafc52ba127fba46705450c6fc441d071040693d911e2c363b0458"
       ],
-      "startedAt": "2026-08-27T15:50:30.336941+00:00",
-      "endedAt": "2026-08-27T15:50:30.422689+00:00",
-      "durationSeconds": 0.086,
+      "startedAt": "2026-08-28T06:34:24.001015+00:00",
+      "endedAt": "2026-08-28T06:34:24.105591+00:00",
+      "durationSeconds": 0.105,
       "exitCode": 0,
       "passed": true,
       "stdout": "",
-      "stderr": "2026-08-27T22:50:30+07:00\tINFO\t[vuln] Vulnerability scanning is enabled\n2026-08-27T22:50:30+07:00\tINFO\tDetected OS\tfamily=\"alpine\" version=\"3.24.1\"\n2026-08-27T22:50:30+07:00\tWARN\tThis OS version is not on the EOL list\tfamily=\"alpine\" version=\"3.24\"\n2026-08-27T22:50:30+07:00\tINFO\t[alpine] Detecting vulnerabilities...\tos_version=\"3.24\" repository=\"3.24\" pkg_num=38\n2026-08-27T22:50:30+07:00\tINFO\tNumber of language-specific files\tnum=1\n2026-08-27T22:50:30+07:00\tINFO\t[python-pkg] Detecting vulnerabilities...\n",
+      "stderr": "2026-08-28T13:34:24+07:00\tINFO\t[vuln] Vulnerability scanning is enabled\n2026-08-28T13:34:24+07:00\tINFO\tDetected OS\tfamily=\"alpine\" version=\"3.24.1\"\n2026-08-28T13:34:24+07:00\tWARN\tThis OS version is not on the EOL list\tfamily=\"alpine\" version=\"3.24\"\n2026-08-28T13:34:24+07:00\tINFO\t[alpine] Detecting vulnerabilities...\tos_version=\"3.24\" repository=\"3.24\" pkg_num=38\n2026-08-28T13:34:24+07:00\tINFO\tNumber of language-specific files\tnum=1\n2026-08-28T13:34:24+07:00\tINFO\t[python-pkg] Detecting vulnerabilities...\n",
       "detail": {}
     },
     {
       "name": "v1:scan-counts",
       "command": null,
-      "startedAt": "2026-08-27T15:50:30.423800+00:00",
-      "endedAt": "2026-08-27T15:50:30.423800+00:00",
+      "startedAt": "2026-08-28T06:34:24.106087+00:00",
+      "endedAt": "2026-08-28T06:34:24.106087+00:00",
       "durationSeconds": 0.0,
       "exitCode": 0,
       "passed": true,
@@ -413,11 +438,11 @@
         "/home/deployer/netci-delivery-platform/.netci-gate/keys/cosign.key",
         "--allow-insecure-registry",
         "--tlog-upload=false",
-        "127.0.0.1:55000/hello-container@sha256:59fb6dc24a50a2147c798f340b735056fc36862d80a448dad1d3561672b78447"
+        "127.0.0.1:55000/hello-container@sha256:b2d0859a00dafc52ba127fba46705450c6fc441d071040693d911e2c363b0458"
       ],
-      "startedAt": "2026-08-27T15:50:30.423833+00:00",
-      "endedAt": "2026-08-27T15:50:30.615008+00:00",
-      "durationSeconds": 0.191,
+      "startedAt": "2026-08-28T06:34:24.106104+00:00",
+      "endedAt": "2026-08-28T06:34:24.284912+00:00",
+      "durationSeconds": 0.179,
       "exitCode": 0,
       "passed": true,
       "stdout": "",
@@ -435,15 +460,15 @@
         "--insecure-ignore-tlog=true",
         "--output",
         "json",
-        "127.0.0.1:55000/hello-container@sha256:59fb6dc24a50a2147c798f340b735056fc36862d80a448dad1d3561672b78447"
+        "127.0.0.1:55000/hello-container@sha256:b2d0859a00dafc52ba127fba46705450c6fc441d071040693d911e2c363b0458"
       ],
-      "startedAt": "2026-08-27T15:50:30.615044+00:00",
-      "endedAt": "2026-08-27T15:50:30.643805+00:00",
-      "durationSeconds": 0.029,
+      "startedAt": "2026-08-28T06:34:24.284926+00:00",
+      "endedAt": "2026-08-28T06:34:24.308575+00:00",
+      "durationSeconds": 0.024,
       "exitCode": 0,
       "passed": true,
-      "stdout": "\n[{\"critical\":{\"identity\":{\"docker-reference\":\"127.0.0.1:55000/hello-container\"},\"image\":{\"docker-manifest-digest\":\"sha256:59fb6dc24a50a2147c798f340b735056fc36862d80a448dad1d3561672b78447\"},\"type\":\"cosign container image signature\"},\"optional\":null}]\n",
-      "stderr": "WARNING: Skipping tlog verification is an insecure practice that lacks of transparency and auditability verification for the signature.\n\nVerification for 127.0.0.1:55000/hello-container@sha256:59fb6dc24a50a2147c798f340b735056fc36862d80a448dad1d3561672b78447 --\nThe following checks were performed on each of these signatures:\n  - The cosign claims were validated\n  - The signatures were verified against the specified public key\n",
+      "stdout": "\n[{\"critical\":{\"identity\":{\"docker-reference\":\"127.0.0.1:55000/hello-container\"},\"image\":{\"docker-manifest-digest\":\"sha256:b2d0859a00dafc52ba127fba46705450c6fc441d071040693d911e2c363b0458\"},\"type\":\"cosign container image signature\"},\"optional\":null}]\n",
+      "stderr": "WARNING: Skipping tlog verification is an insecure practice that lacks of transparency and auditability verification for the signature.\n\nVerification for 127.0.0.1:55000/hello-container@sha256:b2d0859a00dafc52ba127fba46705450c6fc441d071040693d911e2c363b0458 --\nThe following checks were performed on each of these signatures:\n  - The cosign claims were validated\n  - The signatures were verified against the specified public key\n",
       "detail": {}
     },
     {
@@ -452,13 +477,13 @@
         "bash",
         "/home/deployer/netci-delivery-platform/templates/container-ci-cd-v1/scripts/ci/test.sh"
       ],
-      "startedAt": "2026-08-27T15:50:30.644512+00:00",
-      "endedAt": "2026-08-27T15:50:31.260567+00:00",
-      "durationSeconds": 0.616,
+      "startedAt": "2026-08-28T06:34:24.309263+00:00",
+      "endedAt": "2026-08-28T06:34:24.916992+00:00",
+      "durationSeconds": 0.608,
       "exitCode": 0,
       "passed": true,
       "stdout": "",
-      "stderr": "..\n----------------------------------------------------------------------\nRan 2 tests in 0.518s\n\nOK\n",
+      "stderr": "..\n----------------------------------------------------------------------\nRan 2 tests in 0.515s\n\nOK\n",
       "detail": {}
     },
     {
@@ -469,20 +494,20 @@
         "--network",
         "host",
         "--build-arg",
-        "PYTHON_IMAGE=python:3.12-alpine",
+        "PYTHON_IMAGE=netci/python-base:3.12-alpine",
         "--label",
         "org.netci.version=v2",
         "-t",
         "127.0.0.1:55000/hello-container:v2",
         "/home/deployer/netci-delivery-platform/sample-apps/hello-container"
       ],
-      "startedAt": "2026-08-27T15:50:31.260592+00:00",
-      "endedAt": "2026-08-27T15:50:31.790473+00:00",
-      "durationSeconds": 0.53,
+      "startedAt": "2026-08-28T06:34:24.917021+00:00",
+      "endedAt": "2026-08-28T06:34:25.158931+00:00",
+      "durationSeconds": 0.242,
       "exitCode": 0,
       "passed": true,
       "stdout": "",
-      "stderr": "#0 building with \"default\" instance using docker driver\n\n#1 [internal] load build definition from Dockerfile\n#1 transferring dockerfile: 569B done\n#1 DONE 0.0s\n\n#2 [internal] load metadata for docker.io/library/python:3.12-alpine\n#2 DONE 0.3s\n\n#3 [internal] load .dockerignore\n#3 transferring context: 2B done\n#3 DONE 0.0s\n\n#4 [internal] load build context\n#4 transferring context: 28B done\n#4 DONE 0.0s\n\n#5 [1/4] FROM docker.io/library/python:3.12-alpine@sha256:d09d15e60962ca365d1cd544a48773bac9d33f2fb1b00f2aa0deec78ade7dc31\n#5 resolve docker.io/library/python:3.12-alpine@sha256:d09d15e60962ca365d1cd544a48773bac9d33f2fb1b00f2aa0deec78ade7dc31 0.0s done\n#5 DONE 0.0s\n\n#6 [3/4] WORKDIR /app\n#6 CACHED\n\n#7 [2/4] RUN apk upgrade --no-cache\n#7 CACHED\n\n#8 [4/4] COPY --chown=10001:10001 app.py /app/app.py\n#8 CACHED\n\n#9 exporting to image\n#9 exporting layers done\n#9 exporting manifest sha256:40b6c497af398894cf19ea10d2e6adc2e5715fc4d0ef9a5a493a74fc753ddecd done\n#9 exporting config sha256:ff34e9d3d48302518a5b247f1da69cf708eea00e94bf0569b9dabb8a589b08f8 done\n#9 exporting attestation manifest sha256:7df14f82614bcb168d5e8bcfd5214a6d6b20db2fb13b8059fa3dd0b7bbce9809 done\n#9 exporting manifest list sha256:5597c4f85af353ec4e0af4246ed3fee4e5c43fcae9b3e28936d13a79df328ccc done\n#9 naming to 127.0.0.1:55000/hello-container:v2 done\n#9 unpacking to 127.0.0.1:55000/hello-container:v2 done\n#9 DONE 0.0s\n",
+      "stderr": "#0 building with \"default\" instance using docker driver\n\n#1 [internal] load build definition from Dockerfile\n#1 transferring dockerfile: 672B done\n#1 DONE 0.0s\n\n#2 [internal] load metadata for docker.io/netci/python-base:3.12-alpine\n#2 DONE 0.0s\n\n#3 [internal] load .dockerignore\n#3 transferring context: 2B done\n#3 DONE 0.0s\n\n#4 [internal] load build context\n#4 transferring context: 28B done\n#4 DONE 0.0s\n\n#5 [1/3] FROM docker.io/netci/python-base:3.12-alpine@sha256:ace691a1951de7795bb78d504aa123a426d9e4088a1467a59f86b87124ba7cab\n#5 resolve docker.io/netci/python-base:3.12-alpine@sha256:ace691a1951de7795bb78d504aa123a426d9e4088a1467a59f86b87124ba7cab done\n#5 DONE 0.0s\n\n#6 [2/3] WORKDIR /app\n#6 CACHED\n\n#7 [3/3] COPY app.py /app/app.py\n#7 CACHED\n\n#8 exporting to image\n#8 exporting layers done\n#8 exporting manifest sha256:3419729abb8660d0a0b14b4e304b174c5c2a91f2cc4107c796d508b2b1c8038b done\n#8 exporting config sha256:34d851b17a8d34734dafa52b9089836af9905756e41d71136ac10ec235980b07 done\n#8 exporting attestation manifest sha256:2daeeaf7156e1f52ac48d2381b996515d822ada70e1fe9520801f701aab5caaf done\n#8 exporting manifest list sha256:16ce1fe4f71605fb10f7d84423250165b3ef7f219dad70726ec34575c15e0501 done\n#8 naming to 127.0.0.1:55000/hello-container:v2 done\n#8 unpacking to 127.0.0.1:55000/hello-container:v2 done\n#8 DONE 0.0s\n",
       "detail": {}
     },
     {
@@ -492,12 +517,12 @@
         "push",
         "127.0.0.1:55000/hello-container:v2"
       ],
-      "startedAt": "2026-08-27T15:50:31.790489+00:00",
-      "endedAt": "2026-08-27T15:50:31.849373+00:00",
-      "durationSeconds": 0.059,
+      "startedAt": "2026-08-28T06:34:25.158953+00:00",
+      "endedAt": "2026-08-28T06:34:25.215360+00:00",
+      "durationSeconds": 0.056,
       "exitCode": 0,
       "passed": true,
-      "stdout": "The push refers to repository [127.0.0.1:55000/hello-container]\na2fe09303fab: Layer already exists\nebf4d3b8af2b: Pushed\n0021712cb493: Layer already exists\n55afa1ecc21d: Layer already exists\n5086b6265f8c: Layer already exists\n8e1998497ac2: Layer already exists\n7eec6ed36766: Layer already exists\n373ea03ba5d0: Layer already exists\nv2: digest: sha256:5597c4f85af353ec4e0af4246ed3fee4e5c43fcae9b3e28936d13a79df328ccc size: 856\n",
+      "stdout": "The push refers to repository [127.0.0.1:55000/hello-container]\n7eec6ed36766: Layer already exists\n49aa67038306: Layer already exists\n4de315c53acf: Pushed\n0021712cb493: Layer already exists\na1cd137fb928: Layer already exists\n5086b6265f8c: Layer already exists\n6c360e1113d4: Layer already exists\n55afa1ecc21d: Layer already exists\nv2: digest: sha256:16ce1fe4f71605fb10f7d84423250165b3ef7f219dad70726ec34575c15e0501 size: 856\n",
       "stderr": "",
       "detail": {}
     },
@@ -505,13 +530,13 @@
       "name": "v2:sbom",
       "command": [
         "syft",
-        "registry:127.0.0.1:55000/hello-container@sha256:5597c4f85af353ec4e0af4246ed3fee4e5c43fcae9b3e28936d13a79df328ccc",
+        "registry:127.0.0.1:55000/hello-container@sha256:16ce1fe4f71605fb10f7d84423250165b3ef7f219dad70726ec34575c15e0501",
         "--output",
         "cyclonedx-json=/home/deployer/netci-delivery-platform/.netci-gate/e2e-container/v2/sbom.json"
       ],
-      "startedAt": "2026-08-27T15:50:31.849672+00:00",
-      "endedAt": "2026-08-27T15:50:33.269959+00:00",
-      "durationSeconds": 1.42,
+      "startedAt": "2026-08-28T06:34:25.215700+00:00",
+      "endedAt": "2026-08-28T06:34:26.928642+00:00",
+      "durationSeconds": 1.713,
       "exitCode": 0,
       "passed": true,
       "stdout": "",
@@ -532,22 +557,22 @@
         "json",
         "--output",
         "/home/deployer/netci-delivery-platform/.netci-gate/e2e-container/v2/scan-report.json",
-        "127.0.0.1:55000/hello-container@sha256:5597c4f85af353ec4e0af4246ed3fee4e5c43fcae9b3e28936d13a79df328ccc"
+        "127.0.0.1:55000/hello-container@sha256:16ce1fe4f71605fb10f7d84423250165b3ef7f219dad70726ec34575c15e0501"
       ],
-      "startedAt": "2026-08-27T15:50:33.272580+00:00",
-      "endedAt": "2026-08-27T15:50:33.366535+00:00",
-      "durationSeconds": 0.094,
+      "startedAt": "2026-08-28T06:34:26.931343+00:00",
+      "endedAt": "2026-08-28T06:34:27.024468+00:00",
+      "durationSeconds": 0.093,
       "exitCode": 0,
       "passed": true,
       "stdout": "",
-      "stderr": "2026-08-27T22:50:33+07:00\tINFO\t[vuln] Vulnerability scanning is enabled\n2026-08-27T22:50:33+07:00\tINFO\tDetected OS\tfamily=\"alpine\" version=\"3.24.1\"\n2026-08-27T22:50:33+07:00\tWARN\tThis OS version is not on the EOL list\tfamily=\"alpine\" version=\"3.24\"\n2026-08-27T22:50:33+07:00\tINFO\t[alpine] Detecting vulnerabilities...\tos_version=\"3.24\" repository=\"3.24\" pkg_num=38\n2026-08-27T22:50:33+07:00\tINFO\tNumber of language-specific files\tnum=1\n2026-08-27T22:50:33+07:00\tINFO\t[python-pkg] Detecting vulnerabilities...\n",
+      "stderr": "2026-08-28T13:34:26+07:00\tINFO\t[vuln] Vulnerability scanning is enabled\n2026-08-28T13:34:27+07:00\tINFO\tDetected OS\tfamily=\"alpine\" version=\"3.24.1\"\n2026-08-28T13:34:27+07:00\tWARN\tThis OS version is not on the EOL list\tfamily=\"alpine\" version=\"3.24\"\n2026-08-28T13:34:27+07:00\tINFO\t[alpine] Detecting vulnerabilities...\tos_version=\"3.24\" repository=\"3.24\" pkg_num=38\n2026-08-28T13:34:27+07:00\tINFO\tNumber of language-specific files\tnum=1\n2026-08-28T13:34:27+07:00\tINFO\t[python-pkg] Detecting vulnerabilities...\n",
       "detail": {}
     },
     {
       "name": "v2:scan-counts",
       "command": null,
-      "startedAt": "2026-08-27T15:50:33.367269+00:00",
-      "endedAt": "2026-08-27T15:50:33.367269+00:00",
+      "startedAt": "2026-08-28T06:34:27.025153+00:00",
+      "endedAt": "2026-08-28T06:34:27.025153+00:00",
       "durationSeconds": 0.0,
       "exitCode": 0,
       "passed": true,
@@ -569,11 +594,11 @@
         "/home/deployer/netci-delivery-platform/.netci-gate/keys/cosign.key",
         "--allow-insecure-registry",
         "--tlog-upload=false",
-        "127.0.0.1:55000/hello-container@sha256:5597c4f85af353ec4e0af4246ed3fee4e5c43fcae9b3e28936d13a79df328ccc"
+        "127.0.0.1:55000/hello-container@sha256:16ce1fe4f71605fb10f7d84423250165b3ef7f219dad70726ec34575c15e0501"
       ],
-      "startedAt": "2026-08-27T15:50:33.367302+00:00",
-      "endedAt": "2026-08-27T15:50:33.559738+00:00",
-      "durationSeconds": 0.192,
+      "startedAt": "2026-08-28T06:34:27.025192+00:00",
+      "endedAt": "2026-08-28T06:34:27.221819+00:00",
+      "durationSeconds": 0.197,
       "exitCode": 0,
       "passed": true,
       "stdout": "",
@@ -591,29 +616,29 @@
         "--insecure-ignore-tlog=true",
         "--output",
         "json",
-        "127.0.0.1:55000/hello-container@sha256:5597c4f85af353ec4e0af4246ed3fee4e5c43fcae9b3e28936d13a79df328ccc"
+        "127.0.0.1:55000/hello-container@sha256:16ce1fe4f71605fb10f7d84423250165b3ef7f219dad70726ec34575c15e0501"
       ],
-      "startedAt": "2026-08-27T15:50:33.559764+00:00",
-      "endedAt": "2026-08-27T15:50:33.592149+00:00",
-      "durationSeconds": 0.032,
+      "startedAt": "2026-08-28T06:34:27.221836+00:00",
+      "endedAt": "2026-08-28T06:34:27.247996+00:00",
+      "durationSeconds": 0.026,
       "exitCode": 0,
       "passed": true,
-      "stdout": "\n[{\"critical\":{\"identity\":{\"docker-reference\":\"127.0.0.1:55000/hello-container\"},\"image\":{\"docker-manifest-digest\":\"sha256:5597c4f85af353ec4e0af4246ed3fee4e5c43fcae9b3e28936d13a79df328ccc\"},\"type\":\"cosign container image signature\"},\"optional\":null}]\n",
-      "stderr": "WARNING: Skipping tlog verification is an insecure practice that lacks of transparency and auditability verification for the signature.\n\nVerification for 127.0.0.1:55000/hello-container@sha256:5597c4f85af353ec4e0af4246ed3fee4e5c43fcae9b3e28936d13a79df328ccc --\nThe following checks were performed on each of these signatures:\n  - The cosign claims were validated\n  - The signatures were verified against the specified public key\n",
+      "stdout": "\n[{\"critical\":{\"identity\":{\"docker-reference\":\"127.0.0.1:55000/hello-container\"},\"image\":{\"docker-manifest-digest\":\"sha256:16ce1fe4f71605fb10f7d84423250165b3ef7f219dad70726ec34575c15e0501\"},\"type\":\"cosign container image signature\"},\"optional\":null}]\n",
+      "stderr": "WARNING: Skipping tlog verification is an insecure practice that lacks of transparency and auditability verification for the signature.\n\nVerification for 127.0.0.1:55000/hello-container@sha256:16ce1fe4f71605fb10f7d84423250165b3ef7f219dad70726ec34575c15e0501 --\nThe following checks were performed on each of these signatures:\n  - The cosign claims were validated\n  - The signatures were verified against the specified public key\n",
       "detail": {}
     },
     {
       "name": "v1:policy-decision",
       "command": null,
-      "startedAt": "2026-08-27T15:50:33.623446+00:00",
-      "endedAt": "2026-08-27T15:50:33.623446+00:00",
+      "startedAt": "2026-08-28T06:34:27.283592+00:00",
+      "endedAt": "2026-08-28T06:34:27.283592+00:00",
       "durationSeconds": 0.0,
       "exitCode": 0,
       "passed": true,
       "stdout": "",
       "stderr": "",
       "detail": {
-        "pipelineRunId": "5c1cf780-aa41-422b-a667-cae78f5f9742",
+        "pipelineRunId": "31c1af60-0d14-4e19-8fc5-b9d2618c1b20",
         "decision": "allow",
         "reason": "artifact satisfies the netCI supply-chain policy",
         "checks": {
@@ -633,11 +658,11 @@
         "/home/deployer/netci-delivery-platform/deploy/ansible/inventories/localhost.ini",
         "/home/deployer/netci-delivery-platform/deploy/ansible/playbooks/deploy-docker.yml",
         "--extra-vars",
-        "{\"app_name\": \"netci-gate-hello-container\", \"app_root\": \"/home/deployer/netci-delivery-platform/.netci-gate/deploy/docker\", \"artifact_digest\": \"sha256:59fb6dc24a50a2147c798f340b735056fc36862d80a448dad1d3561672b78447\", \"host_port\": 18081, \"image_repository\": \"127.0.0.1:55000/hello-container\", \"netci_action\": \"deploy\", \"network_mode\": \"host\", \"target_environment\": \"staging\"}"
+        "{\"app_name\": \"netci-gate-hello-container\", \"app_root\": \"/home/deployer/netci-delivery-platform/.netci-gate/deploy/docker\", \"artifact_digest\": \"sha256:b2d0859a00dafc52ba127fba46705450c6fc441d071040693d911e2c363b0458\", \"host_port\": 18090, \"image_repository\": \"127.0.0.1:55000/hello-container\", \"netci_action\": \"deploy\", \"network_mode\": \"host\", \"target_environment\": \"staging\"}"
       ],
-      "startedAt": "2026-08-27T15:50:33.648093+00:00",
-      "endedAt": "2026-08-27T15:50:46.829994+00:00",
-      "durationSeconds": 13.182,
+      "startedAt": "2026-08-28T06:34:27.309737+00:00",
+      "endedAt": "2026-08-28T06:34:41.588758+00:00",
+      "durationSeconds": 14.279,
       "exitCode": 0,
       "passed": true,
       "stdout": "\nPLAY [Deploy sample container service to Docker VM] ****************************\n\nTASK [Gathering Facts] *********************************************************\nok: [netci-local]\n\nTASK [Require immutable artifact digest] ***************************************\nok: [netci-local] => {\n    \"changed\": false,\n    \"msg\": \"All assertions passed\"\n}\n\nTASK [Ensure application directory exists] *************************************\nok: [netci-local]\n\nTASK [Render Compose file] *****************************************************\nchanged: [netci-local]\n\nTASK [Pull and start service] **************************************************\nchanged: [netci-local]\n\nTASK [Wait for health endpoint] ************************************************\nok: [netci-local]\n\nPLAY RECAP *********************************************************************\nnetci-local                : ok=6    changed=2    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   \n\n",
@@ -648,8 +673,8 @@
           "app_name": "netci-gate-hello-container",
           "app_root": "/home/deployer/netci-delivery-platform/.netci-gate/deploy/docker",
           "image_repository": "127.0.0.1:55000/hello-container",
-          "artifact_digest": "sha256:59fb6dc24a50a2147c798f340b735056fc36862d80a448dad1d3561672b78447",
-          "host_port": 18081,
+          "artifact_digest": "sha256:b2d0859a00dafc52ba127fba46705450c6fc441d071040693d911e2c363b0458",
+          "host_port": 18090,
           "network_mode": "host",
           "target_environment": "staging"
         },
@@ -659,8 +684,8 @@
     {
       "name": "v1:service-health",
       "command": null,
-      "startedAt": "2026-08-27T15:50:46.832045+00:00",
-      "endedAt": "2026-08-27T15:50:46.832045+00:00",
+      "startedAt": "2026-08-28T06:34:41.590519+00:00",
+      "endedAt": "2026-08-28T06:34:41.590519+00:00",
       "durationSeconds": 0.0,
       "exitCode": 0,
       "passed": true,
@@ -669,7 +694,7 @@
       "detail": {
         "service": "hello-container",
         "status": "ok",
-        "version": "sha256:59fb6dc24a50a2147c798f340b735056fc36862d80a448dad1d3561672b78447"
+        "version": "sha256:b2d0859a00dafc52ba127fba46705450c6fc441d071040693d911e2c363b0458"
       }
     },
     {
@@ -680,11 +705,11 @@
         "/home/deployer/netci-delivery-platform/deploy/ansible/inventories/localhost.ini",
         "/home/deployer/netci-delivery-platform/deploy/ansible/playbooks/deploy-docker.yml",
         "--extra-vars",
-        "{\"app_name\": \"netci-gate-hello-container\", \"app_root\": \"/home/deployer/netci-delivery-platform/.netci-gate/deploy/docker\", \"artifact_digest\": \"sha256:5597c4f85af353ec4e0af4246ed3fee4e5c43fcae9b3e28936d13a79df328ccc\", \"host_port\": 18081, \"image_repository\": \"127.0.0.1:55000/hello-container\", \"netci_action\": \"deploy\", \"network_mode\": \"host\", \"target_environment\": \"staging\"}"
+        "{\"app_name\": \"netci-gate-hello-container\", \"app_root\": \"/home/deployer/netci-delivery-platform/.netci-gate/deploy/docker\", \"artifact_digest\": \"sha256:16ce1fe4f71605fb10f7d84423250165b3ef7f219dad70726ec34575c15e0501\", \"host_port\": 18090, \"image_repository\": \"127.0.0.1:55000/hello-container\", \"netci_action\": \"deploy\", \"network_mode\": \"host\", \"target_environment\": \"staging\"}"
       ],
-      "startedAt": "2026-08-27T15:50:46.896734+00:00",
-      "endedAt": "2026-08-27T15:51:00.071201+00:00",
-      "durationSeconds": 13.174,
+      "startedAt": "2026-08-28T06:34:41.664330+00:00",
+      "endedAt": "2026-08-28T06:34:54.723174+00:00",
+      "durationSeconds": 13.059,
       "exitCode": 0,
       "passed": true,
       "stdout": "\nPLAY [Deploy sample container service to Docker VM] ****************************\n\nTASK [Gathering Facts] *********************************************************\nok: [netci-local]\n\nTASK [Require immutable artifact digest] ***************************************\nok: [netci-local] => {\n    \"changed\": false,\n    \"msg\": \"All assertions passed\"\n}\n\nTASK [Ensure application directory exists] *************************************\nok: [netci-local]\n\nTASK [Render Compose file] *****************************************************\nchanged: [netci-local]\n\nTASK [Pull and start service] **************************************************\nchanged: [netci-local]\n\nTASK [Wait for health endpoint] ************************************************\nok: [netci-local]\n\nPLAY RECAP *********************************************************************\nnetci-local                : ok=6    changed=2    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   \n\n",
@@ -695,8 +720,8 @@
           "app_name": "netci-gate-hello-container",
           "app_root": "/home/deployer/netci-delivery-platform/.netci-gate/deploy/docker",
           "image_repository": "127.0.0.1:55000/hello-container",
-          "artifact_digest": "sha256:5597c4f85af353ec4e0af4246ed3fee4e5c43fcae9b3e28936d13a79df328ccc",
-          "host_port": 18081,
+          "artifact_digest": "sha256:16ce1fe4f71605fb10f7d84423250165b3ef7f219dad70726ec34575c15e0501",
+          "host_port": 18090,
           "network_mode": "host",
           "target_environment": "staging"
         },
@@ -711,11 +736,11 @@
         "/home/deployer/netci-delivery-platform/deploy/ansible/inventories/localhost.ini",
         "/home/deployer/netci-delivery-platform/deploy/ansible/playbooks/deploy-docker.yml",
         "--extra-vars",
-        "{\"app_name\": \"netci-gate-hello-container\", \"app_root\": \"/home/deployer/netci-delivery-platform/.netci-gate/deploy/docker\", \"artifact_digest\": \"sha256:59fb6dc24a50a2147c798f340b735056fc36862d80a448dad1d3561672b78447\", \"host_port\": 18081, \"image_repository\": \"127.0.0.1:55000/hello-container\", \"netci_action\": \"deploy\", \"network_mode\": \"host\", \"target_environment\": \"staging\"}"
+        "{\"app_name\": \"netci-gate-hello-container\", \"app_root\": \"/home/deployer/netci-delivery-platform/.netci-gate/deploy/docker\", \"artifact_digest\": \"sha256:b2d0859a00dafc52ba127fba46705450c6fc441d071040693d911e2c363b0458\", \"host_port\": 18090, \"image_repository\": \"127.0.0.1:55000/hello-container\", \"netci_action\": \"deploy\", \"network_mode\": \"host\", \"target_environment\": \"staging\"}"
       ],
-      "startedAt": "2026-08-27T15:51:00.098130+00:00",
-      "endedAt": "2026-08-27T15:51:13.249690+00:00",
-      "durationSeconds": 13.152,
+      "startedAt": "2026-08-28T06:34:54.766886+00:00",
+      "endedAt": "2026-08-28T06:35:08.866151+00:00",
+      "durationSeconds": 14.099,
       "exitCode": 0,
       "passed": true,
       "stdout": "\nPLAY [Deploy sample container service to Docker VM] ****************************\n\nTASK [Gathering Facts] *********************************************************\nok: [netci-local]\n\nTASK [Require immutable artifact digest] ***************************************\nok: [netci-local] => {\n    \"changed\": false,\n    \"msg\": \"All assertions passed\"\n}\n\nTASK [Ensure application directory exists] *************************************\nok: [netci-local]\n\nTASK [Render Compose file] *****************************************************\nchanged: [netci-local]\n\nTASK [Pull and start service] **************************************************\nchanged: [netci-local]\n\nTASK [Wait for health endpoint] ************************************************\nok: [netci-local]\n\nPLAY RECAP *********************************************************************\nnetci-local                : ok=6    changed=2    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   \n\n",
@@ -726,8 +751,8 @@
           "app_name": "netci-gate-hello-container",
           "app_root": "/home/deployer/netci-delivery-platform/.netci-gate/deploy/docker",
           "image_repository": "127.0.0.1:55000/hello-container",
-          "artifact_digest": "sha256:59fb6dc24a50a2147c798f340b735056fc36862d80a448dad1d3561672b78447",
-          "host_port": 18081,
+          "artifact_digest": "sha256:b2d0859a00dafc52ba127fba46705450c6fc441d071040693d911e2c363b0458",
+          "host_port": 18090,
           "network_mode": "host",
           "target_environment": "staging"
         },
@@ -737,8 +762,8 @@
     {
       "name": "delivery-events",
       "command": null,
-      "startedAt": "2026-08-27T15:51:13.253963+00:00",
-      "endedAt": "2026-08-27T15:51:13.253963+00:00",
+      "startedAt": "2026-08-28T06:35:08.870652+00:00",
+      "endedAt": "2026-08-28T06:35:08.870652+00:00",
       "durationSeconds": 0.0,
       "exitCode": 0,
       "passed": true,
@@ -748,64 +773,64 @@
         "count": 5,
         "items": [
           {
-            "id": "0320d093-994f-46d0-926a-29bcbcfafd17",
+            "id": "58470cf2-e7cb-46b9-ae2d-8cd61b1619a5",
             "eventType": "commit",
-            "applicationId": "e0f7d957-c815-4c4d-913e-f416a57d4819",
-            "pipelineRunId": "5c1cf780-aa41-422b-a667-cae78f5f9742",
+            "applicationId": "51d44951-5fbc-4993-9cc0-257bb32f5e43",
+            "pipelineRunId": "31c1af60-0d14-4e19-8fc5-b9d2618c1b20",
             "deploymentId": null,
             "commitSha": "e2e1111",
             "environment": "prod",
             "successful": null,
             "requiresIntervention": false,
-            "occurredAt": "2026-08-27T15:50:33.600612+00:00"
+            "occurredAt": "2026-08-28T06:34:27.261986+00:00"
           },
           {
-            "id": "ff0d96c3-098d-4d84-85c0-4c91bb36a05e",
+            "id": "828a4f48-4728-42ac-89e0-dc5c3073bcb5",
             "eventType": "deployment",
-            "applicationId": "e0f7d957-c815-4c4d-913e-f416a57d4819",
-            "pipelineRunId": "5c1cf780-aa41-422b-a667-cae78f5f9742",
-            "deploymentId": "60f10dc2-1e66-4d38-9dcc-9c57593bc3a8",
+            "applicationId": "51d44951-5fbc-4993-9cc0-257bb32f5e43",
+            "pipelineRunId": "31c1af60-0d14-4e19-8fc5-b9d2618c1b20",
+            "deploymentId": "559d46e3-9f62-42e1-a26c-fbf4db22658d",
             "commitSha": "e2e1111",
             "environment": "prod",
             "successful": true,
             "requiresIntervention": false,
-            "occurredAt": "2026-08-27T15:50:46.834384+00:00"
+            "occurredAt": "2026-08-28T06:34:41.593822+00:00"
           },
           {
-            "id": "4021627e-9d58-4dde-a850-c4c8bd363552",
+            "id": "b5fc8444-b8b4-4e88-bcfe-92d241f5d052",
             "eventType": "commit",
-            "applicationId": "e0f7d957-c815-4c4d-913e-f416a57d4819",
-            "pipelineRunId": "5c5e0653-83bb-4620-8e28-f188b7191aa6",
+            "applicationId": "51d44951-5fbc-4993-9cc0-257bb32f5e43",
+            "pipelineRunId": "c57c72c7-1415-4786-9413-7629400a1930",
             "deploymentId": null,
             "commitSha": "e2e2222",
             "environment": "prod",
             "successful": null,
             "requiresIntervention": false,
-            "occurredAt": "2026-08-27T15:50:46.851760+00:00"
+            "occurredAt": "2026-08-28T06:34:41.618923+00:00"
           },
           {
-            "id": "f279fecb-c037-4fcf-b3c3-5d250463cc4b",
+            "id": "61c79a43-db67-413a-b14c-23ac025dafd9",
             "eventType": "deployment",
-            "applicationId": "e0f7d957-c815-4c4d-913e-f416a57d4819",
-            "pipelineRunId": "5c5e0653-83bb-4620-8e28-f188b7191aa6",
-            "deploymentId": "a0e27663-5d85-40f4-9812-bd55067b4625",
+            "applicationId": "51d44951-5fbc-4993-9cc0-257bb32f5e43",
+            "pipelineRunId": "c57c72c7-1415-4786-9413-7629400a1930",
+            "deploymentId": "88ef6194-eb0c-45b2-8546-1a861c33c136",
             "commitSha": "e2e2222",
             "environment": "prod",
             "successful": true,
             "requiresIntervention": false,
-            "occurredAt": "2026-08-27T15:51:00.073604+00:00"
+            "occurredAt": "2026-08-28T06:34:54.728708+00:00"
           },
           {
-            "id": "d884ce9e-09ca-4014-a632-69a0a00af443",
+            "id": "b3ffa366-21a2-49f1-8baa-f7c4accff313",
             "eventType": "deployment",
-            "applicationId": "e0f7d957-c815-4c4d-913e-f416a57d4819",
-            "pipelineRunId": "5c5e0653-83bb-4620-8e28-f188b7191aa6",
-            "deploymentId": "a0e27663-5d85-40f4-9812-bd55067b4625",
+            "applicationId": "51d44951-5fbc-4993-9cc0-257bb32f5e43",
+            "pipelineRunId": "c57c72c7-1415-4786-9413-7629400a1930",
+            "deploymentId": "88ef6194-eb0c-45b2-8546-1a861c33c136",
             "commitSha": "e2e2222",
             "environment": "prod",
             "successful": false,
             "requiresIntervention": true,
-            "occurredAt": "2026-08-27T15:51:00.083528+00:00"
+            "occurredAt": "2026-08-28T06:34:54.758463+00:00"
           }
         ]
       }
@@ -813,18 +838,18 @@
     {
       "name": "dora",
       "command": null,
-      "startedAt": "2026-08-27T15:51:13.255589+00:00",
-      "endedAt": "2026-08-27T15:51:13.255589+00:00",
+      "startedAt": "2026-08-28T06:35:08.872516+00:00",
+      "endedAt": "2026-08-28T06:35:08.872516+00:00",
       "durationSeconds": 0.0,
       "exitCode": 0,
       "passed": true,
       "stdout": "",
       "stderr": "",
       "detail": {
-        "applicationId": "e0f7d957-c815-4c4d-913e-f416a57d4819",
+        "applicationId": "51d44951-5fbc-4993-9cc0-257bb32f5e43",
         "period": {
-          "from": "2026-07-28T15:51:13.254696+00:00",
-          "to": "2026-08-27T15:51:13.254696+00:00"
+          "from": "2026-07-29T06:35:08.871803+00:00",
+          "to": "2026-08-28T06:35:08.871803+00:00"
         },
         "metrics": {
           "deploymentFrequency": 0.7,

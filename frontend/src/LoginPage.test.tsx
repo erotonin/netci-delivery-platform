@@ -1,40 +1,89 @@
-import { describe, expect, it, vi } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { describe, expect, it, vi, beforeEach } from 'vitest'
+import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { LoginPage } from './LoginPage'
+import { NetciApiError, whoami } from './api/netciClient'
+
+vi.mock('./api/netciClient', async () => {
+  const actual = await vi.importActual<typeof import('./api/netciClient')>('./api/netciClient')
+  return { ...actual, whoami: vi.fn() }
+})
+
+const whoamiMock = vi.mocked(whoami)
+
+const identity = (mode: string, roles: string[] = ['developer']) => ({
+  principal: { subject: 'dana', displayName: 'Dana Developer', email: 'dana@corp.example', roles, method: mode },
+  authMode: mode,
+  separationOfDuties: true,
+})
 
 describe('LoginPage', () => {
-  it('creates the local SSO preview session from the artifact entry point', async () => {
-    const onLogin = vi.fn()
-    render(<LoginPage onLogin={onLogin} />)
+  beforeEach(() => whoamiMock.mockReset())
 
-    await userEvent.click(screen.getByRole('button', { name: /SSO/i }))
+  it('asks the server how it is configured before drawing a form', async () => {
+    whoamiMock.mockImplementationOnce(() => Promise.reject(new NetciApiError(401, null, 'unauthenticated')))
+    render(<LoginPage onLogin={vi.fn()} />)
 
-    expect(onLogin).toHaveBeenCalledWith({
-      displayName: 'Admin',
-      email: 'admin@netchat.io',
-      method: 'local-sso',
-    })
+    // No credential field exists until the server says one is needed. A login box that
+    // appears regardless is the theatre this screen used to be.
+    expect(screen.queryByLabelText('Access token')).toBeNull()
+    await waitFor(() => expect(screen.getByLabelText('Access token')).toBeTruthy())
   })
 
-  it('validates credentials and never returns the password in the session', async () => {
-    const user = userEvent.setup()
+  it('signs in straight through when netCI runs without authentication', async () => {
     const onLogin = vi.fn()
+    whoamiMock.mockResolvedValue(identity('none', ['platform-admin']))
     render(<LoginPage onLogin={onLogin} />)
 
-    await user.click(screen.getByRole('button', { name: /mật khẩu/i }))
-    await user.click(screen.getByRole('button', { name: /^Đăng nhập$/i }))
-    expect(screen.getByRole('alert').textContent).toMatch(/đầy đủ/i)
+    await waitFor(() => expect(onLogin).toHaveBeenCalledWith({ token: null, identity: identity('none', ['platform-admin']) }))
+    expect(screen.queryByLabelText('Access token')).toBeNull()
+  })
 
-    await user.type(screen.getByPlaceholderText('ten.dang.nhap'), 'Trung TT')
-    await user.type(screen.getByPlaceholderText('••••••••'), 'secret-value')
-    await user.click(screen.getByRole('button', { name: /^Đăng nhập$/i }))
+  it('only creates a session from a token the server accepted', async () => {
+    const user = userEvent.setup()
+    const onLogin = vi.fn()
+    whoamiMock.mockImplementationOnce(() => Promise.reject(new NetciApiError(401, null, 'unauthenticated')))
+    render(<LoginPage onLogin={onLogin} />)
+    const field = await screen.findByLabelText('Access token')
 
-    expect(onLogin).toHaveBeenCalledWith({
-      displayName: 'Trung TT',
-      email: 'trung.tt@netchat.io',
-      method: 'local-password',
-    })
-    expect(JSON.stringify(onLogin.mock.calls[0][0])).not.toContain('secret-value')
+    // A rejected token must not become a session.
+    whoamiMock.mockImplementationOnce(() => Promise.reject(new NetciApiError(401, null, 'unknown or revoked token')))
+    await user.type(field, 'bad-token')
+    await user.click(screen.getByRole('button', { name: /Đăng nhập/i }))
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toMatch(/không hợp lệ|thu hồi/i))
+    expect(onLogin).not.toHaveBeenCalled()
+
+    whoamiMock.mockResolvedValueOnce(identity('token'))
+    await user.clear(field)
+    await user.type(field, 'good-token')
+    await user.click(screen.getByRole('button', { name: /Đăng nhập/i }))
+
+    await waitFor(() => expect(onLogin).toHaveBeenCalledWith({ token: 'good-token', identity: identity('token') }))
+  })
+
+  it('says so plainly when a valid token carries no netCI role', async () => {
+    const user = userEvent.setup()
+    const onLogin = vi.fn()
+    whoamiMock.mockImplementationOnce(() => Promise.reject(new NetciApiError(401, null, 'unauthenticated')))
+    render(<LoginPage onLogin={onLogin} />)
+    const field = await screen.findByLabelText('Access token')
+
+    whoamiMock.mockImplementationOnce(() => Promise.reject(new NetciApiError(403, null, 'no group maps to a netCI role')))
+    await user.type(field, 'roleless-token')
+    await user.click(screen.getByRole('button', { name: /Đăng nhập/i }))
+
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toMatch(/chưa được cấp quyền/i))
+    expect(onLogin).not.toHaveBeenCalled()
+  })
+
+  it('never keeps the typed credential in the DOM as readable text', async () => {
+    const user = userEvent.setup()
+    whoamiMock.mockImplementationOnce(() => Promise.reject(new NetciApiError(401, null, 'unauthenticated')))
+    render(<LoginPage onLogin={vi.fn()} />)
+    const field = await screen.findByLabelText('Access token')
+
+    await user.type(field, 'super-secret-token')
+    expect(field.getAttribute('type')).toBe('password')
+    expect(document.body.textContent).not.toContain('super-secret-token')
   })
 })

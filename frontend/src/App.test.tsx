@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 
 vi.mock('./api/netciClient', async (importOriginal) => {
@@ -8,6 +8,13 @@ vi.mock('./api/netciClient', async (importOriginal) => {
     ...original,
     getPortalDashboard: vi.fn().mockResolvedValue({}),
     listSystems: vi.fn().mockResolvedValue([{ id: 'netChat', status: 'healthy', modules: [{ id: 'notification-worker', name: 'Notification Worker' }] }]),
+    // The Portal asks the API who the caller is; here netCI reports that it runs with
+    // authentication disabled, which is the local-development path.
+    whoami: vi.fn().mockResolvedValue({
+      principal: { subject: 'anonymous', displayName: 'Anonymous (auth disabled)', email: '', roles: ['viewer', 'developer', 'reviewer', 'platform-admin'], method: 'none' },
+      authMode: 'none',
+      separationOfDuties: false,
+    }),
   }
 })
 
@@ -33,10 +40,12 @@ describe('App authentication and navigation', () => {
     const user = userEvent.setup()
     render(<App />)
 
-    expect(screen.getByRole('heading', { name: /Track every release/i })).toBeTruthy()
-    await user.click(screen.getByRole('button', { name: /SSO/i }))
+    // With NETCI_AUTH_MODE=none the server answers /me without a credential, so the
+    // Portal goes straight in rather than showing a login form that asks for nothing.
     await screen.findByText('Dashboard test page')
-    expect(JSON.parse(window.sessionStorage.getItem('netci.auth-session') ?? '{}').method).toBe('local-sso')
+    const stored = JSON.parse(window.sessionStorage.getItem('netci.auth-session') ?? '{}')
+    expect(stored.identity.authMode).toBe('none')
+    expect(stored.token).toBeNull()
 
     const search = screen.getByRole('textbox', { name: /Tìm kiếm toàn cục/i })
     await user.type(search, 'Notification Worker{Enter}')
@@ -47,9 +56,9 @@ describe('App authentication and navigation', () => {
     await screen.findByText('Servers test page')
     expect(window.location.hash).toBe('#/servers')
 
-    await user.click(screen.getByRole('button', { name: /Đăng xuất/i }))
-    await waitFor(() => expect(window.sessionStorage.getItem('netci.auth-session')).toBeNull())
-    expect(window.location.hash).toBe('#/login')
-    expect(screen.getByRole('button', { name: /SSO/i })).toBeTruthy()
+    // No logout control exists when netCI runs without authentication: there is no
+    // credential to drop, and a button that signs the user straight back in is a lie.
+    expect(screen.queryByRole('button', { name: /Đăng xuất/i })).toBeNull()
+    expect(screen.getAllByText(/Chưa bật xác thực/i).length).toBeGreaterThan(0)
   })
 })

@@ -7,6 +7,7 @@ from pathlib import Path
 from temporalio.client import Client
 from temporalio.worker import Worker
 
+from ..adapters.signature_verifier import build_signature_verifier
 from .activities import AnsibleRuntimeRunner, DeliveryActivities, build_evidence_store
 from .provision_and_deploy import ProvisionAndDeployWorkflow
 
@@ -20,6 +21,7 @@ async def main() -> None:
     activities = DeliveryActivities(
         build_evidence_store(project_root),
         AnsibleRuntimeRunner(project_root=project_root, inventory=inventory),
+        build_signature_verifier(),
     )
     worker = Worker(
         client,

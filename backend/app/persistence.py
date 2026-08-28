@@ -573,3 +573,15 @@ class PostgresPortalStore:
                     "UPDATE production_requests SET status = %s, comment = %s WHERE id = %s",
                     (status, comment, UUID(request_id)),
                 )
+
+    def delete_system(self, system_id: str) -> None:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute("DELETE FROM modules WHERE system_id = %s", (system_id,))
+                cursor.execute("DELETE FROM systems WHERE id = %s", (system_id,))
+
+    def delete_module(self, module_id: str) -> None:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute("DELETE FROM modules WHERE id = %s", (module_id,))
+

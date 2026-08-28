@@ -276,6 +276,36 @@ class PortalReadModel:
         self._systems[system_id] = record
         return self.system(system_id)
 
+    def remove_system(self, system_id: str) -> None:
+        if system_id not in self._systems:
+            raise KeyError("system not found")
+        system = self._systems[system_id]
+        for m_id in list(system.module_ids):
+            if m_id in self._modules:
+                del self._modules[m_id]
+        del self._systems[system_id]
+        if self.store is not None:
+            try:
+                self.store.delete_system(system_id)
+            except Exception:
+                pass
+
+    def remove_module(self, module_id: str) -> None:
+        if module_id not in self._modules:
+            raise KeyError("module not found")
+        module = self._modules[module_id]
+        if module.system_id in self._systems:
+            sys_mods = self._systems[module.system_id].module_ids
+            if module_id in sys_mods:
+                sys_mods.remove(module_id)
+        del self._modules[module_id]
+        if self.store is not None:
+            try:
+                self.store.delete_module(module_id)
+            except Exception:
+                pass
+
+
     def attach_module(
         self,
         *,
@@ -636,20 +666,28 @@ class PortalReadModel:
 
     def dcim_services(self, query: str) -> list[dict[str, object]]:
         normalized = query.strip().lower()
-        if not normalized:
-            return []
-        services = [
+        candidates = [
+            {"id": "svc-payment-service", "name": "payment-service", "code": "VTN_PAYMENT", "tenant": "Fintech Unit", "tier": "Tier 1", "description": "Core payment processing and gateway integration service."},
+            {"id": "svc-billing-engine", "name": "billing-engine", "code": "VTN_BILLING", "tenant": "Finance Operations", "tier": "Tier 1", "description": "Automated billing, invoicing, and subscription management system."},
+            {"id": "svc-notification-hub", "name": "notification-hub", "code": "VTN_NOTIF", "tenant": "Platform Services", "tier": "Tier 2", "description": "Multi-channel push, SMS, and email notification distribution engine."},
+            {"id": "svc-user-portal", "name": "user-portal", "code": "VTN_USERPORTAL", "tenant": "Digital Experience", "tier": "Tier 2", "description": "Customer self-service management and profile portal."},
+            {"id": "svc-analytics-pipeline", "name": "analytics-pipeline", "code": "VTN_ANALYTICS", "tenant": "Data Engineering", "tier": "Tier 1", "description": "Real-time telemetry event ingestion and DORA analytics engine."},
+        ]
+        existing = [
             {"id": f"svc-{s.id}", "name": s.id, "code": f"VTN_{s.id.upper()}", "tenant": s.unit, "tier": "Tier 1", "description": s.description}
             for s in self._systems.values()
         ]
-        return [item for item in services if normalized in str(item["name"]).lower() or normalized in str(item["code"]).lower()]
+        all_services = existing + candidates
+        if not normalized:
+            return candidates
+        return [item for item in all_services if normalized in str(item["name"]).lower() or normalized in str(item["code"]).lower() or normalized in str(item["tenant"]).lower()]
 
     def dcim_modules(self, system_id: str) -> list[dict[str, object]]:
         if system_id not in self._systems:
             raise KeyError("system not found")
         sys_obj = self._systems[system_id]
-        modules = [self._modules[m_id] for m_id in sys_obj.module_ids if m_id in self._modules]
-        return [
+        registered_ids = set(sys_obj.module_ids)
+        existing = [
             {
                 "id": m.id,
                 "name": m.name,
@@ -658,8 +696,15 @@ class PortalReadModel:
                 "repositoryUrl": f"https://github.com/example/{m.id}",
                 "registered": True,
             }
-            for m in modules
+            for m_id in sys_obj.module_ids if m_id in self._modules for m in [self._modules[m_id]]
         ]
+        candidates = [
+            {"id": f"{system_id}-api", "name": f"{system_id.capitalize()} REST API", "code": f"{system_id.upper()}_API", "type": "Backend", "repositoryUrl": f"https://github.com/example/{system_id}-api", "registered": False},
+            {"id": f"{system_id}-web", "name": f"{system_id.capitalize()} Web Portal", "code": f"{system_id.upper()}_WEB", "type": "Frontend", "repositoryUrl": f"https://github.com/example/{system_id}-web", "registered": False},
+            {"id": f"{system_id}-worker", "name": f"{system_id.capitalize()} Worker Engine", "code": f"{system_id.upper()}_WRK", "type": "Backend", "repositoryUrl": f"https://github.com/example/{system_id}-worker", "registered": False},
+        ]
+        unregistered = [c for c in candidates if c["id"] not in registered_ids and c["id"] not in self._modules]
+        return existing + unregistered
 
     def audit_events(self, *, system_id: str | None = None, module_id: str | None = None) -> list[dict[str, object]]:
         events: list[dict[str, object]] = []

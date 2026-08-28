@@ -19,6 +19,7 @@ Three cases, each asserted end to end:
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import os
 import shutil
@@ -39,14 +40,17 @@ from netci_gates.evidence import (  # noqa: E402
 WORK_DIR = PROJECT_ROOT / ".netci-gate" / "security"
 
 
-def severity_counts(report: dict) -> dict[str, int]:
-    counts = {"critical": 0, "high": 0, "medium": 0}
-    for result in report.get("Results") or []:
-        for vulnerability in result.get("Vulnerabilities") or []:
-            severity = str(vulnerability.get("Severity", "")).lower()
-            if severity in counts:
-                counts[severity] += 1
-    return counts
+# The gate publishes evidence in exactly the shape `scripts/netci_callback.py` produces,
+# by importing it rather than restating it. A gate that builds its own payload proves the
+# policy works on a payload no build ever sends.
+_CALLBACK_SPEC = importlib.util.spec_from_file_location(
+    "netci_callback_for_gate", PROJECT_ROOT / "scripts" / "netci_callback.py"
+)
+_CALLBACK = importlib.util.module_from_spec(_CALLBACK_SPEC)
+_CALLBACK_SPEC.loader.exec_module(_CALLBACK)
+
+severity_counts = _CALLBACK.trivy_counts
+scan_findings = _CALLBACK.trivy_findings
 
 
 def build_signed_binary(recorder: EvidenceRecorder, work: Path) -> dict[str, object]:
@@ -75,6 +79,7 @@ def build_signed_binary(recorder: EvidenceRecorder, work: Path) -> dict[str, obj
     recorder.run("clean:vulnerability-scan", ["bash", str(ci / "scan.sh")], env=env)
     scan = json.loads((output / "scan-report.json").read_text(encoding="utf-8"))
     counts = severity_counts(scan)
+    findings = scan_findings(scan)
     recorder.check_equal("Trivy found no fixable critical vulnerabilities", counts["critical"], 0)
     recorder.check_equal("Trivy found no fixable high vulnerabilities", counts["high"], 0)
 
@@ -112,6 +117,7 @@ def build_signed_binary(recorder: EvidenceRecorder, work: Path) -> dict[str, obj
             "critical": counts["critical"],
             "high": counts["high"],
             "medium": counts["medium"],
+            "findings": findings,
             "reportLocation": str(output / "scan-report.json"),
         },
         "signature": {
@@ -179,7 +185,9 @@ def build_vulnerable_image(recorder: EvidenceRecorder, work: Path) -> dict[str, 
         ],
         expect_success=False,
     )
-    counts = severity_counts(json.loads(report.read_text(encoding="utf-8")))
+    scan_report = json.loads(report.read_text(encoding="utf-8"))
+    counts = severity_counts(scan_report)
+    findings = scan_findings(scan_report)
     recorder.check(
         "Trivy found fixable HIGH or CRITICAL vulnerabilities in the outdated image",
         counts["critical"] + counts["high"] > 0,
@@ -200,6 +208,7 @@ def build_vulnerable_image(recorder: EvidenceRecorder, work: Path) -> dict[str, 
             "critical": counts["critical"],
             "high": counts["high"],
             "medium": counts["medium"],
+            "findings": findings,
             "reportLocation": str(report),
         },
         "signature": {"provider": "cosign", "verified": True, "bundleLocation": None},

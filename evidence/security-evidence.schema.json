@@ -2,41 +2,148 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://netci.local/schemas/security-evidence.json",
   "type": "object",
-  "required": ["applicationId", "artifactDigest", "sbom", "vulnerabilityScan", "signature", "decision", "recordedAt"],
+  "required": [
+    "applicationId",
+    "artifactDigest",
+    "sbom",
+    "vulnerabilityScan",
+    "signature",
+    "decision",
+    "recordedAt"
+  ],
   "properties": {
-    "applicationId": {"type": "string"},
-    "commitSha": {"type": "string"},
-    "artifactDigest": {"type": "string", "pattern": "^sha256:"},
+    "applicationId": {
+      "type": "string"
+    },
+    "commitSha": {
+      "type": "string"
+    },
+    "artifactDigest": {
+      "type": "string",
+      "pattern": "^sha256:"
+    },
     "sbom": {
       "type": "object",
-      "required": ["format", "location", "generatedBy"],
+      "required": [
+        "format",
+        "location",
+        "generatedBy"
+      ],
       "properties": {
-        "format": {"enum": ["cyclonedx-json", "spdx-json"]},
-        "location": {"type": "string"},
-        "generatedBy": {"type": "string"}
+        "format": {
+          "enum": [
+            "cyclonedx-json",
+            "spdx-json"
+          ]
+        },
+        "location": {
+          "type": "string"
+        },
+        "generatedBy": {
+          "type": "string"
+        }
       }
     },
     "vulnerabilityScan": {
       "type": "object",
-      "required": ["scanner", "status", "critical", "high"],
+      "required": [
+        "scanner",
+        "status",
+        "critical",
+        "high"
+      ],
       "properties": {
-        "scanner": {"type": "string"},
-        "status": {"enum": ["passed", "failed"]},
-        "critical": {"type": "integer", "minimum": 0},
-        "high": {"type": "integer", "minimum": 0}
+        "scanner": {
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "passed",
+            "failed"
+          ]
+        },
+        "critical": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "high": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "findings": {
+          "type": "array",
+          "description": "The HIGH and CRITICAL findings by identifier. netCI's exception register waives a named CVE on a named digest, so evidence that reports only counts cannot be waived at all -- there is nothing to match against. The package and fixed version are carried for whoever has to triage the finding.",
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "severity"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "description": "e.g. CVE-2026-12345"
+              },
+              "severity": {
+                "enum": [
+                  "HIGH",
+                  "CRITICAL"
+                ]
+              },
+              "package": {
+                "type": "string"
+              },
+              "installedVersion": {
+                "type": "string"
+              },
+              "fixedVersion": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "medium": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "reportLocation": {
+          "type": "string"
+        }
       }
     },
     "signature": {
       "type": "object",
-      "required": ["provider", "verified"],
+      "required": [
+        "provider",
+        "verified"
+      ],
       "properties": {
-        "provider": {"type": "string"},
-        "verified": {"type": "boolean"},
-        "certificateIdentity": {"type": ["string", "null"]}
+        "provider": {
+          "type": "string"
+        },
+        "verified": {
+          "type": "boolean"
+        },
+        "certificateIdentity": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
       }
     },
-    "decision": {"enum": ["allow", "deny"]},
-    "reason": {"type": "string"},
-    "recordedAt": {"type": "string", "format": "date-time"}
+    "decision": {
+      "enum": [
+        "allow",
+        "deny"
+      ]
+    },
+    "reason": {
+      "type": "string"
+    },
+    "recordedAt": {
+      "type": "string",
+      "format": "date-time"
+    }
   }
 }

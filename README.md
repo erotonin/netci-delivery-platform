@@ -94,8 +94,52 @@ Xem [QUICKSTART](QUICKSTART.md) cho lab trên host không có bridge network, v�
 - netCI sở hữu policy, approval, audit, promotion, deploy, health check và rollback.
 - Staging và production dùng cùng artifact digest; không rebuild khi promote.
 - Core domain không import SDK/CLI của Jenkins, Temporal, Docker, Helm hoặc Systemd.
-- Engine thật nằm sau seam có thể cấu hình: `NETCI_CI_MODE` (`none`|`jenkins`) và `NETCI_CD_MODE` (`none`|`temporal`). Mặc định `none` nghĩa là netCI ghi nhận trạng thái và chờ callback đã xác thực — nó không bao giờ giả vờ đã chạy một build.
+- Engine thật nằm sau seam có thể cấu hình: `NETCI_CI_MODE` (`none`|`jenkins`), `NETCI_CD_MODE` (`none`|`temporal`), `NETCI_AUTH_MODE` (`none`|`token`|`oidc`) và `NETCI_SIGNATURE_VERIFY_MODE` (`none`|`cosign`). Mặc định `none` nghĩa là netCI ghi nhận trạng thái và chờ callback đã xác thực — nó không bao giờ giả vờ đã chạy một build.
+- **netCI tự kiểm chữ ký lúc deploy** khi bật `cosign`, thay vì tin vào boolean `signature.verified` do chính CI ghi về công việc của mình.
+- **Actor luôn lấy từ credential đã xác thực**, không lấy từ request body. Vì vậy `actor`/`requestedBy`/`createdBy` đã bị bỏ khỏi API: một field mà server nhận rồi âm thầm bỏ qua còn tệ hơn là không có.
 - State, source event, audit và log được ghi trong **cùng một transaction**, nên không thể có trường hợp trạng thái đã đổi nhưng DORA event bị mất.
+
+## Xác thực và phân quyền
+
+Mọi tuyên bố về governance của netCI chỉ có giá trị nếu platform biết ai đang gọi. Vì vậy
+actor được lấy từ credential, và `require_environment_permission` — vốn được viết ra nhưng
+chưa từng được gọi — nay là control thật.
+
+```bash
+# Local: không cần credential, nhưng netCI chỉ phục vụ loopback. Quên cấu hình xác thực
+# không thể biến thành một netCI mở ra ngoài mạng.
+NETCI_AUTH_MODE=none
+
+# Pilot hoặc machine-to-machine: token lưu dưới dạng hash SHA-256.
+NETCI_AUTH_MODE=token NETCI_AUTH_TOKENS_FILE=/etc/netci/tokens.yaml
+python scripts/netci_token.py issue --subject dana --name "Dana Developer" --role developer
+
+# Production: dùng identity provider của tập đoàn — người vào/ra theo directory.
+NETCI_AUTH_MODE=oidc
+NETCI_OIDC_ISSUER=https://login.microsoftonline.com/<tenant>/v2.0
+NETCI_OIDC_AUDIENCE=api://netci
+NETCI_OIDC_ROLE_MAP=netci-admins=platform-admin,release-managers=reviewer,engineers=developer
+```
+
+| Role | Được làm gì |
+|---|---|
+| `viewer` | đọc mọi thứ, không sửa gì |
+| `developer` | tạo application/system, chạy pipeline dev/staging |
+| `reviewer` | như developer, cộng thêm production: chạy, approve, reject |
+| `platform-admin` | như reviewer, cộng quản trị platform |
+| `pipeline` | chỉ báo *kết quả* build/deploy — không bao giờ cấp cho người |
+
+Ba ràng buộc đáng chú ý:
+
+- **Người tạo production run không được tự approve.** netCI so `pipeline_runs.started_by`
+  với người approve và từ chối nếu trùng (`SEPARATION_OF_DUTIES`).
+- **Endpoint máy là của máy.** platform-admin không post được CI result, và pipeline key
+  không approve được deployment — cả hai chiều đều không có cửa sau.
+- **`/healthz` báo `engines.auth`**, nên nhìn từ bên ngoài biết ngay hệ thống có bật xác
+  thực hay không.
+
+Chi tiết, gồm cả cách nối OIDC và các forgery mà verifier từ chối:
+[security model](docs/security-model.md) và [ADR-011](docs/decisions/ADR-011-authentication-seam.md).
 
 ## Tài liệu
 

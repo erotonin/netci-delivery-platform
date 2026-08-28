@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { RefreshCw, WifiOff } from 'lucide-react'
-import { createModule, getPortalDashboard, type Runtime } from './api/netciClient'
+import { createModule, getPortalDashboard, setAuthToken, setUnauthenticatedHandler, type Runtime } from './api/netciClient'
 import { DashboardPage, ServersPage, SystemPage, SystemsPage } from './GeneralPages'
 import { LoginPage, type AuthSession } from './LoginPage'
 import { ModulePage } from './ModulePage'
@@ -26,7 +26,12 @@ function readAuthSession(): AuthSession | null {
     const value = window.sessionStorage.getItem(AUTH_SESSION_KEY)
     if (!value) return null
     const parsed = JSON.parse(value) as Partial<AuthSession>
-    if (typeof parsed.displayName !== 'string' || typeof parsed.email !== 'string' || !['local-sso', 'local-password'].includes(parsed.method ?? '')) return null
+    const principal = parsed.identity?.principal
+    if (!principal || typeof principal.subject !== 'string' || !Array.isArray(principal.roles)) return null
+    // The token is what the API actually checks; the stored identity is only a cached
+    // label for the UI. If the token has been revoked since the last page load, the first
+    // request fails with 401 and `setUnauthenticatedHandler` ends the session.
+    if (parsed.token) setAuthToken(parsed.token)
     return parsed as AuthSession
   } catch {
     return null
@@ -93,7 +98,7 @@ function PortalApp({ session, onLogout }: { session: AuthSession; onLogout: () =
   const { page, systemId, moduleId, settingsOpen } = route
   return <PortalShell page={page} systemId={systemId} moduleId={moduleId} session={session} navigate={navigate} onLogout={onLogout} onSettings={() => moveTo({ page: 'module', systemId, moduleId, settingsOpen: true })}>
     {apiState === 'offline' && <div className="connection-banner" role="status"><WifiOff size={16} /><span><strong>Backend chưa kết nối.</strong> Dữ liệu demo vẫn dùng được trong phiên; các thao tác cần tích hợp sẽ hiển thị lỗi rõ ràng.</span><button onClick={checkApi}><RefreshCw size={15} />Thử lại</button></div>}
-    {settingsOpen ? <ModuleSettings systemId={systemId} moduleId={moduleId} onClose={() => moveTo({ ...route, settingsOpen: false })} /> : <>
+    {settingsOpen ? <ModuleSettings systemId={systemId} moduleId={moduleId} onClose={() => moveTo({ ...route, settingsOpen: false })} onDeleted={() => navigate('system', { systemId })} /> : <>
       {page === 'dashboard' && <DashboardPage navigate={navigate} />}
       {page === 'systems' && <SystemsPage navigate={navigate} />}
       {page === 'servers' && <ServersPage />}
@@ -124,16 +129,26 @@ function PortalApp({ session, onLogout }: { session: AuthSession; onLogout: () =
 
 function App() {
   const [session, setSession] = useState<AuthSession | null>(readAuthSession)
-  const login = (nextSession: AuthSession) => {
+  const login = useCallback((nextSession: AuthSession) => {
     window.sessionStorage.setItem(AUTH_SESSION_KEY, JSON.stringify(nextSession))
+    setAuthToken(nextSession.token)
     setSession(nextSession)
     if (!window.location.hash || window.location.hash === '#/login') window.history.replaceState(null, '', '#/dashboard')
-  }
-  const logout = () => {
+  }, [])
+  const logout = useCallback(() => {
     window.sessionStorage.removeItem(AUTH_SESSION_KEY)
+    setAuthToken(null)
     setSession(null)
     window.history.replaceState(null, '', '#/login')
-  }
+  }, [])
+
+  // Any request answered with 401 -- a revoked or expired token -- returns the whole
+  // shell to the login screen, instead of leaving a signed-out user looking at a page
+  // where every panel has failed for its own apparent reason.
+  useEffect(() => {
+    setUnauthenticatedHandler(logout)
+    return () => setUnauthenticatedHandler(null)
+  }, [logout])
   return <PortalFeedbackProvider>{session ? <PortalApp session={session} onLogout={logout} /> : <LoginPage onLogin={login} />}</PortalFeedbackProvider>
 }
 

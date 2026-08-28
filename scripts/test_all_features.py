@@ -2,6 +2,7 @@
 """Comprehensive test script to exercise every portal endpoint across all 3 systems."""
 
 import json
+import random
 import urllib.request
 import uuid
 
@@ -68,10 +69,11 @@ def run_tests():
         check(f"GET /systems/{sys_id}/dora", st, payload=dora_sys)
 
     # 5. Create Module via Wizard API
+    sub_name = f"submod-{uuid.uuid4().hex[:4]}"
     st, mod_created = req(f"/systems/hello-container/modules", "POST", {
-        "name": "hello-submodule",
-        "displayName": "Hello Submodule",
-        "repositoryUrl": "https://github.com/example/hello-submodule",
+        "name": sub_name,
+        "displayName": f"Submodule {sub_name}",
+        "repositoryUrl": f"https://github.com/example/{sub_name}",
         "pipelineTemplate": "container-ci-cd-v1",
         "runtime": "docker",
         "moduleType": "Backend",
@@ -84,6 +86,7 @@ def run_tests():
     check("POST /systems/hello-container/modules (New Module)", st, payload=mod_created)
 
     # 6. Module Operations for 3 systems
+    last_vtags = {}
     for mod_id in ["hello-container", "hello-kubernetes", "hello-systemd-go"]:
         # Get Module
         st, mod_info = req(f"/modules/{mod_id}")
@@ -93,48 +96,52 @@ def run_tests():
         st, overview = req(f"/modules/{mod_id}/overview")
         check(f"GET /modules/{mod_id}/overview", st, payload=overview)
 
-        # Register Version v1.3.0
+        # Register Version (Dynamic Tag to support repeat runs)
+        import time
+        vtag = f"v1.4.{int(time.time()) % 10000 + int(uuid.uuid4().int % 100)}"
+        last_vtags[mod_id] = vtag
         st, ver_resp = req(f"/modules/{mod_id}/versions", "POST", {
-            "tag": "v1.3.0",
-            "gitTagUrl": f"https://github.com/example/{mod_id}/releases/tag/v1.3.0",
-            "artifactUrl": f"http://127.0.0.1:55000/{mod_id}:v1.3.0",
+            "tag": vtag,
+            "gitTagUrl": f"https://github.com/example/{mod_id}/releases/tag/{vtag}",
+            "artifactUrl": f"http://127.0.0.1:55000/{mod_id}:{vtag}",
             "createdBy": "Automation Test"
         }, {"X-Correlation-Id": str(uuid.uuid4())})
-        check(f"POST /modules/{mod_id}/versions (v1.3.0)", st, payload=ver_resp)
+        check(f"POST /modules/{mod_id}/versions ({vtag})", st, payload=ver_resp)
 
         # List Versions
         st, ver_list = req(f"/modules/{mod_id}/versions")
         check(f"GET /modules/{mod_id}/versions", st, payload=ver_list)
 
-        # Start Pipeline Run
-        st, run_resp = req(f"/modules/{mod_id}/pipeline-runs", "POST", {
-            "commitSha": f"e{uuid.uuid4().hex[:7]}",
+        # Start Pipeline
+        st, pipe_run = req(f"/modules/{mod_id}/pipeline-runs", "POST", {
+            "commitSha": "abc1234",
             "branch": "main",
             "environment": "dev"
         }, {"Idempotency-Key": str(uuid.uuid4()), "X-Correlation-Id": str(uuid.uuid4())})
-        check(f"POST /modules/{mod_id}/pipeline-runs", st, payload=run_resp)
+        check(f"POST /modules/{mod_id}/pipeline-runs", st, payload=pipe_run)
 
-        if st == 202 and "id" in run_resp:
-            run_id = run_resp["id"]
+        if st == 202 and "id" in pipe_run:
+            run_id = pipe_run["id"]
             # Get Pipeline Run
-            st_r, r_info = req(f"/pipeline-runs/{run_id}")
-            check(f"GET /pipeline-runs/{run_id}", st_r, payload=r_info)
+            st, run_info = req(f"/pipeline-runs/{run_id}")
+            check(f"GET /pipeline-runs/{run_id}", st, payload=run_info)
 
             # Get Logs
-            st_l, logs_info = req(f"/pipeline-runs/{run_id}/logs")
-            check(f"GET /pipeline-runs/{run_id}/logs", st_l, payload=logs_info)
+            st, logs = req(f"/pipeline-runs/{run_id}/logs")
+            check(f"GET /pipeline-runs/{run_id}/logs", st, payload=logs)
 
-        # Module DORA
+        # DORA
         st, dora_mod = req(f"/modules/{mod_id}/dora")
         check(f"GET /modules/{mod_id}/dora", st, payload=dora_mod)
 
     # 7. Production Requests
-    st, req_list = req("/production-requests")
-    check("GET /production-requests", st, payload=req_list)
+    st, pr_list = req("/production-requests")
+    check("GET /production-requests", st, payload=pr_list)
 
     # Create Production Request
+    target_v1 = last_vtags.get("hello-container", "v1.0.0")
     st, pr_created = req("/production-requests", "POST", {
-        "modules": [{"moduleId": "hello-container", "version": "v1.3.0", "deploymentOrder": 1}],
+        "modules": [{"moduleId": "hello-container", "version": target_v1, "deploymentOrder": 1}],
         "scheduledFor": "2026-08-30T10:00:00Z",
         "rollbackStrategy": "automatic",
         "runAutomationTests": True
@@ -146,14 +153,14 @@ def run_tests():
 
         # Reject Request
         st, pr_rej = req(f"/production-requests/{pr_id}/reject", "POST", {
-            "actor": "QA Manager",
             "comment": "Rejecting for test validation"
         }, {"X-Correlation-Id": str(uuid.uuid4())})
         check(f"POST /production-requests/{pr_id}/reject", st, payload=pr_rej)
 
     # Create another PR for Approve
+    target_v2 = last_vtags.get("hello-kubernetes", "v1.0.0")
     st, pr_created2 = req("/production-requests", "POST", {
-        "modules": [{"moduleId": "hello-kubernetes", "version": "v1.2.0", "deploymentOrder": 1}],
+        "modules": [{"moduleId": "hello-kubernetes", "version": target_v2, "deploymentOrder": 1}],
         "scheduledFor": "2026-08-31T10:00:00Z",
         "rollbackStrategy": "manual",
         "runAutomationTests": True
@@ -164,7 +171,6 @@ def run_tests():
         pr_id2 = pr_created2["id"]
         # Approve Request
         st, pr_app = req(f"/production-requests/{pr_id2}/approve", "POST", {
-            "actor": "Release Lead",
             "comment": "Approved for deployment"
         }, {"X-Correlation-Id": str(uuid.uuid4())})
         check(f"POST /production-requests/{pr_id2}/approve", st, payload=pr_app)
@@ -181,6 +187,39 @@ def run_tests():
 
     st, audit = req("/audit-events")
     check("GET /audit-events", st, payload=audit)
+
+    # 9. Test DELETE endpoints
+    temp_sys = f"temp-sys-{random.randint(1000, 9999)}"
+    st, sys_created = req("/systems", "POST", {
+        "id": temp_sys, "unit": "Temp Unit", "description": "Temp system for delete test", "owner": "Admin"
+    }, {"Idempotency-Key": str(uuid.uuid4()), "X-Correlation-Id": str(uuid.uuid4())})
+    check(f"POST /systems (Create {temp_sys})", st, payload=sys_created)
+
+    temp_mod = f"temp-mod-{random.randint(1000, 9999)}"
+    st, mod_created = req(f"/systems/{temp_sys}/modules", "POST", {
+        "name": temp_mod,
+        "displayName": "Temp Module",
+        "repositoryUrl": "https://github.com/example/temp-mod.git",
+        "pipelineTemplate": "container-ci-cd-v1",
+        "runtime": "docker",
+        "moduleType": "Backend",
+        "description": "Temp module for delete test",
+        "defaultEnvironment": "dev",
+        "deploymentEnvironments": [{
+            "displayName": "Development",
+            "environment": "dev",
+            "runtime": "docker",
+            "servers": ["srv-dev-01.local"],
+            "tasks": ["docker-compose up -d"]
+        }]
+    }, {"Idempotency-Key": str(uuid.uuid4()), "X-Correlation-Id": str(uuid.uuid4())})
+    check(f"POST /systems/{temp_sys}/modules (Create {temp_mod})", st, payload=mod_created)
+
+    st, del_mod = req(f"/modules/{temp_mod}", "DELETE")
+    check(f"DELETE /modules/{temp_mod}", st, expected_codes=(204,))
+
+    st, del_sys = req(f"/systems/{temp_sys}", "DELETE")
+    check(f"DELETE /systems/{temp_sys}", st, expected_codes=(204,))
 
     passed = sum(1 for r in results if r[1])
     failed = sum(1 for r in results if not r[1])

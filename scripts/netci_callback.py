@@ -97,17 +97,70 @@ def run_id() -> str:
 
 
 def trivy_counts(report: dict[str, object]) -> dict[str, int]:
-    """Count severities from a Trivy JSON report rather than trusting an exit code."""
+    """Count *distinct* CVEs per severity from a Trivy JSON report.
 
-    counts = {"critical": 0, "high": 0, "medium": 0}
+    Not an exit code, and not raw occurrences. Trivy reports the same CVE once per
+    affected package and once per target, so a single flaw routinely appears several
+    times; counting occurrences would say "3 highs" where there is one thing to fix.
+
+    Distinct identifiers is also the unit an exception is written in -- a waiver names a
+    CVE -- so counting this way is what keeps the counts and `trivy_findings` in agreement.
+    netCI refuses evidence where they disagree, precisely so this cannot drift.
+    """
+
+    seen: dict[str, set[str]] = {"critical": set(), "high": set(), "medium": set()}
     for result in report.get("Results", []) or []:
         if not isinstance(result, dict):
             continue
         for vulnerability in result.get("Vulnerabilities", []) or []:
+            if not isinstance(vulnerability, dict):
+                continue
             severity = str(vulnerability.get("Severity", "")).lower()
-            if severity in counts:
-                counts[severity] += 1
-    return counts
+            if severity not in seen:
+                continue
+            identifier = str(vulnerability.get("VulnerabilityID", "")).strip()
+            # An entry with no identifier still counts; it just cannot be de-duplicated
+            # or waived, which is the honest outcome.
+            seen[severity].add(identifier or f"__unidentified__{len(seen[severity])}")
+    return {severity: len(identifiers) for severity, identifiers in seen.items()}
+
+
+def trivy_findings(report: dict[str, object]) -> list[dict[str, str]]:
+    """The blocking findings, by identifier.
+
+    netCI's exception register waives a *named* CVE on a named digest, so evidence that
+    reports only counts cannot be waived at all -- there is nothing to match against, and
+    "three highs" is not something anyone can take responsibility for. Publishing the
+    identifiers is what makes a governed exception possible; it also puts the package and
+    fixed version in the audit trail, which is what someone triaging the finding needs.
+
+    Only HIGH and CRITICAL are listed, because those are the severities that block.
+    """
+
+    findings: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for result in report.get("Results", []) or []:
+        if not isinstance(result, dict):
+            continue
+        for vulnerability in result.get("Vulnerabilities", []) or []:
+            if not isinstance(vulnerability, dict):
+                continue
+            if str(vulnerability.get("Severity", "")).upper() not in {"HIGH", "CRITICAL"}:
+                continue
+            identifier = str(vulnerability.get("VulnerabilityID", "")).strip()
+            if not identifier or identifier in seen:
+                continue
+            seen.add(identifier)
+            findings.append(
+                {
+                    "id": identifier,
+                    "severity": str(vulnerability.get("Severity", "")).upper(),
+                    "package": str(vulnerability.get("PkgName", "")),
+                    "installedVersion": str(vulnerability.get("InstalledVersion", "")),
+                    "fixedVersion": str(vulnerability.get("FixedVersion", "")),
+                }
+            )
+    return findings
 
 
 def command_status(arguments: argparse.Namespace) -> int:
@@ -137,6 +190,7 @@ def command_evidence(arguments: argparse.Namespace) -> int:
     except (OSError, json.JSONDecodeError) as exc:
         fail(f"Trivy report is missing or unreadable: {exc}")
     counts = trivy_counts(scan_report)
+    findings = trivy_findings(scan_report)
 
     signature_path = output_dir() / arguments.signature_file
     signature_verified = signature_path.is_file() and signature_path.stat().st_size > 0
@@ -156,6 +210,7 @@ def command_evidence(arguments: argparse.Namespace) -> int:
             "critical": counts["critical"],
             "high": counts["high"],
             "medium": counts["medium"],
+            "findings": findings,
             "reportLocation": arguments.scan_location or str(scan_path),
         },
         "signature": {

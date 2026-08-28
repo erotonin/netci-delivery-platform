@@ -151,9 +151,9 @@ def test_a_viewer_can_read_but_not_change_anything(token_app):
         json={"name": "viewer-app", "repositoryUrl": "https://git.example.com/a/b", "pipelineTemplate": "container-ci-cd-v1", "runtime": "docker"},
     )
     assert response.status_code == 403
-    assert response.json()["detail"]["code"] == "FORBIDDEN"
+    assert response.json()["code"] == "FORBIDDEN"
     # The message has to say what is missing, or the user cannot act on it.
-    assert "developer" in response.json()["detail"]["message"]
+    assert "developer" in response.json()["message"]
 
 
 def test_a_developer_cannot_run_a_production_pipeline(token_app):
@@ -175,7 +175,7 @@ def test_a_developer_cannot_run_a_production_pipeline(token_app):
         json={"commitSha": "abcdef1234567", "environment": "prod"},
     )
     assert refused.status_code == 403
-    assert refused.json()["detail"]["code"] == "ENVIRONMENT_FORBIDDEN"
+    assert refused.json()["code"] == "ENVIRONMENT_FORBIDDEN"
 
 
 def test_a_reviewer_may_run_a_production_pipeline(token_app):
@@ -268,7 +268,7 @@ def test_the_person_who_started_a_production_run_cannot_approve_it(token_app):
 
     same_person = client.post(f"/deployments/{deployment_id}/approve", headers=headers["raj"], json={})
     assert same_person.status_code == 403
-    assert same_person.json()["detail"]["code"] == "SEPARATION_OF_DUTIES"
+    assert same_person.json()["code"] == "SEPARATION_OF_DUTIES"
 
     second_person = client.post(f"/deployments/{deployment_id}/approve", headers=headers["pat"], json={})
     assert second_person.status_code == 202

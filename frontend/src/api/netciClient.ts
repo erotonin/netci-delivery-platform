@@ -98,11 +98,61 @@ function requestId(): string {
   return `${Date.now()}-${Math.random().toString(16).slice(2)}`
 }
 
+// The credential the Portal presents on every call. Held in memory and mirrored into
+// sessionStorage by the login flow, so a reload keeps the session but closing the tab
+// ends it. It is deliberately never put in localStorage, where it would outlive the
+// browsing session and be readable by any script on the origin for as long as it lasts.
+const AUTH_TOKEN_KEY = 'netci.auth.token'
+
+export function setAuthToken(token: string | null): void {
+  if (token) window.sessionStorage.setItem(AUTH_TOKEN_KEY, token)
+  else window.sessionStorage.removeItem(AUTH_TOKEN_KEY)
+}
+
+export function getAuthToken(): string | null {
+  try {
+    return window.sessionStorage.getItem(AUTH_TOKEN_KEY)
+  } catch {
+    return null
+  }
+}
+
+/** Called when the API says the credential is no longer good, so the shell can log out. */
+let onUnauthenticated: (() => void) | null = null
+export function setUnauthenticatedHandler(handler: (() => void) | null): void {
+  onUnauthenticated = handler
+}
+
+export type Principal = {
+  subject: string
+  displayName: string
+  email: string
+  roles: string[]
+  method: string
+}
+
+export type Identity = {
+  principal: Principal
+  authMode: 'none' | 'token' | 'oidc' | string
+  separationOfDuties: boolean
+}
+
+/** Who the server thinks we are. The Portal never decides this for itself. */
+export function whoami(token?: string): Promise<Identity> {
+  return request<Identity>('/me', token ? { headers: { Authorization: `Bearer ${token}` } } : {})
+}
+
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const headers = new Headers(init.headers)
   headers.set('Accept', 'application/json')
   if (init.body !== undefined) {
     headers.set('Content-Type', 'application/json')
+  }
+  // An explicit Authorization on the call wins, so the login screen can test a token
+  // before it becomes the session.
+  if (!headers.has('Authorization')) {
+    const token = getAuthToken()
+    if (token) headers.set('Authorization', `Bearer ${token}`)
   }
 
   const response = await fetch(`${baseUrl}${path}`, { ...init, headers })
@@ -117,6 +167,13 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   }
 
   if (!response.ok) {
+    // A 401 means the token is gone, expired or revoked. Nothing the page does next can
+    // succeed, so end the session here rather than letting every panel render its own
+    // error about a problem that is really "you are logged out".
+    if (response.status === 401 && !path.startsWith('/me')) {
+      setAuthToken(null)
+      onUnauthenticated?.()
+    }
     throw new NetciApiError(
       response.status,
       body && typeof body === 'object' ? (body as ErrorResponse) : null,
@@ -248,7 +305,8 @@ export type ProductionRequest = {
 
 export type ProductionRequestCreate = {
   modules: Array<{ moduleId: string; version: string; deploymentOrder: number }>
-  requestedBy: string
+  // No requestedBy: the server records the authenticated caller. It is one half of the
+  // separation-of-duties check, so a value the browser chose would defeat the control.
   scheduledFor: string
   rollbackStrategy: 'automatic' | 'manual'
   runAutomationTests: boolean
@@ -316,7 +374,7 @@ export function createProductionRequest(payload: ProductionRequestCreate): Promi
   })
 }
 
-export function approveProductionRequest(productionRequestId: string, payload: { actor: string; comment?: string }): Promise<ProductionRequest> {
+export function approveProductionRequest(productionRequestId: string, payload: { comment?: string }): Promise<ProductionRequest> {
   return request<ProductionRequest>(`/production-requests/${encodeURIComponent(productionRequestId)}/approve`, {
     method: 'POST',
     headers: { 'X-Correlation-Id': requestId() },
@@ -348,7 +406,7 @@ export function startModulePipeline(moduleId: string, payload: PipelineRunCreate
   })
 }
 
-export function rejectProductionRequest(productionRequestId: string, payload: { actor: string; comment: string }): Promise<ProductionRequest> {
+export function rejectProductionRequest(productionRequestId: string, payload: { comment: string }): Promise<ProductionRequest> {
   return request<ProductionRequest>(`/production-requests/${encodeURIComponent(productionRequestId)}/reject`, {
     method: 'POST',
     headers: { 'X-Correlation-Id': requestId() },
@@ -397,10 +455,25 @@ export function listServerInventory(): Promise<ServerInventoryItem[]> {
   return request<ServerInventoryItem[]>('/servers')
 }
 
-export function createModuleVersion(moduleId: string, payload: { tag: string; gitTagUrl: string; artifactUrl: string; createdBy?: string }): Promise<Record<string, unknown>> {
+export function createModuleVersion(moduleId: string, payload: { tag: string; gitTagUrl: string; artifactUrl: string }): Promise<Record<string, unknown>> {
   return request<Record<string, unknown>>(`/modules/${encodeURIComponent(moduleId)}/versions`, {
     method: 'POST',
     headers: { 'X-Correlation-Id': requestId() },
     body: JSON.stringify(payload),
   })
 }
+
+export function deleteModule(moduleId: string): Promise<void> {
+  return request<void>(`/modules/${encodeURIComponent(moduleId)}`, {
+    method: 'DELETE',
+    headers: { 'X-Correlation-Id': requestId() },
+  })
+}
+
+export function deleteSystem(systemId: string): Promise<void> {
+  return request<void>(`/systems/${encodeURIComponent(systemId)}`, {
+    method: 'DELETE',
+    headers: { 'X-Correlation-Id': requestId() },
+  })
+}
+

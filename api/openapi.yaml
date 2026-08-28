@@ -105,6 +105,13 @@ paths:
       responses:
         '200': { description: System detail }
         '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      operationId: deleteSystem
+      parameters:
+        - $ref: '#/components/parameters/SystemId'
+      responses:
+        '204': { description: System removed }
+        '404': { $ref: '#/components/responses/NotFound' }
   /systems/{systemId}/modules:
     get:
       operationId: listSystemModules
@@ -141,6 +148,13 @@ paths:
         - $ref: '#/components/parameters/ModuleId'
       responses:
         '200': { description: Module detail }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      operationId: deleteModule
+      parameters:
+        - $ref: '#/components/parameters/ModuleId'
+      responses:
+        '204': { description: Module removed }
         '404': { $ref: '#/components/responses/NotFound' }
   /modules/{moduleId}/overview:
     get:

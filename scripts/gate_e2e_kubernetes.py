@@ -14,6 +14,7 @@ The registry must be resolvable from inside the cluster; `make kind-up` and
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import os
 import shutil
@@ -44,14 +45,43 @@ RELEASE = "netci-gate-hello-kubernetes"
 NAMESPACE = "staging"
 
 
-def severity_counts(report: dict) -> dict[str, int]:
-    counts = {"critical": 0, "high": 0, "medium": 0}
-    for result in report.get("Results") or []:
-        for vulnerability in result.get("Vulnerabilities") or []:
-            severity = str(vulnerability.get("Severity", "")).lower()
-            if severity in counts:
-                counts[severity] += 1
-    return counts
+# The same evidence shape `scripts/netci_callback.py` publishes, imported rather than
+# restated. A gate that builds its own payload proves the policy works on a payload no
+# build ever sends -- and the identifiers are what a vulnerability exception matches on.
+_CALLBACK_SPEC = importlib.util.spec_from_file_location(
+    "netci_callback_for_gate", PROJECT_ROOT / "scripts" / "netci_callback.py"
+)
+_CALLBACK = importlib.util.module_from_spec(_CALLBACK_SPEC)
+_CALLBACK_SPEC.loader.exec_module(_CALLBACK)
+
+severity_counts = _CALLBACK.trivy_counts
+scan_findings = _CALLBACK.trivy_findings
+
+GOLDEN_BASE = "netci/python-base:3.12-alpine"
+UPSTREAM_BASE = "python:3.12-alpine"
+
+
+def build_golden_base(recorder: EvidenceRecorder) -> str:
+    """Build the patched base the application image is layered on.
+
+    `sample-apps/base-python` runs `apk upgrade`, which is the project's answer to a
+    pinned base accumulating fixable CVEs: patch once, centrally, rather than weakening
+    the gate or patching in every application Dockerfile. Building the application
+    straight on the upstream image instead -- which this gate used to do -- meant the
+    golden base existed but nothing used it, and the vulnerability gate failed the moment
+    upstream published a fix the pinned tag did not have.
+    """
+
+    recorder.run(
+        "golden-base:build",
+        [
+            "docker", "build", "--network", "host", "--pull",
+            "--build-arg", f"PYTHON_IMAGE={UPSTREAM_BASE}",
+            "-t", GOLDEN_BASE, str(PROJECT_ROOT / "sample-apps" / "base-python"),
+        ],
+    )
+    return GOLDEN_BASE
+
 
 
 def kubectl_json(recorder: EvidenceRecorder, name: str, *arguments: str) -> dict:
@@ -73,7 +103,7 @@ def build_and_publish(recorder: EvidenceRecorder, version: str, keys: tuple[str,
         f"{version}:build",
         [
             "docker", "build", "--network", "host",
-            "--build-arg", "PYTHON_IMAGE=python:3.12-alpine",
+            "--build-arg", f"PYTHON_IMAGE={GOLDEN_BASE}",
             "--label", f"org.netci.version={version}",
             "-t", tag, str(APP_DIR),
         ],
@@ -107,7 +137,9 @@ def build_and_publish(recorder: EvidenceRecorder, version: str, keys: tuple[str,
         ],
         env={"TRIVY_INSECURE": "true", "TRIVY_NON_SSL": "true"},
     )
-    counts = severity_counts(json.loads(scan_path.read_text(encoding="utf-8")))
+    scan_report = json.loads(scan_path.read_text(encoding="utf-8"))
+    counts = severity_counts(scan_report)
+    findings = scan_findings(scan_report)
     recorder.record(f"{version}:scan-counts", counts)
 
     recorder.run(
@@ -135,6 +167,7 @@ def build_and_publish(recorder: EvidenceRecorder, version: str, keys: tuple[str,
             "scanner": "trivy",
             "status": "passed" if counts["critical"] == 0 and counts["high"] == 0 else "failed",
             "critical": counts["critical"],
+            "findings": findings,
             "high": counts["high"],
             "medium": counts["medium"],
             "reportLocation": str(scan_path),
@@ -240,6 +273,10 @@ def gate(recorder: EvidenceRecorder) -> None:
     health = client.health()
     recorder.record("api-health", health)
     recorder.check_equal("the netCI API is healthy", health.get("status"), "ok")
+
+    # Before anything is built: the application layers on this, so a stale base is a
+    # vulnerability-gate failure attributed to the application.
+    build_golden_base(recorder)
 
     recorder.run("helm-lint", ["helm", "lint", str(CHART)])
     nodes = kubectl_json(recorder, "cluster-nodes", "get", "nodes")

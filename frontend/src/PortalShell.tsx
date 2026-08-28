@@ -110,9 +110,20 @@ function Sidebar({ page, systemId, moduleId, moduleLinks, navigationSystems, ses
         {navigationSystems.map((system) => <button key={system.id} className="nav-item system-link" onClick={() => navigate('system', { systemId: system.id })}><i className={`system-health health-${systemTone[system.status] ?? 'green'}`} />{system.id}</button>)}
       </>}
     </nav>
-    <button className="sidebar-user" onClick={onLogout} title="Đăng xuất"><span className="avatar">{session.displayName.slice(0, 2).toUpperCase()}</span><span><strong>{session.displayName}</strong><small>{session.email}</small></span><LogOut size={17} /></button>
+    {/* With NETCI_AUTH_MODE=none there is no credential to drop, so a logout button would
+        sign the user straight back in. Showing the posture instead is the honest UI, and
+        it makes an unauthenticated deployment visible to whoever is looking at it. */}
+    {session.identity.authMode === 'none'
+      ? <div className="sidebar-user sidebar-user-anonymous" title="netCI đang chạy không bật xác thực (NETCI_AUTH_MODE=none)"><span className="avatar"><ShieldAlert size={16} /></span><span><strong>Chưa bật xác thực</strong><small>Mọi thao tác ghi nhận là “anonymous”</small></span></div>
+      : <button className="sidebar-user" onClick={onLogout} title="Đăng xuất"><span className="avatar">{session.identity.principal.displayName.slice(0, 2).toUpperCase()}</span><span><strong>{session.identity.principal.displayName}</strong><small>{roleLabel(session)}</small></span><LogOut size={17} /></button>}
     <button className="sidebar-close" aria-label="Đóng menu" onClick={close}><X size={20} /></button>
   </aside>
+}
+
+/** The caller's netCI roles, which is what actually decides what they can do. */
+function roleLabel(session: AuthSession): string {
+  const roles = session.identity.principal.roles
+  return roles.length ? roles.join(' · ') : 'no roles'
 }
 
 function TopBar({ page, systemId, moduleId, moduleLinks, navigationSystems, session, navigate, onSettings, onLogout, onMenu }: { page: PageId; systemId: string; moduleId: string; moduleLinks: NavigationModule[]; navigationSystems: NavigationSystem[]; session: AuthSession; navigate: Navigate; onSettings: () => void; onLogout: () => void; onMenu: () => void }) {
@@ -140,8 +151,8 @@ function TopBar({ page, systemId, moduleId, moduleLinks, navigationSystems, sess
     <div className="topbar-actions">
       <button className="icon-button notification-button" aria-label="Thông báo" aria-expanded={notifications} onClick={() => setNotifications(!notifications)}><Bell size={18} />{!notificationsRead && <i />}</button>
       <button className="icon-button" aria-label="Cài đặt" onClick={onSettings}><Settings size={18} /></button>
-      <span className="avatar" title={`${session.displayName} · ${session.email}`}>{session.displayName.slice(0, 2).toUpperCase()}</span>
-      <button className="logout-button" aria-label="Đăng xuất" onClick={onLogout}><LogOut size={17} /></button>
+      <span className="avatar" title={`${session.identity.principal.displayName} · ${roleLabel(session)}`}>{session.identity.principal.displayName.slice(0, 2).toUpperCase()}</span>
+      {session.identity.authMode !== 'none' && <button className="logout-button" aria-label="Đăng xuất" onClick={onLogout}><LogOut size={17} /></button>}
     </div>
     {notifications && <section className="notification-panel">
       <div className="notification-title"><strong>Notifications</strong><button disabled={notificationsRead} onClick={() => setNotificationsRead(true)}>{notificationsRead ? 'All read' : 'Mark all as read'}</button></div>

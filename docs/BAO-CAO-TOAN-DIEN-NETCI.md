@@ -609,16 +609,65 @@ controller cùng chết. Đó là giới hạn của local reference, không ph�
 7. Secret đọc từ file qua biến `*_FILE`.
 10. Fixture được tách rõ ở màn hình DORA: UI nói thẳng "no delivery events recorded yet" thay vì hiện baseline trông hợp lý.
 
+### P0 mới — phát hiện khi rà soát để đưa vào dùng thật (đã hoàn thành)
+
+Ba lỗ hổng nghiêm trọng, tất cả đều nằm trong code đã chạy được, và mỗi cái làm hai cái
+còn lại trở nên vô nghĩa:
+
+1. **Không endpoint nào dành cho người dùng có xác thực.** `POST /production-requests/{id}/approve`
+   và `POST /deployments/{id}/rollback` ai chạm được cổng là gọi được. Chỉ 8 endpoint
+   callback của CI kiểm tra key.
+2. **Actor do chính người gọi khai.** `ApprovalRequest.actor` mặc định `"local-reviewer"`,
+   còn Portal gửi thẳng chuỗi `'Admin'`. Audit trail ghi lại đúng thứ người gọi tự khai.
+3. **`require_environment_permission` là code chết.** Control dành riêng production cho
+   reviewer đã được viết, được ghi trong tài liệu, và **chưa từng được gọi từ đâu cả**.
+
+Đã sửa trọn vẹn, theo đúng pattern seam sẵn có của dự án ([ADR-011](decisions/ADR-011-authentication-seam.md)):
+
+| Việc | Trạng thái |
+|---|---|
+| Seam xác thực `NETCI_AUTH_MODE` (`none`/`token`/`oidc`) | Xong. `none` **chỉ phục vụ loopback**, nên quên cấu hình không thể thành netCI mở ra mạng. |
+| Actor lấy từ credential | Xong. `actor`/`requestedBy`/`createdBy` đã bị **xóa khỏi API** — field mà server nhận rồi âm thầm bỏ qua còn tệ hơn là không có. |
+| Phân quyền theo role | Xong: `viewer`/`developer`/`reviewer`/`platform-admin`/`pipeline` áp lên toàn bộ endpoint. |
+| `require_environment_permission` được gọi thật | Xong, kèm test sẽ fail nếu nó lại thành code chết. |
+| Separation of duties | Xong: migration `0003` thêm `pipeline_runs.started_by`, người tạo production run không được tự approve. |
+| Endpoint máy là của máy | Xong: platform-admin không post được CI result, pipeline key không approve được deployment. |
+| Portal đăng nhập thật | Xong: `GET /me` quyết định danh tính và role; màn hình login cũ chấp nhận mọi username/password và **không hề gọi backend**. |
+| Cơ chế ngoại lệ CVE có thời hạn | Xong: `security-exceptions.example.yaml` — một CVE, một digest, một ngày hết hạn, một owner, một người duyệt. |
+| Kiểm chữ ký lại lúc deploy | Xong: seam `NETCI_SIGNATURE_VERIFY_MODE=cosign`. netCI tự chạy cosign trên digest sắp deploy bằng **public key** nó giữ — không còn tin boolean do CI tự ghi. Fail closed. |
+
+Verify: `backend/tests/test_authorization.py` (13 test, chạy API ở chế độ `token` với 4 danh
+tính khác nhau), `backend/tests/test_auth_oidc.py` (17 test, ký JWT bằng key thật và chặn
+`alg: none`, RS256→HS256 confusion, sai issuer/audience, hết hạn, `kid` lạ),
+`backend/tests/test_security_exceptions.py`, `test_ci_evidence_contract.py`, và
+`test_signature_verification.py` (22 test, trong đó có một test chạy **cosign thật** với
+key pair thật: chữ ký hợp lệ được nhận, byte bị sửa bị từ chối, sai key bị từ chối).
+
+Hai lỗi do chính đợt này tạo ra và bị test bắt lại — đáng ghi vì nó cho thấy test có tác dụng:
+
+- Waiver ban đầu `return` sớm nên **bỏ qua luôn bước kiểm chữ ký**: một CVE được miễn là đủ
+  cho một artifact *chưa ký* đi qua. Đã sửa: waiver chỉ ghi nhận rồi đi tiếp.
+- Trivy báo cùng một CVE nhiều lần (mỗi package/target một dòng), nên "counts phải khớp
+  findings" sẽ chặn waiver trong đúng trường hợp thường gặp. Đã sửa tận gốc: đếm **CVE
+  riêng biệt**, đúng đơn vị mà một waiver đặt tên.
+- Verifier chữ ký ban đầu **từ chối đúng những artifact mà chính nền tảng này tạo ra**:
+  script CI ký với `--tlog-upload=false`, nên cosign đòi cờ tương ứng lúc verify, nếu không
+  báo "signature not found in transparency log" — trông như chữ ký hỏng nhưng thực ra là
+  lệch cấu hình. Chỉ lộ ra khi chạy cosign thật, fake binary không thể phát hiện.
+
 ### P1 — còn lại
 
-8. Playwright E2E cho login/wizard/pipeline/request/logout và accessibility scan.
-9. Loading skeleton, retry/error boundary và empty state thống nhất ở mọi page.
-10. `demoMode` cho phần fixture còn lại (chart minh họa, Settings/Server overlay).
+Bảo mật và quản trị:
 
-Ngoài ra, hai việc mới phát hiện trong quá trình chạy thật:
+- **Phân quyền theo application/team.** Role hiện là toàn cục; "team A chỉ deploy được app
+  của team A" chưa có. Seam để mở rộng là `requires()` trong `backend/app/main.py`.
+- Rate limiting, quota, tenant isolation.
 
-- **Cơ chế ngoại lệ CVE có thời hạn.** Policy hiện chặn mọi finding HIGH/CRITICAL có bản vá và không có đường đi hợp lệ cho một release phải ship kèm ngoại lệ. Cần một `security-policy.yaml` có owner và ngày hết hạn.
-- **Kiểm tra chữ ký khi deploy.** Hiện netCI tin vào evidence "signature verified" do CI ghi. Bước chặt hơn là chạy `cosign verify` lại tại thời điểm deploy.
+Frontend:
+
+- Playwright E2E cho login/wizard/pipeline/request/logout và accessibility scan.
+- Loading skeleton, retry/error boundary và empty state thống nhất ở mọi page.
+- `demoMode` cho phần fixture còn lại (chart minh họa, Settings/Server overlay).
 
 ### P2 — hướng production, không bắt buộc cho local reference
 

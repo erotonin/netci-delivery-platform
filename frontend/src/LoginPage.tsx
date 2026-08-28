@@ -1,30 +1,68 @@
-import { useState, type FormEvent } from 'react'
-import { ArrowLeft, Eye, EyeOff, KeyRound, LogIn, ShieldCheck } from 'lucide-react'
+import { useEffect, useState, type FormEvent } from 'react'
+import { KeyRound, Loader2, LogIn, ShieldAlert, ShieldCheck } from 'lucide-react'
+import { NetciApiError, whoami, type Identity } from './api/netciClient'
 
+/** The signed-in user, as the *server* described them. The browser never decides this. */
 export type AuthSession = {
-  displayName: string
-  email: string
-  method: 'local-sso' | 'local-password'
+  token: string | null
+  identity: Identity
 }
 
-export function LoginPage({ onLogin }: { onLogin: (session: AuthSession) => void }) {
-  const [passwordMode, setPasswordMode] = useState(false)
-  const [username, setUsername] = useState('')
-  const [password, setPassword] = useState('')
-  const [showPassword, setShowPassword] = useState(false)
-  const [error, setError] = useState('')
+export const displayNameOf = (session: AuthSession) => session.identity.principal.displayName
+export const hasRole = (session: AuthSession, ...roles: string[]) =>
+  session.identity.principal.roles.some((role) => roles.includes(role))
 
-  const loginWithPassword = (event: FormEvent<HTMLFormElement>) => {
+export function LoginPage({ onLogin }: { onLogin: (session: AuthSession) => void }) {
+  const [token, setToken] = useState('')
+  const [error, setError] = useState('')
+  const [busy, setBusy] = useState(false)
+  // `null` while we are still asking the API how it is configured.
+  const [authMode, setAuthMode] = useState<string | null>(null)
+
+  // Ask the server what it requires before drawing a form. When netCI runs with
+  // NETCI_AUTH_MODE=none there is no credential to collect, and presenting a login box
+  // that accepts anything is exactly the theatre this screen used to be.
+  useEffect(() => {
+    let cancelled = false
+    whoami()
+      .then((identity) => {
+        if (cancelled) return
+        setAuthMode(identity.authMode)
+        if (identity.authMode === 'none') onLogin({ token: null, identity })
+      })
+      .catch((cause) => {
+        if (cancelled) return
+        setAuthMode(cause instanceof NetciApiError && cause.status === 401 ? 'token' : 'unreachable')
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [onLogin])
+
+  const signIn = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
-    if (!username.trim() || !password) {
-      setError('Nhập đầy đủ tên đăng nhập và mật khẩu để tiếp tục.')
+    if (!token.trim()) {
+      setError('Nhập access token do platform team cấp.')
       return
     }
-    onLogin({
-      displayName: username.trim(),
-      email: `${username.trim().toLowerCase().replace(/\s+/g, '.')}@netchat.io`,
-      method: 'local-password',
-    })
+    setBusy(true)
+    setError('')
+    try {
+      // The token is verified by the server before it becomes a session: the Portal
+      // never stores a credential it has not seen work.
+      const identity = await whoami(token.trim())
+      onLogin({ token: token.trim(), identity })
+    } catch (cause) {
+      if (cause instanceof NetciApiError && cause.status === 401) {
+        setError('Token không hợp lệ hoặc đã bị thu hồi.')
+      } else if (cause instanceof NetciApiError && cause.status === 403) {
+        setError('Token hợp lệ nhưng tài khoản chưa được cấp quyền nào trên netCI.')
+      } else {
+        setError('Không kết nối được tới netCI API. Kiểm tra dịch vụ và thử lại.')
+      }
+    } finally {
+      setBusy(false)
+    }
   }
 
   return <main className="login-page">
@@ -41,18 +79,47 @@ export function LoginPage({ onLogin }: { onLogin: (session: AuthSession) => void
       <div className="login-card">
         <div className="login-mark">R</div>
         <h2>Đăng nhập</h2>
-        <p>Vui lòng chọn hình thức đăng nhập.</p>
-        {!passwordMode ? <div className="login-options">
-          <button className="login-primary" onClick={() => onLogin({ displayName: 'Admin', email: 'admin@netchat.io', method: 'local-sso' })}><ShieldCheck size={18} />Đăng nhập bằng SSO</button>
-          <button className="login-secondary" onClick={() => { setPasswordMode(true); setError('') }}><KeyRound size={18} />Đăng nhập bằng mật khẩu</button>
-        </div> : <form className="login-form" onSubmit={loginWithPassword} noValidate>
-          <div className="login-field"><label htmlFor="login-username">Tên đăng nhập</label><input id="login-username" autoFocus autoComplete="username" value={username} onChange={(event) => setUsername(event.target.value)} placeholder="ten.dang.nhap" /></div>
-          <div className="login-field"><label htmlFor="login-password">Mật khẩu</label><div className="password-field"><input id="login-password" autoComplete="current-password" type={showPassword ? 'text' : 'password'} value={password} onChange={(event) => setPassword(event.target.value)} placeholder="••••••••" /><button type="button" aria-label={showPassword ? 'Ẩn mật khẩu' : 'Hiện mật khẩu'} onClick={() => setShowPassword((current) => !current)}>{showPassword ? <EyeOff size={17} /> : <Eye size={17} />}</button></div></div>
-          {error && <div className="login-error" role="alert">{error}</div>}
-          <button className="login-primary" type="submit"><LogIn size={18} />Đăng nhập</button>
-          <button className="login-back" type="button" onClick={() => { setPasswordMode(false); setError(''); setPassword('') }}><ArrowLeft size={16} />Quay lại đăng nhập SSO</button>
-        </form>}
-        <div className="login-preview-note"><ShieldCheck size={15} /><span>Windows preview dùng phiên đăng nhập local; SSO/OIDC thật được cấu hình ở runtime Ubuntu.</span></div>
+
+        {authMode === null && <p className="login-checking" role="status"><Loader2 size={16} className="spin" />Đang kiểm tra cấu hình xác thực…</p>}
+
+        {authMode === 'unreachable' && <div className="login-error" role="alert">
+          <ShieldAlert size={16} />netCI API không phản hồi. Portal không thể đăng nhập khi chưa gọi được <code>/me</code>.
+        </div>}
+
+        {authMode === 'none' && <p className="login-checking" role="status"><Loader2 size={16} className="spin" />netCI đang chạy không bật xác thực — đang vào Portal…</p>}
+
+        {(authMode === 'token' || authMode === 'oidc') && <>
+          <p>Dán access token do platform team cấp. Quyền của bạn do netCI quyết định, không do Portal.</p>
+          <form className="login-form" onSubmit={signIn} noValidate>
+            <div className="login-field">
+              <label htmlFor="login-token">Access token</label>
+              <input
+                id="login-token"
+                autoFocus
+                type="password"
+                autoComplete="off"
+                spellCheck={false}
+                value={token}
+                onChange={(event) => setToken(event.target.value)}
+                placeholder="Bearer token"
+              />
+            </div>
+            {error && <div className="login-error" role="alert">{error}</div>}
+            <button className="login-primary" type="submit" disabled={busy}>
+              {busy ? <Loader2 size={18} className="spin" /> : <LogIn size={18} />}
+              {busy ? 'Đang xác thực…' : 'Đăng nhập'}
+            </button>
+          </form>
+          <div className="login-preview-note">
+            <KeyRound size={15} />
+            <span>
+              {authMode === 'oidc'
+                ? 'netCI đang xác thực bằng OIDC: dùng access token từ identity provider của tập đoàn.'
+                : 'netCI đang xác thực bằng token: xem docs/security-model.md để biết cách cấp và thu hồi token.'}
+            </span>
+          </div>
+        </>}
+
         <small className="login-copyright">© 2026 Release Portal · netCI Platform</small>
       </div>
     </section>

@@ -32,6 +32,7 @@ ADRS = [f"docs/decisions/ADR-{index:03d}-{name}.md" for index, name in enumerate
         "artifact-security",
         "multi-controller-routing",
         "local-vs-production-target",
+        "authentication-seam",
     ),
     start=1,
 )]
@@ -51,6 +52,8 @@ REQUIRED = [
     "scripts/validate_release.py",
     "scripts/migrate.py",
     "scripts/netci_callback.py",
+    "scripts/netci_token.py",
+    "backend/app/auth.py",
     "scripts/lab.sh",
     "scripts/jenkins_lab.sh",
     "scripts/backstage_lab.sh",
@@ -76,6 +79,7 @@ REQUIRED = [
     "deploy/ansible/requirements.txt",
     "deploy/ansible/inventories/localhost.ini",
     "release-checklist.yaml",
+    "security-exceptions.example.yaml",
     *CORE_DOCS,
     *ADRS,
 ]
@@ -86,6 +90,7 @@ YAML_FILES = [
     "backstage/netci-template.yaml",
     "backstage/app-config.example.yaml",
     "release-checklist.yaml",
+    "security-exceptions.example.yaml",
 ]
 
 

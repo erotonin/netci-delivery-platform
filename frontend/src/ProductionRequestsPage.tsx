@@ -81,7 +81,7 @@ function NewRequest({ availableModules, onClose, onCreate }: { availableModules:
     setSaving(true)
     setError('')
     try {
-      await onCreate({ modules: selected.map((id) => drafts[id]), requestedBy: 'Admin', scheduledFor: toOffsetIso(scheduledFor), rollbackStrategy: rollback, runAutomationTests: automation })
+      await onCreate({ modules: selected.map((id) => drafts[id]), scheduledFor: toOffsetIso(scheduledFor), rollbackStrategy: rollback, runAutomationTests: automation })
       onClose()
     } catch (submitError) {
       setError(submitError instanceof Error ? submitError.message : 'Không thể tạo production request.')
@@ -143,8 +143,8 @@ export function ProductionRequestsPage({ systemId }: { systemId: string }) {
     setCommandBusy(true)
     try {
       const updated = action === 'approve'
-        ? await approveProductionRequest(details.id, { actor: 'Admin', comment: 'Approved from Release Portal' })
-        : await rejectProductionRequest(details.id, { actor: 'Admin', comment: 'Rejected from Release Portal' })
+        ? await approveProductionRequest(details.id, { comment: 'Approved from Release Portal' })
+        : await rejectProductionRequest(details.id, { comment: 'Rejected from Release Portal' })
       setItems((current) => current.map((item) => item.id === updated.id ? updated : item))
       setDetails(updated)
       notify(`${displayRequestId(updated)} đã được ${action === 'approve' ? 'approve' : 'reject'}.`)

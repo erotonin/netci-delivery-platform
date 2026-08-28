@@ -3,7 +3,7 @@ import {
   Activity, ArrowRight, Box, CheckCircle2, ChevronLeft, ChevronRight, CircleAlert,
   CloudDownload, Layers3, MoreHorizontal, Pencil, Plus, Search, Server, Trash2,
 } from 'lucide-react'
-import { createSystem, getPortalDashboard, getSystem, listServerInventory, listSystems, searchDcimServices, type DcimService, type PortalDashboard, type ServerInventoryItem } from './api/netciClient'
+import { createSystem, deleteSystem, getPortalDashboard, getSystem, listServerInventory, listSystems, searchDcimServices, type DcimService, type PortalDashboard, type ServerInventoryItem } from './api/netciClient'
 import { usePortalFeedback } from './PortalFeedback'
 import { DoraCards, Modal, PageHeader, StatusPill, type Navigate } from './PortalShell'
 import { activity, servers as seedServers, systems, type PortalServer, type PortalSystem as PortalSystemView } from './portalData'
@@ -197,8 +197,12 @@ export function ServersPage() {
 }
 
 export function SystemPage({ systemId, navigate }: { systemId: string; navigate: Navigate }) {
+  const { notify } = usePortalFeedback()
   const fallback: PortalSystemView = systems.find((item) => item.id === systemId) ?? { id: systemId, code: '', unit: 'Đang đồng bộ từ DCIM', description: 'System chưa có module delivery nào trong Release Portal.', owner: 'Admin', status: 'healthy', modules: [], runs: 0, succeeded: 0, failed: 0 }
   const [system, setSystem] = useState<PortalSystemView>(fallback)
+  const [deleteModal, setDeleteModal] = useState(false)
+  const [deleting, setDeleting] = useState(false)
+
   useEffect(() => {
     setSystem(systems.find((item) => item.id === systemId) ?? fallback)
     getSystem(systemId).then((item) => setSystem({
@@ -214,10 +218,26 @@ export function SystemPage({ systemId, navigate }: { systemId: string; navigate:
       failed: item.failedRuns,
     })).catch(() => undefined)
   }, [systemId])
+
+  const handleDeleteSystem = async () => {
+    setDeleting(true)
+    try {
+      await deleteSystem(systemId)
+      notify(`Đã xóa system ${systemId}.`)
+      setDeleteModal(false)
+      navigate('systems')
+    } catch (error) {
+      notify(error instanceof Error ? error.message : 'Không thể xóa system.', 'error')
+    } finally {
+      setDeleting(false)
+    }
+  }
+
   return <>
-    <div className="system-heading"><div><div className="title-status"><h1>{system.id}</h1><StatusPill status={system.status[0].toUpperCase() + system.status.slice(1)} /></div><p>{system.description}</p><small>Đơn vị: {system.unit} · Owner: {system.owner}</small></div><button className="primary-button" onClick={() => navigate('new-module', { systemId })}><Plus size={16} />New Module</button></div>
+    <div className="system-heading"><div><div className="title-status"><h1>{system.id}</h1><StatusPill status={system.status[0].toUpperCase() + system.status.slice(1)} /></div><p>{system.description}</p><small>Đơn vị: {system.unit} · Owner: {system.owner}</small></div><div className="heading-actions"><button className="danger-button" onClick={() => setDeleteModal(true)}><Trash2 size={16} />Delete System</button><button className="primary-button" onClick={() => navigate('new-module', { systemId })}><Plus size={16} />New Module</button></div></div>
     <div className="dora-section-label">DORA METRICS · Q2 2025</div>
     <DoraCards />
     <section className="modules-section"><div className="section-heading"><h2>{system.modules.length} modules</h2><span>Last updated just now</span></div><div className="module-grid">{system.modules.map((module) => <article className="module-card" key={module.id}><div className="module-card-top"><span className={`module-icon ${module.type === 'Frontend' ? 'blue' : 'purple'}`}><Box size={19} /></span><div><h3>{module.name}</h3><p>{module.description}</p></div><em className={`type-badge ${module.type === 'Frontend' ? 'blue' : 'purple'}`}>{module.type}</em></div><label>Versions</label><div className="version-chips">{module.versions.map((version) => <span key={version}>{version}</span>)}</div><label>Environments</label><div className="environment-grid">{['Dev', 'Staging', 'Production'].map((environment) => <div key={environment}><span>{environment}</span><StatusPill status="Deployed" /></div>)}</div><button className="module-view-button" onClick={() => navigate('module', { systemId, moduleId: module.id })}>View Module <ArrowRight size={15} /></button></article>)}{!system.modules.length && <div className="empty-module-state"><Box size={27} /><strong>No modules yet</strong><span>Add a DCIM module to configure its delivery lifecycle.</span><button className="primary-button" onClick={() => navigate('new-module', { systemId })}><Plus size={15} />Add module</button></div>}</div></section>
+    {deleteModal && <Modal title="Delete System" description={`Are you sure you want to delete system "${system.id}"?`} onClose={() => setDeleteModal(false)} footer={<><button className="secondary-button" onClick={() => setDeleteModal(false)}>Cancel</button><button className="danger-button" disabled={deleting} onClick={handleDeleteSystem}>{deleting ? 'Deleting…' : 'Confirm Delete'}</button></>}><div className="inline-error" role="status">Warning: This action will delete system {system.id} and detach all associated modules from the Release Portal.</div></Modal>}
   </>
 }

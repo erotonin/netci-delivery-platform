@@ -219,7 +219,7 @@ def gate(recorder: EvidenceRecorder) -> None:
     ci = client.ci_result(run["id"], {"status": "succeeded", "artifactDigest": first["artifactDigest"]})
     deployment = ci["deployment"]
     recorder.check_equal("production waits for approval", deployment["status"], "pending_approval")
-    client.approve(deployment["id"], "gate-reviewer")
+    client.approve(deployment["id"])
 
     app_root = Path(context["appRoot"])
     deploy(recorder, first, step="deploy:v0.1.0")
@@ -253,7 +253,7 @@ def gate(recorder: EvidenceRecorder) -> None:
         second_run["id"], {"status": "succeeded", "artifactDigest": second["artifactDigest"]}
     )
     second_deployment = second_ci["deployment"]
-    client.approve(second_deployment["id"], "gate-reviewer")
+    client.approve(second_deployment["id"])
     deploy(recorder, second, step="deploy:v0.2.0")
     wait_for_health(health_url)
     recorder.check_equal(

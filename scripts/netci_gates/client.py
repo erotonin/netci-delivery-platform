@@ -102,8 +102,19 @@ class NetciClient:
             "POST", f"/pipeline-runs/{run_id}/security-evidence", payload, status=status, machine=True
         )
 
-    def approve(self, deployment_id: str, actor: str = "gate-reviewer") -> dict[str, Any]:
-        return self.expect("POST", f"/deployments/{deployment_id}/approve", {"actor": actor}, status=202)
+    def approve(self, deployment_id: str) -> dict[str, Any]:
+        """Approve as whoever this client's credential belongs to.
+
+        No actor in the body: netCI records the authenticated principal and ignores any
+        actor a caller supplies, so sending one would only look like it worked.
+        """
+
+        return self.expect("POST", f"/deployments/{deployment_id}/approve", {}, status=202)
+
+    def whoami(self) -> dict[str, Any]:
+        """The identity netCI will attribute this client's actions to."""
+
+        return self.expect("GET", "/me")
 
     def deployment_result(self, deployment_id: str, status_value: str, message: str) -> dict[str, Any]:
         return self.expect(

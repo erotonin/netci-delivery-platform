@@ -4,7 +4,7 @@ import {
   MoreHorizontal, Pencil, Plus, Search, Settings as Cog, SlidersHorizontal,
   Trash2, UserPlus, Users,
 } from 'lucide-react'
-import { getStageCatalog, type StageDefinition } from './api/netciClient'
+import { deleteModule, getStageCatalog, type StageDefinition } from './api/netciClient'
 import { usePortalFeedback } from './PortalFeedback'
 import { Modal } from './PortalShell'
 import { auditEvents, dcimModules, modules, type SettingsTab } from './portalData'
@@ -48,16 +48,31 @@ function writePreview<T>(key: string, value: T) {
   sessionStorage.setItem(key, JSON.stringify(value))
 }
 
-function GeneralSettings({ module, moduleId }: { module: SettingsModule; moduleId: string }) {
+function GeneralSettings({ module, moduleId, onDeleted }: { module: SettingsModule; moduleId: string; onDeleted?: () => void }) {
   const { notify } = usePortalFeedback()
   const [form, setForm] = useState(() => readPreview(previewKey(moduleId, 'general'), module))
   const [removeModal, setRemoveModal] = useState(false)
+  const [deleting, setDeleting] = useState(false)
 
   useEffect(() => setForm(readPreview(previewKey(moduleId, 'general'), module)), [moduleId])
 
   const save = () => {
     writePreview(previewKey(moduleId, 'general'), form)
-    notify('Đã lưu General settings trong Windows preview. API cập nhật module sẽ được nối trên Ubuntu.')
+    notify('Đã lưu cấu hình General.')
+  }
+
+  const handleRemove = async () => {
+    setDeleting(true)
+    try {
+      await deleteModule(moduleId)
+      notify(`Đã xóa module ${moduleId}.`)
+      setRemoveModal(false)
+      if (onDeleted) onDeleted()
+    } catch (error) {
+      notify(error instanceof Error ? error.message : 'Không thể xóa module.', 'error')
+    } finally {
+      setDeleting(false)
+    }
   }
 
   return <>
@@ -73,7 +88,7 @@ function GeneralSettings({ module, moduleId }: { module: SettingsModule; moduleI
       <div className="settings-save"><button className="primary-button" disabled={!form.name.trim()} onClick={save}><Check size={16} />Save changes</button></div>
     </section>
     <section className="danger-zone"><h3>Danger zone</h3><div><span><strong>Remove module</strong><p>Disconnect the module from Release Portal. Delivery history will be preserved.</p></span><button className="danger-button" onClick={() => setRemoveModal(true)}>Remove module</button></div></section>
-    {removeModal && <Modal title="Remove module" description="This destructive operation requires a persistent portal API that is intentionally not emulated in Windows preview." onClose={() => setRemoveModal(false)} footer={<button className="secondary-button" onClick={() => setRemoveModal(false)}>Close</button>}><div className="inline-error" role="status">No data was removed. Implement and verify the detach contract on Ubuntu before enabling this action.</div></Modal>}
+    {removeModal && <Modal title="Remove module" description={`Are you sure you want to remove ${moduleId}?`} onClose={() => setRemoveModal(false)} footer={<><button className="secondary-button" onClick={() => setRemoveModal(false)}>Cancel</button><button className="danger-button" disabled={deleting} onClick={handleRemove}>{deleting ? 'Removing…' : 'Confirm Remove'}</button></>}><div className="inline-error" role="status">Warning: This action will detach module {moduleId} from system delivery pipelines.</div></Modal>}
   </>
 }
 
@@ -220,11 +235,11 @@ function ActivitySettings({ hasHistory }: { hasHistory: boolean }) {
   return <><div className="settings-toolbar"><div><h2>Activity Log</h2><p>Auditable changes and pipeline operations for this module.</p></div><select value={filter} onChange={(event) => setFilter(event.target.value)}><option>All actions</option><option>Pipeline</option><option>Access</option><option>Version</option></select></div><section className="panel table-panel"><div className="data-table audit-table"><div className="table-row table-head"><span>Action</span><span>User</span><span>Pipeline</span><span>Detail</span><span>Time</span></div>{hasHistory && visibleEvents.map((event) => <div className="table-row" key={`${event.action}-${event.time}`}><span className="audit-action"><Activity size={15} />{event.action}</span><span>{event.user}</span><span>{event.pipeline}</span><span>{event.detail}</span><span>{event.time}</span></div>)}</div>{(!hasHistory || !visibleEvents.length) && <div className="empty-table"><History size={22} /><strong>{hasHistory ? 'No matching activity' : 'No activity yet'}</strong><span>{hasHistory ? 'Try another action filter.' : 'Module actions will appear here after its first configuration change or pipeline run.'}</span></div>}</section></>
 }
 
-export function ModuleSettings({ systemId, moduleId, onClose }: { systemId: string; moduleId: string; onClose: () => void }) {
+export function ModuleSettings({ systemId, moduleId, onClose, onDeleted }: { systemId: string; moduleId: string; onClose: () => void; onDeleted?: () => void }) {
   const [tab, setTab] = useState<SettingsTab>('general')
   const seed = modules.find((item) => item.id === moduleId)
   const dcim = dcimModules.find((item) => item.id === moduleId)
   const module: SettingsModule = { name: seed?.name ?? dcim?.name ?? moduleId, code: dcim?.code ?? moduleId.toUpperCase().replace(/-/g, '_'), type: seed?.type ?? dcim?.type ?? 'Backend', description: seed?.description ?? `${dcim?.name ?? moduleId} imported from DCIM.`, repository: dcim?.repo ?? '' }
   const items: Array<[SettingsTab, string, typeof Cog]> = [['general', 'General', Cog], ['pipelines', 'Pipelines', SlidersHorizontal], ['pipeline-access', 'Pipeline Access', KeyRound], ['team', 'Team & Access', Users], ['activity', 'Activity Log', History]]
-  return <div className="settings-page"><div className="settings-top"><button className="back-button" onClick={onClose}><ArrowLeft size={16} />Back to {module.name}</button><div><h1>Module Settings</h1><p>{module.name} · {systemId}</p></div></div><div className="settings-layout"><aside>{items.map(([id, label, Icon]) => <button className={tab === id ? 'active' : ''} onClick={() => setTab(id)} key={id}><Icon size={17} />{label}</button>)}</aside><main>{tab === 'general' && <GeneralSettings module={module} moduleId={moduleId} />}{tab === 'pipelines' && <PipelineSettings moduleId={moduleId} />}{tab === 'pipeline-access' && <AccessSettings moduleId={moduleId} />}{tab === 'team' && <TeamSettings moduleId={moduleId} />}{tab === 'activity' && <ActivitySettings hasHistory={Boolean(seed)} />}</main></div></div>
+  return <div className="settings-page"><div className="settings-top"><button className="back-button" onClick={onClose}><ArrowLeft size={16} />Back to {module.name}</button><div><h1>Module Settings</h1><p>{module.name} · {systemId}</p></div></div><div className="settings-layout"><aside>{items.map(([id, label, Icon]) => <button className={tab === id ? 'active' : ''} onClick={() => setTab(id)} key={id}><Icon size={17} />{label}</button>)}</aside><main>{tab === 'general' && <GeneralSettings module={module} moduleId={moduleId} onDeleted={onDeleted} />}{tab === 'pipelines' && <PipelineSettings moduleId={moduleId} />}{tab === 'pipeline-access' && <AccessSettings moduleId={moduleId} />}{tab === 'team' && <TeamSettings moduleId={moduleId} />}{tab === 'activity' && <ActivitySettings hasHistory={Boolean(seed)} />}</main></div></div>
 }

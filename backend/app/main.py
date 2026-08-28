@@ -79,7 +79,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=configured_cors_origins(),
     allow_credentials=True,
-    allow_methods=["GET", "POST"],
+    allow_methods=["GET", "POST", "DELETE", "PUT", "PATCH", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type", "Idempotency-Key", "X-Correlation-Id"],
     expose_headers=["X-Correlation-Id"],
 )
@@ -475,12 +475,31 @@ class SbomEvidence(BaseModel):
     format: str = Field(default="cyclonedx-json", max_length=64)
 
 
+class VulnerabilityFinding(BaseModel):
+    """One blocking finding, by identifier.
+
+    A vulnerability exception waives a *named* CVE on a named digest, so evidence that
+    reports only counts cannot be waived at all -- there is nothing to match against.
+    The package and fixed version travel with it for whoever has to triage the finding.
+    """
+
+    id: str = Field(min_length=1, max_length=128)
+    severity: Literal["HIGH", "CRITICAL"]
+    package: str = Field(default="", max_length=255)
+    installedVersion: str = Field(default="", max_length=128)
+    fixedVersion: str = Field(default="", max_length=128)
+
+
 class VulnerabilityScanEvidence(BaseModel):
     scanner: Literal["trivy"]
     status: Literal["passed", "failed"]
     critical: int = Field(default=0, ge=0)
     high: int = Field(default=0, ge=0)
     medium: int = Field(default=0, ge=0)
+    # Declared, because pydantic drops what it does not declare. An undeclared field here
+    # is not a harmless omission: the counts would arrive and the identifiers would not,
+    # and every vulnerability exception would silently fail to apply.
+    findings: list[VulnerabilityFinding] = Field(default_factory=list, max_length=500)
     reportLocation: str | None = Field(default=None, max_length=1000)
 
 
@@ -569,6 +588,10 @@ def healthz(response: Response) -> dict[str, object]:
             # Reported so an operator can see from the outside that a deployment is
             # running without authentication, instead of discovering it from an incident.
             "auth": getattr(authenticator, "mode", "unknown"),
+            # Enforced by the Temporal worker, not by this process; reported here because
+            # this is where an operator looks, and "are we re-verifying signatures?" is
+            # not a question anyone should have to answer by reading a worker's env.
+            "signatureVerification": os.getenv("NETCI_SIGNATURE_VERIFY_MODE", "none").strip().lower() or "none",
         },
         "dependencies": {
             "portalPersistence": portal_health,
@@ -640,6 +663,24 @@ def get_system(systemId: str, _: Principal = ReadAccess) -> dict[str, object]:
         return portal.system(systemId)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail={"code": "SYSTEM_NOT_FOUND", "message": str(exc)}) from exc
+
+
+@app.delete("/systems/{systemId}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_system(systemId: str, _: Principal = DeveloperAccess):
+    try:
+        portal.remove_system(systemId)
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail={"code": "SYSTEM_NOT_FOUND", "message": str(exc)}) from exc
+
+
+@app.delete("/modules/{moduleId}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_module(moduleId: str, _: Principal = DeveloperAccess):
+    try:
+        portal.remove_module(moduleId)
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail={"code": "MODULE_NOT_FOUND", "message": str(exc)}) from exc
 
 
 @app.get("/systems/{systemId}/modules")

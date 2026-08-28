@@ -11,6 +11,12 @@ from typing import Protocol
 
 from temporalio import activity
 
+from ..adapters.signature_verifier import (
+    ArtifactIdentity,
+    NullSignatureVerifier,
+    SignatureVerificationError,
+    SignatureVerifier,
+)
 from ..policy.rules import PolicyViolation, evaluate_artifact_evidence
 from .provision_and_deploy import DeliveryInput, DeliveryResult
 
@@ -99,9 +105,15 @@ def build_evidence_store(project_root: Path) -> EvidenceStore:
 class DeliveryActivities:
     """Fail-closed delivery operations used by the Temporal worker."""
 
-    def __init__(self, evidence_store: EvidenceStore, runtime_runner: RuntimeRunner) -> None:
+    def __init__(
+        self,
+        evidence_store: EvidenceStore,
+        runtime_runner: RuntimeRunner,
+        signature_verifier: SignatureVerifier | None = None,
+    ) -> None:
         self.evidence_store = evidence_store
         self.runtime_runner = runtime_runner
+        self.signature_verifier = signature_verifier or NullSignatureVerifier()
 
     @activity.defn(name="validate_artifact")
     async def validate_artifact(self, delivery: DeliveryInput) -> None:
@@ -123,6 +135,25 @@ class DeliveryActivities:
         )
         if not decision.allowed:
             raise PolicyViolation(decision.reason)
+
+        # The policy above checked `signature.verified` -- a boolean CI wrote about its
+        # own work. It records that the build believed the artifact was signed; it does
+        # not prove it now. Re-verifying here uses a key netCI holds, against the digest
+        # about to be deployed, on a different host than the one that produced it, so a
+        # compromised or edited build cannot assert its way past the signature gate.
+        signature = evidence.get("signature")
+        signature = signature if isinstance(signature, dict) else {}
+        try:
+            outcome = await self.signature_verifier.verify(
+                ArtifactIdentity(
+                    digest=delivery.artifact_digest,
+                    reference=str(evidence.get("artifactRef") or "") or None,
+                    bundle_location=str(signature.get("bundleLocation") or "") or None,
+                )
+            )
+        except SignatureVerificationError as exc:
+            raise PolicyViolation(f"artifact signature re-verification failed: {exc}") from exc
+        activity.logger.info("artifact %s: %s", delivery.artifact_digest, outcome)
 
     @activity.defn(name="deploy")
     async def deploy(self, delivery: DeliveryInput) -> DeliveryResult:
