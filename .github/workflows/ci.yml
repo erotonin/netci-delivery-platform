@@ -112,6 +112,15 @@ jobs:
           PYTHONPATH: backend
           NETCI_TEST_DATABASE_URL: postgresql://netci:netci-ci-only@127.0.0.1:5432/netci
 
+      # A backup nobody has restored is a hope. These restore a dump into a throwaway
+      # database and compare it, and assert that a truncated dump and a restore that
+      # loses rows both fail -- the two ways a backup disappoints you quietly.
+      - name: Backup and restore
+        run: python -m pytest backend/tests/test_backup_restore.py -v
+        env:
+          PYTHONPATH: backend
+          NETCI_TEST_DATABASE_URL: postgresql://netci:netci-ci-only@127.0.0.1:5432/netci
+
   portal-browser:
     name: portal in a real browser
     runs-on: ubuntu-24.04

@@ -3,19 +3,19 @@
   "description": "A running Backstage instance executes the checked-in Software Template through the documented proxy; netCI holds the resulting application and still enforces its rules.",
   "result": "pass",
   "error": null,
-  "commit": "d7a43b6c7017c0e48bd3359b6f7e81629dfc1f8e",
+  "commit": "a211fa962254944d674c14ded25cb7123b32a269",
   "host": {
     "platform": "Linux-6.8.0-134-generic-x86_64-with-glibc2.39",
     "python": "3.12.3",
     "hostname": "openstack-aio"
   },
-  "startedAt": "2026-08-28T02:25:36.257990+00:00",
-  "endedAt": "2026-08-28T02:25:40.431905+00:00",
+  "startedAt": "2026-08-28T08:05:27.033542+00:00",
+  "endedAt": "2026-08-28T08:05:31.159648+00:00",
   "context": {
     "apiUrl": "http://127.0.0.1:8100",
     "pipelineApiKey": "netci-local-pipeline-key",
     "backstageUrl": "http://127.0.0.1:7007",
-    "taskId": "aec2f8d7-92a8-4bab-8538-c53cf8797085"
+    "taskId": "b105b928-b3bc-43a3-bfeb-dc6cc738da58"
   },
   "assertions": [
     {
@@ -35,8 +35,8 @@
       "assertion": "the checked-in netCI template is registered in the Backstage catalog",
       "passed": true,
       "detail": [
-        "example-nodejs-template",
-        "netci-application"
+        "netci-application",
+        "example-nodejs-template"
       ]
     },
     {
@@ -77,9 +77,9 @@
       "assertion": "Backstage created the application in netCI, not in a store of its own",
       "passed": true,
       "detail": {
-        "created": "bs-bb068e67",
+        "created": "bs-51c5fad6",
         "newSince": [
-          "bs-bb068e67"
+          "bs-51c5fad6"
         ]
       }
     },
@@ -111,8 +111,8 @@
       "assertion": "netCI assigned the identity, so the application is a first-class netCI object",
       "passed": true,
       "detail": {
-        "id": "22fe46b1-bd7a-4210-8517-992649e1b82e",
-        "createdAt": "2026-08-28T02:25:36.357333+00:00"
+        "id": "3c1ad162-2cd1-4472-90bd-c44d3f02cc34",
+        "createdAt": "2026-08-28T08:05:27.153196+00:00"
       }
     },
     {
@@ -148,8 +148,8 @@
     {
       "name": "netci-health",
       "command": null,
-      "startedAt": "2026-08-28T02:25:36.290288+00:00",
-      "endedAt": "2026-08-28T02:25:36.290288+00:00",
+      "startedAt": "2026-08-28T08:05:27.059361+00:00",
+      "endedAt": "2026-08-28T08:05:27.059361+00:00",
       "durationSeconds": 0.0,
       "exitCode": 0,
       "passed": true,
@@ -160,7 +160,10 @@
         "version": "0.1.0",
         "engines": {
           "ci": "jenkins",
-          "cd": "none"
+          "cd": "none",
+          "auth": "none",
+          "signatureVerification": "none",
+          "rateLimit": "off"
         },
         "dependencies": {
           "portalPersistence": {
@@ -174,8 +177,8 @@
     {
       "name": "catalog-templates",
       "command": null,
-      "startedAt": "2026-08-28T02:25:36.298843+00:00",
-      "endedAt": "2026-08-28T02:25:36.298843+00:00",
+      "startedAt": "2026-08-28T08:05:27.065115+00:00",
+      "endedAt": "2026-08-28T08:05:27.065115+00:00",
       "durationSeconds": 0.0,
       "exitCode": 0,
       "passed": true,
@@ -183,24 +186,24 @@
       "stderr": "",
       "detail": {
         "names": [
-          "example-nodejs-template",
-          "netci-application"
+          "netci-application",
+          "example-nodejs-template"
         ]
       }
     },
     {
       "name": "scaffolder-values",
       "command": null,
-      "startedAt": "2026-08-28T02:25:36.298917+00:00",
-      "endedAt": "2026-08-28T02:25:36.298917+00:00",
+      "startedAt": "2026-08-28T08:05:27.065156+00:00",
+      "endedAt": "2026-08-28T08:05:27.065156+00:00",
       "durationSeconds": 0.0,
       "exitCode": 0,
       "passed": true,
       "stdout": "",
       "stderr": "",
       "detail": {
-        "name": "bs-bb068e67",
-        "repositoryUrl": "https://github.com/example/bs-bb068e67",
+        "name": "bs-51c5fad6",
+        "repositoryUrl": "https://github.com/example/bs-51c5fad6",
         "pipelineTemplate": "kubernetes-ci-cd-v1",
         "runtime": "kubernetes",
         "defaultEnvironment": "staging"
@@ -209,15 +212,15 @@
     {
       "name": "scaffolder-task",
       "command": null,
-      "startedAt": "2026-08-28T02:25:38.352302+00:00",
-      "endedAt": "2026-08-28T02:25:38.352302+00:00",
+      "startedAt": "2026-08-28T08:05:29.128568+00:00",
+      "endedAt": "2026-08-28T08:05:29.128568+00:00",
       "durationSeconds": 0.0,
       "exitCode": 0,
       "passed": true,
       "stdout": "",
       "stderr": "",
       "detail": {
-        "id": "aec2f8d7-92a8-4bab-8538-c53cf8797085",
+        "id": "b105b928-b3bc-43a3-bfeb-dc6cc738da58",
         "status": "completed",
         "log": [
           "Starting up task with 1 steps",
@@ -230,17 +233,17 @@
     {
       "name": "netci-application",
       "command": null,
-      "startedAt": "2026-08-28T02:25:38.357009+00:00",
-      "endedAt": "2026-08-28T02:25:38.357009+00:00",
+      "startedAt": "2026-08-28T08:05:29.130458+00:00",
+      "endedAt": "2026-08-28T08:05:29.130458+00:00",
       "durationSeconds": 0.0,
       "exitCode": 0,
       "passed": true,
       "stdout": "",
       "stderr": "",
       "detail": {
-        "id": "22fe46b1-bd7a-4210-8517-992649e1b82e",
-        "name": "bs-bb068e67",
-        "repositoryUrl": "https://github.com/example/bs-bb068e67",
+        "id": "3c1ad162-2cd1-4472-90bd-c44d3f02cc34",
+        "name": "bs-51c5fad6",
+        "repositoryUrl": "https://github.com/example/bs-51c5fad6",
         "pipelineTemplate": "kubernetes-ci-cd-v1",
         "runtime": "kubernetes",
         "defaultEnvironment": "staging",
@@ -255,21 +258,22 @@
           "deploy",
           "health-check"
         ],
-        "createdAt": "2026-08-28T02:25:36.357333+00:00"
+        "ownerTeam": null,
+        "createdAt": "2026-08-28T08:05:27.153196+00:00"
       }
     },
     {
       "name": "scaffolder-invalid-task",
       "command": null,
-      "startedAt": "2026-08-28T02:25:40.419267+00:00",
-      "endedAt": "2026-08-28T02:25:40.419267+00:00",
+      "startedAt": "2026-08-28T08:05:31.154685+00:00",
+      "endedAt": "2026-08-28T08:05:31.154685+00:00",
       "durationSeconds": 0.0,
       "exitCode": 0,
       "passed": true,
       "stdout": "",
       "stderr": "",
       "detail": {
-        "id": "8a2c0cab-32b9-44a6-8f7b-08aeb323ecb4",
+        "id": "b97c2564-c9f3-49dd-81c8-df5ce5cda372",
         "status": "failed"
       }
     }

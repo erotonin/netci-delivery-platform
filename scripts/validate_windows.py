@@ -54,6 +54,7 @@ REQUIRED = [
     "scripts/migrate.py",
     "scripts/netci_callback.py",
     "scripts/netci_token.py",
+    "scripts/netci_backup.py",
     "backend/app/auth.py",
     "backend/app/ratelimit.py",
     "scripts/lab.sh",

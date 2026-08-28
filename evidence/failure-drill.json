@@ -3,14 +3,14 @@
   "description": "A live Jenkins controller is stopped; netCI detects the outage, routes the next build to its peer, the build completes, and the controller rejoins with its config.",
   "result": "pass",
   "error": null,
-  "commit": "d7a43b6c7017c0e48bd3359b6f7e81629dfc1f8e",
+  "commit": "a211fa962254944d674c14ded25cb7123b32a269",
   "host": {
     "platform": "Linux-6.8.0-134-generic-x86_64-with-glibc2.39",
     "python": "3.12.3",
     "hostname": "openstack-aio"
   },
-  "startedAt": "2026-08-28T01:57:47.348007+00:00",
-  "endedAt": "2026-08-28T01:59:15.404743+00:00",
+  "startedAt": "2026-08-28T08:00:46.197282+00:00",
+  "endedAt": "2026-08-28T08:01:50.608570+00:00",
   "context": {
     "apiUrl": "http://127.0.0.1:8100",
     "pipelineApiKey": "netci-local-pipeline-key",
@@ -24,7 +24,7 @@
     "token": "change-me-local-only",
     "gitUrl": "http://172.17.0.52/netci.git",
     "branch": "main",
-    "commit": "cdf555938afab72a865edfde0cd53832c301c18f",
+    "commit": "209a1b111ff5a6d017093f53431fec4fdf45aed2",
     "agentLabel": "netci-ephemeral",
     "timeout": 900.0
   },
@@ -51,21 +51,22 @@
       "assertion": "a run is accepted while both controllers are up",
       "passed": true,
       "detail": {
-        "id": "00d28621-dd95-43b8-bd9e-f7fb81ad643c",
-        "applicationId": "a73b2554-e30f-4c85-9422-e45d36a67c29",
+        "id": "2391bec4-2701-4e40-bc6b-260e34b72062",
+        "applicationId": "d793132e-471f-46bc-aa10-ba307d6f062a",
         "status": "queued",
-        "commitSha": "cdf555938afab72a865edfde0cd53832c301c18f",
+        "commitSha": "209a1b111ff5a6d017093f53431fec4fdf45aed2",
         "branch": "main",
         "environment": "staging",
         "parameters": {
           "agentLabel": "netci-ephemeral"
         },
-        "correlationId": "f1f2dcb0-fd96-4f51-b795-61b498c8e58e",
-        "jenkinsRunId": "jenkins-a:netci-a73b2554-e30f-4c85-9422-e45d36a67c29#1",
+        "correlationId": "b2a29b09-2a06-4067-86a4-0bdd56dac922",
+        "jenkinsRunId": "jenkins-b:netci-d793132e-471f-46bc-aa10-ba307d6f062a#1",
         "workflowId": null,
         "artifactDigest": null,
-        "createdAt": "2026-08-28T01:57:47.691761+00:00",
-        "updatedAt": "2026-08-28T01:57:48.498241+00:00"
+        "startedBy": "anonymous",
+        "createdAt": "2026-08-28T08:00:46.385598+00:00",
+        "updatedAt": "2026-08-28T08:00:46.798728+00:00"
       }
     },
     {
@@ -89,15 +90,16 @@
     {
       "assertion": "netCI did not route anything to the stopped controller",
       "passed": true,
-      "detail": "jenkins-b:netci-a73b2554-e30f-4c85-9422-e45d36a67c29#1"
+      "detail": "jenkins-b:netci-d793132e-471f-46bc-aa10-ba307d6f062a#2"
     },
     {
       "assertion": "the run log names the controller that accepted it",
       "passed": true,
       "detail": [
-        "queued correlationId=13b34b84-6290-4d9c-aceb-ab8bfff63953",
-        "commit=cdf555938afab72a865edfde0cd53832c301c18f",
-        "ci-dispatched controller=jenkins-b run=netci-a73b2554-e30f-4c85-9422-e45d36a67c29#1"
+        "queued correlationId=fb0c50ce-6c3d-4449-a488-81983e578bc3",
+        "commit=209a1b111ff5a6d017093f53431fec4fdf45aed2",
+        "startedBy=anonymous",
+        "ci-dispatched controller=jenkins-b run=netci-d793132e-471f-46bc-aa10-ba307d6f062a#2"
       ]
     },
     {
@@ -110,7 +112,7 @@
       "passed": true,
       "detail": {
         "status": "running",
-        "artifactDigest": "sha256:80ed1e003c852052c3baf169525ba20f55e54fad8f0fa556e65a95295a630033"
+        "artifactDigest": "sha256:305a5fe6d7c23815f3d53925d732f1b26a26dc3e2876cab68479359c6e785276"
       }
     },
     {
@@ -136,20 +138,20 @@
     {
       "assertion": "netCI accepts work again once both controllers are healthy",
       "passed": true,
-      "detail": "jenkins-a:netci-a73b2554-e30f-4c85-9422-e45d36a67c29#2"
+      "detail": "jenkins-a:netci-d793132e-471f-46bc-aa10-ba307d6f062a#1"
     },
     {
       "assertion": "the drill produced a measured restore time, not an estimate",
       "passed": true,
-      "detail": 76.45
+      "detail": 56.23
     }
   ],
   "steps": [
     {
       "name": "tool-preflight",
       "command": null,
-      "startedAt": "2026-08-28T01:57:47.373370+00:00",
-      "endedAt": "2026-08-28T01:57:47.373370+00:00",
+      "startedAt": "2026-08-28T08:00:46.207331+00:00",
+      "endedAt": "2026-08-28T08:00:46.207331+00:00",
       "durationSeconds": 0.0,
       "exitCode": 0,
       "passed": true,
@@ -165,29 +167,30 @@
     {
       "name": "baseline-run",
       "command": null,
-      "startedAt": "2026-08-28T01:57:48.510765+00:00",
-      "endedAt": "2026-08-28T01:57:48.510765+00:00",
+      "startedAt": "2026-08-28T08:00:46.807932+00:00",
+      "endedAt": "2026-08-28T08:00:46.807932+00:00",
       "durationSeconds": 0.0,
       "exitCode": 0,
       "passed": true,
       "stdout": "",
       "stderr": "",
       "detail": {
-        "id": "00d28621-dd95-43b8-bd9e-f7fb81ad643c",
-        "applicationId": "a73b2554-e30f-4c85-9422-e45d36a67c29",
+        "id": "2391bec4-2701-4e40-bc6b-260e34b72062",
+        "applicationId": "d793132e-471f-46bc-aa10-ba307d6f062a",
         "status": "queued",
-        "commitSha": "cdf555938afab72a865edfde0cd53832c301c18f",
+        "commitSha": "209a1b111ff5a6d017093f53431fec4fdf45aed2",
         "branch": "main",
         "environment": "staging",
         "parameters": {
           "agentLabel": "netci-ephemeral"
         },
-        "correlationId": "f1f2dcb0-fd96-4f51-b795-61b498c8e58e",
-        "jenkinsRunId": "jenkins-a:netci-a73b2554-e30f-4c85-9422-e45d36a67c29#1",
+        "correlationId": "b2a29b09-2a06-4067-86a4-0bdd56dac922",
+        "jenkinsRunId": "jenkins-b:netci-d793132e-471f-46bc-aa10-ba307d6f062a#1",
         "workflowId": null,
         "artifactDigest": null,
-        "createdAt": "2026-08-28T01:57:47.691761+00:00",
-        "updatedAt": "2026-08-28T01:57:48.498241+00:00"
+        "startedBy": "anonymous",
+        "createdAt": "2026-08-28T08:00:46.385598+00:00",
+        "updatedAt": "2026-08-28T08:00:46.798728+00:00"
       }
     },
     {
@@ -197,9 +200,9 @@
         "stop",
         "jenkins-a"
       ],
-      "startedAt": "2026-08-28T01:57:48.510795+00:00",
-      "endedAt": "2026-08-28T01:57:49.171974+00:00",
-      "durationSeconds": 0.661,
+      "startedAt": "2026-08-28T08:00:46.807955+00:00",
+      "endedAt": "2026-08-28T08:00:47.358186+00:00",
+      "durationSeconds": 0.55,
       "exitCode": 0,
       "passed": true,
       "stdout": "jenkins-a\n",
@@ -209,36 +212,37 @@
     {
       "name": "rerouted-run",
       "command": null,
-      "startedAt": "2026-08-28T01:58:04.908373+00:00",
-      "endedAt": "2026-08-28T01:58:04.908373+00:00",
+      "startedAt": "2026-08-28T08:01:03.018733+00:00",
+      "endedAt": "2026-08-28T08:01:03.018733+00:00",
       "durationSeconds": 0.0,
       "exitCode": 0,
       "passed": true,
       "stdout": "",
       "stderr": "",
       "detail": {
-        "id": "8ead73f1-57bd-48b8-9c8b-b8397dfbcd7b",
-        "applicationId": "a73b2554-e30f-4c85-9422-e45d36a67c29",
+        "id": "06b1f69d-215c-4fc1-a650-a12a6d7d5fab",
+        "applicationId": "d793132e-471f-46bc-aa10-ba307d6f062a",
         "status": "queued",
-        "commitSha": "cdf555938afab72a865edfde0cd53832c301c18f",
+        "commitSha": "209a1b111ff5a6d017093f53431fec4fdf45aed2",
         "branch": "main",
         "environment": "staging",
         "parameters": {
           "agentLabel": "netci-ephemeral"
         },
-        "correlationId": "13b34b84-6290-4d9c-aceb-ab8bfff63953",
-        "jenkinsRunId": "jenkins-b:netci-a73b2554-e30f-4c85-9422-e45d36a67c29#1",
+        "correlationId": "fb0c50ce-6c3d-4449-a488-81983e578bc3",
+        "jenkinsRunId": "jenkins-b:netci-d793132e-471f-46bc-aa10-ba307d6f062a#2",
         "workflowId": null,
         "artifactDigest": null,
-        "createdAt": "2026-08-28T01:57:54.233212+00:00",
-        "updatedAt": "2026-08-28T01:58:04.893534+00:00"
+        "startedBy": "anonymous",
+        "createdAt": "2026-08-28T08:00:52.409246+00:00",
+        "updatedAt": "2026-08-28T08:01:03.009080+00:00"
       }
     },
     {
       "name": "reroute-pipeline-log",
       "command": null,
-      "startedAt": "2026-08-28T01:58:04.910475+00:00",
-      "endedAt": "2026-08-28T01:58:04.910475+00:00",
+      "startedAt": "2026-08-28T08:01:03.020605+00:00",
+      "endedAt": "2026-08-28T08:01:03.020605+00:00",
       "durationSeconds": 0.0,
       "exitCode": 0,
       "passed": true,
@@ -246,38 +250,40 @@
       "stderr": "",
       "detail": {
         "lines": [
-          "queued correlationId=13b34b84-6290-4d9c-aceb-ab8bfff63953",
-          "commit=cdf555938afab72a865edfde0cd53832c301c18f",
-          "ci-dispatched controller=jenkins-b run=netci-a73b2554-e30f-4c85-9422-e45d36a67c29#1"
+          "queued correlationId=fb0c50ce-6c3d-4449-a488-81983e578bc3",
+          "commit=209a1b111ff5a6d017093f53431fec4fdf45aed2",
+          "startedBy=anonymous",
+          "ci-dispatched controller=jenkins-b run=netci-d793132e-471f-46bc-aa10-ba307d6f062a#2"
         ]
       }
     },
     {
       "name": "failover-run-final",
       "command": null,
-      "startedAt": "2026-08-28T01:59:04.960388+00:00",
-      "endedAt": "2026-08-28T01:59:04.960388+00:00",
+      "startedAt": "2026-08-28T08:01:43.041000+00:00",
+      "endedAt": "2026-08-28T08:01:43.041000+00:00",
       "durationSeconds": 0.0,
       "exitCode": 0,
       "passed": true,
       "stdout": "",
       "stderr": "",
       "detail": {
-        "id": "8ead73f1-57bd-48b8-9c8b-b8397dfbcd7b",
-        "applicationId": "a73b2554-e30f-4c85-9422-e45d36a67c29",
+        "id": "06b1f69d-215c-4fc1-a650-a12a6d7d5fab",
+        "applicationId": "d793132e-471f-46bc-aa10-ba307d6f062a",
         "status": "running",
-        "commitSha": "cdf555938afab72a865edfde0cd53832c301c18f",
+        "commitSha": "209a1b111ff5a6d017093f53431fec4fdf45aed2",
         "branch": "main",
         "environment": "staging",
         "parameters": {
           "agentLabel": "netci-ephemeral"
         },
-        "correlationId": "13b34b84-6290-4d9c-aceb-ab8bfff63953",
-        "jenkinsRunId": "jenkins-b:netci-a73b2554-e30f-4c85-9422-e45d36a67c29#1",
+        "correlationId": "fb0c50ce-6c3d-4449-a488-81983e578bc3",
+        "jenkinsRunId": "jenkins-b:netci-d793132e-471f-46bc-aa10-ba307d6f062a#2",
         "workflowId": null,
-        "artifactDigest": "sha256:80ed1e003c852052c3baf169525ba20f55e54fad8f0fa556e65a95295a630033",
-        "createdAt": "2026-08-28T01:57:54.233212+00:00",
-        "updatedAt": "2026-08-28T01:59:00.484024+00:00"
+        "artifactDigest": "sha256:305a5fe6d7c23815f3d53925d732f1b26a26dc3e2876cab68479359c6e785276",
+        "startedBy": "anonymous",
+        "createdAt": "2026-08-28T08:00:52.409246+00:00",
+        "updatedAt": "2026-08-28T08:01:41.685535+00:00"
       }
     },
     {
@@ -287,9 +293,9 @@
         "start",
         "jenkins-a"
       ],
-      "startedAt": "2026-08-28T01:59:04.960419+00:00",
-      "endedAt": "2026-08-28T01:59:05.201162+00:00",
-      "durationSeconds": 0.241,
+      "startedAt": "2026-08-28T08:01:43.041029+00:00",
+      "endedAt": "2026-08-28T08:01:43.204954+00:00",
+      "durationSeconds": 0.164,
       "exitCode": 0,
       "passed": true,
       "stdout": "jenkins-a\n",
@@ -299,8 +305,8 @@
     {
       "name": "controller-restarted",
       "command": null,
-      "startedAt": "2026-08-28T01:59:13.840250+00:00",
-      "endedAt": "2026-08-28T01:59:13.840250+00:00",
+      "startedAt": "2026-08-28T08:01:49.884926+00:00",
+      "endedAt": "2026-08-28T08:01:49.884926+00:00",
       "durationSeconds": 0.0,
       "exitCode": 0,
       "passed": true,
@@ -314,8 +320,8 @@
     {
       "name": "rejoined-config",
       "command": null,
-      "startedAt": "2026-08-28T01:59:14.116532+00:00",
-      "endedAt": "2026-08-28T01:59:14.116532+00:00",
+      "startedAt": "2026-08-28T08:01:50.052210+00:00",
+      "endedAt": "2026-08-28T08:01:50.052210+00:00",
       "durationSeconds": 0.0,
       "exitCode": 0,
       "passed": true,
@@ -333,8 +339,8 @@
     {
       "name": "drill-intervals",
       "command": null,
-      "startedAt": "2026-08-28T01:59:15.397895+00:00",
-      "endedAt": "2026-08-28T01:59:15.397895+00:00",
+      "startedAt": "2026-08-28T08:01:50.604904+00:00",
+      "endedAt": "2026-08-28T08:01:50.604904+00:00",
       "durationSeconds": 0.0,
       "exitCode": 0,
       "passed": true,
@@ -343,9 +349,9 @@
       "detail": {
         "stoppedController": "jenkins-a",
         "survivingController": "jenkins-b",
-        "detectionSeconds": 5.72,
-        "rerouteSeconds": 16.4,
-        "timeToRestoreServiceSeconds": 76.45
+        "detectionSeconds": 5.6,
+        "rerouteSeconds": 16.21,
+        "timeToRestoreServiceSeconds": 56.23
       }
     }
   ]

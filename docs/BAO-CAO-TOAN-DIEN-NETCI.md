@@ -330,7 +330,7 @@ Phần này nhóm file theo trách nhiệm. Những file sinh tự động như 
 | `backend/app/delivery.py` | `DeliveryPlatform`: tạo application, start pipeline, nhận CI result, approval, deployment result và rollback; kiểm tra catalog, digest, idempotency, transition và audit. Có in-memory store và optional Postgres persistence. |
 | `backend/app/portal.py` | `PortalReadModel`: dữ liệu system/module/version/production request cho UI; seed demo; tạo module; ánh xạ module sang application; trigger pipeline; xử lý request và các projection dashboard/DCIM/server/audit. |
 | `backend/app/persistence.py` | Hai repository Postgres cho delivery và Portal; chuyển dataclass ↔ row/JSON; seed dữ liệu; load/save; health. Khi persistence được cấu hình nhưng lỗi, Portal fail-closed. |
-| `backend/schema.sql` | DDL cho application, run, deployment, audit, idempotency, system, module, version, production request, join table, constraint, index và trigger `updated_at`. Hiện là schema thô, chưa có migration versioned. |
+| `backend/schema.sql` | DDL cho application, run, deployment, audit, idempotency, system, module, version, production request, join table, constraint, index và trigger `updated_at`. Được **sinh ra từ 4 migration có checksum** (`backend/migrations/`), không phải viết tay; `migrate.py --check-schema` fail nếu hai bên lệch nhau. |
 | `backend/app/policy/rules.py` | `ArtifactEvidence` và policy yêu cầu digest/SBOM/scan/signature; production kiểm tra role. Chính sách hiện đơn giản và cần nối chặt vào luồng thật. |
 | `backend/app/projections/dora.py` | Sắp xếp delivery event, tính frequency/lead time/failure rate/restore time theo đúng khóa liên kết. Chưa thay hoàn toàn số mô phỏng trên Portal. |
 | `backend/app/adapters/interfaces.py` | Các Protocol: Jenkins, runtime, artifact store, image builder, policy. Đây là seam giúp test và thay implementation. |
@@ -545,14 +545,14 @@ kind lab, 3 run mỗi bên, stage `unit-test,build`):
 
 | Phase | Shared agent | Ephemeral pod | Chênh |
 |---|---:|---:|---:|
-| queue | 0,3s | 1,5s | +1,2s |
-| provisioning | 0,0s | 1,4s | +1,4s |
-| checkout | 0,9s | 18,9s | +18,0s |
-| build | 3,3s | 6,5s | +3,2s |
-| cleanup (archive) | 1,0s | 10,0s | +9,0s |
-| **tổng** | **7,7s** | **46,8s** | **+39,1s** |
+| queue | 0,2s | 0,2s | +0,1s |
+| provisioning | 0,0s | 0,2s | +0,2s |
+| checkout | 2,1s | 11,2s | +9,1s |
+| build | 3,1s | 4,2s | +1,1s |
+| cleanup (archive) | 1,2s | 5,7s | +4,6s |
+| **tổng** | **8,7s** | **30,8s** | **+22,1s** |
 
-Provisioning pod — chi phí mà ai cũng nghĩ là lớn nhất — chỉ **1,4s**. Giá thật nằm ở
+Provisioning pod — chi phí mà ai cũng nghĩ là lớn nhất — **dưới 1 giây**. Giá thật nằm ở
 workspace rỗng: build không thấy clone của lần trước nên phải checkout lại toàn bộ mỗi lần,
 và chi phí đó tỉ lệ với kích thước repository chứ không phải với thứ gì platform kiểm soát.
 Muốn giảm thì tấn công vào checkout (shallow clone, hoặc source cache mount read-only), chứ
@@ -953,7 +953,7 @@ Nếu mentor đồng ý bảy điểm này, hướng dự án hiện tại là c
 
 **Hỏi: UI đã giống artifact 100% chưa?**
 
-Đáp: Thành phần và luồng chính đã bám artifact. Không nên tuyên bố pixel-perfect 100% nếu chưa có visual regression baseline/screenshot diff theo viewport. Câu chính xác là functional parity cao, còn cần visual regression/accessibility audit để chứng minh tuyệt đối.
+Đáp: Thành phần và luồng chính đã bám artifact. Không nên tuyên bố pixel-perfect 100% nếu chưa có visual regression baseline/screenshot diff theo viewport — thứ này vẫn **chưa có**. Accessibility audit thì đã có: axe scan trong `frontend/e2e/portal.spec.ts` chạy mỗi lần CI, và lần chạy đầu đã tìm ra 22 node vi phạm tương phản WCAG AA (đã sửa). Câu chính xác là functional parity cao + accessibility đã đo được, còn visual regression thì chưa.
 
 **Hỏi: Đã tối ưu UX chưa?**
 
@@ -975,7 +975,7 @@ Nếu mentor đồng ý bảy điểm này, hướng dự án hiện tại là c
 
 **Hỏi: Schema SQL hiện đủ chưa?**
 
-Đáp: Đủ cho reference data model nhưng chưa có migration version, rollback migration, backup/restore và concurrency proof.
+Đáp: Đã có **migration có version và checksum** (4 migration, `scripts/migrate.py`, gate chống drift cho `schema.sql`) và **concurrency proof** (cột `version` + compare-and-set, test chạy trên PostgreSQL thật trong job `database` của CI). Còn thiếu: **rollback migration** (mỗi migration hiện chỉ đi tới) và **backup/restore có kiểm chứng**.
 
 ### 14.9 Nhóm kiểm thử và acceptance
 

@@ -20,6 +20,8 @@ NETCI_REBUILD_CONTROLLER ?= a
 NETCI_DRILL_VICTIM ?= jenkins-a
 NETCI_BENCHMARK_RUNS ?= 3
 NETCI_BACKSTAGE_URL ?= http://127.0.0.1:7007
+NETCI_BACKUP_DIR ?= backups
+NETCI_BACKUP ?=
 GATE_ENV = NETCI_API_URL=$(NETCI_API_URL) NETCI_REGISTRY=$(NETCI_REGISTRY)
 
 .PHONY: help doctor doctor-windows backend frontend frontend-install frontend-build \
@@ -33,7 +35,7 @@ GATE_ENV = NETCI_API_URL=$(NETCI_API_URL) NETCI_REGISTRY=$(NETCI_REGISTRY)
 help:
 	@printf '%s\n' \
 	  'Portable: validate test frontend-install frontend-build release-check release-portable' \
-	  'Database: migrate migrate-status schema test-durability' \
+	  'Database: migrate migrate-status schema test-durability backup backup-verify' \
 	  'Ubuntu lab: doctor lab-up lab-status lab-down compose-config kind-up registry-connect' \
 	  'Jenkins lab: jenkins-lab-up jenkins-lab-status jenkins-lab-down  Backstage lab: backstage-lab-up' \
 	  'Gates (lab):  security-test e2e-container e2e-kubernetes e2e-systemd dora-dashboard gates' \
@@ -95,6 +97,15 @@ release-check:
 	$(PYTHON) scripts/validate_release.py
 
 # Everything that runs anywhere with only Python and Node -- exactly what CI runs.
+# A backup is a hope until it has been restored. `backup-verify` restores into a
+# throwaway database and compares row counts and the migration ledger against what was
+# recorded when the dump was taken.
+backup:
+	$(PYTHON) scripts/netci_backup.py create --output $(NETCI_BACKUP_DIR)
+
+backup-verify:
+	$(PYTHON) scripts/netci_backup.py verify --input $(NETCI_BACKUP)
+
 release-portable:
 	$(PYTHON) scripts/validate_release.py --profile portable --execute
 

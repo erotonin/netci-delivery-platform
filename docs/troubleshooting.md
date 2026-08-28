@@ -178,3 +178,50 @@ client that sends the crumb without the cookie is refused on every POST. The cru
 dies when the controller restarts — which the rebuild gate does on purpose — so a cached
 one has to be discarded and re-fetched on a 403. `scripts/netci_gates/jenkins.py` does
 both; use `JenkinsClient` rather than writing another HTTP client.
+
+## Backup and restore
+
+`scripts/netci_backup.py` dumps the database with the project's pinned PostgreSQL image
+rather than from the host — most hosts have no PostgreSQL client tools, and `pg_dump`
+refuses to dump a server newer than itself, so pinning both to one image removes a
+mismatch that is otherwise a thing to remember.
+
+```bash
+export DATABASE_URL=postgresql://netci:...@db:5432/netci
+make backup                                            # writes backups/netci-<timestamp>/
+make backup-verify NETCI_BACKUP=backups/netci-<stamp>   # restores it and compares
+```
+
+**`verify` is the point.** A backup nobody has restored is a hope. It checks the dump
+against its recorded checksum, restores into a throwaway database, and compares row counts
+per table and the migration ledger against what was recorded when the dump was taken. It
+exits non-zero on a truncated dump and on any table whose count differs — the two ways a
+backup fails quietly.
+
+Run it in the same job that creates the backup. A verification you have to remember to run
+separately is one that will not be run.
+
+### What the dump does not contain
+
+A restore plan with a silent gap is worse than none:
+
+| Not in the dump | Consequence | Where it lives |
+|---|---|---|
+| `evidence/` and `NETCI_SECURITY_EVIDENCE_DIR` | The supply-chain policy reads evidence at deploy time. A database restored without it will **refuse deployments it previously allowed**. | Disk, or object storage |
+| `NETCI_AUTH_TOKENS_FILE` | Everyone is locked out until it is restored or tokens are reissued. | Secret manager |
+| Cosign keys | Nothing new can be signed; `NETCI_SIGNATURE_VERIFY_MODE=cosign` needs the public key to verify. | Secret manager |
+| Jenkins home | None — it is rebuilt from JCasC by design ([ADR-006](decisions/ADR-006-jcasc-config-source-of-truth.md)), which the `jenkins-rebuild` gate proves. | Git |
+
+### Restoring for real
+
+```bash
+python scripts/netci_backup.py restore --input backups/netci-<stamp> --into "$DATABASE_URL"
+```
+
+It asks for the database name back before overwriting. That prompt costs nothing during a
+drill and is the cheapest protection against pointing a restore at the wrong database;
+`--yes` skips it for automation.
+
+Migrations are forward-only. There is no down-migration, so rolling back a schema change
+means restoring a backup taken before it — which is a reason to take one immediately
+before a migration, not only on a schedule.

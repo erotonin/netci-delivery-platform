@@ -92,7 +92,7 @@ Ba job:
 | Job | Chạy gì | Vì sao tách ra |
 |---|---|---|
 | `portable` | profile `portable` + pyflakes | chỉ cần Python và Node, chạy được ở mọi nơi |
-| `database` | migrate từ DB rỗng, `--check-schema`, test durability | các test này **skip** khi không có PostgreSQL, nên CI là nơi duy nhất chúng chạy mọi lần |
+| `database` | migrate từ DB rỗng, `--check-schema`, test durability, **backup + restore** | các test này **skip** khi không có PostgreSQL, nên CI là nơi duy nhất chúng chạy mọi lần |
 | `portal-browser` | Playwright + axe, với API và PostgreSQL thật | unit test mock client nên không bắt được Portal và API lệch nhau |
 | `supply-chain` | verifier chữ ký + OIDC với **cosign thật** | verifier tự skip khi thiếu cosign; thiếu job này thì suite xanh mà không chứng minh gì |
 
