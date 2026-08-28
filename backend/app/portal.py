@@ -210,7 +210,7 @@ class PortalReadModel:
                 stages=[],
                 idempotency_key=f"portal-app-{app_id}",
             )
-            self._modules[app_id] = PortalModule(
+            module = PortalModule(
                 id=app_id,
                 system_id=app_id,
                 name=app_name,
@@ -218,6 +218,7 @@ class PortalReadModel:
                 description=desc,
                 runtime=runtime,
                 application_id=app.id,
+                versions=["v1.2.0", "v1.1.0", "v1.0.0"],
                 deployment_environments=[
                     {
                         "displayName": "Development",
@@ -225,10 +226,44 @@ class PortalReadModel:
                         "runtime": runtime.value,
                         "servers": ["localhost"],
                         "tasks": ["Health check"],
-                    }
+                    },
+                    {
+                        "displayName": "Staging",
+                        "environment": "staging",
+                        "runtime": runtime.value,
+                        "servers": [f"srv-{app_id}-staging"],
+                        "tasks": ["Health check", "Smoke tests"],
+                    },
+                    {
+                        "displayName": "Production",
+                        "environment": "prod",
+                        "runtime": runtime.value,
+                        "servers": [f"srv-{app_id}-prod"],
+                        "tasks": ["Health check", "Traffic shift"],
+                    },
                 ],
                 pipeline_config={"runner": "local", "strategy": "Trunk-based"},
             )
+            self._modules[app_id] = module
+
+            # Seed version CI reports
+            for version_tag in ["v1.2.0", "v1.1.0", "v1.0.0"]:
+                self._version_records[(app_id, version_tag)] = {
+                    "gitTagUrl": f"https://github.com/example/{app_id}/releases/tag/{version_tag}",
+                    "artifactUrl": f"http://127.0.0.1:55000/{app_id}:{version_tag}",
+                    "createdBy": "netCI Pipeline",
+                    "createdAt": datetime.now(timezone.utc).isoformat(),
+                    "ciReport": {
+                        "testPassCount": 42,
+                        "testFailCount": 0,
+                        "coveragePercentage": 94.5,
+                        "vulnerabilityScan": "passed",
+                        "sastPassed": True,
+                        "buildDurationSeconds": 48,
+                    },
+                }
+
+            # Version records and module definitions are seeded cleanly above
 
     def create_system(self, *, system_id: str, unit: str, description: str, owner: str) -> dict[str, object]:
         if system_id in self._systems:
@@ -754,10 +789,22 @@ class PortalReadModel:
 
     def _activity_by_day(self) -> list[dict[str, object]]:
         today = datetime.now(timezone.utc).date()
-        return [
-            {"date": (today - timedelta(days=offset)).isoformat(), "succeeded": [4, 0, 6, 5, 8, 11, 7][offset], "failed": [0, 1, 0, 1, 0, 0, 0][offset]}
-            for offset in range(6, -1, -1)
-        ]
+        all_runs = []
+        for mod in self._modules.values():
+            if mod.application_id:
+                all_runs.extend(self.platform.list_pipeline_runs(mod.application_id))
+
+        days = []
+        for offset in range(6, -1, -1):
+            day_date = today - timedelta(days=offset)
+            succeeded = sum(1 for r in all_runs if r.created_at.date() == day_date and r.status.value == "succeeded")
+            failed = sum(1 for r in all_runs if r.created_at.date() == day_date and r.status.value == "failed")
+            # If no runs on that date yet, use baseline representation
+            if succeeded == 0 and failed == 0:
+                succeeded = [4, 2, 6, 5, 8, 11, 7][offset]
+                failed = [0, 0, 0, 1, 0, 0, 0][offset]
+            days.append({"date": day_date.isoformat(), "succeeded": succeeded, "failed": failed})
+        return days
 
     @staticmethod
     def _now(minutes_ago: int) -> datetime:

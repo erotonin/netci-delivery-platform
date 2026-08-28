@@ -231,7 +231,7 @@ def gate(recorder: EvidenceRecorder) -> None:
         detail=dashboard["metrics"]["changeLeadTimeSecondsAvg"],
     )
 
-    portal = client.expect("GET", "/modules/backend-api/dora", status=(200, 404))
+    portal = client.expect("GET", "/modules/hello-container/dora", status=(200, 404))
     if isinstance(portal, dict) and "metrics" in portal:
         recorder.record("portal-module-dora", portal)
         recorder.check_equal("the Portal view also reports four metrics", len(portal["metrics"]), 4)
