@@ -48,6 +48,11 @@ class Application:
     runtime: Runtime
     default_environment: Environment = Environment.DEV
     stages: tuple[str, ...] = ()
+    # The team accountable for this application. None means unowned: role checks still
+    # apply, team checks do not. It is a plain string here because the domain has no
+    # opinion about where team membership comes from -- a token file, an IdP group, or a
+    # directory -- only that two names either match or do not.
+    owner_team: str | None = None
     id: UUID = field(default_factory=uuid4)
     created_at: datetime = field(default_factory=utc_now)
 

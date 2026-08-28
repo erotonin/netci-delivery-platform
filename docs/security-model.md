@@ -49,7 +49,7 @@ accident.
 | `viewer` | read everything; change nothing |
 | `developer` | create applications and systems, run dev/staging pipelines |
 | `reviewer` | everything a developer can do to production: run production pipelines, approve and reject |
-| `platform-admin` | as reviewer, plus platform administration |
+| `platform-admin` | as reviewer, plus platform administration; not team-scoped |
 | `pipeline` | report build and deployment *results* only |
 
 `pipeline` is a machine role, granted by `NETCI_PIPELINE_API_KEY` and never to a person.
@@ -106,13 +106,41 @@ refused with `403`, not admitted with no rights.
 those refusals, including the algorithm-confusion attack where a public key is submitted
 as an HMAC secret.
 
+### Ownership: which applications, not just what kind of action
+
+Roles are global — they say what *kind* of thing someone may do. On their own, a
+`developer` role lets anyone run any team's pipeline and a `reviewer` role lets anyone
+approve any team's production release. That is workable for one team and wrong for an
+organisation, where "who may deploy this" is a property of the application.
+
+An application carries an `ownerTeam`, and a principal carries the teams it belongs to
+(`teams:` in the token file, or the IdP group claim named by `NETCI_OIDC_TEAMS_CLAIM`,
+default `groups`). The rule is checked wherever someone *acts* on an application: starting
+a pipeline, approving its deployment, rolling one back. Reads are not team-scoped — a
+delivery platform is more useful when everyone can see the state of the estate, and
+visibility carries far less risk than action.
+
+Two deliberate choices:
+
+- **A platform-admin is not team-scoped**, and does not have to join every team in the
+  organisation to administer the platform.
+- **An unowned application is unrestricted**, so adopting ownership does not break
+  applications created before it existed. Once every application has an owner, set
+  `NETCI_REQUIRE_APPLICATION_OWNER=true`: an unowned application then becomes
+  platform-admin only, and new ones must name a team. The door is open only for as long as
+  the migration needs it.
+
+You may only hand an application to a team you belong to. Otherwise `ownerTeam` would be a
+field anyone could set to anything, which is a label rather than a control.
+
 ### What this does not do
 
 netCI has no session cookies, no password store and no user database: it verifies a
 credential per request and holds no long-lived secret of its own beyond the token hashes.
-Rate limiting, tenant isolation and per-application ACLs are **not** implemented — the
-roles above are global. An organisation that needs "team A may only deploy team A's
-applications" has to add that; the seam is `requires()` in `backend/app/main.py`.
+Rate limiting and tenant isolation are **not** implemented. Ownership is a single flat
+team per application — there is no hierarchy, no per-environment delegation ("team A may
+deploy to staging but not production"), and no group nesting beyond whatever the identity
+provider flattens into the claim.
 
 ## Supply-chain gate
 

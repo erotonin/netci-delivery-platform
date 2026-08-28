@@ -126,8 +126,18 @@ NETCI_OIDC_ROLE_MAP=netci-admins=platform-admin,release-managers=reviewer,engine
 | `viewer` | đọc mọi thứ, không sửa gì |
 | `developer` | tạo application/system, chạy pipeline dev/staging |
 | `reviewer` | như developer, cộng thêm production: chạy, approve, reject |
-| `platform-admin` | như reviewer, cộng quản trị platform |
+| `platform-admin` | như reviewer, cộng quản trị platform; **không bị giới hạn theo team** |
 | `pipeline` | chỉ báo *kết quả* build/deploy — không bao giờ cấp cho người |
+
+Role nói **được làm loại việc gì**; team nói **được làm lên application nào**. Mỗi
+application có `ownerTeam`, mỗi principal có danh sách team. Chỉ thành viên của team đó
+(hoặc platform-admin) mới chạy được pipeline, approve deployment hay rollback của nó — đọc
+thì không giới hạn, vì nhìn thấy trạng thái toàn hệ thống có ích và ít rủi ro hơn nhiều so
+với hành động.
+
+Application chưa có owner vẫn chạy như cũ, nên có thể áp dụng ownership dần. Khi mọi
+application đã có owner, bật `NETCI_REQUIRE_APPLICATION_OWNER=true`: application không có
+owner trở thành chỉ platform-admin dùng được, và application mới bắt buộc khai team.
 
 Ba ràng buộc đáng chú ý:
 

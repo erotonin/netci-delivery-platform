@@ -11,8 +11,8 @@ vi.mock('./api/netciClient', async () => {
 
 const whoamiMock = vi.mocked(whoami)
 
-const identity = (mode: string, roles: string[] = ['developer']) => ({
-  principal: { subject: 'dana', displayName: 'Dana Developer', email: 'dana@corp.example', roles, method: mode },
+const identity = (mode: string, roles: string[] = ['developer'], teams: string[] = ['payments']) => ({
+  principal: { subject: 'dana', displayName: 'Dana Developer', email: 'dana@corp.example', roles, teams, method: mode },
   authMode: mode,
   separationOfDuties: true,
 })
@@ -32,10 +32,10 @@ describe('LoginPage', () => {
 
   it('signs in straight through when netCI runs without authentication', async () => {
     const onLogin = vi.fn()
-    whoamiMock.mockResolvedValue(identity('none', ['platform-admin']))
+    whoamiMock.mockResolvedValue(identity('none', ['platform-admin'], []))
     render(<LoginPage onLogin={onLogin} />)
 
-    await waitFor(() => expect(onLogin).toHaveBeenCalledWith({ token: null, identity: identity('none', ['platform-admin']) }))
+    await waitFor(() => expect(onLogin).toHaveBeenCalledWith({ token: null, identity: identity('none', ['platform-admin'], []) }))
     expect(screen.queryByLabelText('Access token')).toBeNull()
   })
 

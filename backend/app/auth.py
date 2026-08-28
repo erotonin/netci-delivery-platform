@@ -64,6 +64,10 @@ class Principal:
     email: str
     roles: frozenset[Role]
     method: str
+    # Which teams this caller belongs to. Roles say what kind of thing someone may do;
+    # teams say which applications they may do it to. Both are needed: a reviewer role
+    # without team scoping lets anyone approve anyone's production release.
+    teams: frozenset[str] = frozenset()
 
     @property
     def is_anonymous(self) -> bool:
@@ -72,12 +76,16 @@ class Principal:
     def has_any(self, *roles: Role) -> bool:
         return bool(self.roles.intersection(roles))
 
+    def belongs_to(self, team: str) -> bool:
+        return team in self.teams
+
     def as_json(self) -> dict[str, object]:
         return {
             "subject": self.subject,
             "displayName": self.display_name,
             "email": self.email,
             "roles": sorted(role.value for role in self.roles),
+            "teams": sorted(self.teams),
             "method": self.method,
         }
 
@@ -198,7 +206,11 @@ class TokenAuthenticator:
                 roles = _parse_roles(entry.get("roles"), source=source)
             except ValueError as exc:
                 raise AuthError("AUTH_NOT_CONFIGURED", str(exc), status=503) from exc
+            raw_teams = entry.get("teams") or []
+            if not isinstance(raw_teams, list):
+                raise AuthError("AUTH_NOT_CONFIGURED", f"{source}: teams must be a list", status=503)
             by_hash[digest] = Principal(
+                teams=frozenset(str(team).strip() for team in raw_teams if str(team).strip()),
                 subject=subject,
                 display_name=str(entry.get("displayName") or subject),
                 email=str(entry.get("email") or ""),
@@ -261,6 +273,7 @@ class OidcAuthenticator:
         jwks_url: str,
         roles_claim: str = "roles",
         role_map: dict[str, Role] | None = None,
+        teams_claim: str = "groups",
         cache_seconds: float = 300.0,
         leeway_seconds: float = 60.0,
     ) -> None:
@@ -269,6 +282,10 @@ class OidcAuthenticator:
         self.jwks_url = jwks_url
         self.roles_claim = roles_claim
         self.role_map = role_map or {}
+        # Team membership comes from the directory, unmapped: netCI compares the group
+        # names the IdP sends against the owner_team recorded on an application, so the
+        # two only have to agree on a string.
+        self.teams_claim = teams_claim
         self.cache_seconds = cache_seconds
         self.leeway_seconds = leeway_seconds
         self._lock = threading.Lock()
@@ -427,11 +444,15 @@ class OidcAuthenticator:
                 f"no group in the token's {self.roles_claim!r} claim maps to a netCI role",
                 status=403,
             )
+        raw_teams = claims.get(self.teams_claim) or []
+        if isinstance(raw_teams, str):
+            raw_teams = raw_teams.split()
         return Principal(
             subject=subject,
             display_name=str(claims.get("name") or claims.get("preferred_username") or subject),
             email=str(claims.get("email") or ""),
             roles=frozenset(roles),
+            teams=frozenset(str(team).strip() for team in raw_teams if str(team).strip()),
             method="oidc",
         )
 
@@ -491,6 +512,7 @@ def build_authenticator() -> Authenticator:
             audience=audience,
             jwks_url=jwks_url,
             roles_claim=os.getenv("NETCI_OIDC_ROLES_CLAIM", "roles").strip() or "roles",
+            teams_claim=os.getenv("NETCI_OIDC_TEAMS_CLAIM", "groups").strip() or "groups",
             role_map=role_map,
         )
     raise ValueError(f"NETCI_AUTH_MODE must be one of none, token, oidc (got {mode!r})")

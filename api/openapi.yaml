@@ -873,6 +873,17 @@ components:
         pipelineTemplate: { type: string, enum: [container-ci-cd-v1, kubernetes-ci-cd-v1, systemd-ansible-ci-cd-v1] }
         runtime: { $ref: '#/components/schemas/Runtime' }
         defaultEnvironment: { $ref: '#/components/schemas/Environment', default: dev }
+        ownerTeam:
+          type: string
+          maxLength: 255
+          nullable: true
+          description: >-
+            Team accountable for this application. A caller may only hand an application to
+            a team they belong to, and only members of that team (or a platform-admin) can
+            run its pipelines, approve its deployments or roll them back. Null means
+            unowned: role checks still apply, team checks do not, so applications created
+            before ownership existed keep working. Set NETCI_REQUIRE_APPLICATION_OWNER once
+            every application has an owner, and this becomes required.
         stages:
           type: array
           items: { type: string }

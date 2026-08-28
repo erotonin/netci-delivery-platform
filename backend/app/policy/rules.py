@@ -78,6 +78,42 @@ def require_separation_of_duties(requested_by: str, approving: str) -> None:
         )
 
 
+def require_team_access(
+    owner_team: str | None,
+    caller_teams: frozenset[str] | set[str],
+    *,
+    is_platform_admin: bool = False,
+    require_owner: bool = False,
+) -> None:
+    """Whether this caller may act on an application owned by this team.
+
+    Roles are global: they say what kind of thing someone may do. Ownership says which
+    applications they may do it to. Without this, a `developer` role lets anyone run any
+    team's pipeline and a `reviewer` role lets anyone approve any team's production
+    release -- which is fine for one team and wrong for an organisation.
+
+    An unowned application is unrestricted by default, so adopting ownership does not
+    break applications that predate it. `require_owner` (NETCI_REQUIRE_APPLICATION_OWNER)
+    closes that door once every application has an owner: the door is left open only for
+    as long as the migration needs it.
+    """
+
+    if is_platform_admin:
+        return
+    if not owner_team:
+        if require_owner:
+            raise PolicyViolation(
+                "this application has no owning team, and NETCI_REQUIRE_APPLICATION_OWNER "
+                "is set; a platform-admin must assign one before it can be used"
+            )
+        return
+    if owner_team not in caller_teams:
+        held = ", ".join(sorted(caller_teams)) or "no teams"
+        raise PolicyViolation(
+            f"this application is owned by {owner_team!r}; you belong to {held}"
+        )
+
+
 def require_runtime_supported(runtime: Runtime) -> None:
     if runtime not in {Runtime.DOCKER, Runtime.KUBERNETES, Runtime.SYSTEMD}:
         raise PolicyViolation(f"unsupported runtime: {runtime}")

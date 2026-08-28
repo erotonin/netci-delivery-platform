@@ -307,3 +307,186 @@ def test_open_mode_serves_loopback_only():
         current_principal(_Request(), authorization=None)
     assert raised.value.status_code == 403
     assert raised.value.detail["code"] == "AUTH_NOT_CONFIGURED"
+
+
+# ------------------------------------------------------------- ownership by team
+
+
+@pytest.fixture
+def team_app(tmp_path, monkeypatch):
+    """Two teams, so "may I act on this application" is a real question.
+
+    `pat` is a platform-admin in no team at all, which is the case worth getting right:
+    platform administration must not require joining every team in the organisation.
+    """
+
+    path, tokens = _tokens_file(
+        tmp_path,
+        [
+            {"subject": "dana", "displayName": "Dana", "roles": ["developer"], "teams": ["payments"]},
+            {"subject": "raj", "displayName": "Raj", "roles": ["reviewer"], "teams": ["payments"]},
+            {"subject": "sam", "displayName": "Sam", "roles": ["developer", "reviewer"], "teams": ["search"]},
+            {"subject": "pat", "displayName": "Pat", "roles": ["platform-admin"]},
+        ],
+    )
+    monkeypatch.setenv("NETCI_AUTH_MODE", "token")
+    monkeypatch.setenv("NETCI_AUTH_TOKENS_FILE", str(path))
+    monkeypatch.setenv("NETCI_PIPELINE_API_KEY", PIPELINE_KEY)
+
+    import app.main as main
+
+    module = importlib.reload(main)
+    client = TestClient(module.app)
+    headers = {name: {"Authorization": f"Bearer {token}"} for name, token in tokens.items()}
+    yield client, headers, monkeypatch
+
+    monkeypatch.delenv("NETCI_AUTH_MODE", raising=False)
+    monkeypatch.delenv("NETCI_AUTH_TOKENS_FILE", raising=False)
+    monkeypatch.delenv("NETCI_REQUIRE_APPLICATION_OWNER", raising=False)
+    importlib.reload(main)
+
+
+def _owned_application(client, headers, team: str | None) -> dict:
+    payload = {
+        "name": f"own-app-{secrets.token_hex(4)}",
+        "repositoryUrl": "https://git.example.com/team/app",
+        "pipelineTemplate": "container-ci-cd-v1",
+        "runtime": "docker",
+    }
+    if team is not None:
+        payload["ownerTeam"] = team
+    return client.post("/applications", headers=headers, json=payload)
+
+
+def test_an_application_can_only_be_handed_to_a_team_you_belong_to(team_app):
+    client, headers, _ = team_app
+
+    assert _owned_application(client, headers["dana"], "payments").status_code == 201
+
+    refused = _owned_application(client, headers["dana"], "search")
+    assert refused.status_code == 403
+    assert refused.json()["code"] == "APPLICATION_FORBIDDEN"
+
+    # A platform-admin is not a member of every team, and does not need to be.
+    assert _owned_application(client, headers["pat"], "search").status_code == 201
+
+
+def test_another_teams_pipeline_cannot_be_started(team_app):
+    client, headers, _ = team_app
+    application = _owned_application(client, headers["dana"], "payments").json()
+    assert application["ownerTeam"] == "payments"
+
+    mine = client.post(
+        f"/applications/{application['id']}/pipeline-runs",
+        headers=headers["dana"],
+        json={"commitSha": "abcdef1234567", "environment": "staging"},
+    )
+    assert mine.status_code == 202
+
+    theirs = client.post(
+        f"/applications/{application['id']}/pipeline-runs",
+        headers=headers["sam"],
+        json={"commitSha": "abcdef1234567", "environment": "staging"},
+    )
+    assert theirs.status_code == 403
+    assert theirs.json()["code"] == "APPLICATION_FORBIDDEN"
+    assert "payments" in theirs.json()["message"]
+
+
+def test_a_reviewer_from_another_team_cannot_approve_your_production_release(team_app):
+    """The role alone used to be enough; ownership is what makes it someone's release."""
+
+    client, headers, _ = team_app
+    application = _owned_application(client, headers["pat"], "payments").json()
+    run = client.post(
+        f"/applications/{application['id']}/pipeline-runs",
+        headers=headers["raj"],
+        json={"commitSha": "abcdef1234567", "environment": "prod"},
+    ).json()
+    client.post(f"/pipeline-runs/{run['id']}/ci-result", headers=MACHINE_HEADERS, json={"status": "running"})
+    completed = client.post(
+        f"/pipeline-runs/{run['id']}/ci-result",
+        headers=MACHINE_HEADERS,
+        json={"status": "succeeded", "artifactDigest": f"sha256:{'f' * 64}"},
+    ).json()
+    deployment_id = completed["deployment"]["id"]
+
+    # `sam` holds reviewer, and is in the wrong team.
+    outsider = client.post(f"/deployments/{deployment_id}/approve", headers=headers["sam"], json={})
+    assert outsider.status_code == 403
+    assert outsider.json()["code"] == "APPLICATION_FORBIDDEN"
+
+    # `pat` is a platform-admin, and did not start the run, so separation of duties is met.
+    assert client.post(f"/deployments/{deployment_id}/approve", headers=headers["pat"], json={}).status_code == 202
+
+
+def test_rolling_back_another_teams_deployment_is_refused(team_app):
+    client, headers, _ = team_app
+    application = _owned_application(client, headers["dana"], "payments").json()
+    run = client.post(
+        f"/applications/{application['id']}/pipeline-runs",
+        headers=headers["dana"],
+        json={"commitSha": "abcdef1234567", "environment": "staging"},
+    ).json()
+    client.post(f"/pipeline-runs/{run['id']}/ci-result", headers=MACHINE_HEADERS, json={"status": "running"})
+    completed = client.post(
+        f"/pipeline-runs/{run['id']}/ci-result",
+        headers=MACHINE_HEADERS,
+        json={"status": "succeeded", "artifactDigest": f"sha256:{'a' * 64}"},
+    ).json()
+
+    refused = client.post(
+        f"/deployments/{completed['deployment']['id']}/rollback",
+        headers=headers["sam"],
+        json={"targetArtifactDigest": f"sha256:{'b' * 64}", "reason": "not mine to roll back"},
+    )
+    assert refused.status_code == 403
+
+
+def test_an_unowned_application_keeps_working_so_ownership_can_be_adopted_gradually(team_app):
+    """Existing applications predate ownership; adopting it must not break them."""
+
+    client, headers, _ = team_app
+    application = _owned_application(client, headers["dana"], None).json()
+    assert application["ownerTeam"] is None
+
+    for who in ("dana", "sam"):
+        response = client.post(
+            f"/applications/{application['id']}/pipeline-runs",
+            headers=headers[who],
+            json={"commitSha": "abcdef1234567", "environment": "staging"},
+        )
+        assert response.status_code == 202, f"{who}: {response.text}"
+
+
+def test_requiring_an_owner_closes_the_door_once_adoption_is_done(team_app):
+    client, headers, monkeypatch = team_app
+    unowned = _owned_application(client, headers["dana"], None).json()
+
+    monkeypatch.setenv("NETCI_REQUIRE_APPLICATION_OWNER", "true")
+
+    # Existing unowned applications become platform-admin only...
+    blocked = client.post(
+        f"/applications/{unowned['id']}/pipeline-runs",
+        headers=headers["dana"],
+        json={"commitSha": "abcdef1234567", "environment": "staging"},
+    )
+    assert blocked.status_code == 403
+    assert "NETCI_REQUIRE_APPLICATION_OWNER" in blocked.json()["message"]
+    assert client.post(
+        f"/applications/{unowned['id']}/pipeline-runs",
+        headers=headers["pat"],
+        json={"commitSha": "abcdef1234567", "environment": "staging"},
+    ).status_code == 202
+
+    # ...and a new application must name its owner.
+    missing = _owned_application(client, headers["dana"], None)
+    assert missing.status_code == 422
+    assert missing.json()["code"] == "OWNER_TEAM_REQUIRED"
+    assert _owned_application(client, headers["dana"], "payments").status_code == 201
+
+
+def test_me_reports_team_membership_so_the_portal_can_show_it(team_app):
+    client, headers, _ = team_app
+    assert client.get("/me", headers=headers["dana"]).json()["principal"]["teams"] == ["payments"]
+    assert client.get("/me", headers=headers["pat"]).json()["principal"]["teams"] == []

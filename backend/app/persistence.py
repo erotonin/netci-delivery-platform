@@ -137,7 +137,7 @@ class PostgresDeliveryStore:
             with self._connect() as connection:
                 with connection.cursor() as cursor:
                     cursor.execute(
-                        "SELECT id, name, repository_url, pipeline_template, runtime, default_environment, stages, created_at"
+                        "SELECT id, name, repository_url, pipeline_template, runtime, default_environment, stages, owner_team, created_at"
                         " FROM applications ORDER BY created_at"
                     )
                     applications = [
@@ -148,6 +148,7 @@ class PostgresDeliveryStore:
                             runtime=Runtime(row["runtime"]),
                             default_environment=Environment(row["default_environment"]),
                             stages=tuple(row["stages"] or []),
+                            owner_team=row["owner_team"],
                             id=row["id"],
                             created_at=row["created_at"],
                         )
@@ -264,9 +265,10 @@ class PostgresDeliveryStore:
                 for application in unit.applications:
                     cursor.execute(
                         """
-                        INSERT INTO applications (id, name, repository_url, pipeline_template, runtime, default_environment, stages, created_at)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s::jsonb, %s)
-                        ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, stages = EXCLUDED.stages
+                        INSERT INTO applications (id, name, repository_url, pipeline_template, runtime, default_environment, stages, owner_team, created_at)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s)
+                        ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, stages = EXCLUDED.stages,
+                                                      owner_team = EXCLUDED.owner_team
                         """,
                         (
                             application.id,
@@ -276,6 +278,7 @@ class PostgresDeliveryStore:
                             application.runtime.value,
                             application.default_environment.value,
                             json.dumps(list(application.stages)),
+                            application.owner_team,
                             application.created_at,
                         ),
                     )

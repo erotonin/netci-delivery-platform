@@ -32,6 +32,7 @@ from .policy.rules import (
     Role,
     require_environment_permission,
     require_separation_of_duties,
+    require_team_access,
 )
 from .portal import PortalError, PortalReadModel
 
@@ -270,6 +271,32 @@ def _require_environment_role(environment: Environment, principal: Principal) ->
         ) from exc
 
 
+def require_application_owner() -> bool:
+    """Whether an application with no owning team may still be used.
+
+    False during adoption, so applications that predate ownership keep working; true once
+    every application has an owner, which makes an unowned one platform-admin only.
+    """
+
+    return os.getenv("NETCI_REQUIRE_APPLICATION_OWNER", "false").strip().lower() in {"true", "1", "yes"}
+
+
+def _require_application_access(application: Application, principal: Principal) -> None:
+    """The team half of authorization: which applications this caller may act on."""
+
+    try:
+        require_team_access(
+            application.owner_team,
+            principal.teams,
+            is_platform_admin=principal.has_any(Role.PLATFORM_ADMIN),
+            require_owner=require_application_owner(),
+        )
+    except PolicyViolation as exc:
+        raise HTTPException(
+            status_code=403, detail={"code": "APPLICATION_FORBIDDEN", "message": str(exc)}
+        ) from exc
+
+
 def separation_of_duties_enabled(principal: Principal | None = None) -> bool:
     """Whether the requester and the approver must be different people.
 
@@ -285,7 +312,7 @@ def separation_of_duties_enabled(principal: Principal | None = None) -> bool:
 
 
 def application_json(item: Application) -> dict[str, object]:
-    return {"id": str(item.id), "name": item.name, "repositoryUrl": item.repository_url, "pipelineTemplate": item.pipeline_template, "runtime": item.runtime.value, "defaultEnvironment": item.default_environment.value, "stages": list(item.stages), "createdAt": item.created_at.isoformat()}
+    return {"id": str(item.id), "name": item.name, "repositoryUrl": item.repository_url, "pipelineTemplate": item.pipeline_template, "runtime": item.runtime.value, "defaultEnvironment": item.default_environment.value, "stages": list(item.stages), "ownerTeam": item.owner_team, "createdAt": item.created_at.isoformat()}
 
 
 def pipeline_json(item: PipelineRun) -> dict[str, object]:
@@ -313,6 +340,9 @@ def delivery_event_json(item: DeliveryEvent) -> dict[str, object]:
 
 class ApplicationCreate(BaseModel):
     name: str = Field(pattern=r"^[a-z0-9][a-z0-9-]{2,62}$")
+    # The team accountable for this application. Optional while ownership is being
+    # adopted; required once NETCI_REQUIRE_APPLICATION_OWNER is set.
+    ownerTeam: str | None = Field(default=None, max_length=255)
     repositoryUrl: HttpUrl
     pipelineTemplate: str
     runtime: Runtime
@@ -757,6 +787,7 @@ def start_module_pipeline_run(
         application_id = module.get("applicationId")
         if not application_id:
             raise DeliveryError("MODULE_NOT_PROVISIONED", "module has no delivery application", 409)
+        _require_application_access(platform.get_application(UUID(str(application_id))), principal)
         run = platform.start_pipeline(
             UUID(str(application_id)),
             commit_sha=payload.commitSha,
@@ -915,8 +946,28 @@ def list_audit_events(systemId: str | None = None, moduleId: str | None = None, 
 def create_application(
     payload: ApplicationCreate,
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key", min_length=1, max_length=128),
-    _: Principal = DeveloperAccess,
+    principal: Principal = DeveloperAccess,
 ) -> dict[str, object]:
+    # You may hand an application to a team you belong to, and no other. Otherwise
+    # ownership would be a field anyone could set to anything, which is not a control.
+    owner_team = (payload.ownerTeam or "").strip() or None
+    if owner_team and not principal.has_any(Role.PLATFORM_ADMIN) and not principal.belongs_to(owner_team):
+        held = ", ".join(sorted(principal.teams)) or "no teams"
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "code": "APPLICATION_FORBIDDEN",
+                "message": f"cannot create an application owned by {owner_team!r}; you belong to {held}",
+            },
+        )
+    if owner_team is None and require_application_owner() and not principal.has_any(Role.PLATFORM_ADMIN):
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "OWNER_TEAM_REQUIRED",
+                "message": "ownerTeam is required: NETCI_REQUIRE_APPLICATION_OWNER is set",
+            },
+        )
     application = platform.create_application(
         name=payload.name,
         repository_url=str(payload.repositoryUrl),
@@ -925,6 +976,7 @@ def create_application(
         default_environment=payload.defaultEnvironment,
         stages=payload.stages,
         idempotency_key=idempotency_key,
+        owner_team=owner_team,
     )
     return application_json(application)
 
@@ -977,6 +1029,7 @@ def start_pipeline_run(
     principal: Principal = PipelineStartAccess,
 ) -> JSONResponse | dict[str, object]:
     _require_environment_role(payload.environment, principal)
+    _require_application_access(platform.get_application(applicationId), principal)
     run = platform.start_pipeline(
         applicationId,
         commit_sha=payload.commitSha,
@@ -1053,6 +1106,7 @@ def approve_deployment(
 
     deployment = platform.get_deployment(deploymentId)
     _require_environment_role(deployment.environment, principal)
+    _require_application_access(platform.get_application(deployment.application_id), principal)
     if separation_of_duties_enabled(principal):
         try:
             require_separation_of_duties(platform.deployment_requested_by(deploymentId), principal.subject)
@@ -1081,8 +1135,11 @@ def record_deployment_result(
 
 @app.post("/deployments/{deploymentId}/rollback", status_code=status.HTTP_202_ACCEPTED, response_model=None)
 def rollback_deployment(
-    deploymentId: UUID, payload: RollbackRequest, _: Principal = ReviewerAccess
+    deploymentId: UUID, payload: RollbackRequest, principal: Principal = ReviewerAccess
 ) -> JSONResponse | dict[str, object]:
+    _require_application_access(
+        platform.get_application(platform.get_deployment(deploymentId).application_id), principal
+    )
     return deployment_json(
         platform.rollback_deployment(deploymentId, payload.targetArtifactDigest)
     )

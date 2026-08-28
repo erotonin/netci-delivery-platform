@@ -255,6 +255,7 @@ class DeliveryPlatform:
         default_environment: Environment,
         stages: list[str],
         idempotency_key: str | None,
+        owner_team: str | None = None,
     ) -> Application:
         request_payload = {
             "name": name,
@@ -264,6 +265,13 @@ class DeliveryPlatform:
             "defaultEnvironment": default_environment.value,
             "stages": stages,
         }
+        # Added to the hash only when it is set. The idempotency record stores a hash of
+        # this payload, so adding a field unconditionally rehashes every key that already
+        # exists and turns the next replay into IDEMPOTENCY_KEY_REUSED -- an upgrade that
+        # breaks in-flight clients. Absent means "as before", which is exactly what an
+        # application created before ownership existed sent.
+        if owner_team is not None:
+            request_payload["ownerTeam"] = owner_team
         scope = ("application.create", idempotency_key)
         replay = self._idempotent_replay(scope, idempotency_key, request_payload)
         if replay is not None:
@@ -287,6 +295,7 @@ class DeliveryPlatform:
             runtime=runtime,
             default_environment=default_environment,
             stages=selected_stages,
+            owner_team=owner_team,
         )
         unit = UnitOfWork(applications=[application])
         unit.audit.append(AuditRecord("application.created", application_id=application.id))

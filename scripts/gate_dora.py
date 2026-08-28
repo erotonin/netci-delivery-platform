@@ -139,7 +139,7 @@ def release(
     client.ci_result(run["id"], {"status": "running"})
     result = client.ci_result(run["id"], {"status": "succeeded", "artifactDigest": digest})
     deployment = result["deployment"]
-    client.approve(deployment["id"], "dora-reviewer")
+    client.approve(deployment["id"])
     client.deployment_result(deployment["id"], "healthy" if healthy else "failed", f"{commit} {healthy}")
     return deployment["id"]
 

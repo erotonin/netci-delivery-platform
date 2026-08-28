@@ -1,3 +1,5 @@
+from uuid import uuid4
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -358,3 +360,31 @@ def test_machine_callbacks_reject_missing_or_invalid_bearer_tokens():
     assert missing.status_code == invalid.status_code == 401
     assert missing.json()['code'] == invalid.json()['code'] == 'PIPELINE_UNAUTHORIZED'
     assert missing.headers['WWW-Authenticate'] == 'Bearer'
+
+
+def test_adding_owner_team_did_not_rehash_existing_idempotency_keys():
+    """An upgrade must not turn a client's next replay into IDEMPOTENCY_KEY_REUSED.
+
+    The idempotency record stores a hash of the request payload. `ownerTeam` is folded in
+    only when it is set, so a request that omits it hashes exactly as it did before the
+    field existed. Adding it unconditionally broke the portal seed against a database that
+    already had records -- which is what a customer upgrade looks like.
+    """
+
+    key = f'compat-{uuid4()}'
+    payload = application_payload(name=f'compat-{uuid4().hex[:8]}')
+
+    first = client.post('/applications', headers={'Idempotency-Key': key}, json=payload)
+    assert first.status_code == 201
+    assert first.json()['ownerTeam'] is None
+
+    replay = client.post('/applications', headers={'Idempotency-Key': key}, json=payload)
+    assert replay.status_code in {200, 201}
+    assert replay.json()['id'] == first.json()['id']
+
+    # A different owner is a different request, and is still caught.
+    conflicting = client.post(
+        '/applications', headers={'Idempotency-Key': key}, json={**payload, 'ownerTeam': 'payments'}
+    )
+    assert conflicting.status_code == 409
+    assert conflicting.json()['code'] == 'IDEMPOTENCY_KEY_REUSED'

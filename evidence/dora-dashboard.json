@@ -3,18 +3,18 @@
   "description": "The four DORA metrics recomputed from recorded delivery events and checked against the dashboard the API serves.",
   "result": "pass",
   "error": null,
-  "commit": "cb2c3c310111392dbe827bb44d91c5f7a1bcf3b2",
+  "commit": "f04e7a4b02daa9662fa273da5a0991b6cdc57af8",
   "host": {
     "platform": "Linux-6.8.0-134-generic-x86_64-with-glibc2.39",
     "python": "3.12.3",
     "hostname": "openstack-aio"
   },
-  "startedAt": "2026-08-28T06:29:58.683598+00:00",
-  "endedAt": "2026-08-28T06:29:58.908585+00:00",
+  "startedAt": "2026-08-28T07:01:20.860710+00:00",
+  "endedAt": "2026-08-28T07:01:21.073533+00:00",
   "context": {
     "apiUrl": "http://127.0.0.1:8100",
     "pipelineApiKey": "netci-local-pipeline-key",
-    "applicationId": "2d3d1841-9350-48db-8e29-7efdc6983970"
+    "applicationId": "3abe4ba2-8e11-4a73-993d-4ca99853f797"
   },
   "assertions": [
     {
@@ -71,8 +71,8 @@
       "assertion": "the recovery is bound to the deployment that actually failed",
       "passed": true,
       "detail": {
-        "expected": "d822bb9a-52bd-45d7-816c-4bec89fadabe",
-        "actual": "d822bb9a-52bd-45d7-816c-4bec89fadabe"
+        "expected": "80a8330b-cf0a-4d46-99a6-189c8baa4865",
+        "actual": "80a8330b-cf0a-4d46-99a6-189c8baa4865"
       }
     },
     {
@@ -174,7 +174,7 @@
       "passed": true,
       "detail": {
         "dashboard": 7200.0,
-        "recomputedFromEvents": 7200.107
+        "recomputedFromEvents": 7200.098
       }
     },
     {
@@ -190,7 +190,7 @@
       "passed": true,
       "detail": {
         "dashboard": 0.0,
-        "recomputedFromEvents": 0.058
+        "recomputedFromEvents": 0.055
       }
     },
     {
@@ -232,8 +232,8 @@
     {
       "name": "api-health",
       "command": null,
-      "startedAt": "2026-08-28T06:29:58.705775+00:00",
-      "endedAt": "2026-08-28T06:29:58.705775+00:00",
+      "startedAt": "2026-08-28T07:01:20.882362+00:00",
+      "endedAt": "2026-08-28T07:01:20.882362+00:00",
       "durationSeconds": 0.0,
       "exitCode": 0,
       "passed": true,
@@ -260,18 +260,18 @@
     {
       "name": "dora-before-any-release",
       "command": null,
-      "startedAt": "2026-08-28T06:29:58.727145+00:00",
-      "endedAt": "2026-08-28T06:29:58.727145+00:00",
+      "startedAt": "2026-08-28T07:01:20.904470+00:00",
+      "endedAt": "2026-08-28T07:01:20.904470+00:00",
       "durationSeconds": 0.0,
       "exitCode": 0,
       "passed": true,
       "stdout": "",
       "stderr": "",
       "detail": {
-        "applicationId": "2d3d1841-9350-48db-8e29-7efdc6983970",
+        "applicationId": "3abe4ba2-8e11-4a73-993d-4ca99853f797",
         "period": {
-          "from": "2026-07-29T06:29:58.726486+00:00",
-          "to": "2026-08-28T06:29:58.726486+00:00"
+          "from": "2026-07-29T07:01:20.903881+00:00",
+          "to": "2026-08-28T07:01:20.903881+00:00"
         },
         "metrics": {
           "deploymentFrequency": 0.0,
@@ -285,22 +285,22 @@
     {
       "name": "released",
       "command": null,
-      "startedAt": "2026-08-28T06:29:58.901364+00:00",
-      "endedAt": "2026-08-28T06:29:58.901364+00:00",
+      "startedAt": "2026-08-28T07:01:21.064878+00:00",
+      "endedAt": "2026-08-28T07:01:21.064878+00:00",
       "durationSeconds": 0.0,
       "exitCode": 0,
       "passed": true,
       "stdout": "",
       "stderr": "",
       "detail": {
-        "failedDeploymentId": "d822bb9a-52bd-45d7-816c-4bec89fadabe"
+        "failedDeploymentId": "80a8330b-cf0a-4d46-99a6-189c8baa4865"
       }
     },
     {
       "name": "delivery-events",
       "command": null,
-      "startedAt": "2026-08-28T06:29:58.902596+00:00",
-      "endedAt": "2026-08-28T06:29:58.902596+00:00",
+      "startedAt": "2026-08-28T07:01:21.066506+00:00",
+      "endedAt": "2026-08-28T07:01:21.066506+00:00",
       "durationSeconds": 0.0,
       "exitCode": 0,
       "passed": true,
@@ -310,88 +310,88 @@
         "count": 7,
         "items": [
           {
-            "id": "900a0af4-44b7-410a-8732-baab11acf2c3",
+            "id": "1f74f3d5-58bb-4586-b1ad-77d3ba4845c6",
             "eventType": "commit",
-            "applicationId": "2d3d1841-9350-48db-8e29-7efdc6983970",
-            "pipelineRunId": "87ba5df1-a812-4d17-8ce7-9373a65daffb",
+            "applicationId": "3abe4ba2-8e11-4a73-993d-4ca99853f797",
+            "pipelineRunId": "d8f41ad1-b0e1-4db9-9a02-547eb1c75ccd",
             "deploymentId": null,
             "commitSha": "d0raaa1",
             "environment": "prod",
             "successful": null,
             "requiresIntervention": false,
-            "occurredAt": "2026-08-28T03:29:58.727177+00:00"
+            "occurredAt": "2026-08-28T04:01:20.904482+00:00"
           },
           {
-            "id": "f378225e-ea32-4f66-ae0c-e817037fc63b",
+            "id": "ac06205e-f3e3-4da4-93ee-05d25684070c",
             "eventType": "deployment",
-            "applicationId": "2d3d1841-9350-48db-8e29-7efdc6983970",
-            "pipelineRunId": "87ba5df1-a812-4d17-8ce7-9373a65daffb",
-            "deploymentId": "6a4c42a5-2804-4b97-9264-ec5227d3b245",
+            "applicationId": "3abe4ba2-8e11-4a73-993d-4ca99853f797",
+            "pipelineRunId": "d8f41ad1-b0e1-4db9-9a02-547eb1c75ccd",
+            "deploymentId": "2f8cdbae-e636-4cd5-8ffe-002fd9c7838d",
             "commitSha": "d0raaa1",
             "environment": "prod",
             "successful": true,
             "requiresIntervention": false,
-            "occurredAt": "2026-08-28T06:29:58.775935+00:00"
+            "occurredAt": "2026-08-28T07:01:20.946904+00:00"
           },
           {
-            "id": "8f19f0f5-fa31-4046-a334-653636e7b75d",
+            "id": "65a844f7-f8da-47a5-aa01-09f089008d28",
             "eventType": "commit",
-            "applicationId": "2d3d1841-9350-48db-8e29-7efdc6983970",
-            "pipelineRunId": "f3eb1d73-e53d-434c-b0c0-75b82be76a28",
+            "applicationId": "3abe4ba2-8e11-4a73-993d-4ca99853f797",
+            "pipelineRunId": "6efdd7d6-6643-4e50-8d18-6d570389a666",
             "deploymentId": null,
             "commitSha": "d0rabb2",
             "environment": "prod",
             "successful": null,
             "requiresIntervention": false,
-            "occurredAt": "2026-08-28T04:29:58.727177+00:00"
+            "occurredAt": "2026-08-28T05:01:20.904482+00:00"
           },
           {
-            "id": "ecabe9e8-0baa-40b8-a005-c28f3d2d50a4",
+            "id": "0f21ce31-7442-4c46-8d78-dfc1a51ba442",
             "eventType": "deployment",
-            "applicationId": "2d3d1841-9350-48db-8e29-7efdc6983970",
-            "pipelineRunId": "f3eb1d73-e53d-434c-b0c0-75b82be76a28",
-            "deploymentId": "d822bb9a-52bd-45d7-816c-4bec89fadabe",
+            "applicationId": "3abe4ba2-8e11-4a73-993d-4ca99853f797",
+            "pipelineRunId": "6efdd7d6-6643-4e50-8d18-6d570389a666",
+            "deploymentId": "80a8330b-cf0a-4d46-99a6-189c8baa4865",
             "commitSha": "d0rabb2",
             "environment": "prod",
             "successful": false,
             "requiresIntervention": true,
-            "occurredAt": "2026-08-28T06:29:58.834694+00:00"
+            "occurredAt": "2026-08-28T07:01:21.002537+00:00"
           },
           {
-            "id": "77b168ec-bbec-4d37-8635-1b3fa7511aaa",
+            "id": "4e22df24-9015-4035-a4f6-32790078d514",
             "eventType": "commit",
-            "applicationId": "2d3d1841-9350-48db-8e29-7efdc6983970",
-            "pipelineRunId": "962c46b0-dbf7-4011-8773-955fde207f2c",
+            "applicationId": "3abe4ba2-8e11-4a73-993d-4ca99853f797",
+            "pipelineRunId": "c66978e0-7483-461a-8daf-0070d3c40ebf",
             "deploymentId": null,
             "commitSha": "d0racc3",
             "environment": "prod",
             "successful": null,
             "requiresIntervention": false,
-            "occurredAt": "2026-08-28T05:29:58.727177+00:00"
+            "occurredAt": "2026-08-28T06:01:20.904482+00:00"
           },
           {
-            "id": "15f1d371-8fb3-4d9c-ae96-c0b000591906",
+            "id": "eeed41dd-e4a0-40a3-911a-5b267c01f092",
             "eventType": "deployment",
-            "applicationId": "2d3d1841-9350-48db-8e29-7efdc6983970",
-            "pipelineRunId": "962c46b0-dbf7-4011-8773-955fde207f2c",
-            "deploymentId": "f52dd1f7-d251-417f-bda5-1475a65fcc38",
+            "applicationId": "3abe4ba2-8e11-4a73-993d-4ca99853f797",
+            "pipelineRunId": "c66978e0-7483-461a-8daf-0070d3c40ebf",
+            "deploymentId": "1cf585c6-c171-4d08-a4c4-d7297ac03515",
             "commitSha": "d0racc3",
             "environment": "prod",
             "successful": true,
             "requiresIntervention": false,
-            "occurredAt": "2026-08-28T06:29:58.892921+00:00"
+            "occurredAt": "2026-08-28T07:01:21.057875+00:00"
           },
           {
-            "id": "f9c3df87-3d12-4650-99a0-16ccbaa01e26",
+            "id": "a1ddf23f-8854-4228-9820-3b6cabc97db8",
             "eventType": "recovery",
-            "applicationId": "2d3d1841-9350-48db-8e29-7efdc6983970",
-            "pipelineRunId": "f3eb1d73-e53d-434c-b0c0-75b82be76a28",
-            "deploymentId": "d822bb9a-52bd-45d7-816c-4bec89fadabe",
+            "applicationId": "3abe4ba2-8e11-4a73-993d-4ca99853f797",
+            "pipelineRunId": "6efdd7d6-6643-4e50-8d18-6d570389a666",
+            "deploymentId": "80a8330b-cf0a-4d46-99a6-189c8baa4865",
             "commitSha": "d0rabb2",
             "environment": "prod",
             "successful": true,
             "requiresIntervention": false,
-            "occurredAt": "2026-08-28T06:29:58.892921+00:00"
+            "occurredAt": "2026-08-28T07:01:21.057875+00:00"
           }
         ]
       }
@@ -399,18 +399,18 @@
     {
       "name": "dora-dashboard",
       "command": null,
-      "startedAt": "2026-08-28T06:29:58.903566+00:00",
-      "endedAt": "2026-08-28T06:29:58.903566+00:00",
+      "startedAt": "2026-08-28T07:01:21.067672+00:00",
+      "endedAt": "2026-08-28T07:01:21.067672+00:00",
       "durationSeconds": 0.0,
       "exitCode": 0,
       "passed": true,
       "stdout": "",
       "stderr": "",
       "detail": {
-        "applicationId": "2d3d1841-9350-48db-8e29-7efdc6983970",
+        "applicationId": "3abe4ba2-8e11-4a73-993d-4ca99853f797",
         "period": {
-          "from": "2026-07-29T06:29:58.903234+00:00",
-          "to": "2026-08-28T06:29:58.903234+00:00"
+          "from": "2026-07-29T07:01:21.067285+00:00",
+          "to": "2026-08-28T07:01:21.067285+00:00"
         },
         "metrics": {
           "deploymentFrequency": 0.7,
@@ -424,8 +424,8 @@
     {
       "name": "recomputed-from-events",
       "command": null,
-      "startedAt": "2026-08-28T06:29:58.903865+00:00",
-      "endedAt": "2026-08-28T06:29:58.903865+00:00",
+      "startedAt": "2026-08-28T07:01:21.067820+00:00",
+      "endedAt": "2026-08-28T07:01:21.067820+00:00",
       "durationSeconds": 0.0,
       "exitCode": 0,
       "passed": true,
@@ -433,16 +433,16 @@
       "stderr": "",
       "detail": {
         "deploymentFrequency": 0.7000000000000001,
-        "changeLeadTimeSecondsAvg": 7200.107339666666,
+        "changeLeadTimeSecondsAvg": 7200.097956666667,
         "changeFailRate": 0.3333333333333333,
-        "timeToRestoreServiceSecondsAvg": 0.058227
+        "timeToRestoreServiceSecondsAvg": 0.055338
       }
     },
     {
       "name": "portal-module-dora",
       "command": null,
-      "startedAt": "2026-08-28T06:29:58.904834+00:00",
-      "endedAt": "2026-08-28T06:29:58.904834+00:00",
+      "startedAt": "2026-08-28T07:01:21.068846+00:00",
+      "endedAt": "2026-08-28T07:01:21.068846+00:00",
       "durationSeconds": 0.0,
       "exitCode": 0,
       "passed": true,
@@ -483,8 +483,8 @@
         ],
         "sourceEventCount": 0,
         "window": {
-          "from": "2026-07-29T06:29:58.904512+00:00",
-          "to": "2026-08-28T06:29:58.904512+00:00",
+          "from": "2026-07-29T07:01:21.068492+00:00",
+          "to": "2026-08-28T07:01:21.068492+00:00",
           "days": 30
         }
       }

@@ -36,6 +36,9 @@ export type ApplicationCreate = {
   runtime: Runtime
   defaultEnvironment?: Environment
   stages?: string[]
+  // The team accountable for this application. netCI refuses a team the caller does not
+  // belong to, so this is a choice among the caller's own teams, not free text.
+  ownerTeam?: string | null
 }
 
 export type Application = ApplicationCreate & {
@@ -128,6 +131,8 @@ export type Principal = {
   displayName: string
   email: string
   roles: string[]
+  // Which applications this caller may act on. Roles say what kind of thing they may do.
+  teams: string[]
   method: string
 }
 

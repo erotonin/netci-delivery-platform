@@ -11,7 +11,7 @@ vi.mock('./api/netciClient', async (importOriginal) => {
     // The Portal asks the API who the caller is; here netCI reports that it runs with
     // authentication disabled, which is the local-development path.
     whoami: vi.fn().mockResolvedValue({
-      principal: { subject: 'anonymous', displayName: 'Anonymous (auth disabled)', email: '', roles: ['viewer', 'developer', 'reviewer', 'platform-admin'], method: 'none' },
+      principal: { subject: 'anonymous', displayName: 'Anonymous (auth disabled)', email: '', roles: ['viewer', 'developer', 'reviewer', 'platform-admin'], teams: [], method: 'none' },
       authMode: 'none',
       separationOfDuties: false,
     }),

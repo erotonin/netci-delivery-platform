@@ -33,6 +33,7 @@ ADRS = [f"docs/decisions/ADR-{index:03d}-{name}.md" for index, name in enumerate
         "multi-controller-routing",
         "local-vs-production-target",
         "authentication-seam",
+        "application-ownership",
     ),
     start=1,
 )]

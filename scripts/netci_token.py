@@ -7,7 +7,8 @@ afterwards. Losing it means issuing a new one, which is the intended trade -- a 
 could hand back working credentials is a file whose every backup is a liability.
 
     python scripts/netci_token.py issue  --subject dana --name "Dana Developer" \\
-                                         --email dana@corp.example --role developer
+                                         --email dana@corp.example \\
+                                         --role developer --team payments
     python scripts/netci_token.py list
     python scripts/netci_token.py revoke --subject dana
 
@@ -100,18 +101,28 @@ def issue(arguments: argparse.Namespace) -> int:
             "displayName": arguments.name or arguments.subject,
             "email": arguments.email or "",
             "roles": list(arguments.role),
+            "teams": list(arguments.team or []),
             "tokenSha256": hashlib.sha256(token.encode()).hexdigest(),
         }
     )
     save(path, document)
 
-    print(f"issued a token for {arguments.subject} ({', '.join(arguments.role)}) in {path}\n")
+    scope = ", ".join(arguments.role)
+    if arguments.team:
+        scope += " in " + ", ".join(arguments.team)
+    print(f"issued a token for {arguments.subject} ({scope}) in {path}\n")
     print(token)
     print("\nGive this to the user now -- it is not stored and cannot be shown again.")
     if "platform-admin" in arguments.role:
         print(
-            "\nNote: platform-admin can approve production. Prefer separate reviewer and\n"
-            "developer tokens for day-to-day work so separation of duties still applies."
+            "\nNote: platform-admin can approve production and is not team-scoped. Prefer\n"
+            "separate reviewer and developer tokens for day-to-day work, so separation of\n"
+            "duties and team ownership both still apply."
+        )
+    elif not arguments.team:
+        print(
+            "\nNote: no --team, so this token can only act on applications that have no\n"
+            "owning team. Add --team to give it access to a team's applications."
         )
     return 0
 
@@ -122,10 +133,11 @@ def list_tokens(arguments: argparse.Namespace) -> int:
     if not document["principals"]:
         print(f"no tokens in {path}")
         return 0
-    print(f"{'SUBJECT':<24} {'ROLES':<34} DISPLAY NAME")
+    print(f"{'SUBJECT':<20} {'ROLES':<30} {'TEAMS':<24} DISPLAY NAME")
     for entry in document["principals"]:
         roles = ", ".join(entry.get("roles", []))
-        print(f"{entry.get('subject', ''):<24} {roles:<34} {entry.get('displayName', '')}")
+        teams = ", ".join(entry.get("teams", [])) or "-"
+        print(f"{entry.get('subject', ''):<20} {roles:<30} {teams:<24} {entry.get('displayName', '')}")
     return 0
 
 
@@ -159,6 +171,13 @@ def main() -> int:
     issue_parser.add_argument("--email", help="contact address")
     issue_parser.add_argument(
         "--role", action="append", choices=ROLES, required=True, help="repeatable"
+    )
+    issue_parser.add_argument(
+        "--team",
+        action="append",
+        help="repeatable. Roles say what kind of thing someone may do; teams say which "
+        "applications they may do it to. A token with no team can only act on unowned "
+        "applications -- unless it holds platform-admin, which is not team-scoped.",
     )
     issue_parser.set_defaults(handler=issue)
 
