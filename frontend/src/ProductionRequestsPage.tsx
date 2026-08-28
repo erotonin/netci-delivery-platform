@@ -4,7 +4,7 @@ import {
   FileCheck2, Pencil, Plus, RefreshCw, RotateCcw, Search, ShieldCheck, Trash2, XCircle,
 } from 'lucide-react'
 import {
-  approveProductionRequest, createProductionRequest, listProductionRequests,
+  approveProductionRequest, createProductionRequest, listProductionRequests, listSystems,
   getSystem, rejectProductionRequest, type ProductionRequest, type ProductionRequestCreate,
 } from './api/netciClient'
 import { Modal, PageHeader, StatusPill } from './PortalShell'
@@ -122,7 +122,21 @@ export function ProductionRequestsPage({ systemId }: { systemId: string }) {
   useEffect(() => { void load() }, [])
   useEffect(() => {
     let active = true
-    getSystem(systemId).then((system) => { if (active) setAvailableModules(system.modules.map((module) => ({ id: module.id, name: module.name, type: module.type, description: module.description, versions: module.versions, runtime: module.runtime }))) }).catch(() => undefined)
+    if (systemId) {
+      getSystem(systemId)
+        .then((system) => {
+          if (active) setAvailableModules(system.modules.map((module) => ({ id: module.id, name: module.name, type: module.type, description: module.description, versions: module.versions, runtime: module.runtime })))
+        })
+        .catch(() => undefined)
+    } else {
+      listSystems()
+        .then((systems) => {
+          if (!active) return
+          const allMods = systems.flatMap((s) => s.modules.map((m) => ({ id: m.id, name: m.name, type: m.type, description: m.description, versions: m.versions, runtime: m.runtime })))
+          if (allMods.length > 0) setAvailableModules(allMods)
+        })
+        .catch(() => undefined)
+    }
     return () => { active = false }
   }, [systemId])
   const filtered = useMemo(() => items.filter((request) => {
