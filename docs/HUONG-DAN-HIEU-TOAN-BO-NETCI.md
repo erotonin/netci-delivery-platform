@@ -620,6 +620,7 @@ sẵn trong ADR-015 chứ không phải trong trí nhớ của người đã ngh
 | **020** | Pipeline lifecycle + reconciler (Phase 7) |
 | **021** | Config revision có phiên bản + DCIM lifecycle (Phase 8) |
 | **022** | Observability, outbox, connection pooling, retention, DR drill (Phase 9) |
+| **023** | Multi-Module DAG Release Plan, SAGA Orchestration, Progressive Delivery (Phase 10) |
 
 ---
 
@@ -976,14 +977,24 @@ NETCI_DEPLOYMENT_LEASE_TTL_SECONDS=900
 - Sao lưu mã hóa AES-256-GCM và kịch bản DR Drill tự động (`scripts/netci_dr_drill.py`) kiểm toán phục hồi vào database scratch sạch, đối chiếu checksum, khóa ngoại và bằng chứng JSON.
 </details>
 
+<details>
+<summary><b>Phase 10 — Multi-Module DAG, SAGA Orchestration & Progressive Delivery</b></summary>
+
+- Thuật toán Topological Sort (Kahn's DAG) và phân tầng đợt triển khai (`compute_dag_waves`): nhóm các module độc lập vào Wave 1, giải quyết phụ thuộc tuần tự, phát hiện chu trình 422 `CYCLIC_DEPENDENCY`.
+- Migration cơ sở dữ liệu `0016_multi_module_dag_and_progressive_delivery.sql`: bổ sung `release_plan`, `strategy`, `strategy_config` vào `production_requests`; `dependencies`, `status`, `deployment_id` vào `production_request_modules`; `traffic_weight`, `active_color`, `canary_step` vào `deployments`.
+- Điều phối viên SAGA Release Plan (`ReleasePlanCoordinator`): tự động kích hoạt đợt kế tiếp khi các module đợt trước vượt qua kiểm tra sức khỏe; kích hoạt SAGA reverse rollback khi có sự cố, đưa hệ thống về trạng thái an toàn nhất quán.
+- Động cơ Progressive Delivery (`TrafficRoutingAdapter`, `CanaryAnalyzer`): điều tiết lưu lượng Canary theo từng bước (10% -> 25% -> 50% -> 100%) và đánh giá ngưỡng lỗi/độ trễ (SLO), hỗ trợ Blue/Green cutover tức thì.
+- Giao diện Release Portal (`ProductionRequestsPage.tsx`): hỗ trợ chọn nhiều module và liên kết phụ thuộc, chọn chiến lược triển khai (Rolling DAG, Canary, Blue/Green), hiển thị trực quan các Wave và bảng điều khiển Canary thời gian thực.
+</details>
+
 ### 8.4. Còn phải làm gì
 
-| Phase | Nội dung chính | Ước lượng độ lớn |
+| Phase | Nội dung chính | Trạng thái |
 |---|---|---|
-| **10** | ProductionRequest nhiều module, release plan DAG, Temporal child workflow, compensation, canary/blue-green, traffic adapter thật, metrics provider thật | **Rất lớn** |
-| **11** | PolicyDecision module + OPA, policy bundle có chữ ký, risk-based approval, security exception gắn CVE+digest+expiry, break-glass dual control, quota, Kubernetes admission controller | **Rất lớn** |
-| **12** | Owning team first-class, service lifecycle, dependency graph, pipeline template có version, preview environment theo PR (namespace + TTL + DNS/TLS thật), ResourceRequest self-service (DB/queue/bucket/domain) | **Rất lớn** |
-| **13** | Audit toàn bộ route, quét runtime tìm mock/fake còn sót, chạy **mọi** loại test, chaos/failover, viết `LIVE-READINESS.md` với từng gate PASS/FAIL/BLOCKED | Trung bình |
+| **10** | ProductionRequest nhiều module, release plan DAG, SAGA compensation, canary/blue-green, traffic adapter | **Đã hoàn thành** (ADR-023) |
+| **11** | PolicyDecision module + OPA, policy bundle có chữ ký, risk-based approval, security exception gắn CVE+digest+expiry, break-glass dual control, quota, Kubernetes admission controller | Tiếp theo |
+| **12** | Owning team first-class, service lifecycle, dependency graph, pipeline template có version, preview environment theo PR (namespace + TTL + DNS/TLS thật), ResourceRequest self-service (DB/queue/bucket/domain) | Chưa làm |
+| **13** | Audit toàn bộ route, quét runtime tìm mock/fake còn sót, chạy **mọi** loại test, chaos/failover, viết `LIVE-READINESS.md` với từng gate PASS/FAIL/BLOCKED | Cuối cùng |
 
 ### 8.5. Khi nào xong?
 

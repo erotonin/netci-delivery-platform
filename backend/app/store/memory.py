@@ -473,6 +473,7 @@ class InMemorySession:
         status: str,
         comment: str | None,
         deployment_id: UUID | None = None,
+        release_plan: dict[str, Any] | None = None,
     ) -> None:
         current = self._state.requests.get(str(request_id))
         if current is None:
@@ -482,6 +483,58 @@ class InMemorySession:
             status=status,
             comment=comment,
             deployment_id=deployment_id if deployment_id is not None else current.deployment_id,
+            release_plan=release_plan if release_plan is not None else current.release_plan,
+        )
+
+    def update_portal_request_module(
+        self,
+        request_id: str,
+        module_id: str,
+        *,
+        status: str,
+        deployment_id: UUID | None = None,
+        error_message: str | None = None,
+        started_at: datetime | None = None,
+        completed_at: datetime | None = None,
+    ) -> None:
+        current = self._state.requests.get(str(request_id))
+        if current is None:
+            return
+        new_modules = []
+        for m in current.modules:
+            if m.module_id == module_id:
+                new_modules.append(
+                    replace(
+                        m,
+                        status=status,
+                        deployment_id=deployment_id if deployment_id is not None else m.deployment_id,
+                        error_message=error_message if error_message is not None else m.error_message,
+                        started_at=started_at if started_at is not None else m.started_at,
+                        completed_at=completed_at if completed_at is not None else m.completed_at,
+                    )
+                )
+            else:
+                new_modules.append(m)
+        self._state.requests[str(request_id)] = replace(current, modules=tuple(new_modules))
+
+    def update_deployment_traffic(
+        self,
+        deployment_id: UUID,
+        *,
+        strategy: str | None = None,
+        traffic_weight: int,
+        canary_step: int = 0,
+        active_color: str | None = None,
+    ) -> None:
+        current = self._state.deployments.get(deployment_id)
+        if current is None:
+            return
+        self._state.deployments[deployment_id] = replace(
+            current,
+            strategy=strategy if strategy is not None else current.strategy,
+            traffic_weight=traffic_weight,
+            canary_step=canary_step,
+            active_color=active_color if active_color is not None else current.active_color,
         )
 
     # ------------------------------------------------- SCM integrations & webhooks

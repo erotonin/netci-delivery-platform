@@ -170,6 +170,29 @@ class PlatformSession(Protocol):
         status: str,
         comment: str | None,
         deployment_id: UUID | None = None,
+        release_plan: dict[str, Any] | None = None,
+    ) -> None: ...
+
+    def update_portal_request_module(
+        self,
+        request_id: str,
+        module_id: str,
+        *,
+        status: str,
+        deployment_id: UUID | None = None,
+        error_message: str | None = None,
+        started_at: datetime | None = None,
+        completed_at: datetime | None = None,
+    ) -> None: ...
+
+    def update_deployment_traffic(
+        self,
+        deployment_id: UUID,
+        *,
+        strategy: str | None = None,
+        traffic_weight: int,
+        canary_step: int = 0,
+        active_color: str | None = None,
     ) -> None: ...
 
     # ------------------------------------------------- SCM integrations & webhooks

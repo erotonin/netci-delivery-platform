@@ -45,6 +45,8 @@ from .store import (
     VersionRow,
     join,
 )
+from .domain.dag import compute_dag_waves, DagValidationError
+from .coordinator import ReleasePlanCoordinator
 
 #: Rolling window every DORA figure is computed over. Stated in the response so a
 #: number on screen can never be read without the period it belongs to.
@@ -1281,6 +1283,12 @@ class PortalService:
                     "moduleName": module.name if module else member.module_id,
                     "version": member.version,
                     "deploymentOrder": member.deployment_order,
+                    "dependencies": list(member.dependencies),
+                    "status": member.status,
+                    "deploymentId": str(member.deployment_id) if member.deployment_id else None,
+                    "startedAt": member.started_at.isoformat() if member.started_at else None,
+                    "completedAt": member.completed_at.isoformat() if member.completed_at else None,
+                    "errorMessage": member.error_message,
                 }
             )
         return {
@@ -1293,6 +1301,9 @@ class PortalService:
             "status": request.status,
             "deploymentId": str(request.deployment_id) if request.deployment_id else None,
             "comment": request.comment,
+            "releasePlan": request.release_plan,
+            "strategy": request.strategy,
+            "strategyConfig": request.strategy_config,
         }
 
     def production_request(self, request_id: str) -> dict[str, object] | None:
@@ -1311,22 +1322,34 @@ class PortalService:
         rollback_strategy: str,
         run_automation_tests: bool,
         idempotency_key: str | None = None,
+        strategy: str = "rolling",
+        strategy_config: dict[str, Any] | None = None,
     ) -> dict[str, object]:
-        if len(modules) != 1:
-            raise PortalError(
-                "MULTI_MODULE_ORCHESTRATION_UNAVAILABLE",
-                "production requests currently require exactly one module",
-                422,
-            )
+        if not modules:
+            raise PortalError("EMPTY_MODULES", "at least one module must be selected", 422)
+
+        # Validate DAG dependencies and compute execution waves
+        try:
+            plan = compute_dag_waves(modules)
+        except DagValidationError as exc:
+            raise PortalError(exc.code, str(exc), exc.status_code)
+
+        strategy_cfg = dict(strategy_config or {})
         signature: tuple[object, ...] = (
             tuple(
-                (str(item["moduleId"]), str(item["version"]), int(item["deploymentOrder"]))
+                (
+                    str(item["moduleId"]),
+                    str(item["version"]),
+                    int(item.get("deploymentOrder", 1)),
+                    tuple(str(d) for d in (item.get("dependencies") or ())),
+                )
                 for item in modules
             ),
             requested_by,
             scheduled_for.isoformat(),
             rollback_strategy,
             run_automation_tests,
+            strategy,
         )
         request_hash = hashlib.sha256(
             json.dumps(signature, separators=(",", ":"), default=str).encode()
@@ -1354,8 +1377,15 @@ class PortalService:
                 if transaction.portal_version(module_id, version) is None:
                     raise ValueError(f"version {version} is not registered for module {module_id}")
                 self._delivery_parameters(transaction, module_id, Environment.PROD)
+                deps = tuple(str(d) for d in (item.get("dependencies") or ()))
                 requested_modules.append(
-                    RequestModuleRow(module_id, version, int(item["deploymentOrder"]))
+                    RequestModuleRow(
+                        module_id=module_id,
+                        version=version,
+                        deployment_order=int(item.get("deploymentOrder", 1)),
+                        dependencies=deps,
+                        status="pending",
+                    )
                 )
 
             request = RequestRow(
@@ -1368,78 +1398,47 @@ class PortalService:
                 status="waiting_approval",
                 idempotency_key=idempotency_key,
                 request_hash=request_hash,
+                release_plan=plan,
+                strategy=strategy,
+                strategy_config=strategy_cfg,
             )
             transaction.insert_portal_request(request)
             return self._request_json(transaction, request)
 
     def approve_request(self, request_id: str, actor: str, comment: str | None = None) -> dict[str, object]:
-        # The promotion and the approval below reach Temporal, so the gate checks run in
-        # their own transaction and the request status is written in another. A crash
-        # between them leaves a request still waiting for approval, which is recoverable;
-        # the alternative holds a connection open across two network calls.
         with self._session() as transaction:
             request = transaction.portal_request(request_id)
             if request is None:
                 raise KeyError("production request not found")
             if request.status != "waiting_approval":
                 raise ValueError("production request is not waiting for approval")
-            if len(request.modules) != 1:
-                raise PortalError(
-                    "MULTI_MODULE_ORCHESTRATION_UNAVAILABLE",
-                    "production requests currently require exactly one module",
-                    422,
-                )
-            requested = request.modules[0]
-            version_row = transaction.portal_version(requested.module_id, requested.version)
-            metadata = version_row.metadata if version_row is not None else {}
-            pipeline_run_id = metadata.get("pipelineRunId")
-            artifact_digest = metadata.get("artifactDigest")
-            if not pipeline_run_id or not artifact_digest:
-                raise PortalError(
-                    "VERSION_NOT_PROMOTABLE",
-                    "registered version is not linked to a verified pipeline artifact",
-                    409,
-                )
-            report = metadata.get("ciReport")
-            if request.run_automation_tests and (
-                not isinstance(report, dict) or report.get("autoTest") != "passed"
-            ):
-                raise PortalError(
-                    "AUTOMATION_GATE_FAILED",
-                    "production request requires a passing automation-test result on the selected version",
-                    409,
-                )
-            deployment_parameters = self._delivery_parameters(
-                transaction, requested.module_id, Environment.PROD
-            )
 
-        deployment = self.platform.create_production_promotion(
-            UUID(str(pipeline_run_id)),
-            requested_by=request.requested_by,
-            correlation_id=f"production-request:{request.id}",
-            production_request_id=request.id,
-            scheduled_for=request.scheduled_for,
-            rollback_strategy=request.rollback_strategy,
-            run_automation_tests=request.run_automation_tests,
-            deployment_parameters=deployment_parameters,
-        )
-        next_comment = comment or f"approved by {actor}"
-        with self._session() as transaction:
-            transaction.update_portal_request(
-                request_id, status="approved", comment=next_comment, deployment_id=deployment.id
-            )
-        try:
-            self.platform.approve_deployment(deployment.id, actor)
-        except Exception as exc:
-            blocked_comment = f"deployment could not start: {exc}"
-            with self._session() as transaction:
-                transaction.update_portal_request(
-                    request_id,
-                    status="blocked",
-                    comment=blocked_comment,
-                    deployment_id=deployment.id,
-                )
-            raise
+            # Validate each module has verified release artifact and meets automation gate
+            for requested in request.modules:
+                version_row = transaction.portal_version(requested.module_id, requested.version)
+                metadata = version_row.metadata if version_row is not None else {}
+                pipeline_run_id = metadata.get("pipelineRunId")
+                artifact_digest = metadata.get("artifactDigest")
+                if not pipeline_run_id or not artifact_digest:
+                    raise PortalError(
+                        "VERSION_NOT_PROMOTABLE",
+                        f"registered version {requested.version} for module {requested.module_id} is not linked to a verified pipeline artifact",
+                        409,
+                    )
+                report = metadata.get("ciReport")
+                if request.run_automation_tests and (
+                    not isinstance(report, dict) or report.get("autoTest") != "passed"
+                ):
+                    raise PortalError(
+                        "AUTOMATION_GATE_FAILED",
+                        f"production request requires a passing automation-test result for module {requested.module_id}",
+                        409,
+                    )
+
+        # Coordinate multi-module wave execution
+        coordinator = ReleasePlanCoordinator(self, self.platform)
+        coordinator.start_release(request_id, actor)
+
         with self._session() as transaction:
             row = transaction.portal_request(request_id)
             assert row is not None
@@ -1458,15 +1457,10 @@ class PortalService:
             request = transaction.portal_request_for_deployment(deployment_id)
             if request is None:
                 return
-            target = "succeeded" if status == "healthy" else "blocked"
-            if request.status == target:
-                return
-            transaction.update_portal_request(
-                request.id,
-                status=target,
-                comment=message or f"deployment {status}",
-                deployment_id=deployment_id,
-            )
+            request_id = request.id
+
+        coordinator = ReleasePlanCoordinator(self, self.platform)
+        coordinator.record_module_deployment_result(request_id, deployment_id, status, message)
 
     def _set_request_status(self, request_id: str, status: str, actor: str, comment: str | None) -> dict[str, object]:
         with self._session() as transaction:

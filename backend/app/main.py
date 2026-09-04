@@ -56,6 +56,8 @@ from .portal import PortalError, PortalService
 from .readiness import probe_readiness
 from .reconciler import Reconciler
 from .retention import RetentionManager
+from .coordinator import ReleasePlanCoordinator
+from .traffic import default_traffic_router
 from .store import build_database
 from . import workload_identity
 from .workload_identity import (
@@ -911,15 +913,18 @@ class ConfigRevisionReject(StrictBody):
 class ProductionRequestModuleCreate(StrictBody):
     moduleId: str = Field(pattern=r"^[a-z0-9][a-z0-9-]{2,62}$")
     version: str = Field(pattern=r"^v?\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$")
-    deploymentOrder: int = Field(ge=1, le=100)
+    deploymentOrder: int = Field(default=1, ge=1, le=100)
+    dependencies: list[str] = Field(default_factory=list)
 
 
 class ProductionRequestCreate(StrictBody):
-    modules: list[ProductionRequestModuleCreate] = Field(min_length=1, max_length=1)
+    modules: list[ProductionRequestModuleCreate] = Field(min_length=1, max_length=100)
     # requestedBy is the authenticated principal; see ApprovalRequest.
     scheduledFor: datetime
     rollbackStrategy: Literal["automatic", "manual"] = "automatic"
     runAutomationTests: bool = True
+    strategy: Literal["rolling", "canary", "blue_green"] = "rolling"
+    strategyConfig: dict[str, Any] = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def validate_modules(self) -> "ProductionRequestCreate":
@@ -1621,6 +1626,8 @@ def create_production_request(
             rollback_strategy=payload.rollbackStrategy,
             run_automation_tests=payload.runAutomationTests,
             idempotency_key=idempotency_key,
+            strategy=payload.strategy,
+            strategy_config=payload.strategyConfig,
         )
     except KeyError as exc:
         raise HTTPException(status_code=404, detail={"code": "MODULE_NOT_FOUND", "message": str(exc)}) from exc
@@ -1628,6 +1635,96 @@ def create_production_request(
         raise HTTPException(status_code=409, detail={"code": "VERSION_NOT_AVAILABLE", "message": str(exc)}) from exc
     except PortalError as exc:
         raise HTTPException(status_code=exc.status_code, detail={"code": exc.code, "message": exc.message}) from exc
+
+
+@app.get("/production-requests/{requestId}/plan")
+def get_production_request_plan(requestId: str, principal: Principal = ReadAccess) -> dict[str, object]:
+    existing = portal.production_request(requestId)
+    if existing is None:
+        raise HTTPException(
+            status_code=404, detail={"code": "REQUEST_NOT_FOUND", "message": "production request not found"}
+        )
+    return {
+        "requestId": requestId,
+        "status": existing.get("status"),
+        "strategy": existing.get("strategy"),
+        "releasePlan": existing.get("releasePlan"),
+        "modules": existing.get("modules"),
+    }
+
+
+class AdvanceCanaryRequest(StrictBody):
+    metrics: dict[str, float] = Field(default_factory=dict)
+
+
+@app.post("/production-requests/{requestId}/canary/advance")
+def advance_canary_step(
+    requestId: str,
+    payload: AdvanceCanaryRequest | None = None,
+    principal: Principal = ReviewerAccess,
+) -> dict[str, object]:
+    existing = portal.production_request(requestId)
+    if existing is None:
+        raise HTTPException(
+            status_code=404, detail={"code": "REQUEST_NOT_FOUND", "message": "production request not found"}
+        )
+    deployment_id = existing.get("deploymentId")
+    if not deployment_id:
+        raise HTTPException(
+            status_code=400, detail={"code": "NO_ACTIVE_DEPLOYMENT", "message": "no deployment currently active for this request"}
+        )
+    metrics_data = payload.metrics if payload else {}
+    coordinator = ReleasePlanCoordinator(portal, platform)
+    try:
+        return coordinator.advance_canary(requestId, UUID(str(deployment_id)), metrics_data)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail={"code": "CANARY_ERROR", "message": str(exc)}) from exc
+
+
+class AbortCanaryRequest(StrictBody):
+    reason: str = Field(default="Aborted by operator", min_length=1, max_length=500)
+
+
+@app.post("/production-requests/{requestId}/canary/abort")
+def abort_canary_step(
+    requestId: str,
+    payload: AbortCanaryRequest | None = None,
+    principal: Principal = ReviewerAccess,
+) -> dict[str, object]:
+    existing = portal.production_request(requestId)
+    if existing is None:
+        raise HTTPException(
+            status_code=404, detail={"code": "REQUEST_NOT_FOUND", "message": "production request not found"}
+        )
+    deployment_id = existing.get("deploymentId")
+    if not deployment_id:
+        raise HTTPException(
+            status_code=400, detail={"code": "NO_ACTIVE_DEPLOYMENT", "message": "no deployment currently active for this request"}
+        )
+    reason = payload.reason if payload else "Aborted by operator"
+    coordinator = ReleasePlanCoordinator(portal, platform)
+    try:
+        return coordinator.abort_canary(requestId, UUID(str(deployment_id)), reason)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail={"code": "CANARY_ERROR", "message": str(exc)}) from exc
+
+
+@app.get("/deployments/{deploymentId}/traffic")
+def get_deployment_traffic(deploymentId: UUID, principal: Principal = ReadAccess) -> dict[str, object]:
+    deployment = platform.get_deployment(deploymentId)
+    if deployment is None:
+        raise HTTPException(status_code=404, detail={"code": "DEPLOYMENT_NOT_FOUND", "message": "deployment not found"})
+    status_info = default_traffic_router.get_routing_status(str(deployment.application_id), deployment.environment.value)
+    return {
+        "deploymentId": str(deploymentId),
+        "applicationId": str(deployment.application_id),
+        "environment": deployment.environment.value,
+        "strategy": deployment.strategy,
+        "trafficWeight": deployment.traffic_weight,
+        "activeColor": deployment.active_color,
+        "canaryStep": deployment.canary_step,
+        "routerStatus": status_info,
+    }
 
 
 @app.post("/production-requests/{requestId}/approve", status_code=status.HTTP_202_ACCEPTED)

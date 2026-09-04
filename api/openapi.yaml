@@ -493,6 +493,63 @@ paths:
         '202': { description: Rejection accepted }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
+  /production-requests/{requestId}/plan:
+    get:
+      operationId: get_production_request_plan
+      summary: Get release plan DAG and wave execution progress
+      parameters:
+        - $ref: '#/components/parameters/ProductionRequestId'
+      responses:
+        '200':
+          description: Production request release plan
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /production-requests/{requestId}/canary/advance:
+    post:
+      operationId: advance_canary_step
+      summary: Advance canary traffic step or verify metrics
+      parameters:
+        - $ref: '#/components/parameters/ProductionRequestId'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                metrics:
+                  type: object
+                  additionalProperties:
+                    type: number
+      responses:
+        '200':
+          description: Canary traffic step advanced
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /production-requests/{requestId}/canary/abort:
+    post:
+      operationId: abort_canary_step
+      summary: Abort canary traffic and revert to baseline
+      parameters:
+        - $ref: '#/components/parameters/ProductionRequestId'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason:
+                  type: string
+      responses:
+        '200':
+          description: Canary aborted
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
   /servers:
     get:
       operationId: listServers
@@ -1158,6 +1215,17 @@ paths:
           $ref: '#/components/responses/NotFound'
         '409':
           $ref: '#/components/responses/Conflict'
+  /deployments/{deploymentId}/traffic:
+    get:
+      operationId: get_deployment_traffic
+      summary: Get progressive delivery traffic routing status
+      parameters:
+        - $ref: '#/components/parameters/DeploymentId'
+      responses:
+        '200':
+          description: Deployment traffic status
+        '404':
+          $ref: '#/components/responses/NotFound'
         '422':
           $ref: '#/components/responses/UnprocessableEntity'
   /reconciler/reconcile:
@@ -1891,19 +1959,24 @@ components:
         modules:
           type: array
           minItems: 1
-          maxItems: 1
+          maxItems: 100
           items: { $ref: '#/components/schemas/ProductionRequestModuleCreate' }
         scheduledFor: { type: string, format: date-time }
         rollbackStrategy: { type: string, enum: [automatic, manual], default: automatic }
         runAutomationTests: { type: boolean, default: true }
+        strategy: { type: string, enum: [rolling, canary, blue_green], default: rolling }
+        strategyConfig: { type: object }
     ProductionRequestModuleCreate:
       type: object
-      required: [moduleId, version, deploymentOrder]
+      required: [moduleId, version]
       additionalProperties: false
       properties:
         moduleId: { type: string, pattern: '^[a-z0-9][a-z0-9-]{2,62}$' }
         version: { type: string, pattern: '^v?\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$' }
-        deploymentOrder: { type: integer, minimum: 1, maximum: 100 }
+        deploymentOrder: { type: integer, minimum: 1, maximum: 100, default: 1 }
+        dependencies:
+          type: array
+          items: { type: string }
     ApprovalRequest:
       type: object
       additionalProperties: false

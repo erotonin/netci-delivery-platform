@@ -49,6 +49,12 @@ class RequestModuleRow:
     module_id: str
     version: str
     deployment_order: int = 1
+    dependencies: tuple[str, ...] = ()
+    status: str = "pending"
+    deployment_id: UUID | None = None
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+    error_message: str | None = None
 
 
 @dataclass(frozen=True)
@@ -64,6 +70,9 @@ class RequestRow:
     comment: str | None = None
     idempotency_key: str | None = None
     request_hash: str | None = None
+    release_plan: dict[str, Any] | None = None
+    strategy: str = "rolling"
+    strategy_config: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)

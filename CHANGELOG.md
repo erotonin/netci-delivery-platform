@@ -5,6 +5,36 @@ Changelog and releases use Semantic Versioning once the project reaches 1.0.0.
 
 ## [Unreleased]
 
+### Added - Phase 10 (P2.1): Multi-Module DAG Release Plan, SAGA Orchestration & Progressive Delivery
+- **Topological DAG Wave Computation (`backend/app/domain/dag.py`)**:
+  - Implemented Kahn's algorithm with wave layering (`compute_dag_waves`).
+  - Automatically groups independent modules into concurrent deployment waves.
+  - Cycle detection rejecting circular dependencies with 422 `CYCLIC_DEPENDENCY`.
+  - Comprehensive unit test coverage (`backend/tests/test_dag.py`).
+- **Database Schema Migration 0016 (`backend/migrations/0016_multi_module_dag_and_progressive_delivery.sql`)**:
+  - `production_requests`: added `release_plan JSONB`, `strategy VARCHAR(32)`, `strategy_config JSONB`.
+  - `production_request_modules`: added `dependencies TEXT[]`, `status VARCHAR(32)`, `deployment_id UUID`, `started_at`, `completed_at`, `error_message`.
+  - `deployments`: added `strategy VARCHAR(32)`, `traffic_weight INTEGER`, `active_color VARCHAR(16)`, `canary_step INTEGER`.
+  - Added indexes for coordinator lookups and status filtering.
+- **SAGA Release Plan Coordinator (`backend/app/coordinator.py`)**:
+  - Wave-by-wave deployment dispatch on production request approval.
+  - Automatic wave advancement as modules pass health checks.
+  - SAGA reverse rollback compensation: when any module in a wave fails, automatically triggers rollbacks of earlier waves in reverse topological order, setting request to `blocked`/`rejected` and modules to `rolled_back`.
+- **Progressive Delivery & Traffic Engine (`backend/app/traffic.py`)**:
+  - `TrafficRoutingAdapter` and `InMemoryTrafficRoutingAdapter` with weighted split and blue/green active color management.
+  - `CanaryAnalyzer` evaluating SLO thresholds (`maxErrorRate`, `maxP95LatencyMs`).
+  - Canary progression management: `POST /production-requests/{id}/canary/advance` and `POST /production-requests/{id}/canary/abort`.
+- **OpenAPI 3.1.0 Contract Parity**:
+  - Extended OpenAPI definitions for multi-module requests, strategies (`rolling`, `canary`, `blue_green`), release plan endpoints, and traffic endpoints (`/deployments/{id}/traffic`).
+  - Passed all contract tests in `tests/contract/test_openapi.py`.
+- **Portal UI Enhancement (`ProductionRequestsPage.tsx`, `netciClient.ts`)**:
+  - Multi-module selection wizard with dependency checkboxes.
+  - Strategy selector (Rolling DAG, Canary Rollout, Blue/Green).
+  - Visual DAG release plan waves in request details modal.
+  - Interactive canary control panel with live traffic weight % and advance/abort actions.
+  - Frontend test coverage in `ProductionRequestsPage.test.tsx` and full Vitest suite passing.
+- See ADR-023.
+
 ### Added - Phase 9 (P1.4): Observability, Transactional Outbox, Connection Pooling & Disaster Recovery
 - **Thread-Safe PostgreSQL Connection Pooling (`backend/app/store/postgres.py`)**:
   - `PostgresConnectionPool` with bounded concurrency (`NETCI_DB_POOL_MIN`, `NETCI_DB_POOL_MAX`), timeout on pool exhaustion (`TimeoutError`), connection liveness validation (`SELECT 1`), and graceful cleanup.

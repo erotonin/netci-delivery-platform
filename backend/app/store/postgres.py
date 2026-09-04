@@ -90,7 +90,8 @@ SCM_DELIVERY_COLUMNS = (
 )
 DEPLOYMENT_COLUMNS = (
     "id, application_id, pipeline_run_id, runtime, environment, status, artifact_digest,"
-    " previous_artifact_digest, approved_by, fencing_token, config_revision_id, version, created_at, updated_at"
+    " previous_artifact_digest, approved_by, fencing_token, config_revision_id,"
+    " strategy, traffic_weight, active_color, canary_step, version, created_at, updated_at"
 )
 EVENT_COLUMNS = (
     "id, event_type, application_id, pipeline_run_id, deployment_id, commit_sha, environment,"
@@ -106,7 +107,8 @@ MODULE_COLUMNS = (
 )
 REQUEST_COLUMNS = (
     "id, module_id, version, requested_by, scheduled_for, rollback_strategy,"
-    " run_automation_tests, status, deployment_id, comment, idempotency_key, request_hash"
+    " run_automation_tests, status, deployment_id, comment, idempotency_key, request_hash,"
+    " release_plan, strategy, strategy_config"
 )
 CONFIG_REVISION_COLUMNS = (
     "id, module_id, revision_number, pipeline_config, deployment_config, change_summary,"
@@ -254,6 +256,10 @@ def _deployment(row: dict[str, Any]) -> Deployment:
         approved_by=row["approved_by"],
         fencing_token=int(row["fencing_token"]) if row["fencing_token"] is not None else None,
         config_revision_id=row.get("config_revision_id"),
+        strategy=str(row.get("strategy") or "rolling"),
+        traffic_weight=int(row.get("traffic_weight") if row.get("traffic_weight") is not None else 100),
+        active_color=row.get("active_color"),
+        canary_step=int(row.get("canary_step") or 0),
         version=int(row["version"] or 1),
         created_at=row["created_at"],
         updated_at=row["updated_at"],
@@ -867,8 +873,10 @@ class PostgresSession:
                 """
                 INSERT INTO deployments (id, application_id, pipeline_run_id, runtime, environment,
                                          status, artifact_digest, previous_artifact_digest,
-                                         approved_by, fencing_token, config_revision_id, version, created_at, updated_at)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                                         approved_by, fencing_token, config_revision_id,
+                                         strategy, traffic_weight, active_color, canary_step,
+                                         version, created_at, updated_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
                     deployment.id,
@@ -882,6 +890,10 @@ class PostgresSession:
                     deployment.approved_by,
                     deployment.fencing_token,
                     deployment.config_revision_id,
+                    deployment.strategy,
+                    deployment.traffic_weight,
+                    deployment.active_color,
+                    deployment.canary_step,
                     deployment.version,
                     deployment.created_at,
                     deployment.updated_at,
@@ -892,7 +904,9 @@ class PostgresSession:
             """
             UPDATE deployments
                SET status = %s, artifact_digest = %s, previous_artifact_digest = %s,
-                   approved_by = %s, fencing_token = %s, version = %s, updated_at = %s
+                   approved_by = %s, fencing_token = %s,
+                   strategy = %s, traffic_weight = %s, active_color = %s, canary_step = %s,
+                   version = %s, updated_at = %s
              WHERE id = %s AND version = %s
             """,
             (
@@ -901,6 +915,10 @@ class PostgresSession:
                 deployment.previous_artifact_digest,
                 deployment.approved_by,
                 deployment.fencing_token,
+                deployment.strategy,
+                deployment.traffic_weight,
+                deployment.active_color,
+                deployment.canary_step,
                 deployment.version,
                 deployment.updated_at,
                 deployment.id,
@@ -1011,15 +1029,25 @@ class PostgresSession:
             return ()
         identifiers = [row["id"] for row in rows]
         self._cursor.execute(
-            "SELECT request_id, module_id, version, deployment_order FROM production_request_modules"
+            "SELECT request_id, module_id, version, deployment_order, dependencies, status, deployment_id, started_at, completed_at, error_message"
+            " FROM production_request_modules"
             " WHERE request_id = ANY(%s) ORDER BY request_id, deployment_order, module_id",
             (identifiers,),
         )
         members: dict[str, list[RequestModuleRow]] = {}
         for item in self._cursor.fetchall():
             members.setdefault(str(item["request_id"]), []).append(
-                RequestModuleRow(str(item["module_id"]), str(item["version"]),
-                                 int(item["deployment_order"]))
+                RequestModuleRow(
+                    module_id=str(item["module_id"]),
+                    version=str(item["version"]),
+                    deployment_order=int(item["deployment_order"] or 1),
+                    dependencies=tuple(item.get("dependencies") or ()),
+                    status=str(item.get("status") or "pending"),
+                    deployment_id=item.get("deployment_id"),
+                    started_at=item.get("started_at"),
+                    completed_at=item.get("completed_at"),
+                    error_message=item.get("error_message"),
+                )
             )
         output: list[RequestRow] = []
         for row in rows:
@@ -1042,6 +1070,9 @@ class PostgresSession:
                     comment=row["comment"],
                     idempotency_key=row["idempotency_key"],
                     request_hash=row["request_hash"],
+                    release_plan=row.get("release_plan"),
+                    strategy=str(row.get("strategy") or "rolling"),
+                    strategy_config=dict(row.get("strategy_config") or {}),
                 )
             )
         return tuple(output)
@@ -1183,8 +1214,9 @@ class PostgresSession:
             """
             INSERT INTO production_requests (
                 id, module_id, version, requested_by, scheduled_for,
-                rollback_strategy, run_automation_tests, status, idempotency_key, request_hash
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                rollback_strategy, run_automation_tests, status, idempotency_key, request_hash,
+                release_plan, strategy, strategy_config
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """,
             (
                 UUID(str(row.id)),
@@ -1197,13 +1229,31 @@ class PostgresSession:
                 row.status,
                 row.idempotency_key,
                 row.request_hash,
+                json.dumps(row.release_plan) if row.release_plan is not None else None,
+                row.strategy,
+                json.dumps(row.strategy_config),
             ),
         )
         for member in row.modules:
             self._cursor.execute(
-                "INSERT INTO production_request_modules (request_id, module_id, version, deployment_order)"
-                " VALUES (%s, %s, %s, %s)",
-                (UUID(str(row.id)), member.module_id, member.version, member.deployment_order),
+                """
+                INSERT INTO production_request_modules (
+                    request_id, module_id, version, deployment_order,
+                    dependencies, status, deployment_id, started_at, completed_at, error_message
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    UUID(str(row.id)),
+                    member.module_id,
+                    member.version,
+                    member.deployment_order,
+                    list(member.dependencies),
+                    member.status,
+                    member.deployment_id,
+                    member.started_at,
+                    member.completed_at,
+                    member.error_message,
+                ),
             )
 
     def update_portal_request(
@@ -1213,11 +1263,73 @@ class PostgresSession:
         status: str,
         comment: str | None,
         deployment_id: UUID | None = None,
+        release_plan: dict[str, Any] | None = None,
+    ) -> None:
+        if release_plan is not None:
+            self._cursor.execute(
+                "UPDATE production_requests SET status = %s, comment = %s,"
+                " deployment_id = COALESCE(%s, deployment_id), release_plan = %s WHERE id = %s",
+                (status, comment, deployment_id, json.dumps(release_plan), UUID(str(request_id))),
+            )
+        else:
+            self._cursor.execute(
+                "UPDATE production_requests SET status = %s, comment = %s,"
+                " deployment_id = COALESCE(%s, deployment_id) WHERE id = %s",
+                (status, comment, deployment_id, UUID(str(request_id))),
+            )
+
+    def update_portal_request_module(
+        self,
+        request_id: str,
+        module_id: str,
+        *,
+        status: str,
+        deployment_id: UUID | None = None,
+        error_message: str | None = None,
+        started_at: datetime | None = None,
+        completed_at: datetime | None = None,
     ) -> None:
         self._cursor.execute(
-            "UPDATE production_requests SET status = %s, comment = %s,"
-            " deployment_id = COALESCE(%s, deployment_id) WHERE id = %s",
-            (status, comment, deployment_id, UUID(str(request_id))),
+            """
+            UPDATE production_request_modules
+               SET status = %s,
+                   deployment_id = COALESCE(%s, deployment_id),
+                   error_message = COALESCE(%s, error_message),
+                   started_at = COALESCE(%s, started_at),
+                   completed_at = COALESCE(%s, completed_at)
+             WHERE request_id = %s AND module_id = %s
+            """,
+            (
+                status,
+                deployment_id,
+                error_message,
+                started_at,
+                completed_at,
+                UUID(str(request_id)),
+                module_id,
+            ),
+        )
+
+    def update_deployment_traffic(
+        self,
+        deployment_id: UUID,
+        *,
+        strategy: str | None = None,
+        traffic_weight: int,
+        canary_step: int = 0,
+        active_color: str | None = None,
+    ) -> None:
+        self._cursor.execute(
+            """
+            UPDATE deployments
+               SET strategy = COALESCE(%s, strategy),
+                   traffic_weight = %s,
+                   canary_step = %s,
+                   active_color = COALESCE(%s, active_color),
+                   updated_at = NOW()
+             WHERE id = %s
+            """,
+            (strategy, traffic_weight, canary_step, active_color, deployment_id),
         )
 
     # ------------------------------------------------- SCM integrations & webhooks

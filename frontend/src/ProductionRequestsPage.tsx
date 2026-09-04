@@ -2,10 +2,12 @@ import { useEffect, useMemo, useState } from 'react'
 import {
   CalendarClock, Check, CheckCircle2, Circle, CircleAlert, Clock3, Eye,
   FileCheck2, Pencil, Plus, RefreshCw, RotateCcw, Search, ShieldCheck, Trash2, XCircle,
+  GitFork, Split, TrendingUp, Layers, Activity,
 } from 'lucide-react'
 import {
   approveProductionRequest, createProductionRequest, listProductionRequests, listSystems,
-  getSystem, rejectProductionRequest, type ProductionRequest, type ProductionRequestCreate,
+  getSystem, rejectProductionRequest, getProductionRequestPlan, advanceCanary, abortCanary,
+  getDeploymentTraffic, type ProductionRequest, type ProductionRequestCreate,
 } from './api/netciClient'
 import { Modal, PageHeader, StatusPill } from './PortalShell'
 import { usePortalFeedback } from './PortalFeedback'
@@ -44,41 +46,358 @@ function toOffsetIso(localValue: string): string {
   return `${localValue}:00+07:00`
 }
 
-function RequestDetails({ request, busy, onClose, onApprove, onReject }: { request: ProductionRequest; busy: boolean; onClose: () => void; onApprove: () => void; onReject: () => void }) {
-  const pending = request.status === 'waiting_approval'
-  const failed = request.status === 'rejected' || request.status === 'blocked'
+function RequestDetails({
+  request,
+  busy,
+  onClose,
+  onApprove,
+  onReject,
+  onRefresh,
+}: {
+  request: ProductionRequest
+  busy: boolean
+  onClose: () => void
+  onApprove: () => void
+  onReject: () => void
+  onRefresh?: () => void
+}) {
+  const { notify } = usePortalFeedback()
+  const [currentReq, setCurrentReq] = useState<ProductionRequest>(request)
+  const [canaryBusy, setCanaryBusy] = useState(false)
+  const [trafficInfo, setTrafficInfo] = useState<{ trafficWeight: number; canaryStep: number } | null>(null)
+
+  useEffect(() => {
+    let active = true
+    getProductionRequestPlan(request.id)
+      .then((plan) => {
+        if (active) setCurrentReq(plan)
+      })
+      .catch(() => {})
+
+    if (request.deploymentId && (request.strategy === 'canary' || request.strategy === 'blue_green')) {
+      getDeploymentTraffic(request.deploymentId)
+        .then((traffic) => {
+          if (active) setTrafficInfo({ trafficWeight: traffic.trafficWeight, canaryStep: traffic.canaryStep })
+        })
+        .catch(() => {})
+    }
+    return () => {
+      active = false
+    }
+  }, [request.id, request.deploymentId, request.strategy])
+
+  const handleAdvanceCanary = async () => {
+    setCanaryBusy(true)
+    try {
+      const res = await advanceCanary(request.id)
+      notify(`Canary advanced to step ${res.step} (${res.trafficWeight}% traffic).`)
+      setTrafficInfo({ trafficWeight: res.trafficWeight, canaryStep: res.step })
+      const updated = await getProductionRequestPlan(request.id)
+      setCurrentReq(updated)
+      onRefresh?.()
+    } catch (err) {
+      notify(err instanceof Error ? err.message : 'Failed to advance canary', 'error')
+    } finally {
+      setCanaryBusy(false)
+    }
+  }
+
+  const handleAbortCanary = async () => {
+    setCanaryBusy(true)
+    try {
+      await abortCanary(request.id, 'Aborted from Release Portal')
+      notify('Canary aborted. Traffic rolled back.')
+      const updated = await getProductionRequestPlan(request.id)
+      setCurrentReq(updated)
+      onRefresh?.()
+    } catch (err) {
+      notify(err instanceof Error ? err.message : 'Failed to abort canary', 'error')
+    } finally {
+      setCanaryBusy(false)
+    }
+  }
+
+  const pending = currentReq.status === 'waiting_approval'
+  const failed = currentReq.status === 'rejected' || currentReq.status === 'blocked'
+  const isApproved = currentReq.status === 'approved'
+  const isCanary = currentReq.strategy === 'canary'
+
   const steps = [
-    { label: 'Create production request', detail: `${request.modules.length} module · ${request.rollbackStrategy} rollback`, state: 'done' },
-    { label: 'Check approval status', detail: pending ? 'Waiting for mentor / GNOC approval' : request.status === 'approved' ? 'Approved for promotion' : `Request ${request.status}`, state: pending ? 'running' : failed ? 'failed' : 'done' },
-    { label: 'Execute CD Production', detail: request.deploymentId ? `Deployment ${request.deploymentId}` : 'No deployment has been created', state: request.deploymentId ? request.status === 'blocked' ? 'failed' : request.status === 'succeeded' ? 'done' : 'running' : 'waiting' },
-    { label: 'Health check and rollback', detail: request.comment ?? (request.rollbackStrategy === 'automatic' ? 'Automatic rollback on failed health check' : 'Wait for operator decision'), state: request.status === 'succeeded' ? 'done' : request.status === 'blocked' ? 'failed' : 'waiting' },
+    {
+      label: 'Create production request',
+      detail: `${currentReq.modules.length} module(s) · strategy: ${currentReq.strategy || 'rolling'} · ${currentReq.rollbackStrategy} rollback`,
+      state: 'done',
+    },
+    {
+      label: 'Check approval status',
+      detail: pending
+        ? 'Waiting for mentor / GNOC approval'
+        : currentReq.status === 'approved'
+        ? 'Approved for promotion'
+        : `Request ${currentReq.status}`,
+      state: pending ? 'running' : failed ? 'failed' : 'done',
+    },
+    {
+      label: 'Execute CD Production',
+      detail: currentReq.deploymentId
+        ? `Deployment ${currentReq.deploymentId}`
+        : 'No deployment has been created',
+      state: currentReq.deploymentId
+        ? currentReq.status === 'blocked'
+          ? 'failed'
+          : currentReq.status === 'succeeded'
+          ? 'done'
+          : 'running'
+        : 'waiting',
+    },
+    {
+      label: 'Health check and rollback',
+      detail:
+        currentReq.comment ??
+        (currentReq.rollbackStrategy === 'automatic'
+          ? 'Automatic rollback on failed health check'
+          : 'Wait for operator decision'),
+      state:
+        currentReq.status === 'succeeded'
+          ? 'done'
+          : currentReq.status === 'blocked'
+          ? 'failed'
+          : 'waiting',
+    },
   ]
-  return <Modal wide title={displayRequestId(request)} description={`${request.modules.map((item) => item.moduleName).join(' · ')} · Scheduled ${scheduledDate(request.scheduledFor)}`} onClose={onClose} footer={<>{pending && <><button className="danger-button" disabled={busy} onClick={onReject}><XCircle size={16} />Reject</button><button className="primary-button" disabled={busy} onClick={onApprove}><ShieldCheck size={16} />Approve</button></>}<button className="secondary-button" onClick={onClose}>Close</button></>}>
-    <div className="request-summary"><div><span>Requested by</span><strong>{request.requestedBy}</strong></div><div><span>Automation</span><strong>{request.runAutomationTests ? 'Required' : 'Disabled'}</strong></div><div><span>Status</span><StatusPill status={statusLabel(request.status)} /></div></div>
-    <div className="request-module-pills">{request.modules.map((item) => <span key={item.moduleId}>{item.moduleName} · {item.version} · order {item.deploymentOrder}</span>)}</div>
-    {failed && <div className="failure-alert"><CircleAlert size={18} /><div><strong>Request cannot proceed</strong><p>{request.comment ?? 'The approval or policy gate blocked this production request.'}</p></div></div>}
-    <div className="request-timeline">{steps.map((step, index) => <div className={`timeline-step step-${step.state}`} key={step.label}><div className="timeline-rail"><span>{step.state === 'done' ? <Check size={15} /> : step.state === 'failed' ? <XCircle size={16} /> : step.state === 'running' ? <Clock3 size={15} /> : <Circle size={12} />}</span>{index < steps.length - 1 && <i />}</div><div><strong>{step.label}</strong><p>{step.detail}</p></div><em>{step.state === 'done' ? 'Done' : step.state === 'failed' ? 'Failed' : step.state === 'running' ? 'In progress' : 'Pending'}</em></div>)}</div>
-  </Modal>
+
+  return (
+    <Modal
+      wide
+      title={displayRequestId(currentReq)}
+      description={`${currentReq.modules.map((item) => item.moduleName).join(' · ')} · Scheduled ${scheduledDate(currentReq.scheduledFor)}`}
+      onClose={onClose}
+      footer={
+        <>
+          {pending && (
+            <>
+              <button className="danger-button" disabled={busy} onClick={onReject}>
+                <XCircle size={16} />Reject
+              </button>
+              <button className="primary-button" disabled={busy} onClick={onApprove}>
+                <ShieldCheck size={16} />Approve
+              </button>
+            </>
+          )}
+          <button className="secondary-button" onClick={onClose}>
+            Close
+          </button>
+        </>
+      }
+    >
+      <div className="request-summary">
+        <div>
+          <span>Requested by</span>
+          <strong>{currentReq.requestedBy}</strong>
+        </div>
+        <div>
+          <span>Strategy</span>
+          <span className={`strategy-tag ${currentReq.strategy || 'rolling'}`}>
+            {currentReq.strategy || 'rolling'}
+          </span>
+        </div>
+        <div>
+          <span>Status</span>
+          <StatusPill status={statusLabel(currentReq.status)} />
+        </div>
+      </div>
+
+      <div className="request-module-pills">
+        {currentReq.modules.map((item) => (
+          <span key={item.moduleId}>
+            {item.moduleName} · {item.version}
+            {item.dependencies && item.dependencies.length > 0
+              ? ` (deps: ${item.dependencies.length})`
+              : ''}
+            {item.status ? ` [${item.status}]` : ''}
+          </span>
+        ))}
+      </div>
+
+      {/* Canary Traffic Controls */}
+      {isCanary && isApproved && (
+        <div className="canary-control-panel">
+          <div>
+            <Activity size={18} style={{ display: 'inline', verticalAlign: 'middle', marginRight: 6 }} />
+            <strong>Canary Traffic Allocation</strong>
+            <span className="traffic-pill">{trafficInfo ? `${trafficInfo.trafficWeight}%` : '10%'}</span>
+            <small style={{ marginLeft: 8, color: 'var(--muted)' }}>
+              (Step {trafficInfo ? trafficInfo.canaryStep : 1})
+            </small>
+          </div>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button
+              className="primary-button"
+              style={{ padding: '4px 10px', fontSize: 11 }}
+              disabled={canaryBusy || (trafficInfo ? trafficInfo.trafficWeight >= 100 : false)}
+              onClick={handleAdvanceCanary}
+            >
+              <TrendingUp size={14} />Advance Step
+            </button>
+            <button
+              className="danger-button"
+              style={{ padding: '4px 10px', fontSize: 11 }}
+              disabled={canaryBusy}
+              onClick={handleAbortCanary}
+            >
+              <XCircle size={14} />Abort Canary
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* DAG Release Plan Waves */}
+      {currentReq.releasePlan && currentReq.releasePlan.waves && currentReq.releasePlan.waves.length > 0 && (
+        <div className="release-plan-container">
+          <h4>
+            <Layers size={14} style={{ display: 'inline', verticalAlign: 'middle', marginRight: 5 }} />
+            DAG Release Plan ({currentReq.releasePlan.totalWaves} Waves)
+          </h4>
+          <div className="wave-list">
+            {currentReq.releasePlan.waves.map((wave) => (
+              <div key={wave.wave} className="wave-card">
+                <div className="wave-header">Wave {wave.wave}</div>
+                <div className="wave-modules">
+                  {wave.moduleIds.map((modId) => {
+                    const mod = currentReq.modules.find((m) => m.moduleId === modId)
+                    return (
+                      <div key={modId} className="wave-module-item">
+                        <strong>{mod?.moduleName ?? modId}</strong>
+                        <span>{mod?.version}</span>
+                        <StatusPill status={statusLabel(mod?.status ?? 'pending')} />
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {failed && (
+        <div className="failure-alert">
+          <CircleAlert size={18} />
+          <div>
+            <strong>Request cannot proceed</strong>
+            <p>{currentReq.comment ?? 'The approval or policy gate blocked this production request.'}</p>
+          </div>
+        </div>
+      )}
+
+      <div className="request-timeline">
+        {steps.map((step, index) => (
+          <div className={`timeline-step step-${step.state}`} key={step.label}>
+            <div className="timeline-rail">
+              <span>
+                {step.state === 'done' ? (
+                  <Check size={15} />
+                ) : step.state === 'failed' ? (
+                  <XCircle size={16} />
+                ) : step.state === 'running' ? (
+                  <Clock3 size={15} />
+                ) : (
+                  <Circle size={12} />
+                )}
+              </span>
+              {index < steps.length - 1 && <i />}
+            </div>
+            <div>
+              <strong>{step.label}</strong>
+              <p>{step.detail}</p>
+            </div>
+            <em>
+              {step.state === 'done'
+                ? 'Done'
+                : step.state === 'failed'
+                ? 'Failed'
+                : step.state === 'running'
+                ? 'In progress'
+                : 'Pending'}
+            </em>
+          </div>
+        ))}
+      </div>
+    </Modal>
+  )
 }
 
-type DraftModule = { moduleId: string; version: string; deploymentOrder: number }
+type DraftModule = {
+  moduleId: string
+  version: string
+  deploymentOrder: number
+  dependencies: string[]
+}
 
-function NewRequest({ availableModules, onClose, onCreate }: { availableModules: PortalModuleView[]; onClose: () => void; onCreate: (payload: ProductionRequestCreate) => Promise<void> }) {
+function NewRequest({
+  availableModules,
+  onClose,
+  onCreate,
+}: {
+  availableModules: PortalModuleView[]
+  onClose: () => void
+  onCreate: (payload: ProductionRequestCreate) => Promise<void>
+}) {
   const firstVersionedModule = availableModules.find((module) => module.versions.length > 0)
   const [selected, setSelected] = useState<string[]>(firstVersionedModule ? [firstVersionedModule.id] : [])
-  const [drafts, setDrafts] = useState<Record<string, DraftModule>>(() => Object.fromEntries(availableModules.map((module, index) => [module.id, { moduleId: module.id, version: module.versions[0] ?? '', deploymentOrder: index + 1 }])))
+  const [drafts, setDrafts] = useState<Record<string, DraftModule>>(() =>
+    Object.fromEntries(
+      availableModules.map((module, index) => [
+        module.id,
+        {
+          moduleId: module.id,
+          version: module.versions[0] ?? '',
+          deploymentOrder: index + 1,
+          dependencies: [],
+        },
+      ])
+    )
+  )
   const [scheduledFor, setScheduledFor] = useState(localScheduleDefault)
   const [review, setReview] = useState(false)
+  const [strategy, setStrategy] = useState<'rolling' | 'canary' | 'blue_green'>('rolling')
   const [rollback, setRollback] = useState<'automatic' | 'manual'>('automatic')
   const [automation, setAutomation] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
-  const toggle = (id: string) => setSelected((current) => current.includes(id) ? [] : [id])
+
+  const toggle = (id: string) =>
+    setSelected((current) =>
+      current.includes(id) ? current.filter((item) => item !== id) : [...current, id]
+    )
+
+  const toggleDependency = (moduleId: string, depId: string) => {
+    setDrafts((prev) => {
+      const cur = prev[moduleId]
+      const deps = cur.dependencies.includes(depId)
+        ? cur.dependencies.filter((d) => d !== depId)
+        : [...cur.dependencies, depId]
+      return { ...prev, [moduleId]: { ...cur, dependencies: deps } }
+    })
+  }
+
   const submit = async () => {
     setSaving(true)
     setError('')
     try {
-      await onCreate({ modules: selected.map((id) => drafts[id]), scheduledFor: toOffsetIso(scheduledFor), rollbackStrategy: rollback, runAutomationTests: automation })
+      await onCreate({
+        modules: selected.map((id) => ({
+          moduleId: drafts[id].moduleId,
+          version: drafts[id].version,
+          deploymentOrder: drafts[id].deploymentOrder,
+          dependencies: drafts[id].dependencies,
+        })),
+        scheduledFor: toOffsetIso(scheduledFor),
+        rollbackStrategy: rollback,
+        runAutomationTests: automation,
+        strategy,
+        strategyConfig: strategy === 'canary' ? { steps: [10, 25, 50, 100] } : {},
+      })
       onClose()
     } catch (submitError) {
       setError(submitError instanceof Error ? submitError.message : 'Không thể tạo production request.')
@@ -86,15 +405,296 @@ function NewRequest({ availableModules, onClose, onCreate }: { availableModules:
       setSaving(false)
     }
   }
-  return <Modal wide title="New Production Request" description="Promote one verified artifact through an approval-bound production deployment." onClose={onClose} footer={<><button className="secondary-button" disabled={saving} onClick={review ? () => setReview(false) : onClose}>{review ? 'Back' : 'Cancel'}</button>{review ? <button className="primary-button" disabled={saving} onClick={submit}><FileCheck2 size={16} />{saving ? 'Creating…' : 'Create Request'}</button> : <button className="primary-button" disabled={!selected.length || !scheduledFor} onClick={() => setReview(true)}>Review Request</button>}</>}>
-    {!review ? <div className="request-form">
-      <section className="form-section"><div className="form-section-title"><span>1</span><div><h3>Select one module</h3><p>Multi-module promotion is refused until an ordered coordinator is implemented.</p></div></div><div className="selectable-modules">{availableModules.map((module) => <button className={selected.includes(module.id) ? 'selected' : ''} disabled={!module.versions.length} title={!module.versions.length ? 'Register a verified version before creating a production request' : undefined} onClick={() => toggle(module.id)} key={module.id}><span className="check-box">{selected.includes(module.id) && <Check size={13} />}</span><span><strong>{module.name}</strong><small>{module.versions.length} registered versions</small></span></button>)}</div></section>
-      {selected.length > 0 && <section className="form-section"><div className="form-section-title"><span>2</span><div><h3>Verified version</h3><p>Approval re-checks artifact digest, SBOM, scan, signature and optional automation evidence.</p></div></div><div className="deployment-order">{selected.map((id) => { const module = availableModules.find((item) => item.id === id)!; const draft = drafts[id]; return <article key={id}><div><strong>{module.name}</strong><small>Registered immutable versions</small></div><select value={draft.version} onChange={(event) => setDrafts({ ...drafts, [id]: { ...draft, version: event.target.value } })}>{module.versions.map((version) => <option key={version}>{version}</option>)}</select></article> })}</div></section>}
-      <section className="form-section form-grid"><div className="form-section-title full"><span>3</span><div><h3>Schedule</h3><p>Production window in Asia/Saigon timezone.</p></div></div><label className="field full"><span>Deployment date and time</span><input type="datetime-local" value={scheduledFor} onChange={(event) => setScheduledFor(event.target.value)} /></label></section>
-      <section className="form-section"><div className="form-section-title"><span>4</span><div><h3>Rollback strategy</h3><p>Choose how the portal responds to failed health checks.</p></div></div><div className="option-cards"><button className={rollback === 'automatic' ? 'selected' : ''} onClick={() => setRollback('automatic')}><RotateCcw size={18} /><strong>Automatic</strong><small>Rollback when health check fails</small></button><button className={rollback === 'manual' ? 'selected' : ''} onClick={() => setRollback('manual')}><Pencil size={18} /><strong>Manual</strong><small>Wait for operator decision</small></button></div></section>
-      <section className="form-section"><div className="toggle-row"><div><strong>Require passing automation evidence</strong><p>When enabled, approval fails unless the selected version has a pipeline-reported <code>autoTest: passed</code> result.</p></div><button type="button" role="switch" aria-checked={automation} className={`switch ${automation ? 'on' : ''}`} onClick={() => setAutomation(!automation)}><i /></button></div></section>
-    </div> : <div className="review-request"><div className="review-banner"><CheckCircle2 size={20} /><div><strong>Request is ready to create</strong><p>Approval re-checks immutable delivery evidence before the configured production adapter starts.</p></div></div><div className="review-grid"><div><span>Module</span><strong>{selected.map((id) => availableModules.find((item) => item.id === id)?.name).join(', ')}</strong></div><div><span>Schedule</span><strong>{scheduledDate(toOffsetIso(scheduledFor))}</strong></div><div><span>Rollback</span><strong>{rollback === 'automatic' ? 'Automatic' : 'Manual intervention'}</strong></div><div><span>Automation evidence</span><strong>{automation ? 'Passing result required' : 'Not required'}</strong></div></div><div className="approval-flow"><span><FileCheck2 size={17} />Create request</span><i /><span><CheckCircle2 size={17} />Approval + evidence gates</span><i /><span><CalendarClock size={17} />Scheduled deploy</span></div>{error && <div className="inline-error" role="alert"><CircleAlert size={15} />{error}</div>}</div>}
-  </Modal>
+
+  return (
+    <Modal
+      wide
+      title="New Production Request"
+      description="Promote verified artifacts through an approval-bound DAG production deployment."
+      onClose={onClose}
+      footer={
+        <>
+          <button
+            className="secondary-button"
+            disabled={saving}
+            onClick={review ? () => setReview(false) : onClose}
+          >
+            {review ? 'Back' : 'Cancel'}
+          </button>
+          {review ? (
+            <button className="primary-button" disabled={saving} onClick={submit}>
+              <FileCheck2 size={16} />
+              {saving ? 'Creating…' : 'Create Request'}
+            </button>
+          ) : (
+            <button
+              className="primary-button"
+              disabled={!selected.length || !scheduledFor}
+              onClick={() => setReview(true)}
+            >
+              Review Request
+            </button>
+          )}
+        </>
+      }
+    >
+      {!review ? (
+        <div className="request-form">
+          <section className="form-section">
+            <div className="form-section-title">
+              <span>1</span>
+              <div>
+                <h3>Select modules</h3>
+                <p>Select one or more modules. DAG wave coordination schedules safe sequential rollouts.</p>
+              </div>
+            </div>
+            <div className="selectable-modules">
+              {availableModules.map((module) => (
+                <button
+                  className={selected.includes(module.id) ? 'selected' : ''}
+                  disabled={!module.versions.length}
+                  title={
+                    !module.versions.length
+                      ? 'Register a verified version before creating a production request'
+                      : undefined
+                  }
+                  onClick={() => toggle(module.id)}
+                  key={module.id}
+                >
+                  <span className="check-box">{selected.includes(module.id) && <Check size={13} />}</span>
+                  <span>
+                    <strong>{module.name}</strong>
+                    <small>{module.versions.length} registered versions</small>
+                  </span>
+                </button>
+              ))}
+            </div>
+          </section>
+
+          {selected.length > 0 && (
+            <section className="form-section">
+              <div className="form-section-title">
+                <span>2</span>
+                <div>
+                  <h3>Versions & Dependencies</h3>
+                  <p>Configure verified immutable version and optional DAG upstream dependencies.</p>
+                </div>
+              </div>
+              <div className="deployment-order">
+                {selected.map((id) => {
+                  const module = availableModules.find((item) => item.id === id)!
+                  const draft = drafts[id]
+                  const otherSelected = selected.filter((otherId) => otherId !== id)
+                  return (
+                    <article key={id}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <div>
+                          <strong>{module.name}</strong>
+                          <small style={{ display: 'block' }}>Registered immutable versions</small>
+                        </div>
+                        <select
+                          value={draft.version}
+                          onChange={(event) =>
+                            setDrafts({
+                              ...drafts,
+                              [id]: { ...draft, version: event.target.value },
+                            })
+                          }
+                        >
+                          {module.versions.map((version) => (
+                            <option key={version}>{version}</option>
+                          ))}
+                        </select>
+                      </div>
+
+                      {otherSelected.length > 0 && (
+                        <div className="dependency-selector">
+                          <span>
+                            <GitFork size={12} style={{ display: 'inline', marginRight: 4 }} />
+                            Depends on (deploy before this module):
+                          </span>
+                          <div className="dependency-checkboxes">
+                            {otherSelected.map((otherId) => {
+                              const otherMod = availableModules.find((item) => item.id === otherId)
+                              const isChecked = draft.dependencies.includes(otherId)
+                              return (
+                                <label key={otherId}>
+                                  <input
+                                    type="checkbox"
+                                    checked={isChecked}
+                                    onChange={() => toggleDependency(id, otherId)}
+                                  />
+                                  <span>{otherMod?.name ?? otherId}</span>
+                                </label>
+                              )
+                            })}
+                          </div>
+                        </div>
+                      )}
+                    </article>
+                  )
+                })}
+              </div>
+            </section>
+          )}
+
+          <section className="form-section">
+            <div className="form-section-title">
+              <span>3</span>
+              <div>
+                <h3>Deployment strategy</h3>
+                <p>Choose progressive delivery mechanism for this promotion.</p>
+              </div>
+            </div>
+            <div className="option-cards">
+              <button
+                className={strategy === 'rolling' ? 'selected' : ''}
+                onClick={() => setStrategy('rolling')}
+              >
+                <Layers size={18} />
+                <strong>Rolling DAG</strong>
+                <small>Deploy in topological waves</small>
+              </button>
+              <button
+                className={strategy === 'canary' ? 'selected' : ''}
+                onClick={() => setStrategy('canary')}
+              >
+                <TrendingUp size={18} />
+                <strong>Canary Rollout</strong>
+                <small>10% → 25% → 50% → 100%</small>
+              </button>
+              <button
+                className={strategy === 'blue_green' ? 'selected' : ''}
+                onClick={() => setStrategy('blue_green')}
+              >
+                <Split size={18} />
+                <strong>Blue / Green</strong>
+                <small>Instant cutover with zero downtime</small>
+              </button>
+            </div>
+          </section>
+
+          <section className="form-section form-grid">
+            <div className="form-section-title full">
+              <span>4</span>
+              <div>
+                <h3>Schedule</h3>
+                <p>Production window in Asia/Saigon timezone.</p>
+              </div>
+            </div>
+            <label className="field full">
+              <span>Deployment date and time</span>
+              <input
+                type="datetime-local"
+                value={scheduledFor}
+                onChange={(event) => setScheduledFor(event.target.value)}
+              />
+            </label>
+          </section>
+
+          <section className="form-section">
+            <div className="form-section-title">
+              <span>5</span>
+              <div>
+                <h3>Rollback strategy</h3>
+                <p>Choose how the portal responds to failed health checks.</p>
+              </div>
+            </div>
+            <div className="option-cards">
+              <button
+                className={rollback === 'automatic' ? 'selected' : ''}
+                onClick={() => setRollback('automatic')}
+              >
+                <RotateCcw size={18} />
+                <strong>Automatic SAGA</strong>
+                <small>Compensate and rollback previous waves</small>
+              </button>
+              <button
+                className={rollback === 'manual' ? 'selected' : ''}
+                onClick={() => setRollback('manual')}
+              >
+                <Pencil size={18} />
+                <strong>Manual</strong>
+                <small>Wait for operator decision</small>
+              </button>
+            </div>
+          </section>
+
+          <section className="form-section">
+            <div className="toggle-row">
+              <div>
+                <strong>Require passing automation evidence</strong>
+                <p>
+                  When enabled, approval fails unless the selected version has a pipeline-reported{' '}
+                  <code>autoTest: passed</code> result.
+                </p>
+              </div>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={automation}
+                className={`switch ${automation ? 'on' : ''}`}
+                onClick={() => setAutomation(!automation)}
+              >
+                <i />
+              </button>
+            </div>
+          </section>
+        </div>
+      ) : (
+        <div className="review-request">
+          <div className="review-banner">
+            <CheckCircle2 size={20} />
+            <div>
+              <strong>Request is ready to create</strong>
+              <p>Approval re-checks immutable delivery evidence before the configured production adapter starts.</p>
+            </div>
+          </div>
+          <div className="review-grid">
+            <div>
+              <span>Modules</span>
+              <strong>{selected.map((id) => availableModules.find((item) => item.id === id)?.name).join(', ')}</strong>
+            </div>
+            <div>
+              <span>Strategy</span>
+              <strong style={{ textTransform: 'capitalize' }}>{strategy.replace('_', ' ')}</strong>
+            </div>
+            <div>
+              <span>Schedule</span>
+              <strong>{scheduledDate(toOffsetIso(scheduledFor))}</strong>
+            </div>
+            <div>
+              <span>Rollback</span>
+              <strong>{rollback === 'automatic' ? 'Automatic SAGA compensation' : 'Manual intervention'}</strong>
+            </div>
+            <div>
+              <span>Automation evidence</span>
+              <strong>{automation ? 'Passing result required' : 'Not required'}</strong>
+            </div>
+          </div>
+          <div className="approval-flow">
+            <span>
+              <FileCheck2 size={17} />Create request
+            </span>
+            <i />
+            <span>
+              <CheckCircle2 size={17} />Approval + evidence gates
+            </span>
+            <i />
+            <span>
+              <CalendarClock size={17} />DAG wave deploy
+            </span>
+          </div>
+          {error && (
+            <div className="inline-error" role="alert">
+              <CircleAlert size={15} />
+              {error}
+            </div>
+          )}
+        </div>
+      )}
+    </Modal>
+  )
 }
 
 export function ProductionRequestsPage({ systemId }: { systemId: string }) {
@@ -111,52 +711,96 @@ export function ProductionRequestsPage({ systemId }: { systemId: string }) {
   const [creating, setCreating] = useState(false)
   const [commandBusy, setCommandBusy] = useState(false)
   const [availableModules, setAvailableModules] = useState<PortalModuleView[]>([])
+
   const load = async () => {
     setLoading(true)
     setLoadError('')
-    try { setItems(await listProductionRequests()) } catch (error) { setLoadError(error instanceof Error ? error.message : 'Không thể tải production requests.') } finally { setLoading(false) }
+    try {
+      setItems(await listProductionRequests())
+    } catch (error) {
+      setLoadError(error instanceof Error ? error.message : 'Không thể tải production requests.')
+    } finally {
+      setLoading(false)
+    }
   }
-  useEffect(() => { void load() }, [])
+
+  useEffect(() => {
+    void load()
+  }, [])
+
   useEffect(() => {
     let active = true
     if (systemId) {
       getSystem(systemId)
         .then((system) => {
-          if (active) setAvailableModules(system.modules.map((module) => ({ id: module.id, name: module.name, type: module.type, description: module.description, versions: module.versions, runtime: module.runtime, environments: module.environments })))
+          if (active)
+            setAvailableModules(
+              system.modules.map((module) => ({
+                id: module.id,
+                name: module.name,
+                type: module.type,
+                description: module.description,
+                versions: module.versions,
+                runtime: module.runtime,
+                environments: module.environments,
+              }))
+            )
         })
         .catch(() => undefined)
     } else {
       listSystems()
         .then((systems) => {
           if (!active) return
-          const allMods = systems.flatMap((s) => s.modules.map((m) => ({ id: m.id, name: m.name, type: m.type, description: m.description, versions: m.versions, runtime: m.runtime, environments: m.environments })))
+          const allMods = systems.flatMap((s) =>
+            s.modules.map((m) => ({
+              id: m.id,
+              name: m.name,
+              type: m.type,
+              description: m.description,
+              versions: m.versions,
+              runtime: m.runtime,
+              environments: m.environments,
+            }))
+          )
           if (allMods.length > 0) setAvailableModules(allMods)
         })
         .catch(() => undefined)
     }
-    return () => { active = false }
+    return () => {
+      active = false
+    }
   }, [systemId])
-  const filtered = useMemo(() => items.filter((request) => {
-    const date = request.scheduledFor.slice(0, 10)
-    return displayRequestId(request).toLowerCase().includes(query.toLowerCase())
-      && (moduleFilter === 'All modules' || request.modules.some((item) => item.moduleName === moduleFilter))
-      && (statusFilter === 'All statuses' || request.status === statusFilter)
-      && (!fromDate || date >= fromDate)
-      && (!toDate || date <= toDate)
-  }), [items, query, moduleFilter, statusFilter, fromDate, toDate])
+
+  const filtered = useMemo(
+    () =>
+      items.filter((request) => {
+        const date = request.scheduledFor.slice(0, 10)
+        return (
+          displayRequestId(request).toLowerCase().includes(query.toLowerCase()) &&
+          (moduleFilter === 'All modules' || request.modules.some((item) => item.moduleName === moduleFilter)) &&
+          (statusFilter === 'All statuses' || request.status === statusFilter) &&
+          (!fromDate || date >= fromDate) &&
+          (!toDate || date <= toDate)
+        )
+      }),
+    [items, query, moduleFilter, statusFilter, fromDate, toDate]
+  )
+
   const create = async (payload: ProductionRequestCreate) => {
     const request = await createProductionRequest(payload)
     setItems((current) => [request, ...current])
     notify(`${displayRequestId(request)} đã được tạo và đang chờ approval.`)
   }
+
   const updateStatus = async (action: 'approve' | 'reject') => {
     if (!details) return
     setCommandBusy(true)
     try {
-      const updated = action === 'approve'
-        ? await approveProductionRequest(details.id, { comment: 'Approved from Release Portal' })
-        : await rejectProductionRequest(details.id, { comment: 'Rejected from Release Portal' })
-      setItems((current) => current.map((item) => item.id === updated.id ? updated : item))
+      const updated =
+        action === 'approve'
+          ? await approveProductionRequest(details.id, { comment: 'Approved from Release Portal' })
+          : await rejectProductionRequest(details.id, { comment: 'Rejected from Release Portal' })
+      setItems((current) => current.map((item) => (item.id === updated.id ? updated : item)))
       setDetails(updated)
       notify(`${displayRequestId(updated)} đã được ${action === 'approve' ? 'approve' : 'reject'}.`)
     } catch (error) {
@@ -165,17 +809,161 @@ export function ProductionRequestsPage({ systemId }: { systemId: string }) {
       setCommandBusy(false)
     }
   }
-  const immutableNotice = (request: ProductionRequest, action: string) => notify(`${displayRequestId(request)} đã submit và là immutable. ${action} cần command cancel/recreate riêng.`, 'info')
-  return <>
-    <PageHeader title="Production Requests" description="Create and track requests to deploy modules to production." action={<button className="primary-button" onClick={() => setCreating(true)}><Plus size={16} />New Request</button>} />
-    <div className="request-kpis">{[['Total Requests', String(items.length), 'neutral'], ['Approved', String(items.filter((item) => item.status === 'approved').length), 'green'], ['Blocked / Rejected', String(items.filter((item) => ['blocked', 'rejected'].includes(item.status)).length), 'red'], ['Pending', String(items.filter((item) => item.status === 'waiting_approval').length), 'amber']].map(([label, value, tone]) => <article key={label}><i className={`request-kpi-dot ${tone}`} /><div><span>{label}</span><strong>{value}</strong></div></article>)}</div>
-    <section className="panel table-panel"><div className="table-toolbar request-filters"><label className="input-with-icon"><Search size={16} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search request ID…" /></label><select value={moduleFilter} onChange={(event) => setModuleFilter(event.target.value)}><option>All modules</option>{availableModules.map((item) => <option key={item.id}>{item.name}</option>)}</select><select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}><option value="All statuses">All statuses</option><option value="succeeded">Succeeded</option><option value="approved">Approved / deploying</option><option value="rejected">Rejected</option><option value="blocked">Blocked</option><option value="waiting_approval">Pending checks</option></select><label className="date-filter"><span>From</span><input type="date" value={fromDate} onChange={(event) => setFromDate(event.target.value)} /></label><label className="date-filter"><span>To</span><input type="date" value={toDate} min={fromDate || undefined} onChange={(event) => setToDate(event.target.value)} /></label><button className="text-button" onClick={() => { setQuery(''); setModuleFilter('All modules'); setStatusFilter('All statuses'); setFromDate(''); setToDate('') }}>Clear filters</button></div>
-      {loadError && <div className="load-state error-state" role="alert"><CircleAlert size={20} /><strong>Không tải được approval queue</strong><span>{loadError}</span><button className="secondary-button" onClick={load}><RefreshCw size={15} />Retry</button></div>}
-      {!loadError && <div className="data-table requests-table"><div className="table-row table-head"><span>Request</span><span>Modules</span><span>Requested by</span><span>Scheduled</span><span>Rollback</span><span>Status</span><span>Actions</span></div>{filtered.map((request) => <div className="table-row" key={request.id}><span className="request-id">{displayRequestId(request)}</span><span className="module-list-cell">{request.modules.map((item) => <small key={item.moduleId}>{item.moduleName}</small>)}</span><span>{request.requestedBy}</span><span>{scheduledDate(request.scheduledFor)}</span><span>{request.rollbackStrategy}</span><StatusPill status={statusLabel(request.status)} /><span className="row-actions"><button aria-label={`Xem ${displayRequestId(request)}`} onClick={() => setDetails(request)}><Eye size={16} /></button>{request.status === 'waiting_approval' && <><button aria-label={`Sửa ${displayRequestId(request)}`} onClick={() => immutableNotice(request, 'Editing')}><Pencil size={15} /></button><button aria-label={`Xóa ${displayRequestId(request)}`} onClick={() => immutableNotice(request, 'Deleting')}><Trash2 size={15} /></button></>}</span></div>)}</div>}
-      {!loadError && !loading && !filtered.length && <div className="empty-table"><Search size={22} /><strong>Không có request phù hợp</strong><span>Thử đổi bộ lọc hoặc tạo production request mới.</span></div>}
-      {loading && <div className="load-state"><RefreshCw className="spin" size={20} /><strong>Loading production requests…</strong></div>}
-    </section>
-    {details && <RequestDetails request={details} busy={commandBusy} onClose={() => setDetails(null)} onApprove={() => updateStatus('approve')} onReject={() => updateStatus('reject')} />}
-    {creating && <NewRequest availableModules={availableModules} onClose={() => setCreating(false)} onCreate={create} />}
-  </>
+
+  const immutableNotice = (request: ProductionRequest, action: string) =>
+    notify(`${displayRequestId(request)} đã submit và là immutable. ${action} cần command cancel/recreate riêng.`, 'info')
+
+  return (
+    <>
+      <PageHeader
+        title="Production Requests"
+        description="Create and track requests to deploy modules to production."
+        action={
+          <button className="primary-button" onClick={() => setCreating(true)}>
+            <Plus size={16} />New Request
+          </button>
+        }
+      />
+      <div className="request-kpis">
+        {[
+          ['Total Requests', String(items.length), 'neutral'],
+          ['Approved', String(items.filter((item) => item.status === 'approved').length), 'green'],
+          ['Blocked / Rejected', String(items.filter((item) => ['blocked', 'rejected'].includes(item.status)).length), 'red'],
+          ['Pending', String(items.filter((item) => item.status === 'waiting_approval').length), 'amber'],
+        ].map(([label, value, tone]) => (
+          <article key={label}>
+            <i className={`request-kpi-dot ${tone}`} />
+            <div>
+              <span>{label}</span>
+              <strong>{value}</strong>
+            </div>
+          </article>
+        ))}
+      </div>
+      <section className="panel table-panel">
+        <div className="table-toolbar request-filters">
+          <label className="input-with-icon">
+            <Search size={16} />
+            <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search request ID…" />
+          </label>
+          <select value={moduleFilter} onChange={(event) => setModuleFilter(event.target.value)}>
+            <option>All modules</option>
+            {availableModules.map((item) => (
+              <option key={item.id}>{item.name}</option>
+            ))}
+          </select>
+          <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
+            <option value="All statuses">All statuses</option>
+            <option value="succeeded">Succeeded</option>
+            <option value="approved">Approved / deploying</option>
+            <option value="rejected">Rejected</option>
+            <option value="blocked">Blocked</option>
+            <option value="waiting_approval">Pending checks</option>
+          </select>
+          <label className="date-filter">
+            <span>From</span>
+            <input type="date" value={fromDate} onChange={(event) => setFromDate(event.target.value)} />
+          </label>
+          <label className="date-filter">
+            <span>To</span>
+            <input type="date" value={toDate} min={fromDate || undefined} onChange={(event) => setToDate(event.target.value)} />
+          </label>
+          <button
+            className="text-button"
+            onClick={() => {
+              setQuery('')
+              setModuleFilter('All modules')
+              setStatusFilter('All statuses')
+              setFromDate('')
+              setToDate('')
+            }}
+          >
+            Clear filters
+          </button>
+        </div>
+        {loadError && (
+          <div className="load-state error-state" role="alert">
+            <CircleAlert size={20} />
+            <strong>Không tải được approval queue</strong>
+            <span>{loadError}</span>
+            <button className="secondary-button" onClick={load}>
+              <RefreshCw size={15} />Retry
+            </button>
+          </div>
+        )}
+        {!loadError && (
+          <div className="data-table requests-table">
+            <div className="table-row table-head">
+              <span>Request</span>
+              <span>Modules</span>
+              <span>Strategy</span>
+              <span>Requested by</span>
+              <span>Scheduled</span>
+              <span>Rollback</span>
+              <span>Status</span>
+              <span>Actions</span>
+            </div>
+            {filtered.map((request) => (
+              <div className="table-row" key={request.id}>
+                <span className="request-id">{displayRequestId(request)}</span>
+                <span className="module-list-cell">
+                  {request.modules.map((item) => (
+                    <small key={item.moduleId}>{item.moduleName}</small>
+                  ))}
+                </span>
+                <span>
+                  <span className={`strategy-tag ${request.strategy || 'rolling'}`}>
+                    {request.strategy || 'rolling'}
+                  </span>
+                </span>
+                <span>{request.requestedBy}</span>
+                <span>{scheduledDate(request.scheduledFor)}</span>
+                <span>{request.rollbackStrategy}</span>
+                <StatusPill status={statusLabel(request.status)} />
+                <span className="row-actions">
+                  <button aria-label={`Xem ${displayRequestId(request)}`} onClick={() => setDetails(request)}>
+                    <Eye size={16} />
+                  </button>
+                  {request.status === 'waiting_approval' && (
+                    <>
+                      <button aria-label={`Sửa ${displayRequestId(request)}`} onClick={() => immutableNotice(request, 'Editing')}>
+                        <Pencil size={15} />
+                      </button>
+                      <button aria-label={`Xóa ${displayRequestId(request)}`} onClick={() => immutableNotice(request, 'Deleting')}>
+                        <Trash2 size={15} />
+                      </button>
+                    </>
+                  )}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+        {!loadError && !loading && !filtered.length && (
+          <div className="empty-table">
+            <Search size={22} />
+            <strong>Không có request phù hợp</strong>
+            <span>Thử đổi bộ lọc hoặc tạo production request mới.</span>
+          </div>
+        )}
+        {loading && (
+          <div className="load-state">
+            <RefreshCw className="spin" size={20} />
+            <strong>Loading production requests…</strong>
+          </div>
+        )}
+      </section>
+      {details && (
+        <RequestDetails
+          request={details}
+          busy={commandBusy}
+          onClose={() => setDetails(null)}
+          onApprove={() => updateStatus('approve')}
+          onReject={() => updateStatus('reject')}
+          onRefresh={load}
+        />
+      )}
+      {creating && <NewRequest availableModules={availableModules} onClose={() => setCreating(false)} onCreate={create} />}
+    </>
+  )
 }

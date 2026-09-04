@@ -398,6 +398,22 @@ export type ProductionRequestModule = {
   moduleName: string
   version: string
   deploymentOrder: number
+  dependencies?: string[]
+  status?: string
+  deploymentId?: string | null
+  startedAt?: string | null
+  completedAt?: string | null
+  errorMessage?: string | null
+}
+
+export type ReleasePlanWave = {
+  wave: number
+  moduleIds: string[]
+}
+
+export type ReleasePlan = {
+  totalWaves: number
+  waves: ReleasePlanWave[]
 }
 
 export type ProductionRequest = {
@@ -410,15 +426,25 @@ export type ProductionRequest = {
   status: string
   deploymentId: string | null
   comment: string | null
+  strategy?: 'rolling' | 'canary' | 'blue_green'
+  strategyConfig?: Record<string, unknown>
+  releasePlan?: ReleasePlan | null
 }
 
 export type ProductionRequestCreate = {
-  modules: Array<{ moduleId: string; version: string; deploymentOrder: number }>
+  modules: Array<{
+    moduleId: string
+    version: string
+    deploymentOrder?: number
+    dependencies?: string[]
+  }>
   // No requestedBy: the server records the authenticated caller. It is one half of the
   // separation-of-duties check, so a value the browser chose would defeat the control.
   scheduledFor: string
   rollbackStrategy: 'automatic' | 'manual'
   runAutomationTests: boolean
+  strategy?: 'rolling' | 'canary' | 'blue_green'
+  strategyConfig?: Record<string, unknown>
 }
 
 export function getPortalDashboard(): Promise<PortalDashboard> {
@@ -575,6 +601,38 @@ export function rejectProductionRequest(productionRequestId: string, payload: { 
     headers: { 'X-Correlation-Id': requestId() },
     body: JSON.stringify(payload),
   })
+}
+
+export function getProductionRequestPlan(productionRequestId: string): Promise<ProductionRequest> {
+  return request<ProductionRequest>(`/production-requests/${encodeURIComponent(productionRequestId)}/plan`)
+}
+
+export function advanceCanary(
+  productionRequestId: string,
+  metrics?: Record<string, number>,
+): Promise<{ message: string; deploymentId: string; step: number; trafficWeight: number }> {
+  return request(`/production-requests/${encodeURIComponent(productionRequestId)}/canary/advance`, {
+    method: 'POST',
+    headers: { 'X-Correlation-Id': requestId() },
+    body: JSON.stringify({ metrics }),
+  })
+}
+
+export function abortCanary(
+  productionRequestId: string,
+  reason?: string,
+): Promise<{ message: string; deploymentId: string; rolledBack: boolean }> {
+  return request(`/production-requests/${encodeURIComponent(productionRequestId)}/canary/abort`, {
+    method: 'POST',
+    headers: { 'X-Correlation-Id': requestId() },
+    body: JSON.stringify({ reason }),
+  })
+}
+
+export function getDeploymentTraffic(
+  deploymentId: string,
+): Promise<{ deploymentId: string; strategy: string; trafficWeight: number; activeColor: string | null; canaryStep: number }> {
+  return request(`/deployments/${encodeURIComponent(deploymentId)}/traffic`)
 }
 
 export type DcimService = {

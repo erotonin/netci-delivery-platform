@@ -164,6 +164,12 @@ class ScmWebhookDelivery:
     received_at: datetime = field(default_factory=utc_now)
 
 
+class DeploymentStrategy(str, Enum):
+    ROLLING = "rolling"
+    CANARY = "canary"
+    BLUE_GREEN = "blue_green"
+
+
 @dataclass(frozen=True)
 class Deployment:
     application_id: UUID
@@ -180,6 +186,10 @@ class Deployment:
     # let an older result overwrite a newer one.
     fencing_token: int | None = None
     config_revision_id: UUID | None = None
+    strategy: str = "rolling"
+    traffic_weight: int = 100
+    active_color: str | None = None
+    canary_step: int = 0
     version: int = 1
     created_at: datetime = field(default_factory=utc_now)
     updated_at: datetime = field(default_factory=utc_now)

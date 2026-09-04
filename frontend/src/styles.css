@@ -553,3 +553,116 @@ textarea { min-height: 78px; padding: 9px 10px; resize: vertical; font-size: 11p
   max-width: 640px; padding: 10px 14px; border-radius: 6px;
   background: var(--surface-alt, #f2f4f7); font-size: 11px; word-break: break-word;
 }
+
+/* Phase 10: Multi-Module DAG & Progressive Delivery */
+.strategy-tag {
+  display: inline-block;
+  padding: 2px 7px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  background: var(--surface-alt, #eef2f6);
+  color: var(--muted, #475467);
+}
+.strategy-tag.canary {
+  background: #fef3f2;
+  color: #b42318;
+  border: 1px solid #fecdca;
+}
+.strategy-tag.blue_green {
+  background: #ecfdf3;
+  color: #027a48;
+  border: 1px solid #a6f4c5;
+}
+.strategy-tag.rolling {
+  background: #f0f9ff;
+  color: #026aa2;
+  border: 1px solid #b9e6fe;
+}
+.release-plan-container {
+  margin: 14px 0;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: #fafbfc;
+}
+.release-plan-container h4 {
+  font-size: 11px;
+  font-weight: 700;
+  margin-bottom: 10px;
+  color: var(--text);
+}
+.wave-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.wave-card {
+  border: 1px solid #e4e7eb;
+  border-radius: 6px;
+  background: #ffffff;
+  padding: 8px 12px;
+}
+.wave-header {
+  font-size: 10px;
+  font-weight: 700;
+  color: #6550b1;
+  text-transform: uppercase;
+  margin-bottom: 6px;
+}
+.wave-modules {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.wave-module-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  background: #f8f9fb;
+  border-radius: 4px;
+  font-size: 10px;
+}
+.canary-control-panel {
+  margin: 14px 0;
+  padding: 12px;
+  border: 1px solid #b9e6fe;
+  border-radius: 6px;
+  background: #f0f9ff;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.canary-control-panel strong {
+  font-size: 12px;
+  color: #026aa2;
+}
+.canary-control-panel .traffic-pill {
+  font-weight: 700;
+  background: #026aa2;
+  color: #fff;
+  padding: 2px 8px;
+  border-radius: 12px;
+  margin-left: 6px;
+}
+.dependency-selector {
+  margin-top: 6px;
+  padding: 6px 8px;
+  background: #f9f9fb;
+  border-radius: 4px;
+  font-size: 10px;
+}
+.dependency-checkboxes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 4px;
+}
+.dependency-checkboxes label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+}

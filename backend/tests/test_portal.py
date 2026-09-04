@@ -473,7 +473,7 @@ def test_production_approval_enforces_the_requested_automation_gate():
     assert production_run['parameters']['sourcePipelineRunId'] == run['id']
 
 
-def test_portal_refuses_multi_module_request_until_ordered_coordinator_exists():
+def test_portal_supports_multi_module_request_with_release_plan():
     client.post('/modules/hello-container/versions', json={
         'tag': 'v1.0.0',
         'gitTagUrl': 'https://github.com/example/hello-container/tags/v1.0.0',
@@ -494,7 +494,8 @@ def test_portal_refuses_multi_module_request_until_ordered_coordinator_exists():
         ],
     })
 
-    assert response.status_code == 422
+    assert response.status_code == 201
+    assert len(response.json()['modules']) == 2
 
 
 def test_production_request_creation_is_idempotent_for_the_same_key():
