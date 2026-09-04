@@ -17,11 +17,13 @@ from uuid import UUID
 
 from ..domain.models import (
     Application,
+    ConfigRevisionStatus,
     DeliveryEvent,
     DeliveryEventType,
     Deployment,
     DeploymentStatus,
     Environment,
+    ModuleConfigRevision,
     PipelineRun,
     PipelineStage,
     PipelineStatus,
@@ -30,6 +32,7 @@ from ..domain.models import (
     ScmIntegration,
     ScmProviderType,
     ScmWebhookDelivery,
+    ServerHealthRecord,
 )
 from ..persistence import (
     AuditRecord,
@@ -64,7 +67,8 @@ APPLICATION_COLUMNS = (
 )
 RUN_COLUMNS = (
     "id, application_id, status, commit_sha, branch, environment, parameters, correlation_id,"
-    " jenkins_run_id, workflow_id, artifact_digest, started_by, console_url, retry_of, version, created_at, updated_at"
+    " jenkins_run_id, workflow_id, artifact_digest, started_by, console_url, retry_of,"
+    " config_revision_id, version, created_at, updated_at"
 )
 STAGE_COLUMNS = (
     "id, pipeline_run_id, stage_id, stage_name, attempt, status, queued_at, started_at,"
@@ -80,7 +84,7 @@ SCM_DELIVERY_COLUMNS = (
 )
 DEPLOYMENT_COLUMNS = (
     "id, application_id, pipeline_run_id, runtime, environment, status, artifact_digest,"
-    " previous_artifact_digest, approved_by, fencing_token, version, created_at, updated_at"
+    " previous_artifact_digest, approved_by, fencing_token, config_revision_id, version, created_at, updated_at"
 )
 EVENT_COLUMNS = (
     "id, event_type, application_id, pipeline_run_id, deployment_id, commit_sha, environment,"
@@ -92,11 +96,18 @@ AUDIT_COLUMNS = (
 )
 MODULE_COLUMNS = (
     "id, system_id, application_id, runtime, name, module_type, description,"
-    " deployment_config, pipeline_config"
+    " deployment_config, pipeline_config, active_config_revision_id, config_version"
 )
 REQUEST_COLUMNS = (
     "id, module_id, version, requested_by, scheduled_for, rollback_strategy,"
     " run_automation_tests, status, deployment_id, comment, idempotency_key, request_hash"
+)
+CONFIG_REVISION_COLUMNS = (
+    "id, module_id, revision_number, pipeline_config, deployment_config, change_summary,"
+    " status, created_by, approved_by, approved_at, rejection_reason, created_at"
+)
+SERVER_HEALTH_COLUMNS = (
+    "server_name, status, source, freshness_seconds, details, observed_at"
 )
 
 
@@ -130,6 +141,7 @@ def _run(row: dict[str, Any]) -> PipelineRun:
         started_by=row["started_by"],
         console_url=row.get("console_url"),
         retry_of=row.get("retry_of"),
+        config_revision_id=row.get("config_revision_id"),
         version=int(row["version"] or 1),
         created_at=row["created_at"],
         updated_at=row["updated_at"],
@@ -195,6 +207,7 @@ def _deployment(row: dict[str, Any]) -> Deployment:
         previous_artifact_digest=row["previous_artifact_digest"],
         approved_by=row["approved_by"],
         fencing_token=int(row["fencing_token"]) if row["fencing_token"] is not None else None,
+        config_revision_id=row.get("config_revision_id"),
         version=int(row["version"] or 1),
         created_at=row["created_at"],
         updated_at=row["updated_at"],
@@ -234,6 +247,9 @@ def _module(row: dict[str, Any]) -> ModuleRow:
     application_id = row["application_id"]
     if application_id is not None and not isinstance(application_id, UUID):
         application_id = UUID(str(application_id))
+    active_rev_id = row.get("active_config_revision_id")
+    if active_rev_id is not None and not isinstance(active_rev_id, UUID):
+        active_rev_id = UUID(str(active_rev_id))
     return ModuleRow(
         id=str(row["id"]),
         system_id=str(row["system_id"]),
@@ -244,6 +260,36 @@ def _module(row: dict[str, Any]) -> ModuleRow:
         application_id=application_id,
         deployment_config=list(row["deployment_config"] or []),
         pipeline_config=dict(row["pipeline_config"] or {}),
+        active_config_revision_id=active_rev_id,
+        config_version=int(row.get("config_version") or 1),
+    )
+
+
+def _config_revision(row: dict[str, Any]) -> ModuleConfigRevision:
+    return ModuleConfigRevision(
+        id=row["id"],
+        module_id=str(row["module_id"]),
+        revision_number=int(row["revision_number"]),
+        pipeline_config=dict(row["pipeline_config"] or {}),
+        deployment_config=list(row["deployment_config"] or []),
+        change_summary=str(row.get("change_summary") or ""),
+        status=ConfigRevisionStatus(row["status"]),
+        created_by=str(row["created_by"]),
+        approved_by=row.get("approved_by"),
+        approved_at=row.get("approved_at"),
+        rejection_reason=row.get("rejection_reason"),
+        created_at=row["created_at"],
+    )
+
+
+def _server_health(row: dict[str, Any]) -> ServerHealthRecord:
+    return ServerHealthRecord(
+        server_name=str(row["server_name"]),
+        status=str(row["status"]),
+        source=str(row["source"]),
+        freshness_seconds=int(row.get("freshness_seconds") or 0),
+        details=dict(row.get("details") or {}),
+        observed_at=row["observed_at"],
     )
 
 
@@ -718,8 +764,8 @@ class PostgresSession:
                 INSERT INTO pipeline_runs (id, application_id, commit_sha, branch, environment,
                                            parameters, status, jenkins_run_id, workflow_id,
                                            artifact_digest, correlation_id, started_by,
-                                           console_url, retry_of, version, created_at, updated_at)
-                VALUES (%s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                                           console_url, retry_of, config_revision_id, version, created_at, updated_at)
+                VALUES (%s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
                     run.id,
@@ -736,6 +782,7 @@ class PostgresSession:
                     run.started_by,
                     run.console_url,
                     run.retry_of,
+                    run.config_revision_id,
                     run.version,
                     run.created_at,
                     run.updated_at,
@@ -772,8 +819,8 @@ class PostgresSession:
                 """
                 INSERT INTO deployments (id, application_id, pipeline_run_id, runtime, environment,
                                          status, artifact_digest, previous_artifact_digest,
-                                         approved_by, fencing_token, version, created_at, updated_at)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                                         approved_by, fencing_token, config_revision_id, version, created_at, updated_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
                     deployment.id,
@@ -786,6 +833,7 @@ class PostgresSession:
                     deployment.previous_artifact_digest,
                     deployment.approved_by,
                     deployment.fencing_token,
+                    deployment.config_revision_id,
                     deployment.version,
                     deployment.created_at,
                     deployment.updated_at,
@@ -995,7 +1043,7 @@ class PostgresSession:
         self._cursor.execute(
             f"""
             INSERT INTO modules ({MODULE_COLUMNS})
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb, %s, %s)
             """,
             (
                 row.id,
@@ -1007,6 +1055,8 @@ class PostgresSession:
                 row.description,
                 json.dumps(row.deployment_config, default=str),
                 json.dumps(row.pipeline_config, default=str),
+                row.active_config_revision_id,
+                row.config_version,
             ),
         )
 
@@ -1265,6 +1315,177 @@ class PostgresSession:
             (pipeline_run_id,),
         )
         return tuple(_stage(row) for row in self._cursor.fetchall())
+
+    # ---------------------------------------- versioned config & server health
+
+    def config_revisions(self, module_id: str) -> tuple[ModuleConfigRevision, ...]:
+        self._cursor.execute(
+            f"SELECT {CONFIG_REVISION_COLUMNS} FROM module_config_revisions WHERE module_id = %s ORDER BY revision_number DESC",
+            (module_id,),
+        )
+        return tuple(_config_revision(row) for row in self._cursor.fetchall())
+
+    def config_revision(self, revision_id: UUID) -> ModuleConfigRevision | None:
+        self._cursor.execute(
+            f"SELECT {CONFIG_REVISION_COLUMNS} FROM module_config_revisions WHERE id = %s",
+            (revision_id,),
+        )
+        row = self._cursor.fetchone()
+        return _config_revision(row) if row else None
+
+    def config_revision_by_number(
+        self, module_id: str, revision_number: int
+    ) -> ModuleConfigRevision | None:
+        self._cursor.execute(
+            f"SELECT {CONFIG_REVISION_COLUMNS} FROM module_config_revisions WHERE module_id = %s AND revision_number = %s",
+            (module_id, revision_number),
+        )
+        row = self._cursor.fetchone()
+        return _config_revision(row) if row else None
+
+    def active_config_revision(self, module_id: str) -> ModuleConfigRevision | None:
+        self._cursor.execute(
+            f"""
+            SELECT r.* FROM module_config_revisions r
+            JOIN modules m ON m.active_config_revision_id = r.id
+            WHERE m.id = %s
+            """,
+            (module_id,),
+        )
+        row = self._cursor.fetchone()
+        return _config_revision(row) if row else None
+
+    def record_config_revision(
+        self, revision: ModuleConfigRevision
+    ) -> ModuleConfigRevision:
+        self._cursor.execute(
+            f"""
+            INSERT INTO module_config_revisions (
+                id, module_id, revision_number, pipeline_config, deployment_config,
+                change_summary, status, created_by, approved_by, approved_at,
+                rejection_reason, created_at
+            ) VALUES (%s, %s, %s, %s::jsonb, %s::jsonb, %s, %s, %s, %s, %s, %s, %s)
+            RETURNING {CONFIG_REVISION_COLUMNS}
+            """,
+            (
+                revision.id,
+                revision.module_id,
+                revision.revision_number,
+                json.dumps(revision.pipeline_config, default=str),
+                json.dumps(revision.deployment_config, default=str),
+                revision.change_summary,
+                revision.status.value,
+                revision.created_by,
+                revision.approved_by,
+                revision.approved_at,
+                revision.rejection_reason,
+                revision.created_at,
+            ),
+        )
+        row = self._cursor.fetchone()
+        return _config_revision(row)
+
+    def update_config_revision_status(
+        self,
+        revision_id: UUID,
+        status: ConfigRevisionStatus,
+        approved_by: str | None = None,
+        approved_at: datetime | None = None,
+        rejection_reason: str | None = None,
+    ) -> ModuleConfigRevision | None:
+        self._cursor.execute(
+            f"""
+            UPDATE module_config_revisions
+               SET status = %s, approved_by = COALESCE(%s, approved_by),
+                   approved_at = COALESCE(%s, approved_at),
+                   rejection_reason = COALESCE(%s, rejection_reason)
+             WHERE id = %s
+            RETURNING {CONFIG_REVISION_COLUMNS}
+            """,
+            (status.value, approved_by, approved_at, rejection_reason, revision_id),
+        )
+        row = self._cursor.fetchone()
+        return _config_revision(row) if row else None
+
+    def replace_portal_module_config(
+        self,
+        module_id: str,
+        *,
+        deployment_config: list[dict[str, Any]],
+        pipeline_config: dict[str, Any],
+    ) -> None:
+        self._cursor.execute(
+            "UPDATE modules SET deployment_config = %s::jsonb, pipeline_config = %s::jsonb"
+            " WHERE id = %s",
+            (
+                json.dumps(deployment_config, default=str),
+                json.dumps(pipeline_config, default=str),
+                module_id,
+            ),
+        )
+
+    def set_module_active_revision(
+        self, module_id: str, revision_id: UUID, expected_config_version: int
+    ) -> bool:
+        # Fetch the revision to sync pipeline_config and deployment_config to modules row
+        rev = self.config_revision(revision_id)
+        if not rev:
+            return False
+        self._cursor.execute(
+            """
+            UPDATE modules
+               SET active_config_revision_id = %s,
+                   config_version = config_version + 1,
+                   pipeline_config = %s::jsonb,
+                   deployment_config = %s::jsonb
+             WHERE id = %s AND config_version = %s
+            """,
+            (
+                revision_id,
+                json.dumps(rev.pipeline_config, default=str),
+                json.dumps(rev.deployment_config, default=str),
+                module_id,
+                expected_config_version,
+            ),
+        )
+        return self._cursor.rowcount == 1
+
+    def server_health(self, server_name: str) -> ServerHealthRecord | None:
+        self._cursor.execute(
+            f"SELECT {SERVER_HEALTH_COLUMNS} FROM server_health_records WHERE server_name = %s",
+            (server_name,),
+        )
+        row = self._cursor.fetchone()
+        return _server_health(row) if row else None
+
+    def list_server_health(self) -> tuple[ServerHealthRecord, ...]:
+        self._cursor.execute(
+            f"SELECT {SERVER_HEALTH_COLUMNS} FROM server_health_records ORDER BY server_name"
+        )
+        return tuple(_server_health(row) for row in self._cursor.fetchall())
+
+    def record_server_health(self, record: ServerHealthRecord) -> None:
+        self._cursor.execute(
+            """
+            INSERT INTO server_health_records (
+                server_name, status, source, freshness_seconds, details, observed_at
+            ) VALUES (%s, %s, %s, %s, %s::jsonb, %s)
+            ON CONFLICT (server_name) DO UPDATE SET
+                status = EXCLUDED.status,
+                source = EXCLUDED.source,
+                freshness_seconds = EXCLUDED.freshness_seconds,
+                details = EXCLUDED.details,
+                observed_at = EXCLUDED.observed_at
+            """,
+            (
+                record.server_name,
+                record.status,
+                record.source,
+                record.freshness_seconds,
+                json.dumps(record.details, default=str),
+                record.observed_at,
+            ),
+        )
 
 
 class PostgresDatabase:

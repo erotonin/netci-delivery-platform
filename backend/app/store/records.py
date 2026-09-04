@@ -33,6 +33,8 @@ class ModuleRow:
     application_id: UUID | None = None
     deployment_config: list[dict[str, Any]] = field(default_factory=list)
     pipeline_config: dict[str, Any] = field(default_factory=dict)
+    active_config_revision_id: UUID | None = None
+    config_version: int = 1
 
 
 @dataclass(frozen=True)

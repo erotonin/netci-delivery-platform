@@ -22,14 +22,17 @@ from uuid import UUID, uuid4
 
 from ..domain.models import (
     Application,
+    ConfigRevisionStatus,
     DeliveryEvent,
     Deployment,
+    ModuleConfigRevision,
     PipelineRun,
     PipelineStage,
     ScmCommitStatus,
     ScmIntegration,
     ScmProviderType,
     ScmWebhookDelivery,
+    ServerHealthRecord,
 )
 from ..persistence import (
     AuditRecord,
@@ -64,6 +67,8 @@ class _State:
     scm_integrations: dict[UUID, ScmIntegration] = field(default_factory=dict)
     scm_deliveries: dict[str, ScmWebhookDelivery] = field(default_factory=dict)
     stages: dict[tuple[UUID, str, int], PipelineStage] = field(default_factory=dict)
+    config_revisions: dict[UUID, ModuleConfigRevision] = field(default_factory=dict)
+    server_health: dict[str, ServerHealthRecord] = field(default_factory=dict)
 
     def copy(self) -> "_State":
         return _State(
@@ -87,6 +92,8 @@ class _State:
             scm_integrations=dict(self.scm_integrations),
             scm_deliveries=dict(self.scm_deliveries),
             stages=dict(self.stages),
+            config_revisions=dict(self.config_revisions),
+            server_health=dict(self.server_health),
         )
 
 
@@ -550,6 +557,104 @@ class InMemorySession:
         ]
         matching.sort(key=lambda s: (s.created_at, s.attempt, s.stage_id))
         return tuple(matching)
+
+    # ---------------------------------------- versioned config & server health
+
+    def config_revisions(self, module_id: str) -> tuple[ModuleConfigRevision, ...]:
+        revs = [r for r in self._state.config_revisions.values() if r.module_id == module_id]
+        revs.sort(key=lambda r: r.revision_number, reverse=True)
+        return tuple(revs)
+
+    def config_revision(self, revision_id: UUID) -> ModuleConfigRevision | None:
+        return self._state.config_revisions.get(revision_id)
+
+    def config_revision_by_number(
+        self, module_id: str, revision_number: int
+    ) -> ModuleConfigRevision | None:
+        for r in self._state.config_revisions.values():
+            if r.module_id == module_id and r.revision_number == revision_number:
+                return r
+        return None
+
+    def active_config_revision(self, module_id: str) -> ModuleConfigRevision | None:
+        mod = self._state.modules.get(module_id)
+        if not mod or not mod.active_config_revision_id:
+            return None
+        return self._state.config_revisions.get(mod.active_config_revision_id)
+
+    def record_config_revision(
+        self, revision: ModuleConfigRevision
+    ) -> ModuleConfigRevision:
+        self._state.config_revisions[revision.id] = revision
+        return revision
+
+    def update_config_revision_status(
+        self,
+        revision_id: UUID,
+        status: ConfigRevisionStatus,
+        approved_by: str | None = None,
+        approved_at: datetime | None = None,
+        rejection_reason: str | None = None,
+    ) -> ModuleConfigRevision | None:
+        rev = self._state.config_revisions.get(revision_id)
+        if not rev:
+            return None
+        updated = replace(
+            rev,
+            status=status,
+            approved_by=approved_by if approved_by is not None else rev.approved_by,
+            approved_at=approved_at if approved_at is not None else rev.approved_at,
+            rejection_reason=rejection_reason if rejection_reason is not None else rev.rejection_reason,
+        )
+        self._state.config_revisions[revision_id] = updated
+        return updated
+
+    def replace_portal_module_config(
+        self,
+        module_id: str,
+        *,
+        deployment_config: list[dict[str, Any]],
+        pipeline_config: dict[str, Any],
+    ) -> None:
+        current = self._state.modules.get(module_id)
+        if current is None:
+            raise KeyError("module not found")
+        self._state.modules[module_id] = replace(
+            current,
+            deployment_config=list(deployment_config),
+            pipeline_config=dict(pipeline_config),
+        )
+
+    def set_module_active_revision(
+        self, module_id: str, revision_id: UUID, expected_config_version: int
+    ) -> bool:
+        mod = self._state.modules.get(module_id)
+        if not mod:
+            return False
+        if mod.config_version != expected_config_version:
+            return False
+        rev = self._state.config_revisions.get(revision_id)
+        if not rev:
+            return False
+        self._state.modules[module_id] = replace(
+            mod,
+            active_config_revision_id=revision_id,
+            config_version=mod.config_version + 1,
+            pipeline_config=dict(rev.pipeline_config),
+            deployment_config=list(rev.deployment_config),
+        )
+        return True
+
+    def server_health(self, server_name: str) -> ServerHealthRecord | None:
+        return self._state.server_health.get(server_name)
+
+    def list_server_health(self) -> tuple[ServerHealthRecord, ...]:
+        records = list(self._state.server_health.values())
+        records.sort(key=lambda r: r.server_name)
+        return tuple(records)
+
+    def record_server_health(self, record: ServerHealthRecord) -> None:
+        self._state.server_health[record.server_name] = record
 
 
 class InMemoryDatabase:

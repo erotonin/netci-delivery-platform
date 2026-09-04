@@ -1,15 +1,17 @@
 import { useEffect, useState } from 'react'
 import {
-  ArrowLeft, Box, CheckCircle2, Code2, Copy, ExternalLink, GitBranch,
-  History, MoreHorizontal, Play, Plus, RotateCcw, Settings, TerminalSquare,
-  XCircle, ZoomIn, ZoomOut,
+  ArrowLeft, Box, Check, CheckCircle2, Code2, Copy, ExternalLink, GitBranch,
+  History, MoreHorizontal, Play, Plus, RotateCcw, Settings, ShieldAlert,
+  TerminalSquare, XCircle, ZoomIn, ZoomOut,
 } from 'lucide-react'
 import {
-  cancelPipelineRun, createModuleVersion, getDora, getModule, getModuleOverview,
-  getPipelineLogs, getPipelineStages, listModulePipelineRuns, listModuleVersions,
-  retryPipelineRun, startModulePipeline, type Environment, type ModuleOverview,
-  type ModulePipelineConfig, type ModuleVersion, type PipelineRun, type PipelineStage,
-  type Runtime,
+  approveConfigRevision, cancelPipelineRun, createModuleVersion, detectDrift,
+  diffConfigRevisions, getDora, getModule, getModuleOverview, getPipelineLogs,
+  getPipelineStages, listConfigRevisions, listModulePipelineRuns, listModuleVersions,
+  proposeConfigRevision, rejectConfigRevision, retryPipelineRun, rollbackConfigRevision,
+  startModulePipeline, type ConfigDriftReport, type ConfigRevision, type ConfigRevisionDiff,
+  type Environment, type ModuleOverview, type ModulePipelineConfig, type ModuleVersion,
+  type PipelineRun, type PipelineStage, type Runtime,
 } from './api/netciClient'
 import { usePortalFeedback } from './PortalFeedback'
 import { DoraCards, Modal, StatusPill } from './PortalShell'
@@ -380,6 +382,518 @@ function DoraTab({ moduleId }: { moduleId: string }) {
   return <><div className="dora-toolbar"><div><p>{windowLabel} · {provenance} · updated {updatedAt}</p></div><button className="secondary-button" disabled={loading} aria-label="Refresh DORA metrics" onClick={load}><RotateCcw size={15} />{loading ? 'Loading…' : 'Refresh'}</button></div><DoraCards metrics={metrics} /></>
 }
 
+function ConfigTab({ moduleId }: { moduleId: string }) {
+  const { notify } = usePortalFeedback()
+  const [revisions, setRevisions] = useState<ConfigRevision[]>([])
+  const [configVersion, setConfigVersion] = useState<number>(1)
+  const [driftReport, setDriftReport] = useState<ConfigDriftReport | null>(null)
+  const [loadingDrift, setLoadingDrift] = useState(false)
+
+  // Modals
+  const [proposeModal, setProposeModal] = useState(false)
+  const [diffModal, setDiffModal] = useState<{ from: number; to: number; diff: ConfigRevisionDiff | null } | null>(null)
+  const [rejectModal, setRejectModal] = useState<ConfigRevision | null>(null)
+  const [rejectReason, setRejectReason] = useState('')
+  const [submitting, setSubmitting] = useState(false)
+
+  // Propose form state
+  const [changeSummary, setChangeSummary] = useState('')
+  const [runner, setRunner] = useState('jenkins-primary')
+  const [stagesText, setStagesText] = useState('checkout, unit-test, build, sbom, vulnerability-scan, sign, publish, deploy')
+  const [devServers, setDevServers] = useState('srv-dev-01.internal')
+  const [stagingServers, setStagingServers] = useState('srv-staging-01.internal')
+  const [prodServers, setProdServers] = useState('srv-prod-01.internal')
+  const [useRawJson, setUseRawJson] = useState(false)
+  const [pipelineJsonText, setPipelineJsonText] = useState('{}')
+  const [deploymentJsonText, setDeploymentJsonText] = useState('[]')
+  const [formError, setFormError] = useState('')
+
+  const loadRevisions = async () => {
+    try {
+      const data = await listConfigRevisions(moduleId)
+      setRevisions(data.items)
+      setConfigVersion(data.configVersion)
+    } catch (error) {
+      notify(error instanceof Error ? error.message : 'Unable to load configuration revisions.', 'error')
+    }
+  }
+
+  const checkDrift = async () => {
+    setLoadingDrift(true)
+    try {
+      const report = await detectDrift(moduleId)
+      setDriftReport(report)
+      if (report.hasDrift) {
+        notify('Configuration drift detected between active revision and running deployments or DCIM targets.', 'error')
+      } else {
+        notify('No configuration drift. Desired state matches running deployments and DCIM targets.')
+      }
+    } catch (error) {
+      notify(error instanceof Error ? error.message : 'Unable to run drift detection.', 'error')
+    } finally {
+      setLoadingDrift(false)
+    }
+  }
+
+  useEffect(() => {
+    void loadRevisions()
+    void checkDrift()
+  }, [moduleId])
+
+  const openProposeModal = () => {
+    const active = revisions.find((r) => r.active) ?? revisions[0]
+    if (active) {
+      setRunner(String(active.pipelineConfig.runner ?? 'jenkins-primary'))
+      const stages = Array.isArray(active.pipelineConfig.stages) ? active.pipelineConfig.stages.join(', ') : 'checkout, unit-test, build'
+      setStagesText(stages)
+      const getServers = (env: string) => {
+        const item = active.deploymentConfig.find((d) => d.environment === env)
+        return Array.isArray(item?.servers) ? (item.servers as string[]).join(', ') : ''
+      }
+      setDevServers(getServers('dev') || 'srv-dev-01.internal')
+      setStagingServers(getServers('staging') || 'srv-staging-01.internal')
+      setProdServers(getServers('prod') || 'srv-prod-01.internal')
+      setPipelineJsonText(JSON.stringify(active.pipelineConfig, null, 2))
+      setDeploymentJsonText(JSON.stringify(active.deploymentConfig, null, 2))
+    }
+    setChangeSummary('')
+    setFormError('')
+    setProposeModal(true)
+  }
+
+  const handlePropose = async () => {
+    if (!changeSummary.trim()) {
+      setFormError('Please enter a summary of changes for the revision.')
+      return
+    }
+    setSubmitting(true)
+    setFormError('')
+    try {
+      let pipelineConfig: Record<string, unknown> = {}
+      let deploymentConfig: Array<Record<string, unknown>> = []
+
+      if (useRawJson) {
+        try {
+          pipelineConfig = JSON.parse(pipelineJsonText)
+          deploymentConfig = JSON.parse(deploymentJsonText)
+        } catch {
+          setFormError('Invalid JSON format in pipelineConfig or deploymentConfig.')
+          setSubmitting(false)
+          return
+        }
+      } else {
+        pipelineConfig = {
+          runner: runner.trim(),
+          stages: stagesText.split(',').map((s) => s.trim()).filter(Boolean),
+        }
+        deploymentConfig = [
+          { environment: 'dev', servers: devServers.split(',').map((s) => s.trim()).filter(Boolean) },
+          { environment: 'staging', servers: stagingServers.split(',').map((s) => s.trim()).filter(Boolean) },
+          { environment: 'prod', servers: prodServers.split(',').map((s) => s.trim()).filter(Boolean) },
+        ]
+      }
+
+      const res = await proposeConfigRevision(moduleId, {
+        changeSummary: changeSummary.trim(),
+        pipelineConfig,
+        deploymentConfig,
+      })
+
+      setProposeModal(false)
+      await loadRevisions()
+      if (res.requiresApproval) {
+        notify(`Revision #${res.revisionNumber} proposed. Modifies production and requires separate approval.`, 'info')
+      } else {
+        notify(`Revision #${res.revisionNumber} created and activated successfully!`)
+      }
+    } catch (error) {
+      setFormError(error instanceof Error ? error.message : 'Unable to propose configuration revision.')
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  const handleApprove = async (revId: string, revNumber: number) => {
+    try {
+      await approveConfigRevision(moduleId, revId)
+      notify(`Revision #${revNumber} approved and activated!`)
+      await loadRevisions()
+      await checkDrift()
+    } catch (error) {
+      notify(error instanceof Error ? error.message : 'Unable to approve configuration revision.', 'error')
+    }
+  }
+
+  const handleReject = async () => {
+    if (!rejectModal) return
+    if (!rejectReason.trim()) {
+      notify('Please provide a reason for rejecting the revision.', 'error')
+      return
+    }
+    try {
+      await rejectConfigRevision(moduleId, rejectModal.id, rejectReason.trim())
+      notify(`Revision #${rejectModal.revisionNumber} rejected.`)
+      setRejectModal(null)
+      setRejectReason('')
+      await loadRevisions()
+    } catch (error) {
+      notify(error instanceof Error ? error.message : 'Unable to reject revision.', 'error')
+    }
+  }
+
+  const handleRollback = async (revNumber: number) => {
+    if (!window.confirm(`Are you sure you want to rollback to Revision #${revNumber}? This will create a new immutable revision cloning its configuration.`)) {
+      return
+    }
+    try {
+      const res = await rollbackConfigRevision(moduleId, revNumber)
+      notify(`Rolled back to revision #${revNumber}. Created revision #${res.revisionNumber}.`)
+      await loadRevisions()
+      await checkDrift()
+    } catch (error) {
+      notify(error instanceof Error ? error.message : 'Unable to rollback revision.', 'error')
+    }
+  }
+
+  const handleViewDiff = async (fromRev: number, toRev: number) => {
+    try {
+      const diff = await diffConfigRevisions(moduleId, fromRev, toRev)
+      setDiffModal({ from: fromRev, to: toRev, diff })
+    } catch (error) {
+      notify(error instanceof Error ? error.message : 'Unable to compute diff.', 'error')
+    }
+  }
+
+  const activeRev = revisions.find((r) => r.active)
+  const pendingRev = revisions.find((r) => r.status === 'pending_approval')
+
+  return (
+    <div className="config-tab">
+      {pendingRev && (
+        <section className="panel" style={{ borderLeft: '4px solid #f59e0b', background: 'rgba(245, 158, 11, 0.08)', marginBottom: 20 }}>
+          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 16 }}>
+            <span style={{ color: '#f59e0b', marginTop: 2 }}><ShieldAlert size={24} /></span>
+            <div style={{ flex: 1 }}>
+              <h3 style={{ margin: '0 0 6px 0', fontSize: '1.1rem' }}>
+                Revision #{pendingRev.revisionNumber} requires production change approval
+              </h3>
+              <p style={{ margin: '0 0 8px 0', color: 'var(--text-secondary)' }}>
+                Proposed by <strong>{pendingRev.createdBy}</strong> at {new Date(pendingRev.createdAt).toLocaleString('vi-VN')}: <em>"{pendingRev.changeSummary}"</em>
+              </p>
+              <small style={{ display: 'block', color: 'var(--text-muted)', marginBottom: 12 }}>
+                Separation of duties applies: the author of a production configuration cannot approve their own change.
+              </small>
+              <div style={{ display: 'flex', gap: 10 }}>
+                <button className="primary-button" onClick={() => handleApprove(pendingRev.id, pendingRev.revisionNumber)}>
+                  <Check size={15} /> Approve & Activate
+                </button>
+                <button className="secondary-button" onClick={() => setRejectModal(pendingRev)}>
+                  <XCircle size={15} /> Reject
+                </button>
+                {activeRev && (
+                  <button className="secondary-button" onClick={() => handleViewDiff(activeRev.revisionNumber, pendingRev.revisionNumber)}>
+                    <ExternalLink size={15} /> View Changes Diff
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        </section>
+      )}
+
+      <div className="tab-toolbar" style={{ marginBottom: 16 }}>
+        <div>
+          <h2>Environment & Pipeline Configuration</h2>
+          <p>
+            Immutable, versioned domain configuration with compare-and-set pointer (CAS Version: {configVersion}) and DCIM lifecycle validation.
+          </p>
+        </div>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button className="secondary-button" disabled={loadingDrift} onClick={checkDrift}>
+            <RotateCcw size={15} /> {loadingDrift ? 'Detecting…' : 'Check Drift'}
+          </button>
+          <button className="primary-button" onClick={openProposeModal}>
+            <Plus size={16} /> Propose Revision
+          </button>
+        </div>
+      </div>
+
+      {driftReport && (
+        <section className="panel" style={{ marginBottom: 20, borderLeft: driftReport.hasDrift ? '4px solid #ef4444' : '4px solid #10b981' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <span style={{ color: driftReport.hasDrift ? '#ef4444' : '#10b981' }}>
+                {driftReport.hasDrift ? <XCircle size={20} /> : <CheckCircle2 size={20} />}
+              </span>
+              <strong>{driftReport.hasDrift ? 'Configuration Drift Detected' : 'Configuration In Sync'}</strong>
+            </div>
+            <small style={{ color: 'var(--text-muted)' }}>
+              Targeting active revision #{activeRev?.revisionNumber ?? '—'}
+            </small>
+          </div>
+          {driftReport.hasDrift ? (
+            <div style={{ fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
+              {driftReport.deploymentDrift.filter(d => d.drifted).map((d, i) => (
+                <div key={`dep-${i}`} style={{ marginBottom: 4 }}>
+                  • <strong>{d.environment} deployment</strong>: running revision {d.runningConfigRevisionId?.slice(0, 8) ?? 'none'} does not match active desired revision {d.desiredConfigRevisionId?.slice(0, 8) ?? 'none'}. {d.reason}
+                </div>
+              ))}
+              {driftReport.dcimDrift.filter(d => d.drifted).map((d, i) => (
+                <div key={`dcim-${i}`} style={{ marginBottom: 4 }}>
+                  • <strong>{d.environment} target host ({d.server})</strong>: DCIM status is <code>{d.dcimStatus}</code> ({d.message}).
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p style={{ margin: 0, fontSize: '0.88rem', color: 'var(--text-muted)' }}>
+              All running deployment environments match the active desired configuration revision, and all DCIM target hosts are validated online.
+            </p>
+          )}
+        </section>
+      )}
+
+      {activeRev && (
+        <section className="panel" style={{ marginBottom: 24, padding: 18 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+            <div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
+                <h3 style={{ margin: 0 }}>Active: Revision #{activeRev.revisionNumber}</h3>
+                <StatusPill status="active" />
+                <span className="mono" style={{ fontSize: '0.8rem', opacity: 0.7 }}>({activeRev.id.slice(0, 8)})</span>
+              </div>
+              <p style={{ margin: '0 0 6px 0', color: 'var(--text-secondary)' }}>{activeRev.changeSummary}</p>
+              <small style={{ color: 'var(--text-muted)' }}>
+                Created by {activeRev.createdBy} on {new Date(activeRev.createdAt).toLocaleString('vi-VN')}
+                {activeRev.approvedBy && ` · Approved by ${activeRev.approvedBy}`}
+              </small>
+            </div>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginTop: 16, paddingTop: 16, borderTop: '1px solid var(--border)' }}>
+            <div>
+              <strong style={{ fontSize: '0.85rem', textTransform: 'uppercase', letterSpacing: 0.5, opacity: 0.8 }}>Pipeline Settings</strong>
+              <pre style={{ margin: '8px 0 0 0', padding: 10, borderRadius: 6, background: 'var(--bg-card)', fontSize: '0.8rem' }}>
+                {JSON.stringify(activeRev.pipelineConfig, null, 2)}
+              </pre>
+            </div>
+            <div>
+              <strong style={{ fontSize: '0.85rem', textTransform: 'uppercase', letterSpacing: 0.5, opacity: 0.8 }}>Deployment Target Environments</strong>
+              <pre style={{ margin: '8px 0 0 0', padding: 10, borderRadius: 6, background: 'var(--bg-card)', fontSize: '0.8rem' }}>
+                {JSON.stringify(activeRev.deploymentConfig, null, 2)}
+              </pre>
+            </div>
+          </div>
+        </section>
+      )}
+
+      <div className="panel-heading" style={{ marginBottom: 12 }}>
+        <div>
+          <h3>Configuration Revision History</h3>
+          <p>Complete immutable audit log of all proposed, approved, and rejected revisions.</p>
+        </div>
+      </div>
+
+      <section className="panel table-panel">
+        <div className="data-table">
+          <div className="table-row table-head">
+            <span>Rev</span>
+            <span>Status</span>
+            <span>Author</span>
+            <span>Created</span>
+            <span>Summary</span>
+            <span style={{ textAlign: 'right' }}>Actions</span>
+          </div>
+          {revisions.map((rev) => (
+            <div className="table-row" key={rev.id}>
+              <span>
+                <strong>#{rev.revisionNumber}</strong>
+                {rev.active && <small style={{ color: '#10b981', display: 'block', fontWeight: 600 }}>Active</small>}
+              </span>
+              <StatusPill status={rev.status.replace('_', ' ')} />
+              <span>{rev.createdBy}</span>
+              <span style={{ fontSize: '0.85rem' }}>{new Date(rev.createdAt).toLocaleString('vi-VN')}</span>
+              <span className="truncate" title={rev.changeSummary}>{rev.changeSummary}</span>
+              <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
+                {activeRev && rev.revisionNumber !== activeRev.revisionNumber && (
+                  <button
+                    className="secondary-button"
+                    style={{ padding: '4px 8px', fontSize: '0.8rem' }}
+                    onClick={() => handleViewDiff(rev.revisionNumber, activeRev.revisionNumber)}
+                  >
+                    Diff with Active
+                  </button>
+                )}
+                {!rev.active && rev.status !== 'rejected' && (
+                  <button
+                    className="secondary-button"
+                    style={{ padding: '4px 8px', fontSize: '0.8rem' }}
+                    onClick={() => handleRollback(rev.revisionNumber)}
+                  >
+                    Rollback
+                  </button>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      {proposeModal && (
+        <Modal
+          title="Propose Configuration Revision"
+          description="Create a new immutable revision. Changes to production will require separate approval."
+          onClose={() => setProposeModal(false)}
+          footer={
+            <>
+              <button className="secondary-button" onClick={() => setProposeModal(false)}>Cancel</button>
+              <button className="primary-button" disabled={submitting || !changeSummary.trim()} onClick={handlePropose}>
+                {submitting ? 'Proposing…' : 'Propose Revision'}
+              </button>
+            </>
+          }
+        >
+          <div className="form-grid">
+            <label className="field full">
+              <span>Change Summary *</span>
+              <input
+                value={changeSummary}
+                onChange={(e) => setChangeSummary(e.target.value)}
+                placeholder="Describe what changed and why (e.g., scale up prod workers, add staging host)"
+              />
+            </label>
+
+            <div className="field full" style={{ display: 'flex', justifyContent: 'flex-end' }}>
+              <button
+                type="button"
+                className="secondary-button"
+                style={{ fontSize: '0.8rem', padding: '4px 8px' }}
+                onClick={() => setUseRawJson(!useRawJson)}
+              >
+                {useRawJson ? 'Switch to Form Fields' : 'Switch to Raw JSON Editor'}
+              </button>
+            </div>
+
+            {useRawJson ? (
+              <>
+                <label className="field full">
+                  <span>pipelineConfig (JSON)</span>
+                  <textarea
+                    rows={6}
+                    className="mono"
+                    value={pipelineJsonText}
+                    onChange={(e) => setPipelineJsonText(e.target.value)}
+                  />
+                </label>
+                <label className="field full">
+                  <span>deploymentConfig (JSON Array)</span>
+                  <textarea
+                    rows={6}
+                    className="mono"
+                    value={deploymentJsonText}
+                    onChange={(e) => setDeploymentJsonText(e.target.value)}
+                  />
+                </label>
+              </>
+            ) : (
+              <>
+                <label className="field">
+                  <span>Pipeline Runner</span>
+                  <input value={runner} onChange={(e) => setRunner(e.target.value)} />
+                </label>
+                <label className="field full">
+                  <span>Pipeline Stages (comma-separated)</span>
+                  <input value={stagesText} onChange={(e) => setStagesText(e.target.value)} />
+                </label>
+                <label className="field full">
+                  <span>Development Target Servers (comma-separated)</span>
+                  <input value={devServers} onChange={(e) => setDevServers(e.target.value)} />
+                </label>
+                <label className="field full">
+                  <span>Staging Target Servers (comma-separated)</span>
+                  <input value={stagingServers} onChange={(e) => setStagingServers(e.target.value)} />
+                </label>
+                <label className="field full">
+                  <span>Production Target Servers (comma-separated, triggers approval)</span>
+                  <input value={prodServers} onChange={(e) => setProdServers(e.target.value)} />
+                </label>
+              </>
+            )}
+
+            {formError && <div className="inline-error full" role="alert">{formError}</div>}
+          </div>
+        </Modal>
+      )}
+
+      {diffModal && (
+        <Modal
+          title={`Diff: Revision #${diffModal.from} → Revision #${diffModal.to}`}
+          description="Structural differences between configuration revisions."
+          onClose={() => setDiffModal(null)}
+          footer={<button className="secondary-button" onClick={() => setDiffModal(null)}>Close</button>}
+        >
+          {diffModal.diff && (
+            <div>
+              <p style={{ marginBottom: 12 }}>
+                <strong>{diffModal.diff.changeCount}</strong> change{diffModal.diff.changeCount === 1 ? '' : 's'} recorded:
+              </p>
+              {diffModal.diff.changes.length === 0 ? (
+                <div style={{ color: 'var(--text-muted)' }}>No differences found between these revisions.</div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                  {diffModal.diff.changes.map((change, idx) => (
+                    <div key={idx} style={{ padding: 10, borderRadius: 6, background: 'var(--bg-card)', border: '1px solid var(--border)' }}>
+                      <div className="mono" style={{ fontWeight: 600, color: 'var(--accent-purple)', marginBottom: 6 }}>
+                        {change.path}
+                      </div>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, fontSize: '0.85rem' }}>
+                        <div style={{ background: 'rgba(239, 68, 68, 0.1)', padding: 8, borderRadius: 4, color: '#f87171' }}>
+                          <small style={{ display: 'block', fontWeight: 600, marginBottom: 2 }}>FROM (Rev #{diffModal.from})</small>
+                          <pre style={{ margin: 0, whiteSpace: 'pre-wrap' }}>{JSON.stringify(change.from, null, 2)}</pre>
+                        </div>
+                        <div style={{ background: 'rgba(16, 185, 129, 0.1)', padding: 8, borderRadius: 4, color: '#34d399' }}>
+                          <small style={{ display: 'block', fontWeight: 600, marginBottom: 2 }}>TO (Rev #{diffModal.to})</small>
+                          <pre style={{ margin: 0, whiteSpace: 'pre-wrap' }}>{JSON.stringify(change.to, null, 2)}</pre>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </Modal>
+      )}
+
+      {rejectModal && (
+        <Modal
+          title={`Reject Revision #${rejectModal.revisionNumber}`}
+          description="Provide a justification for rejecting this configuration change."
+          onClose={() => setRejectModal(null)}
+          footer={
+            <>
+              <button className="secondary-button" onClick={() => setRejectModal(null)}>Cancel</button>
+              <button className="primary-button" style={{ background: '#ef4444' }} onClick={handleReject}>
+                Confirm Rejection
+              </button>
+            </>
+          }
+        >
+          <div className="form-grid">
+            <label className="field full">
+              <span>Rejection Reason *</span>
+              <textarea
+                rows={4}
+                value={rejectReason}
+                onChange={(e) => setRejectReason(e.target.value)}
+                placeholder="Explain why this change is rejected (e.g. invalid server host, security policy violation)"
+              />
+            </label>
+          </div>
+        </Modal>
+      )}
+    </div>
+  )
+}
+
 type ModuleView = { id: string; name: string; type: string; description: string; runtime: Runtime; versions: string[]; activityCount: number; pipelineConfig: Partial<ModulePipelineConfig> }
 
 export function ModulePage({ moduleId, onSettings }: { moduleId: string; onSettings: () => void }) {
@@ -391,7 +905,7 @@ export function ModulePage({ moduleId, onSettings }: { moduleId: string; onSetti
   const moduleCode = module.id.toUpperCase().replace(/-/g, '_')
   return <>
     <div className="module-heading"><div className="module-title"><span className="module-icon purple"><Box size={20} /></span><div><div className="title-status"><h1>{module.name}</h1><span className="type-badge purple">{module.type}</span></div><p>{module.description}</p><small>Module code: {moduleCode} · Runtime: {module.runtime}</small></div></div><button className="secondary-button" onClick={onSettings}><Settings size={16} />Settings</button></div>
-    <nav className="tabs" role="tablist" aria-label="Module views">{([['overview', 'Overview'], ['pipeline', 'Pipeline'], ['version', 'Version'], ['dora', 'DORA Metrics']] as [ModuleTab, string][]).map(([id, label]) => <button role="tab" aria-selected={tab === id} className={tab === id ? 'active' : ''} onClick={() => setTab(id)} key={id}>{label}</button>)}</nav>
-    <div className="tab-content" role="tabpanel">{tab === 'overview' && <OverviewTab moduleId={moduleId} />}{tab === 'pipeline' && <PipelineTab moduleId={moduleId} pipelineConfig={module.pipelineConfig ?? {}} />}{tab === 'version' && <VersionsTab moduleId={moduleId} />}{tab === 'dora' && <DoraTab moduleId={moduleId} />}</div>
+    <nav className="tabs" role="tablist" aria-label="Module views">{([['overview', 'Overview'], ['pipeline', 'Pipeline'], ['version', 'Version'], ['config', 'Configuration'], ['dora', 'DORA Metrics']] as [ModuleTab, string][]).map(([id, label]) => <button role="tab" aria-selected={tab === id} className={tab === id ? 'active' : ''} onClick={() => setTab(id)} key={id}>{label}</button>)}</nav>
+    <div className="tab-content" role="tabpanel">{tab === 'overview' && <OverviewTab moduleId={moduleId} />}{tab === 'pipeline' && <PipelineTab moduleId={moduleId} pipelineConfig={module.pipelineConfig ?? {}} />}{tab === 'version' && <VersionsTab moduleId={moduleId} />}{tab === 'config' && <ConfigTab moduleId={moduleId} />}{tab === 'dora' && <DoraTab moduleId={moduleId} />}</div>
   </>
 }

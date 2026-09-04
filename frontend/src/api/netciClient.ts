@@ -66,6 +66,7 @@ export type PipelineRun = {
   artifactDigest: string | null
   consoleUrl: string | null
   retryOf: string | null
+  configRevisionId?: string | null
   startedBy: string | null
   createdAt: string
   updatedAt: string
@@ -99,8 +100,76 @@ export type Deployment = {
   previousArtifactDigest?: string | null
   approvedBy?: string | null
   fencingToken?: number | null
+  configRevisionId?: string | null
   createdAt?: string
   updatedAt?: string
+}
+
+export type ConfigRevision = {
+  id: string
+  revisionNumber: number
+  status: 'draft' | 'pending_approval' | 'active' | 'superseded' | 'rejected'
+  active: boolean
+  changeSummary: string
+  createdBy: string
+  createdAt: string
+  approvedBy: string | null
+  approvedAt: string | null
+  rejectionReason: string | null
+  pipelineConfig: Record<string, unknown>
+  deploymentConfig: Array<Record<string, unknown>>
+}
+
+export type ConfigRevisionList = {
+  moduleId: string
+  activeRevisionId: string | null
+  configVersion: number
+  items: ConfigRevision[]
+}
+
+export type ConfigDiffChange = {
+  path: string
+  from: unknown
+  to: unknown
+}
+
+export type ConfigRevisionDiff = {
+  moduleId: string
+  from: number
+  to: number
+  changeCount: number
+  changes: ConfigDiffChange[]
+}
+
+export type ConfigDriftItem = {
+  environment: string
+  deploymentId?: string
+  status?: string
+  runningConfigRevisionId?: string | null
+  desiredConfigRevisionId?: string | null
+  server?: string
+  dcimStatus?: string
+  message?: string
+  drifted: boolean
+  reason?: string
+}
+
+export type ConfigDriftReport = {
+  moduleId: string
+  activeRevisionId: string | null
+  configVersion: number
+  hasDrift: boolean
+  deploymentDrift: ConfigDriftItem[]
+  dcimDrift: ConfigDriftItem[]
+}
+
+export type ServerHealthRecord = {
+  serverName: string
+  status: string
+  source: string
+  freshnessSeconds: number
+  details: Record<string, unknown>
+  observedAt: string
 }
 
 type ErrorResponse = {
@@ -600,4 +669,54 @@ export function deleteSystem(systemId: string): Promise<void> {
     method: 'DELETE',
     headers: { 'X-Correlation-Id': requestId() },
   })
+}
+
+export function listConfigRevisions(moduleId: string): Promise<ConfigRevisionList> {
+  return request<ConfigRevisionList>(`/modules/${encodeURIComponent(moduleId)}/config-revisions`)
+}
+
+export function proposeConfigRevision(
+  moduleId: string,
+  payload: { changeSummary: string; pipelineConfig?: Record<string, unknown>; deploymentConfig?: Array<Record<string, unknown>> }
+): Promise<ConfigRevision & { requiresApproval?: boolean }> {
+  return request<ConfigRevision & { requiresApproval?: boolean }>(`/modules/${encodeURIComponent(moduleId)}/config-revisions`, {
+    method: 'POST',
+    headers: { 'X-Correlation-Id': requestId() },
+    body: JSON.stringify(payload),
+  })
+}
+
+export function diffConfigRevisions(moduleId: string, fromRev: number, toRev: number): Promise<ConfigRevisionDiff> {
+  return request<ConfigRevisionDiff>(`/modules/${encodeURIComponent(moduleId)}/config-revisions/diff?fromRev=${fromRev}&toRev=${toRev}`)
+}
+
+export function approveConfigRevision(moduleId: string, revisionId: string): Promise<ConfigRevision> {
+  return request<ConfigRevision>(`/modules/${encodeURIComponent(moduleId)}/config-revisions/${encodeURIComponent(revisionId)}/approve`, {
+    method: 'POST',
+    headers: { 'X-Correlation-Id': requestId() },
+  })
+}
+
+export function rejectConfigRevision(moduleId: string, revisionId: string, reason: string): Promise<ConfigRevision> {
+  return request<ConfigRevision>(`/modules/${encodeURIComponent(moduleId)}/config-revisions/${encodeURIComponent(revisionId)}/reject`, {
+    method: 'POST',
+    headers: { 'X-Correlation-Id': requestId() },
+    body: JSON.stringify({ reason }),
+  })
+}
+
+export function rollbackConfigRevision(moduleId: string, revisionNumber: number): Promise<ConfigRevision & { rolledBackTo: number; requiresApproval: boolean }> {
+  return request<ConfigRevision & { rolledBackTo: number; requiresApproval: boolean }>(`/modules/${encodeURIComponent(moduleId)}/config-revisions/${revisionNumber}/rollback`, {
+    method: 'POST',
+    headers: { 'X-Correlation-Id': requestId() },
+  })
+}
+
+export function detectDrift(moduleId: string): Promise<ConfigDriftReport> {
+  return request<ConfigDriftReport>(`/modules/${encodeURIComponent(moduleId)}/drift`)
+}
+
+export function listServersHealth(serverName?: string): Promise<{ count: number; items: ServerHealthRecord[] }> {
+  const query = serverName ? `?serverName=${encodeURIComponent(serverName)}` : ''
+  return request<{ count: number; items: ServerHealthRecord[] }>(`/servers/health${query}`)
 }

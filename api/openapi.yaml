@@ -337,6 +337,106 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '422': { $ref: '#/components/responses/UnprocessableEntity' }
+  /modules/{moduleId}/config-revisions:
+    get:
+      operationId: listModuleConfigRevisions
+      summary: List configuration revisions for a module
+      parameters:
+        - $ref: '#/components/parameters/ModuleId'
+      responses:
+        '200': { description: Configuration revision history }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      operationId: proposeModuleConfigRevision
+      summary: Propose a new immutable configuration revision
+      parameters:
+        - $ref: '#/components/parameters/ModuleId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ConfigRevisionCreate' }
+      responses:
+        '201': { description: Configuration revision created }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/UnprocessableEntity' }
+  /modules/{moduleId}/config-revisions/diff:
+    get:
+      operationId: diffModuleConfigRevisions
+      summary: Diff two configuration revisions
+      parameters:
+        - $ref: '#/components/parameters/ModuleId'
+        - name: fromRev
+          in: query
+          required: true
+          schema: { type: integer }
+        - name: toRev
+          in: query
+          required: true
+          schema: { type: integer }
+      responses:
+        '200': { description: Structural diff between revisions }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /modules/{moduleId}/config-revisions/{revisionId}/approve:
+    post:
+      operationId: approveModuleConfigRevision
+      summary: Approve a pending production configuration revision
+      parameters:
+        - $ref: '#/components/parameters/ModuleId'
+        - $ref: '#/components/parameters/RevisionId'
+      responses:
+        '200': { description: Configuration revision approved and activated }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /modules/{moduleId}/config-revisions/{revisionId}/reject:
+    post:
+      operationId: rejectModuleConfigRevision
+      summary: Reject a pending configuration revision
+      parameters:
+        - $ref: '#/components/parameters/ModuleId'
+        - $ref: '#/components/parameters/RevisionId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ConfigRevisionReject' }
+      responses:
+        '200': { description: Configuration revision rejected }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /modules/{moduleId}/config-revisions/{revisionNumber}/rollback:
+    post:
+      operationId: rollbackModuleConfigRevision
+      summary: Rollback to a past configuration revision
+      parameters:
+        - $ref: '#/components/parameters/ModuleId'
+        - $ref: '#/components/parameters/RevisionNumber'
+      responses:
+        '200': { description: New configuration revision created copying the target revision }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /modules/{moduleId}/drift:
+    get:
+      operationId: detectModuleDrift
+      summary: Detect configuration and DCIM drift for a module
+      parameters:
+        - $ref: '#/components/parameters/ModuleId'
+      responses:
+        '200': { description: Configuration and DCIM drift report }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /servers/health:
+    get:
+      operationId: listServersHealth
+      summary: Query server health records from DCIM collector
+      parameters:
+        - name: serverName
+          in: query
+          required: false
+          schema: { type: string }
+      responses:
+        '200': { description: Server health records }
   /modules/{moduleId}/dora:
     get:
       operationId: getModuleDora
@@ -1099,6 +1199,16 @@ components:
       in: path
       required: true
       schema: { type: string }
+    RevisionId:
+      name: revisionId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    RevisionNumber:
+      name: revisionNumber
+      in: path
+      required: true
+      schema: { type: integer }
     ProductionRequestId:
       name: requestId
       in: path
@@ -1679,3 +1789,42 @@ components:
         enabled: { type: boolean }
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
+    ConfigRevisionCreate:
+      type: object
+      additionalProperties: false
+      properties:
+        changeSummary: { type: string, maxLength: 1000 }
+        pipelineConfig: { type: object, additionalProperties: true }
+        deploymentConfig: { type: array, items: { type: object, additionalProperties: true } }
+    ConfigRevisionReject:
+      type: object
+      required: [reason]
+      additionalProperties: false
+      properties:
+        reason: { type: string, minLength: 1, maxLength: 1000 }
+    ConfigRevision:
+      type: object
+      required: [id, revisionNumber, status, active, changeSummary, createdBy, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        revisionNumber: { type: integer }
+        status: { type: string, enum: [draft, pending_approval, active, superseded, rejected] }
+        active: { type: boolean }
+        changeSummary: { type: string }
+        createdBy: { type: string }
+        createdAt: { type: string, format: date-time }
+        approvedBy: { type: string, nullable: true }
+        approvedAt: { type: string, format: date-time, nullable: true }
+        rejectionReason: { type: string, nullable: true }
+        pipelineConfig: { type: object, additionalProperties: true }
+        deploymentConfig: { type: array, items: { type: object, additionalProperties: true } }
+    ServerHealthRecord:
+      type: object
+      required: [serverName, status, source, freshnessSeconds, observedAt]
+      properties:
+        serverName: { type: string }
+        status: { type: string }
+        source: { type: string }
+        freshnessSeconds: { type: integer }
+        details: { type: object, additionalProperties: true }
+        observedAt: { type: string, format: date-time }

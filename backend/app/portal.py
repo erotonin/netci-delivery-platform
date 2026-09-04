@@ -15,12 +15,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from uuid import UUID, uuid4
 
 from .adapters.dcim import DcimCatalog, build_dcim_catalog
 from .demo_data import seed_demo_data
+from .runtime_environment import is_local_runtime
 from .errors import ApiError
 from .delivery import DeliveryPlatform
 from .domain.models import DeliveryEvent, Environment, PipelineStatus, Runtime
@@ -32,6 +34,7 @@ from .persistence import (
     VersionConflict,
 )
 from .projections.dora import DoraEvent, project_dora
+from .domain.models import ConfigRevisionStatus, DeploymentStatus, ModuleConfigRevision
 from .store import (
     ModuleRow,
     PlatformDatabase,
@@ -184,6 +187,7 @@ class PortalService:
         application_id: UUID,
         deployment_environments: list[dict[str, object]],
         pipeline_config: dict[str, object],
+        created_by: str | None = None,
         session: PlatformSession | None = None,
     ) -> dict[str, object]:
         with self._session(session) as transaction:
@@ -201,7 +205,540 @@ class PortalService:
                     pipeline_config=dict(pipeline_config),
                 )
             )
+            # Revision 1 is written in the same transaction as the module. A module whose
+            # configuration has no revision cannot be pinned to a run, and a run that
+            # cannot name the configuration it used cannot be reproduced or audited.
+            revision = transaction.record_config_revision(
+                ModuleConfigRevision(
+                    module_id=module_id,
+                    revision_number=1,
+                    created_by=created_by or "system",
+                    pipeline_config=dict(pipeline_config),
+                    deployment_config=list(deployment_environments),
+                    change_summary="initial configuration recorded at onboarding",
+                    status=ConfigRevisionStatus.ACTIVE,
+                )
+            )
+            transaction.set_module_active_revision(module_id, revision.id, 1)
             return self._module(transaction, module_id)
+
+    # ------------------------------------------------------ deploy-time revalidation
+
+    @staticmethod
+    def dcim_revalidation_required() -> bool:
+        """Whether a target DCIM cannot vouch for blocks the deployment.
+
+        Default on outside local mode. The point of asking DCIM at all is that the
+        inventory changes between the moment a release is approved and the moment it
+        deploys -- a host gets decommissioned, moved to another system, or put into
+        maintenance. Asking and then ignoring the answer is worse than not asking.
+        """
+
+        setting = os.getenv("NETCI_REQUIRE_DCIM_REVALIDATION", "").strip().lower()
+        if setting:
+            return setting not in {"0", "false", "no"}
+        return not is_local_runtime()
+
+    def revalidate_deployment_targets(
+        self, module_id: str, environment: Environment
+    ) -> list[dict[str, object]]:
+        """Ask DCIM whether these targets are still deployable, right before deploying.
+
+        Raises `DEPLOYMENT_TARGET_INVALID` when a target has been decommissioned, moved
+        to a different system or module, or put into maintenance. An unconfigured DCIM
+        reports `unconfigured` and is not treated as approval -- it is reported as such,
+        and blocks only when revalidation is required.
+        """
+
+        with self._session() as transaction:
+            module = transaction.portal_module(module_id)
+            if module is None:
+                raise KeyError("module not found")
+            target = next(
+                (
+                    item
+                    for item in module.deployment_config
+                    if (
+                        item.get("environment").value
+                        if isinstance(item.get("environment"), Environment)
+                        else str(item.get("environment"))
+                    ) == environment.value
+                ),
+                None,
+            )
+            system_id = module.system_id
+
+        if target is None:
+            raise PortalError(
+                "DEPLOYMENT_TARGET_NOT_CONFIGURED",
+                f"module {module_id} has no {environment.value} deployment target",
+                409,
+            )
+
+        hosts = [str(item) for item in (target.get("servers") or [])]
+        namespace = str(target.get("namespace") or "").strip()
+        checked: list[dict[str, object]] = []
+        blocked: list[str] = []
+        for name in hosts or ([namespace] if namespace else []):
+            result = self.dcim_catalog.validate_target(
+                system_id, module_id, environment.value, name
+            )
+            checked.append(
+                {
+                    "target": name,
+                    "valid": result.valid,
+                    "status": result.status,
+                    "message": result.message,
+                }
+            )
+            # `unconfigured` is not a failure of the target -- it is a failure to have an
+            # inventory. It blocks only where revalidation is required, and says which.
+            if result.status == "unconfigured":
+                if self.dcim_revalidation_required():
+                    blocked.append(f"{name}: DCIM is not configured, so this target cannot be verified")
+                continue
+            if not result.valid:
+                blocked.append(f"{name}: {result.message}")
+
+        if blocked and self.dcim_revalidation_required():
+            raise PortalError(
+                "DEPLOYMENT_TARGET_INVALID",
+                "the registered deployment targets are no longer deployable: "
+                + "; ".join(blocked),
+                409,
+            )
+        return checked
+
+    def collect_server_health(self, server_names: list[str]) -> list[dict[str, object]]:
+        """Record what the health provider says, and store `unknown` when there is none.
+
+        A target with no provider is `unknown`, never `online`. "We have not looked" and
+        "we looked and it is fine" are different facts, and only one of them justifies
+        deploying on top of it.
+        """
+
+        observed: list[dict[str, object]] = []
+        with self._session() as transaction:
+            for name in server_names:
+                record = self.dcim_catalog.probe_server_health(name)
+                transaction.record_server_health(record)
+                observed.append(
+                    {
+                        "server": record.server_name,
+                        "status": record.status,
+                        "source": record.source,
+                        "freshnessSeconds": record.freshness_seconds,
+                        "observedAt": record.observed_at.isoformat(),
+                    }
+                )
+        return observed
+
+    def detect_config_drift(self, module_id: str) -> dict[str, object]:
+        """Compare what the active revision says with what deployments actually used.
+
+        A deployment pinned to an older revision is not an error -- it is simply older.
+        It becomes drift the moment someone reads the module's configuration and assumes
+        that is what is running.
+        """
+
+        with self._session() as transaction:
+            module = transaction.portal_module(module_id)
+            if module is None:
+                raise KeyError("module not found")
+            active = transaction.active_config_revision(module_id)
+            if module.application_id is None or active is None:
+                return {"moduleId": module_id, "drifted": False, "items": []}
+            deployments = self.platform.list_deployments(
+                module.application_id, session=transaction
+            )
+            drifted = [
+                {
+                    "deploymentId": str(item.id),
+                    "environment": item.environment.value,
+                    "status": item.status.value,
+                    "usedRevisionId": str(item.config_revision_id)
+                    if item.config_revision_id
+                    else None,
+                }
+                for item in deployments
+                if item.status
+                in {DeploymentStatus.HEALTHY, DeploymentStatus.DEPLOYING}
+                and item.config_revision_id != active.id
+            ]
+        return {
+            "moduleId": module_id,
+            "activeRevisionId": str(active.id),
+            "activeRevisionNumber": active.revision_number,
+            "drifted": bool(drifted),
+            "items": drifted,
+        }
+
+    # ------------------------------------------------- versioned configuration
+
+    @staticmethod
+    def production_config_needs_approval() -> bool:
+        """Whether a revision touching production must be approved by a second person.
+
+        On by default. A configuration revision decides which machines a release lands
+        on and which credential it uses, so changing it is a production change even
+        though no code moved -- the same separation of duties applies.
+        """
+
+        return os.getenv("NETCI_REQUIRE_CONFIG_APPROVAL", "true").strip().lower() not in {
+            "0", "false", "no"
+        }
+
+    @staticmethod
+    def _touches_production(
+        current_deployment_config: list[dict[str, object]],
+        new_deployment_config: list[dict[str, object]],
+    ) -> bool:
+        def get_prod(cfg: list[dict[str, object]]) -> dict[str, object] | None:
+            for item in cfg:
+                env = item.get("environment")
+                env_str = env.value if isinstance(env, Environment) else str(env or "")
+                if env_str == Environment.PROD.value:
+                    return item
+            return None
+
+        current_prod = get_prod(current_deployment_config)
+        new_prod = get_prod(new_deployment_config)
+        if current_prod is None and new_prod is None:
+            return False
+        if (current_prod is None) != (new_prod is None):
+            return True
+        return current_prod != new_prod
+
+    def config_revisions(self, module_id: str) -> dict[str, object]:
+        with self._session() as transaction:
+            module = transaction.portal_module(module_id)
+            if module is None:
+                raise KeyError("module not found")
+            active_id = module.active_config_revision_id
+            return {
+                "moduleId": module_id,
+                "activeRevisionId": str(active_id) if active_id else None,
+                "configVersion": module.config_version,
+                "items": [
+                    self._revision_json(item, active_id)
+                    for item in transaction.config_revisions(module_id)
+                ],
+            }
+
+    @staticmethod
+    def _revision_json(revision: ModuleConfigRevision, active_id=None) -> dict[str, object]:
+        return {
+            "id": str(revision.id),
+            "revisionNumber": revision.revision_number,
+            "status": revision.status.value,
+            "active": active_id is not None and revision.id == active_id,
+            "changeSummary": revision.change_summary,
+            "createdBy": revision.created_by,
+            "createdAt": revision.created_at.isoformat(),
+            "approvedBy": revision.approved_by,
+            "approvedAt": revision.approved_at.isoformat() if revision.approved_at else None,
+            "rejectionReason": revision.rejection_reason,
+            "pipelineConfig": dict(revision.pipeline_config),
+            "deploymentConfig": list(revision.deployment_config),
+        }
+
+    def propose_config_revision(
+        self,
+        module_id: str,
+        *,
+        pipeline_config: dict[str, object],
+        deployment_config: list[dict[str, object]],
+        change_summary: str,
+        actor: str,
+    ) -> dict[str, object]:
+        """Write a new immutable revision. Older revisions are never edited.
+
+        A revision that touches production is written as `pending_approval` and does not
+        become active until someone else approves it. One that does not is activated
+        immediately -- requiring a second person for a dev target buys nothing and
+        teaches people to route around the control.
+        """
+
+        with self._session() as transaction:
+            module = transaction.portal_module(module_id)
+            if module is None:
+                raise KeyError("module not found")
+            existing = transaction.config_revisions(module_id)
+            next_number = max((item.revision_number for item in existing), default=0) + 1
+            needs_approval = self.production_config_needs_approval() and self._touches_production(
+                list(module.deployment_config), deployment_config
+            )
+            revision = transaction.record_config_revision(
+                ModuleConfigRevision(
+                    module_id=module_id,
+                    revision_number=next_number,
+                    created_by=actor,
+                    pipeline_config=dict(pipeline_config),
+                    deployment_config=list(deployment_config),
+                    change_summary=change_summary,
+                    status=(
+                        ConfigRevisionStatus.PENDING_APPROVAL
+                        if needs_approval
+                        else ConfigRevisionStatus.ACTIVE
+                    ),
+                )
+            )
+            if not needs_approval:
+                self._activate(transaction, module, revision, actor)
+                active_id = revision.id
+            else:
+                active_id = module.active_config_revision_id
+            return {
+                **self._revision_json(revision, active_id),
+                "requiresApproval": needs_approval,
+            }
+
+    def approve_config_revision(
+        self, module_id: str, revision_id: UUID, actor: str
+    ) -> dict[str, object]:
+        with self._session() as transaction:
+            module = transaction.portal_module(module_id)
+            if module is None:
+                raise KeyError("module not found")
+            revision = transaction.config_revision(revision_id)
+            if revision is None or revision.module_id != module_id:
+                raise KeyError("configuration revision not found")
+            if revision.status != ConfigRevisionStatus.PENDING_APPROVAL:
+                raise PortalError(
+                    "INVALID_REVISION_STATE",
+                    f"revision {revision.revision_number} is {revision.status.value}, "
+                    "not waiting for approval",
+                    409,
+                )
+            if self.separation_of_duties_required() and revision.created_by == actor:
+                raise PortalError(
+                    "SEPARATION_OF_DUTIES",
+                    "a configuration revision must be approved by someone other than its author",
+                    403,
+                )
+            transaction.update_config_revision_status(
+                revision_id,
+                ConfigRevisionStatus.ACTIVE,
+                approved_by=actor,
+                approved_at=datetime.now(timezone.utc),
+            )
+            self._activate(transaction, module, revision, actor, approved_by=actor)
+            updated = transaction.config_revision(revision_id)
+            assert updated is not None
+            return self._revision_json(updated, updated.id)
+
+    def reject_config_revision(
+        self, module_id: str, revision_id: UUID, actor: str, reason: str
+    ) -> dict[str, object]:
+        with self._session() as transaction:
+            revision = transaction.config_revision(revision_id)
+            if revision is None or revision.module_id != module_id:
+                raise KeyError("configuration revision not found")
+            if revision.status != ConfigRevisionStatus.PENDING_APPROVAL:
+                raise PortalError(
+                    "INVALID_REVISION_STATE", "revision is not waiting for approval", 409
+                )
+            transaction.update_config_revision_status(
+                revision_id, ConfigRevisionStatus.REJECTED, rejection_reason=reason
+            )
+            updated = transaction.config_revision(revision_id)
+            assert updated is not None
+            return self._revision_json(updated)
+
+    def rollback_config_revision(
+        self, module_id: str, revision_number: int, actor: str
+    ) -> dict[str, object]:
+        """Make an earlier revision active again by copying it forward.
+
+        The old revision is not reactivated in place: history must stay append-only, so
+        "we went back to revision 3" is itself recorded as revision 7. Otherwise the
+        sequence of what was live when cannot be reconstructed.
+        """
+
+        with self._session() as transaction:
+            module = transaction.portal_module(module_id)
+            if module is None:
+                raise KeyError("module not found")
+            source = transaction.config_revision_by_number(module_id, revision_number)
+            if source is None:
+                raise KeyError(f"revision {revision_number} not found for module {module_id}")
+            existing = transaction.config_revisions(module_id)
+            next_number = max((item.revision_number for item in existing), default=0) + 1
+            needs_approval = self.production_config_needs_approval() and self._touches_production(
+                list(module.deployment_config), list(source.deployment_config)
+            )
+            revision = transaction.record_config_revision(
+                ModuleConfigRevision(
+                    module_id=module_id,
+                    revision_number=next_number,
+                    created_by=actor,
+                    pipeline_config=dict(source.pipeline_config),
+                    deployment_config=list(source.deployment_config),
+                    change_summary=f"rollback to revision {revision_number}",
+                    status=(
+                        ConfigRevisionStatus.PENDING_APPROVAL
+                        if needs_approval
+                        else ConfigRevisionStatus.ACTIVE
+                    ),
+                )
+            )
+            if not needs_approval:
+                self._activate(transaction, module, revision, actor)
+                active_id = revision.id
+            else:
+                active_id = module.active_config_revision_id
+            return {
+                **self._revision_json(revision, active_id),
+                "rolledBackTo": revision_number,
+                "requiresApproval": needs_approval,
+            }
+
+    def diff_config_revisions(
+        self, module_id: str, left: int, right: int
+    ) -> dict[str, object]:
+        """What changed between two revisions, field by field."""
+
+        with self._session() as transaction:
+            a = transaction.config_revision_by_number(module_id, left)
+            b = transaction.config_revision_by_number(module_id, right)
+            if a is None or b is None:
+                raise KeyError("one of the revisions does not exist")
+        changes: list[dict[str, object]] = []
+        for key in sorted(set(a.pipeline_config) | set(b.pipeline_config)):
+            if a.pipeline_config.get(key) != b.pipeline_config.get(key):
+                changes.append({
+                    "path": f"pipelineConfig.{key}",
+                    "from": a.pipeline_config.get(key),
+                    "to": b.pipeline_config.get(key),
+                })
+        targets_a = {str(item.get("environment")): item for item in a.deployment_config}
+        targets_b = {str(item.get("environment")): item for item in b.deployment_config}
+        for environment in sorted(set(targets_a) | set(targets_b)):
+            if targets_a.get(environment) != targets_b.get(environment):
+                changes.append({
+                    "path": f"deploymentConfig.{environment}",
+                    "from": targets_a.get(environment),
+                    "to": targets_b.get(environment),
+                })
+        return {
+            "moduleId": module_id,
+            "from": left,
+            "to": right,
+            "changeCount": len(changes),
+            "changes": changes,
+        }
+
+    def detect_drift(self, module_id: str) -> dict[str, object]:
+        """Compare desired configuration against observed running deployments and DCIM server status."""
+        with self._session() as transaction:
+            module = transaction.portal_module(module_id)
+            if module is None:
+                raise KeyError("module not found")
+            active_rev = transaction.active_config_revision(module_id)
+            active_id = str(active_rev.id) if active_rev else None
+            app_id = module.application_id
+
+            # 1. Deployment revision drift
+            deployments = list(self.platform.list_deployments(app_id, session=transaction)) if app_id else []
+            latest_by_env: dict[str, Any] = {}
+            for d in deployments:
+                env = d.environment.value
+                if env not in latest_by_env or d.created_at > latest_by_env[env].created_at:
+                    latest_by_env[env] = d
+
+            deployment_drifts = []
+            for env, dep in latest_by_env.items():
+                dep_rev_id = str(dep.config_revision_id) if dep.config_revision_id else None
+                if active_id and dep_rev_id != active_id:
+                    deployment_drifts.append({
+                        "environment": env,
+                        "deploymentId": str(dep.id),
+                        "status": dep.status.value,
+                        "runningConfigRevisionId": dep_rev_id,
+                        "desiredConfigRevisionId": active_id,
+                        "drifted": True,
+                        "reason": f"running deployment pinned to revision {dep_rev_id or 'none'}, desired is {active_id}",
+                    })
+                else:
+                    deployment_drifts.append({
+                        "environment": env,
+                        "deploymentId": str(dep.id),
+                        "status": dep.status.value,
+                        "runningConfigRevisionId": dep_rev_id,
+                        "desiredConfigRevisionId": active_id,
+                        "drifted": False,
+                    })
+
+            # 2. DCIM server status drift
+            dcim_drifts = []
+            for target in module.deployment_config:
+                env = str(target.get("environment") or "")
+                servers = list(target.get("servers") or [])
+                for server in servers:
+                    validation = self.dcim_catalog.validate_target(module.system_id, module.id, env, server)
+                    if not validation.valid:
+                        dcim_drifts.append({
+                            "environment": env,
+                            "server": server,
+                            "dcimStatus": validation.status,
+                            "message": validation.message,
+                            "drifted": True,
+                        })
+                    else:
+                        dcim_drifts.append({
+                            "environment": env,
+                            "server": server,
+                            "dcimStatus": validation.status,
+                            "message": validation.message,
+                            "drifted": False,
+                        })
+
+            has_drift = any(item.get("drifted") for item in deployment_drifts) or any(item.get("drifted") for item in dcim_drifts)
+            return {
+                "moduleId": module_id,
+                "activeRevisionId": active_id,
+                "configVersion": module.config_version,
+                "hasDrift": has_drift,
+                "deploymentDrift": deployment_drifts,
+                "dcimDrift": dcim_drifts,
+            }
+
+    def _activate(
+        self,
+        transaction: PlatformSession,
+        module: ModuleRow,
+        revision: ModuleConfigRevision,
+        actor: str,
+        approved_by: str | None = None,
+    ) -> None:
+        """Point the module at a revision, and copy it into the module's live columns.
+
+        Compare-and-set on `config_version`: two people editing the same module
+        concurrently must not both believe they won, and the loser is told so rather
+        than silently overwritten.
+        """
+
+        moved = transaction.set_module_active_revision(
+            module.id, revision.id, module.config_version
+        )
+        if not moved:
+            raise PortalError(
+                "CONCURRENT_MODIFICATION",
+                "this module's configuration changed while your revision was being written; "
+                "re-read it and try again",
+                409,
+            )
+        transaction.replace_portal_module_config(
+            module.id,
+            deployment_config=list(revision.deployment_config),
+            pipeline_config=dict(revision.pipeline_config),
+        )
+
+    @staticmethod
+    def separation_of_duties_required() -> bool:
+        return os.getenv("NETCI_REQUIRE_SEPARATION_OF_DUTIES", "true").strip().lower() not in {
+            "0", "false", "no"
+        }
 
     def validate_module_slot(self, system_id: str, module_id: str) -> None:
         with self._session() as transaction:
@@ -335,6 +872,10 @@ class PortalService:
             "applicationId": str(item.application_id) if item.application_id else None,
             "ownerTeam": application.owner_team if application else None,
             "versions": [row.version for row in transaction.portal_versions(module_id)],
+            "activeConfigRevisionId": (
+                str(item.active_config_revision_id) if item.active_config_revision_id else None
+            ),
+            "configVersion": item.config_version,
             "deploymentEnvironments": list(item.deployment_config),
             "pipelineConfig": dict(item.pipeline_config),
             "environments": [
@@ -366,8 +907,8 @@ class PortalService:
         with self._session(session) as transaction:
             return self._delivery_parameters(transaction, module_id, environment, supplied)
 
-    @staticmethod
     def _delivery_parameters(
+        self,
         transaction: PlatformSession,
         module_id: str,
         environment: Environment,
@@ -395,10 +936,28 @@ class PortalService:
                 409,
             )
 
+        configured_servers = list(target.get("servers") or [])
+        # Dynamic inventory resolution: if DCIM can resolve inventory for this module/env, use it or validate configured servers
+        # Revalidate each target host against DCIM immediately before dispatching
+        for srv in configured_servers:
+            val = self.dcim_catalog.validate_target(module.system_id, module.id, environment.value, srv)
+            if not val.valid and val.status != "unconfigured":
+                raise PortalError(
+                    "DCIM_TARGET_UNAVAILABLE",
+                    f"deployment target '{srv}' is rejected by DCIM ({val.status}): {val.message}",
+                    422,
+                )
+
+        # If dynamic inventory is available and no servers configured, resolve from DCIM
+        if not configured_servers:
+            dynamic = self.dcim_catalog.resolve_inventory(module.system_id, module.id, environment.value)
+            if dynamic:
+                configured_servers = dynamic
+
         managed: dict[str, object] = {
             "app_name": module.id,
             "target_environment": environment.value,
-            "target_hosts": list(target.get("servers") or []),
+            "target_hosts": configured_servers,
             # Browser/API compatibility fields are deliberately neutralized. Runtime
             # commands come from reviewed playbooks, never arbitrary request metadata.
             "deployment_tasks": [],

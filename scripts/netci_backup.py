@@ -72,6 +72,8 @@ CRITICAL_TABLES: tuple[str, ...] = (
     "scm_integrations",
     "scm_webhook_deliveries",
     "pipeline_stages",
+    "module_config_revisions",
+    "server_health_records",
 )
 
 

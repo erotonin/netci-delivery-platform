@@ -692,6 +692,7 @@ class DeliveryPlatform:
         correlation_id: str,
         idempotency_key: str | None,
         started_by: str | None = None,
+        config_revision_id: UUID | None = None,
     ) -> PipelineRun:
         request_payload = {
             "commitSha": commit_sha,
@@ -726,6 +727,7 @@ class DeliveryPlatform:
                 correlation_id=correlation_id,
                 idempotency_key=idempotency_key,
                 started_by=started_by,
+                config_revision_id=config_revision_id,
                 request_payload=request_payload,
             )
         return self._launch_ci(application, run)
@@ -743,6 +745,7 @@ class DeliveryPlatform:
         idempotency_key: str | None,
         started_by: str | None,
         request_payload: dict[str, object],
+        config_revision_id: UUID | None = None,
     ) -> PipelineRun:
         run = PipelineRun(
             application_id=application_id,
@@ -752,6 +755,11 @@ class DeliveryPlatform:
             parameters=dict(parameters),
             correlation_id=correlation_id,
             started_by=started_by,
+            # The run is pinned to the configuration revision that was active when it was
+            # queued. Editing the module afterwards produces a new revision and does not
+            # touch this run: a build must deploy to the targets it was approved for, not
+            # to whatever the module points at by the time the workflow gets there.
+            config_revision_id=config_revision_id,
         )
         unit = UnitOfWork(runs=[(run, None)])
         unit.logs.append(
@@ -1562,6 +1570,9 @@ class DeliveryPlatform:
             runtime=application.runtime,
             environment=run.environment,
             artifact_digest=artifact_digest,
+            # Inherited, not re-read: the deployment must use the configuration the run
+            # was queued against, whatever the module says now.
+            config_revision_id=run.config_revision_id,
             status=(DeploymentStatus.PENDING_APPROVAL if requires_approval else DeploymentStatus.DEPLOYING),
         )
         updated = replace(

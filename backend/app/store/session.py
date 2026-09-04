@@ -13,14 +13,17 @@ from uuid import UUID
 
 from ..domain.models import (
     Application,
+    ConfigRevisionStatus,
     DeliveryEvent,
     Deployment,
+    ModuleConfigRevision,
     PipelineRun,
     PipelineStage,
     ScmCommitStatus,
     ScmIntegration,
     ScmProviderType,
     ScmWebhookDelivery,
+    ServerHealthRecord,
 )
 from ..persistence import AuditRecord, IdempotencyRow, UnitOfWork
 from .records import DeploymentLease, ModuleRow, RequestRow, SystemRow, VersionRow
@@ -194,3 +197,50 @@ class PlatformSession(Protocol):
     def record_pipeline_stage(self, stage: PipelineStage) -> PipelineStage: ...
 
     def pipeline_stages(self, pipeline_run_id: UUID) -> tuple[PipelineStage, ...]: ...
+
+    # ---------------------------------------- versioned config & server health
+
+    def config_revisions(self, module_id: str) -> tuple[ModuleConfigRevision, ...]: ...
+
+    def config_revision(self, revision_id: UUID) -> ModuleConfigRevision | None: ...
+
+    def config_revision_by_number(
+        self, module_id: str, revision_number: int
+    ) -> ModuleConfigRevision | None: ...
+
+    def active_config_revision(self, module_id: str) -> ModuleConfigRevision | None: ...
+
+    def record_config_revision(
+        self, revision: ModuleConfigRevision
+    ) -> ModuleConfigRevision: ...
+
+    def update_config_revision_status(
+        self,
+        revision_id: UUID,
+        status: ConfigRevisionStatus,
+        approved_by: str | None = None,
+        approved_at: datetime | None = None,
+        rejection_reason: str | None = None,
+    ) -> ModuleConfigRevision | None: ...
+
+    def replace_portal_module_config(
+        self,
+        module_id: str,
+        *,
+        deployment_config: list[dict[str, Any]],
+        pipeline_config: dict[str, Any],
+    ) -> None:
+        """Copy an activated revision into the module live configuration columns."""
+
+    def set_module_active_revision(
+        self, module_id: str, revision_id: UUID, expected_config_version: int
+    ) -> bool:
+        """Advance module's active revision using compare-and-set. Returns False if conflict."""
+        ...
+
+    def server_health(self, server_name: str) -> ServerHealthRecord | None: ...
+
+    def list_server_health(self) -> tuple[ServerHealthRecord, ...]: ...
+
+    def record_server_health(self, record: ServerHealthRecord) -> None: ...
+

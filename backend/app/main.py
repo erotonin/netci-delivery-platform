@@ -592,6 +592,7 @@ def pipeline_json(item: PipelineRun) -> dict[str, object]:
         "artifactDigest": item.artifact_digest,
         "consoleUrl": item.console_url,
         "retryOf": str(item.retry_of) if item.retry_of else None,
+        "configRevisionId": str(item.config_revision_id) if item.config_revision_id else None,
         "startedBy": item.started_by,
         "createdAt": item.created_at.isoformat(),
         "updatedAt": item.updated_at.isoformat(),
@@ -618,7 +619,21 @@ def stage_json(item: PipelineStage) -> dict[str, object]:
 
 
 def deployment_json(item: Deployment) -> dict[str, object]:
-    return {"id": str(item.id), "applicationId": str(item.application_id), "pipelineRunId": str(item.pipeline_run_id) if item.pipeline_run_id else None, "runtime": item.runtime.value, "environment": item.environment.value, "status": item.status.value, "artifactDigest": item.artifact_digest, "previousArtifactDigest": item.previous_artifact_digest, "approvedBy": item.approved_by, "fencingToken": item.fencing_token, "createdAt": item.created_at.isoformat(), "updatedAt": item.updated_at.isoformat()}
+    return {
+        "id": str(item.id),
+        "applicationId": str(item.application_id),
+        "pipelineRunId": str(item.pipeline_run_id) if item.pipeline_run_id else None,
+        "runtime": item.runtime.value,
+        "environment": item.environment.value,
+        "status": item.status.value,
+        "artifactDigest": item.artifact_digest,
+        "previousArtifactDigest": item.previous_artifact_digest,
+        "approvedBy": item.approved_by,
+        "fencingToken": item.fencing_token,
+        "configRevisionId": str(item.config_revision_id) if item.config_revision_id else None,
+        "createdAt": item.created_at.isoformat(),
+        "updatedAt": item.updated_at.isoformat(),
+    }
 
 
 def delivery_event_json(item: DeliveryEvent) -> dict[str, object]:
@@ -865,6 +880,16 @@ class ModuleUpdate(StrictBody):
     displayName: str = Field(min_length=2, max_length=255)
     moduleType: str = Field(min_length=2, max_length=64)
     description: str = Field(default="", max_length=1000)
+
+
+class ConfigRevisionCreate(StrictBody):
+    changeSummary: str = Field(default="", max_length=1000)
+    pipelineConfig: dict[str, object] = Field(default_factory=dict)
+    deploymentConfig: list[dict[str, object]] = Field(default_factory=list)
+
+
+class ConfigRevisionReject(StrictBody):
+    reason: str = Field(min_length=1, max_length=1000)
 
 
 class ProductionRequestModuleCreate(StrictBody):
@@ -1307,6 +1332,7 @@ def start_module_pipeline_run(
         if not application_id:
             raise DeliveryError("MODULE_NOT_PROVISIONED", "module has no delivery application", 409)
         _require_application_access(platform.get_application(UUID(str(application_id))), principal)
+        active_rev_id = UUID(str(module["activeConfigRevisionId"])) if module.get("activeConfigRevisionId") else None
         run = platform.start_pipeline(
             UUID(str(application_id)),
             commit_sha=payload.commitSha,
@@ -1316,6 +1342,7 @@ def start_module_pipeline_run(
             correlation_id=request.state.correlation_id,
             idempotency_key=idempotency_key,
             started_by=principal.subject,
+            config_revision_id=active_rev_id,
         )
         return pipeline_json(run)
     except KeyError as exc:
@@ -1340,6 +1367,131 @@ def list_module_versions(moduleId: str, principal: Principal = ReadAccess) -> di
         return portal.versions(moduleId)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail={"code": "MODULE_NOT_FOUND", "message": str(exc)}) from exc
+
+
+# ------------------------------------------------------------- versioned config revisions & DCIM
+
+@app.get("/modules/{moduleId}/config-revisions")
+def list_module_config_revisions(moduleId: str, principal: Principal = ReadAccess) -> dict[str, object]:
+    try:
+        _require_module_access(moduleId, principal)
+        return portal.config_revisions(moduleId)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail={"code": "MODULE_NOT_FOUND", "message": str(exc)}) from exc
+
+
+@app.post("/modules/{moduleId}/config-revisions", status_code=status.HTTP_201_CREATED)
+def propose_module_config_revision(
+    moduleId: str,
+    payload: ConfigRevisionCreate,
+    principal: Principal = DeveloperAccess,
+) -> dict[str, object]:
+    try:
+        _require_module_access(moduleId, principal)
+        return portal.propose_config_revision(
+            moduleId,
+            pipeline_config=payload.pipelineConfig,
+            deployment_config=payload.deploymentConfig,
+            change_summary=payload.changeSummary,
+            actor=principal.subject,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail={"code": "MODULE_NOT_FOUND", "message": str(exc)}) from exc
+    except PortalError as exc:
+        raise HTTPException(status_code=exc.status_code, detail={"code": exc.code, "message": exc.message}) from exc
+
+
+@app.get("/modules/{moduleId}/config-revisions/diff")
+def diff_module_config_revisions(
+    moduleId: str,
+    fromRev: int,
+    toRev: int,
+    principal: Principal = ReadAccess,
+) -> dict[str, object]:
+    try:
+        _require_module_access(moduleId, principal)
+        return portal.diff_config_revisions(moduleId, fromRev, toRev)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail={"code": "REVISION_NOT_FOUND", "message": str(exc)}) from exc
+
+
+@app.post("/modules/{moduleId}/config-revisions/{revisionId}/approve")
+def approve_module_config_revision(
+    moduleId: str,
+    revisionId: UUID,
+    principal: Principal = ReviewerAccess,
+) -> dict[str, object]:
+    try:
+        _require_module_access(moduleId, principal)
+        return portal.approve_config_revision(moduleId, revisionId, actor=principal.subject)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail={"code": "REVISION_NOT_FOUND", "message": str(exc)}) from exc
+    except PortalError as exc:
+        raise HTTPException(status_code=exc.status_code, detail={"code": exc.code, "message": exc.message}) from exc
+
+
+@app.post("/modules/{moduleId}/config-revisions/{revisionId}/reject")
+def reject_module_config_revision(
+    moduleId: str,
+    revisionId: UUID,
+    payload: ConfigRevisionReject,
+    principal: Principal = ReviewerAccess,
+) -> dict[str, object]:
+    try:
+        _require_module_access(moduleId, principal)
+        return portal.reject_config_revision(moduleId, revisionId, actor=principal.subject, reason=payload.reason)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail={"code": "REVISION_NOT_FOUND", "message": str(exc)}) from exc
+    except PortalError as exc:
+        raise HTTPException(status_code=exc.status_code, detail={"code": exc.code, "message": exc.message}) from exc
+
+
+@app.post("/modules/{moduleId}/config-revisions/{revisionNumber}/rollback")
+def rollback_module_config_revision(
+    moduleId: str,
+    revisionNumber: int,
+    principal: Principal = DeveloperAccess,
+) -> dict[str, object]:
+    try:
+        _require_module_access(moduleId, principal)
+        return portal.rollback_config_revision(moduleId, revisionNumber, actor=principal.subject)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail={"code": "REVISION_NOT_FOUND", "message": str(exc)}) from exc
+    except PortalError as exc:
+        raise HTTPException(status_code=exc.status_code, detail={"code": exc.code, "message": exc.message}) from exc
+
+
+@app.get("/modules/{moduleId}/drift")
+def detect_module_drift(moduleId: str, principal: Principal = ReadAccess) -> dict[str, object]:
+    try:
+        _require_module_access(moduleId, principal)
+        return portal.detect_drift(moduleId)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail={"code": "MODULE_NOT_FOUND", "message": str(exc)}) from exc
+
+
+@app.get("/servers/health")
+def list_servers_health(serverName: str | None = None, _: Principal = ReadAccess) -> dict[str, object]:
+    with database.transaction() as session:
+        if serverName:
+            rec = session.server_health(serverName)
+            items = [rec] if rec else []
+        else:
+            items = list(session.list_server_health())
+    return {
+        "count": len(items),
+        "items": [
+            {
+                "serverName": r.server_name,
+                "status": r.status,
+                "source": r.source,
+                "freshnessSeconds": r.freshness_seconds,
+                "details": r.details,
+                "observedAt": r.observed_at.isoformat(),
+            }
+            for r in items
+        ],
+    }
 
 
 @app.post("/modules/{moduleId}/versions", status_code=status.HTTP_201_CREATED)

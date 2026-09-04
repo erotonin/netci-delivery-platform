@@ -5,6 +5,32 @@ Changelog and releases use Semantic Versioning once the project reaches 1.0.0.
 
 ## [Unreleased]
 
+### Added - Phase 8 (P1.3): Versioned Environment Configuration & DCIM Lifecycle
+- **Immutable Configuration Revisions (`module_config_revisions`)**:
+  - `module_config_revisions` table (migration `0014_versioned_config_revisions_and_dcim.sql`) tracking pipeline config, deployment config, change summary, status, author, approver, and rejection reasons.
+  - Included in critical backup manifest and referential integrity verification (`scripts/netci_backup.py`).
+- **Active Revision Pointer & Optimistic Locking (CAS)**:
+  - `active_config_revision_id` and `config_version` integer on `modules`.
+  - Atomic compare-and-set pointer updates preventing race conditions and silent overwrites (`409 CONCURRENT_MODIFICATION`).
+- **Execution-Time Configuration Pinning**:
+  - `config_revision_id` pinned on `pipeline_runs` and `deployments` at execution time, guaranteeing that in-flight or historical executions are isolated from subsequent configuration changes.
+- **Change Governance & Separation of Duties**:
+  - Non-production configuration changes auto-activate immediately.
+  - Production changes require review and enter `pending_approval` status (`requiresApproval: True`).
+  - Separation of duties strictly enforced: author proposing change cannot approve it (`403 SEPARATION_OF_DUTIES`).
+- **Diff Viewer & Forward Rollback**:
+  - `GET /modules/{moduleId}/config-revisions/diff` provides structural JSON path diffing between revisions.
+  - `POST /modules/{moduleId}/config-revisions/{revisionNumber}/rollback` copies target revision settings into a new monotonic revision (preserving append-only history).
+- **DCIM Target Host Revalidation & Health Observer**:
+  - `validate_target()` verifies targets immediately before deployment dispatch, failing closed on decommissioned, maintenance, or offline servers (`422 DCIM_TARGET_UNAVAILABLE`).
+  - Dynamic inventory resolution via `resolve_inventory()` replacing static host aliases.
+  - `server_health_records` table and `GET /servers/health` endpoint recording live probe health without faking online status.
+- **Drift Detection (`GET /modules/{moduleId}/drift`)**:
+  - Detects divergence between active desired configuration revision and running deployments or live DCIM host states.
+- **Portal UI (`ModulePage.tsx`)**:
+  - `Configuration` tab with active revision summary, pending production approval banner, drift detection alerts, diff viewer modal, and 1-click rollback.
+- See ADR-021.
+
 ### Added - Phase 7 (P1.2): Pipeline Lifecycle, Reconciliation Watchdog & Stage Events
 - **Pipeline & Deployment Cancellation (`POST /pipeline-runs/{id}/cancel`, `POST /deployments/{id}/cancel`)**:
   - Direct abort of Jenkins builds (`CiLauncher.abort`) and Temporal workflows (`CdOrchestrator.cancel`).

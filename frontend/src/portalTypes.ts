@@ -1,5 +1,5 @@
 export type PageId = 'dashboard' | 'systems' | 'servers' | 'system' | 'requests' | 'module' | 'new-module'
-export type ModuleTab = 'overview' | 'pipeline' | 'version' | 'dora'
+export type ModuleTab = 'overview' | 'pipeline' | 'version' | 'config' | 'dora'
 export type SettingsTab = 'general' | 'activity'
 
 export type PortalModuleView = {
