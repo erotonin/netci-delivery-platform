@@ -11,7 +11,16 @@ from datetime import datetime
 from typing import Any, Protocol
 from uuid import UUID
 
-from ..domain.models import Application, DeliveryEvent, Deployment, PipelineRun
+from ..domain.models import (
+    Application,
+    DeliveryEvent,
+    Deployment,
+    PipelineRun,
+    ScmCommitStatus,
+    ScmIntegration,
+    ScmProviderType,
+    ScmWebhookDelivery,
+)
 from ..persistence import AuditRecord, IdempotencyRow, UnitOfWork
 from .records import DeploymentLease, ModuleRow, RequestRow, SystemRow, VersionRow
 
@@ -158,3 +167,23 @@ class PlatformSession(Protocol):
         comment: str | None,
         deployment_id: UUID | None = None,
     ) -> None: ...
+
+    # ------------------------------------------------- SCM integrations & webhooks
+
+    def scm_integration(self, integration_id: UUID) -> ScmIntegration | None: ...
+
+    def scm_integration_for_application(
+        self, application_id: UUID, provider: ScmProviderType | None = None
+    ) -> ScmIntegration | None: ...
+
+    def scm_integration_for_repository(
+        self, provider: ScmProviderType, repository_identity: str
+    ) -> ScmIntegration | None: ...
+
+    def upsert_scm_integration(self, integration: ScmIntegration) -> None: ...
+
+    def record_scm_webhook_delivery(self, delivery: ScmWebhookDelivery) -> bool:
+        """Atomically record webhook delivery ID. Returns False if duplicate already exists."""
+        ...
+
+    def scm_webhook_delivery(self, delivery_id: str) -> ScmWebhookDelivery | None: ...

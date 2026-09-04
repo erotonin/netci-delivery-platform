@@ -25,6 +25,10 @@ from ..domain.models import (
     PipelineRun,
     PipelineStatus,
     Runtime,
+    ScmCommitStatus,
+    ScmIntegration,
+    ScmProviderType,
+    ScmWebhookDelivery,
 )
 from ..persistence import (
     AuditRecord,
@@ -59,7 +63,15 @@ APPLICATION_COLUMNS = (
 )
 RUN_COLUMNS = (
     "id, application_id, status, commit_sha, branch, environment, parameters, correlation_id,"
-    " jenkins_run_id, workflow_id, artifact_digest, started_by, version, created_at, updated_at"
+    " jenkins_run_id, workflow_id, artifact_digest, started_by, console_url, version, created_at, updated_at"
+)
+SCM_INTEGRATION_COLUMNS = (
+    "id, application_id, provider, repository_identity, secret_token, secret_token_hash,"
+    " credential_reference, enabled, created_at, updated_at"
+)
+SCM_DELIVERY_COLUMNS = (
+    "delivery_id, provider, event_type, repository_identity, application_id, commit_sha,"
+    " status, received_at"
 )
 DEPLOYMENT_COLUMNS = (
     "id, application_id, pipeline_run_id, runtime, environment, status, artifact_digest,"
@@ -111,9 +123,38 @@ def _run(row: dict[str, Any]) -> PipelineRun:
         workflow_id=row["workflow_id"],
         artifact_digest=row["artifact_digest"],
         started_by=row["started_by"],
+        console_url=row.get("console_url"),
         version=int(row["version"] or 1),
         created_at=row["created_at"],
         updated_at=row["updated_at"],
+    )
+
+
+def _scm_integration(row: dict[str, Any]) -> ScmIntegration:
+    return ScmIntegration(
+        id=row["id"],
+        application_id=row["application_id"],
+        provider=ScmProviderType(row["provider"]),
+        repository_identity=row["repository_identity"],
+        secret_token=row.get("secret_token"),
+        secret_token_hash=row.get("secret_token_hash"),
+        credential_reference=row.get("credential_reference"),
+        enabled=bool(row["enabled"]),
+        created_at=row["created_at"],
+        updated_at=row["updated_at"],
+    )
+
+
+def _scm_delivery(row: dict[str, Any]) -> ScmWebhookDelivery:
+    return ScmWebhookDelivery(
+        delivery_id=row["delivery_id"],
+        provider=ScmProviderType(row["provider"]),
+        event_type=row["event_type"],
+        repository_identity=row["repository_identity"],
+        status=row["status"],
+        application_id=row.get("application_id"),
+        commit_sha=row.get("commit_sha"),
+        received_at=row["received_at"],
     )
 
 
@@ -652,8 +693,8 @@ class PostgresSession:
                 INSERT INTO pipeline_runs (id, application_id, commit_sha, branch, environment,
                                            parameters, status, jenkins_run_id, workflow_id,
                                            artifact_digest, correlation_id, started_by,
-                                           version, created_at, updated_at)
-                VALUES (%s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                                           console_url, version, created_at, updated_at)
+                VALUES (%s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
                     run.id,
@@ -668,6 +709,7 @@ class PostgresSession:
                     run.artifact_digest,
                     run.correlation_id,
                     run.started_by,
+                    run.console_url,
                     run.version,
                     run.created_at,
                     run.updated_at,
@@ -678,7 +720,7 @@ class PostgresSession:
             """
             UPDATE pipeline_runs
                SET status = %s, parameters = %s::jsonb, jenkins_run_id = %s, workflow_id = %s,
-                   artifact_digest = %s, version = %s, updated_at = %s
+                   artifact_digest = %s, console_url = %s, version = %s, updated_at = %s
              WHERE id = %s AND version = %s
             """,
             (
@@ -687,6 +729,7 @@ class PostgresSession:
                 run.jenkins_run_id,
                 run.workflow_id,
                 run.artifact_digest,
+                run.console_url,
                 run.version,
                 run.updated_at,
                 run.id,
@@ -1052,6 +1095,101 @@ class PostgresSession:
             " deployment_id = COALESCE(%s, deployment_id) WHERE id = %s",
             (status, comment, deployment_id, UUID(str(request_id))),
         )
+
+    # ------------------------------------------------- SCM integrations & webhooks
+
+    def scm_integration(self, integration_id: UUID) -> ScmIntegration | None:
+        self._cursor.execute(
+            f"SELECT {SCM_INTEGRATION_COLUMNS} FROM scm_integrations WHERE id = %s",
+            (integration_id,),
+        )
+        row = self._cursor.fetchone()
+        return _scm_integration(row) if row else None
+
+    def scm_integration_for_application(
+        self, application_id: UUID, provider: ScmProviderType | None = None
+    ) -> ScmIntegration | None:
+        if provider:
+            self._cursor.execute(
+                f"SELECT {SCM_INTEGRATION_COLUMNS} FROM scm_integrations WHERE application_id = %s AND provider = %s",
+                (application_id, provider.value),
+            )
+        else:
+            self._cursor.execute(
+                f"SELECT {SCM_INTEGRATION_COLUMNS} FROM scm_integrations WHERE application_id = %s ORDER BY created_at LIMIT 1",
+                (application_id,),
+            )
+        row = self._cursor.fetchone()
+        return _scm_integration(row) if row else None
+
+    def scm_integration_for_repository(
+        self, provider: ScmProviderType, repository_identity: str
+    ) -> ScmIntegration | None:
+        self._cursor.execute(
+            f"SELECT {SCM_INTEGRATION_COLUMNS} FROM scm_integrations WHERE provider = %s AND repository_identity = %s",
+            (provider.value, repository_identity),
+        )
+        row = self._cursor.fetchone()
+        return _scm_integration(row) if row else None
+
+    def upsert_scm_integration(self, integration: ScmIntegration) -> None:
+        self._cursor.execute(
+            """
+            INSERT INTO scm_integrations (id, application_id, provider, repository_identity,
+                                         secret_token, secret_token_hash, credential_reference,
+                                         enabled, created_at, updated_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (application_id, provider) DO UPDATE
+               SET repository_identity = EXCLUDED.repository_identity,
+                   secret_token = COALESCE(EXCLUDED.secret_token, scm_integrations.secret_token),
+                   secret_token_hash = COALESCE(EXCLUDED.secret_token_hash, scm_integrations.secret_token_hash),
+                   credential_reference = EXCLUDED.credential_reference,
+                   enabled = EXCLUDED.enabled,
+                   updated_at = EXCLUDED.updated_at
+            """,
+            (
+                integration.id,
+                integration.application_id,
+                integration.provider.value,
+                integration.repository_identity,
+                integration.secret_token,
+                integration.secret_token_hash,
+                integration.credential_reference,
+                integration.enabled,
+                integration.created_at,
+                integration.updated_at,
+            ),
+        )
+
+    def record_scm_webhook_delivery(self, delivery: ScmWebhookDelivery) -> bool:
+        self._cursor.execute(
+            """
+            INSERT INTO scm_webhook_deliveries (delivery_id, provider, event_type,
+                                                repository_identity, application_id,
+                                                commit_sha, status, received_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (delivery_id) DO NOTHING
+            """,
+            (
+                delivery.delivery_id,
+                delivery.provider.value,
+                delivery.event_type,
+                delivery.repository_identity,
+                delivery.application_id,
+                delivery.commit_sha,
+                delivery.status,
+                delivery.received_at,
+            ),
+        )
+        return self._cursor.rowcount > 0
+
+    def scm_webhook_delivery(self, delivery_id: str) -> ScmWebhookDelivery | None:
+        self._cursor.execute(
+            f"SELECT {SCM_DELIVERY_COLUMNS} FROM scm_webhook_deliveries WHERE delivery_id = %s",
+            (delivery_id,),
+        )
+        row = self._cursor.fetchone()
+        return _scm_delivery(row) if row else None
 
 
 class PostgresDatabase:

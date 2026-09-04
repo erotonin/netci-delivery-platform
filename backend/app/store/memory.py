@@ -20,7 +20,16 @@ from datetime import datetime, timedelta
 from typing import Any
 from uuid import UUID, uuid4
 
-from ..domain.models import Application, DeliveryEvent, Deployment, PipelineRun
+from ..domain.models import (
+    Application,
+    DeliveryEvent,
+    Deployment,
+    PipelineRun,
+    ScmCommitStatus,
+    ScmIntegration,
+    ScmProviderType,
+    ScmWebhookDelivery,
+)
 from ..persistence import (
     AuditRecord,
     ConcurrentModification,
@@ -51,6 +60,8 @@ class _State:
     fencing_counters: dict[tuple[UUID, str, str], int] = field(default_factory=dict)
     log_sequences: dict[UUID, int] = field(default_factory=dict)
     ci_reports: dict[tuple[str, str], list[dict[str, Any]]] = field(default_factory=dict)
+    scm_integrations: dict[UUID, ScmIntegration] = field(default_factory=dict)
+    scm_deliveries: dict[str, ScmWebhookDelivery] = field(default_factory=dict)
 
     def copy(self) -> "_State":
         return _State(
@@ -71,6 +82,8 @@ class _State:
             fencing_counters=dict(self.fencing_counters),
             log_sequences=dict(self.log_sequences),
             ci_reports={key: list(value) for key, value in self.ci_reports.items()},
+            scm_integrations=dict(self.scm_integrations),
+            scm_deliveries=dict(self.scm_deliveries),
         )
 
 
@@ -453,6 +466,56 @@ class InMemorySession:
             comment=comment,
             deployment_id=deployment_id if deployment_id is not None else current.deployment_id,
         )
+
+    # ------------------------------------------------- SCM integrations & webhooks
+
+    def scm_integration(self, integration_id: UUID) -> ScmIntegration | None:
+        return self._state.scm_integrations.get(integration_id)
+
+    def scm_integration_for_application(
+        self, application_id: UUID, provider: ScmProviderType | None = None
+    ) -> ScmIntegration | None:
+        for integration in self._state.scm_integrations.values():
+            if integration.application_id == application_id:
+                if provider is None or integration.provider == provider:
+                    return integration
+        return None
+
+    def scm_integration_for_repository(
+        self, provider: ScmProviderType, repository_identity: str
+    ) -> ScmIntegration | None:
+        for integration in self._state.scm_integrations.values():
+            if integration.provider == provider and integration.repository_identity == repository_identity:
+                return integration
+        return None
+
+    def upsert_scm_integration(self, integration: ScmIntegration) -> None:
+        for existing_id, existing in list(self._state.scm_integrations.items()):
+            if (
+                existing.application_id == integration.application_id
+                and existing.provider == integration.provider
+            ) or (
+                existing.provider == integration.provider
+                and existing.repository_identity == integration.repository_identity
+            ):
+                updated = replace(
+                    integration,
+                    id=existing.id,
+                    secret_token=integration.secret_token or existing.secret_token,
+                    secret_token_hash=integration.secret_token_hash or existing.secret_token_hash,
+                )
+                self._state.scm_integrations[existing.id] = updated
+                return
+        self._state.scm_integrations[integration.id] = integration
+
+    def record_scm_webhook_delivery(self, delivery: ScmWebhookDelivery) -> bool:
+        if delivery.delivery_id in self._state.scm_deliveries:
+            return False
+        self._state.scm_deliveries[delivery.delivery_id] = delivery
+        return True
+
+    def scm_webhook_delivery(self, delivery_id: str) -> ScmWebhookDelivery | None:
+        return self._state.scm_deliveries.get(delivery_id)
 
 
 class InMemoryDatabase:

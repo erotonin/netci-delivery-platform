@@ -5,6 +5,23 @@ Changelog and releases use Semantic Versioning once the project reaches 1.0.0.
 
 ## [Unreleased]
 
+### Added - Phase 6 (P1.1): SCM Webhook Integration, Private Repository Checkout & Commit Status
+- **SCM Provider Port & Adapters (`backend/app/adapters/scm.py`)**:
+  - `ScmProvider` interface with production adapters for GitHub (`GitHubScmProvider`) and GitLab (`GitLabScmProvider`), plus `MockScmProvider` for testing.
+  - Cryptographic signature validation: HMAC-SHA256 (`X-Hub-Signature-256`) for GitHub, constant-time secret comparison (`X-Gitlab-Token`) for GitLab.
+  - 1MB payload size enforcement (`MAX_WEBHOOK_PAYLOAD_BYTES`) on webhooks.
+  - Commit status reporting back to SCM for pipeline transitions (`pending`, `running`, `success`, `failure`, `cancelled`).
+- **Atomic Deduplication & Persistence (`backend/migrations/0012_scm_integrations_and_webhooks.sql`)**:
+  - `scm_integrations` and `scm_webhook_deliveries` tables.
+  - Atomic deduplication of webhook delivery IDs at the database level.
+  - Server-managed credentialsId for private Git checkouts.
+  - `console_url` added to `pipeline_runs` and exposed in API and frontend.
+- **REST Endpoints & Frontend (`backend/app/main.py`, `frontend/src/ModulePage.tsx`)**:
+  - `POST /applications/{id}/scm` and `GET /applications/{id}/scm` with credential redaction.
+  - `POST /webhooks/scm/{provider}` for verified webhook ingestion.
+  - "Open Jenkins" action enabled dynamically on `ModulePage.tsx` when `consoleUrl` is present.
+
+
 ### Added
 
 - Open-source governance, contribution and security policies.

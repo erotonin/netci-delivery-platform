@@ -515,6 +515,87 @@ paths:
           $ref: '#/components/responses/Conflict'
         '422':
           $ref: '#/components/responses/UnprocessableEntity'
+  /applications/{applicationId}/scm:
+    post:
+      operationId: configureApplicationScm
+      summary: Configure or update SCM integration for an application
+      parameters:
+        - $ref: '#/components/parameters/ApplicationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ScmIntegrationCreate'
+      responses:
+        '201':
+          description: SCM integration configured
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScmIntegration'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+    get:
+      operationId: getApplicationScm
+      summary: Get configured SCM integration for an application (secrets redacted)
+      parameters:
+        - $ref: '#/components/parameters/ApplicationId'
+        - name: provider
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [github, gitlab]
+      responses:
+        '200':
+          description: SCM integration details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScmIntegration'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /webhooks/scm/{provider}:
+    post:
+      operationId: receiveScmWebhook
+      summary: Ingest external SCM webhook
+      parameters:
+        - name: provider
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [github, gitlab]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Duplicate webhook ignored or acknowledged
+          content:
+            application/json:
+              schema:
+                type: object
+        '201':
+          description: Pipeline triggered by verified webhook
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '413':
+          description: Webhook payload exceeds 1MB limit
   /pipeline-runs/{pipelineRunId}/callback-token:
     post:
       operationId: issuePipelineCallbackToken
@@ -869,6 +950,12 @@ components:
       required: false
       schema: { type: string, maxLength: 128 }
   responses:
+    BadRequest:
+      description: Bad request or missing required parameters
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
     Unauthorized:
       description: Missing or invalid machine callback credential
       headers:
@@ -1224,6 +1311,7 @@ components:
         jenkinsRunId: { type: string, nullable: true }
         workflowId: { type: string, nullable: true }
         artifactDigest: { type: string, nullable: true }
+        consoleUrl: { type: string, nullable: true }
         startedBy: { type: string, nullable: true }
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
@@ -1333,3 +1421,26 @@ components:
         code: { type: string }
         message: { type: string }
         correlationId: { type: string, nullable: true }
+    ScmIntegrationCreate:
+      type: object
+      required: [provider, repositoryIdentity, secretToken]
+      additionalProperties: false
+      properties:
+        provider: { type: string, enum: [github, gitlab] }
+        repositoryIdentity: { type: string, minLength: 1, maxLength: 255 }
+        secretToken: { type: string, minLength: 8, maxLength: 255 }
+        credentialReference: { type: string, nullable: true, maxLength: 128 }
+        enabled: { type: boolean, default: true }
+    ScmIntegration:
+      type: object
+      required: [id, applicationId, provider, repositoryIdentity, enabled, createdAt, updatedAt]
+      additionalProperties: false
+      properties:
+        id: { type: string, format: uuid }
+        applicationId: { type: string, format: uuid }
+        provider: { type: string, enum: [github, gitlab] }
+        repositoryIdentity: { type: string }
+        credentialReference: { type: string, nullable: true }
+        enabled: { type: boolean }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }

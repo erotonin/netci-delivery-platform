@@ -64,6 +64,7 @@ export type PipelineRun = {
   jenkinsRunId: string | null
   workflowId: string | null
   artifactDigest: string | null
+  consoleUrl: string | null
   startedBy: string | null
   createdAt: string
   updatedAt: string

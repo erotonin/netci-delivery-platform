@@ -69,6 +69,8 @@ CRITICAL_TABLES: tuple[str, ...] = (
     "deployment_fencing_counters",
     "pipeline_log_sequences",
     "version_ci_reports",
+    "scm_integrations",
+    "scm_webhook_deliveries",
 )
 
 

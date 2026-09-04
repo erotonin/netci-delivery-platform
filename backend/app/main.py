@@ -30,7 +30,12 @@ from .domain.models import (
     PipelineRun,
     PipelineStatus,
     Runtime,
+    ScmCommitStatus,
+    ScmIntegration,
+    ScmProviderType,
+    ScmWebhookDelivery,
 )
+from .adapters.scm import MAX_WEBHOOK_PAYLOAD_BYTES, get_scm_provider
 from .delivery import CiResult, DeliveryError, DeliveryPlatform
 from .policy.rules import (
     PolicyViolation,
@@ -560,7 +565,7 @@ def application_json(item: Application) -> dict[str, object]:
 
 
 def pipeline_json(item: PipelineRun) -> dict[str, object]:
-    return {"id": str(item.id), "applicationId": str(item.application_id), "status": item.status.value, "commitSha": item.commit_sha, "branch": item.branch, "environment": item.environment.value, "parameters": dict(item.parameters), "correlationId": item.correlation_id, "jenkinsRunId": item.jenkins_run_id, "workflowId": item.workflow_id, "artifactDigest": item.artifact_digest, "startedBy": item.started_by, "createdAt": item.created_at.isoformat(), "updatedAt": item.updated_at.isoformat()}
+    return {"id": str(item.id), "applicationId": str(item.application_id), "status": item.status.value, "commitSha": item.commit_sha, "branch": item.branch, "environment": item.environment.value, "parameters": dict(item.parameters), "correlationId": item.correlation_id, "jenkinsRunId": item.jenkins_run_id, "workflowId": item.workflow_id, "artifactDigest": item.artifact_digest, "consoleUrl": item.console_url, "startedBy": item.started_by, "createdAt": item.created_at.isoformat(), "updatedAt": item.updated_at.isoformat()}
 
 
 def deployment_json(item: Deployment) -> dict[str, object]:
@@ -598,6 +603,29 @@ class ApplicationCreate(BaseModel):
     runtime: Runtime
     defaultEnvironment: Environment = Environment.DEV
     stages: list[str] = Field(default_factory=list)
+
+
+class ScmIntegrationCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    provider: ScmProviderType
+    repositoryIdentity: str = Field(min_length=1, max_length=255)
+    secretToken: str = Field(min_length=8, max_length=255)
+    credentialReference: str | None = Field(default=None, max_length=128)
+    enabled: bool = True
+
+
+def scm_integration_json(item: ScmIntegration) -> dict[str, object]:
+    # Redact secretToken and secretTokenHash: never exposed in API responses or logs
+    return {
+        "id": str(item.id),
+        "applicationId": str(item.application_id),
+        "provider": item.provider.value,
+        "repositoryIdentity": item.repository_identity,
+        "credentialReference": item.credential_reference,
+        "enabled": item.enabled,
+        "createdAt": item.created_at.isoformat(),
+        "updatedAt": item.updated_at.isoformat(),
+    }
 
 
 class PipelineRunCreate(BaseModel):
@@ -1486,6 +1514,155 @@ def list_delivery_events(applicationId: UUID | None = None, principal: Principal
         visible_ids = _visible_application_ids(principal)
         events = tuple(event for event in platform.delivery_events() if event.application_id in visible_ids)
     return {"count": len(events), "items": [delivery_event_json(item) for item in events]}
+
+
+@app.post("/applications/{applicationId}/scm", status_code=status.HTTP_201_CREATED)
+def configure_application_scm(
+    applicationId: UUID,
+    payload: ScmIntegrationCreate,
+    principal: Principal = DeveloperAccess,
+) -> dict[str, object]:
+    """Configure or update SCM webhook & repository identity for an application."""
+    app = platform.get_application(applicationId)
+    _require_application_access(app, principal)
+
+    secret_hash = hashlib.sha256(payload.secretToken.encode("utf-8")).hexdigest()
+    integration = ScmIntegration(
+        application_id=applicationId,
+        provider=payload.provider,
+        repository_identity=payload.repositoryIdentity.strip(),
+        secret_token=payload.secretToken,
+        secret_token_hash=secret_hash,
+        credential_reference=payload.credentialReference.strip() if payload.credentialReference else None,
+        enabled=payload.enabled,
+    )
+    with database.transaction() as session:
+        existing = session.scm_integration_for_repository(payload.provider, integration.repository_identity)
+        if existing and existing.application_id != applicationId:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                f"repository {integration.repository_identity} is already configured for another application",
+            )
+        session.upsert_scm_integration(integration)
+        saved = session.scm_integration_for_application(applicationId, payload.provider)
+        assert saved is not None
+
+    return scm_integration_json(saved)
+
+
+@app.get("/applications/{applicationId}/scm")
+def get_application_scm(
+    applicationId: UUID,
+    provider: ScmProviderType | None = None,
+    principal: Principal = ReadAccess,
+) -> dict[str, object]:
+    """Get active SCM integration for an application (secrets are redacted)."""
+    app = platform.get_application(applicationId)
+    _require_application_access(app, principal)
+    with database.transaction() as session:
+        integration = session.scm_integration_for_application(applicationId, provider)
+        if integration is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "no SCM integration found for application")
+        return scm_integration_json(integration)
+
+
+@app.post("/webhooks/scm/{provider}", status_code=status.HTTP_200_OK)
+async def receive_scm_webhook(
+    provider: str,
+    request: Request,
+) -> JSONResponse:
+    """Receive, verify, deduplicate, and process external SCM webhooks."""
+    raw_body = await request.body()
+    if len(raw_body) > MAX_WEBHOOK_PAYLOAD_BYTES:
+        raise HTTPException(
+            status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            "webhook payload exceeds maximum permitted size of 1MB",
+        )
+
+    try:
+        provider_type = ScmProviderType(provider.lower())
+        scm_provider = get_scm_provider(provider_type)
+    except ValueError:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"unsupported SCM provider: {provider}")
+
+    headers = dict(request.headers)
+    parsed = scm_provider.parse_webhook(headers, raw_body)
+    if parsed is None:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "unsupported or unparseable webhook event",
+        )
+
+    with database.transaction() as session:
+        integration = session.scm_integration_for_repository(provider_type, parsed.repository_identity)
+        if integration is None or not integration.enabled:
+            raise HTTPException(
+                status.HTTP_404_NOT_FOUND,
+                f"repository {parsed.repository_identity} is not mapped to any active application",
+            )
+
+        # Signature verification against server-side secret
+        verified = scm_provider.verify_webhook(
+            headers,
+            raw_body,
+            secret_token=integration.secret_token,
+            secret_token_hash=integration.secret_token_hash,
+        )
+        if not verified:
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid webhook signature")
+
+        # Atomic deduplication on delivery ID
+        delivery = ScmWebhookDelivery(
+            delivery_id=parsed.delivery_id,
+            provider=provider_type,
+            event_type=parsed.event_type,
+            repository_identity=parsed.repository_identity,
+            application_id=integration.application_id,
+            commit_sha=parsed.commit_sha,
+            status="received",
+        )
+        recorded = session.record_scm_webhook_delivery(delivery)
+        if not recorded:
+            return JSONResponse(
+                status_code=status.HTTP_200_OK,
+                content={
+                    "status": "ignored_duplicate",
+                    "deliveryId": parsed.delivery_id,
+                    "message": "webhook delivery was already processed",
+                },
+            )
+
+        app = session.application(integration.application_id)
+        if app is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "associated application not found")
+
+    # Trigger pipeline run outside the read transaction
+    managed_parameters: dict[str, object] = {}
+    if integration.credential_reference:
+        managed_parameters["credentialsId"] = integration.credential_reference
+
+    corr_id = str(getattr(request.state, "correlation_id", None) or uuid4())
+    run = platform.start_pipeline(
+        app.id,
+        commit_sha=parsed.commit_sha,
+        branch=parsed.branch,
+        environment=app.default_environment,
+        parameters=managed_parameters,
+        correlation_id=corr_id,
+        idempotency_key=f"scm:{parsed.delivery_id}",
+        started_by=f"scm:{provider_type.value}:{parsed.sender}",
+    )
+
+    return JSONResponse(
+        status_code=status.HTTP_201_CREATED,
+        content={
+            "status": "triggered",
+            "deliveryId": parsed.delivery_id,
+            "pipelineRunId": str(run.id),
+            "commitSha": parsed.commit_sha,
+            "branch": parsed.branch,
+        },
+    )
 
 
 @app.post("/applications/{applicationId}/pipeline-runs", status_code=status.HTTP_202_ACCEPTED, response_model=None)

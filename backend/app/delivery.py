@@ -52,6 +52,7 @@ from .domain.models import (
     PipelineRun,
     PipelineStatus,
     Runtime,
+    ScmCommitStatus,
 )
 
 
@@ -745,6 +746,15 @@ class DeliveryPlatform:
                 correlation_id=correlation_id,
             )
         )
+        self._notify_scm_status(
+            transaction,
+            application_id,
+            commit_sha,
+            ScmCommitStatus.PENDING,
+            pipeline_run_id=run.id,
+            correlation_id=correlation_id,
+            unit=unit,
+        )
         if idempotency_key is not None:
             unit.idempotency.append(
                 IdempotencyRow(
@@ -805,6 +815,7 @@ class DeliveryPlatform:
         updated = replace(
             run,
             jenkins_run_id=launched.jenkins_run_id,
+            console_url=launched.console_url,
             version=run.version + 1,
             updated_at=_now(),
         )
@@ -818,11 +829,59 @@ class DeliveryPlatform:
                 application_id=application.id,
                 pipeline_run_id=run.id,
                 correlation_id=run.correlation_id,
-                payload={"controllerId": launched.controller_id, "externalRunId": launched.external_run_id},
+                payload={
+                    "controllerId": launched.controller_id,
+                    "externalRunId": launched.external_run_id,
+                    "consoleUrl": launched.console_url,
+                },
             )
         )
         self._commit(unit)
         return updated
+
+    def _notify_scm_status(
+        self,
+        session: PlatformSession,
+        application_id: UUID,
+        commit_sha: str,
+        status: ScmCommitStatus,
+        *,
+        pipeline_run_id: UUID | None = None,
+        target_url: str | None = None,
+        correlation_id: str | None = None,
+        unit: UnitOfWork | None = None,
+    ) -> None:
+        integration = session.scm_integration_for_application(application_id)
+        if integration is None or not integration.enabled:
+            return
+        try:
+            from .adapters.scm import get_scm_provider
+            provider = get_scm_provider(integration.provider)
+            provider.update_commit_status(
+                integration.repository_identity,
+                commit_sha,
+                status,
+                context="netci/pipeline",
+                description=f"netCI pipeline {status.value}",
+                target_url=target_url,
+                credential_reference=integration.credential_reference,
+            )
+            if unit is not None:
+                unit.audit.append(
+                    AuditRecord(
+                        "scm.status_updated",
+                        application_id=application_id,
+                        pipeline_run_id=pipeline_run_id,
+                        correlation_id=correlation_id,
+                        payload={
+                            "provider": integration.provider.value,
+                            "status": status.value,
+                            "commitSha": commit_sha,
+                        },
+                    )
+                )
+        except Exception as exc:
+            logger.warning("Failed to update SCM commit status: %s", exc)
 
     def list_pipeline_runs(
         self, application_id: UUID | None = None, session: PlatformSession | None = None
@@ -1092,6 +1151,15 @@ class DeliveryPlatform:
             unit = UnitOfWork(runs=[(updated, run.version)])
             if log_lines:
                 unit.logs.append((run.id, list(log_lines)))
+            self._notify_scm_status(
+                transaction,
+                run.application_id,
+                run.commit_sha,
+                ScmCommitStatus.RUNNING,
+                pipeline_run_id=run.id,
+                correlation_id=run.correlation_id,
+                unit=unit,
+            )
             self._apply(transaction, unit)
             return _CiOutcome(CiResult(updated))
 
@@ -1114,6 +1182,15 @@ class DeliveryPlatform:
                     pipeline_run_id=run.id,
                     correlation_id=run.correlation_id,
                 )
+            )
+            self._notify_scm_status(
+                transaction,
+                run.application_id,
+                run.commit_sha,
+                ScmCommitStatus.FAILURE,
+                pipeline_run_id=run.id,
+                correlation_id=run.correlation_id,
+                unit=unit,
             )
             self._apply(transaction, unit)
             return _CiOutcome(CiResult(updated))
@@ -1140,6 +1217,15 @@ class DeliveryPlatform:
                     correlation_id=run.correlation_id,
                     payload=decision.as_json(),
                 )
+            )
+            self._notify_scm_status(
+                transaction,
+                run.application_id,
+                run.commit_sha,
+                ScmCommitStatus.FAILURE,
+                pipeline_run_id=run.id,
+                correlation_id=run.correlation_id,
+                unit=unit,
             )
             self._apply(transaction, unit)
             return _CiOutcome(
@@ -1168,13 +1254,14 @@ class DeliveryPlatform:
         )
         unit = UnitOfWork(runs=[(updated, run.version)], deployments=[(deployment, None)])
         if deployment.status == DeploymentStatus.DEPLOYING:
+            self._apply(transaction, UnitOfWork(deployments=[(deployment, None)]))
             # Claim the target before anything is written that says a deployment is
             # under way. If someone else holds it this raises, and nothing is committed.
             lease = self._acquire_lease(
                 transaction, unit, deployment, updated, owner=f"ci:{run.id}"
             )
             deployment = replace(deployment, fencing_token=lease.fencing_token)
-            unit.deployments = [(deployment, None)]
+            unit.deployments = [(deployment, 1)]
         if log_lines:
             unit.logs.append((run.id, list(log_lines)))
         unit.audit.append(
@@ -1186,6 +1273,16 @@ class DeliveryPlatform:
                 correlation_id=run.correlation_id,
                 payload={"artifactDigest": artifact_digest},
             )
+        )
+        self._notify_scm_status(
+            transaction,
+            run.application_id,
+            run.commit_sha,
+            ScmCommitStatus.SUCCESS,
+            pipeline_run_id=run.id,
+            target_url=run.console_url,
+            correlation_id=run.correlation_id,
+            unit=unit,
         )
         self._apply(transaction, unit)
 

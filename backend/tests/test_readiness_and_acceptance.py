@@ -41,7 +41,7 @@ def test_readyz_fails_503_when_database_unavailable(monkeypatch):
 
 
 def test_operator_health_requires_admin_access():
-    from app.main import current_principal
+    import app.main as main_mod
     viewer_principal = Principal(
         subject="viewer-user",
         display_name="Viewer User",
@@ -50,16 +50,16 @@ def test_operator_health_requires_admin_access():
         method="token",
         teams=frozenset(),
     )
-    app.dependency_overrides[current_principal] = lambda: viewer_principal
+    main_mod.app.dependency_overrides[main_mod.current_principal] = lambda: viewer_principal
     try:
-        response = client.get("/operator/health")
+        response = TestClient(main_mod.app).get("/operator/health")
         assert response.status_code == 403
     finally:
-        app.dependency_overrides.pop(current_principal, None)
+        main_mod.app.dependency_overrides.pop(main_mod.current_principal, None)
 
 
 def test_operator_health_with_admin_access():
-    from app.main import current_principal
+    import app.main as main_mod
     admin_principal = Principal(
         subject="admin-user",
         display_name="Admin User",
@@ -68,9 +68,9 @@ def test_operator_health_with_admin_access():
         method="token",
         teams=frozenset({"admins"}),
     )
-    app.dependency_overrides[current_principal] = lambda: admin_principal
+    main_mod.app.dependency_overrides[main_mod.current_principal] = lambda: admin_principal
     try:
-        response = client.get("/operator/health")
+        response = TestClient(main_mod.app).get("/operator/health")
         assert response.status_code in (200, 503)
         data = response.json()
         assert data.get("operatorView") is True
@@ -78,7 +78,7 @@ def test_operator_health_with_admin_access():
         assert "netci-local-only" not in raw_text
         assert "Bearer" not in raw_text
     finally:
-        app.dependency_overrides.pop(current_principal, None)
+        main_mod.app.dependency_overrides.pop(main_mod.current_principal, None)
 
 
 def test_acceptance_harness_generates_evidence():

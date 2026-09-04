@@ -82,9 +82,49 @@ class PipelineRun:
     jenkins_run_id: str | None = None
     workflow_id: str | None = None
     artifact_digest: str | None = None
+    console_url: str | None = None
     version: int = 1
     created_at: datetime = field(default_factory=utc_now)
     updated_at: datetime = field(default_factory=utc_now)
+
+
+class ScmProviderType(str, Enum):
+    GITHUB = "github"
+    GITLAB = "gitlab"
+
+
+class ScmCommitStatus(str, Enum):
+    PENDING = "pending"
+    RUNNING = "running"
+    SUCCESS = "success"
+    FAILURE = "failure"
+    CANCELLED = "cancelled"
+
+
+@dataclass(frozen=True)
+class ScmIntegration:
+    application_id: UUID
+    provider: ScmProviderType
+    repository_identity: str
+    secret_token: str | None = None
+    secret_token_hash: str | None = None
+    credential_reference: str | None = None
+    enabled: bool = True
+    id: UUID = field(default_factory=uuid4)
+    created_at: datetime = field(default_factory=utc_now)
+    updated_at: datetime = field(default_factory=utc_now)
+
+
+@dataclass(frozen=True)
+class ScmWebhookDelivery:
+    delivery_id: str
+    provider: ScmProviderType
+    event_type: str
+    repository_identity: str
+    status: str
+    application_id: UUID | None = None
+    commit_sha: str | None = None
+    received_at: datetime = field(default_factory=utc_now)
 
 
 @dataclass(frozen=True)
