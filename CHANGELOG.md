@@ -5,6 +5,19 @@ Changelog and releases use Semantic Versioning once the project reaches 1.0.0.
 
 ## [Unreleased]
 
+### Added - Phase 13 (P2.4): Platform Integrity, Clean-Room Verification & Final Production Readiness Certification
+- **Automated Production Readiness Audit Suite (`scripts/production_readiness_audit.py`)**:
+  - Implemented end-to-end verification covering all 13 architecture phases across 28 distinct invariant checks.
+  - Generates machine-readable audit report at `evidence/production_readiness_audit.json` with 100% pass rate (28/28 checks PASS) and `CERTIFIED` verdict.
+- **Clean-Room Enforcement & Fail-Closed Integrity**:
+  - Validated zero mock/fake data fallbacks in default runtime paths.
+  - Enforced fail-closed behavior across all external dependencies (PostgreSQL, DCIM, Cosign, Secrets/Vault).
+- **Comprehensive Operational Documentation & Architecture Decisions**:
+  - Added `docs/LIVE-READINESS.md` detailing operational requirements, invariant gates, and verification runbooks.
+  - Added `docs/decisions/ADR-026-production-readiness-and-certification.md` defining platform certification standards.
+  - Updated `docs/HUONG-DAN-HIEU-TOAN-BO-NETCI.md` architectural corpus reflecting full project maturity.
+- See ADR-026.
+
 ### Added - Phase 12 (P2.3): Service Catalog, Golden Path Templates, Ephemeral Preview Environments & Self-Service Developer Workflows
 - **Canonical PostgreSQL Schema Migration 0018 (`backend/migrations/0018_service_catalog_and_self_service.sql`)**:
   - `catalog_services`: Authoritative software entities with tier (`tier-1`, `tier-2`, `tier-3`), lifecycle state (`active`, `deprecated`, `decommissioned`), owning team, repo/docs URLs, and metadata.

@@ -75,6 +75,15 @@ CRITICAL_TABLES: tuple[str, ...] = (
     "module_config_revisions",
     "server_health_records",
     "notifications",
+    "policy_decisions",
+    "security_exceptions",
+    "break_glass_requests",
+    "resource_quotas",
+    "catalog_services",
+    "catalog_service_dependencies",
+    "catalog_templates",
+    "preview_environments",
+    "resource_requests",
 )
 
 

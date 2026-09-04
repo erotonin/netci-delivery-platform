@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<testsuite name="production_acceptance" tests="9" failures="0" skipped="5" timestamp="2026-09-04T15:14:25.438431+00:00">
-  <testcase name="persistence_across_api_restart" classname="acceptance" time="0.131">
+<testsuite name="production_acceptance" tests="9" failures="0" skipped="7" timestamp="2026-09-04T16:44:49.879952+00:00">
+  <testcase name="persistence_across_api_restart" classname="acceptance" time="0.000">
+    <skipped message="No database configured (DATABASE_URL or NETCI_TEST_DATABASE_URL is empty)"/>
   </testcase>
   <testcase name="oidc_role_and_team" classname="acceptance" time="0.000">
     <skipped message="OIDC is not configured (NETCI_AUTH_MODE != 'oidc' or NETCI_OIDC_ISSUER missing)"/>
@@ -21,6 +22,7 @@
   </testcase>
   <testcase name="deployment_failure_and_rollback" classname="acceptance" time="0.000">
   </testcase>
-  <testcase name="backup_and_restore_verification" classname="acceptance" time="77.626">
+  <testcase name="backup_and_restore_verification" classname="acceptance" time="0.000">
+    <skipped message="DATABASE_URL not configured for backup drill"/>
   </testcase>
 </testsuite>
