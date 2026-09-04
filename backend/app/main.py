@@ -563,7 +563,7 @@ def pipeline_json(item: PipelineRun) -> dict[str, object]:
 
 
 def deployment_json(item: Deployment) -> dict[str, object]:
-    return {"id": str(item.id), "applicationId": str(item.application_id), "pipelineRunId": str(item.pipeline_run_id) if item.pipeline_run_id else None, "runtime": item.runtime.value, "environment": item.environment.value, "status": item.status.value, "artifactDigest": item.artifact_digest, "previousArtifactDigest": item.previous_artifact_digest, "approvedBy": item.approved_by, "createdAt": item.created_at.isoformat(), "updatedAt": item.updated_at.isoformat()}
+    return {"id": str(item.id), "applicationId": str(item.application_id), "pipelineRunId": str(item.pipeline_run_id) if item.pipeline_run_id else None, "runtime": item.runtime.value, "environment": item.environment.value, "status": item.status.value, "artifactDigest": item.artifact_digest, "previousArtifactDigest": item.previous_artifact_digest, "approvedBy": item.approved_by, "fencingToken": item.fencing_token, "createdAt": item.created_at.isoformat(), "updatedAt": item.updated_at.isoformat()}
 
 
 def delivery_event_json(item: DeliveryEvent) -> dict[str, object]:
@@ -650,6 +650,20 @@ class ApprovalRequest(StrictBody):
 class DeploymentResultRequest(StrictBody):
     status: Literal["healthy", "failed"]
     message: str | None = Field(default=None, max_length=2000)
+    # The lease generation the reporting workflow was started under. netCI hands this to
+    # the workflow when it starts it; sending it back is what lets a workflow that was
+    # superseded be told apart from the one that replaced it.
+    fencingToken: int | None = Field(default=None, ge=1)
+
+
+class RollbackResultRequest(StrictBody):
+    succeeded: bool
+    message: str | None = Field(default=None, max_length=2000)
+    fencingToken: int | None = Field(default=None, ge=1)
+
+
+class HeartbeatRequest(StrictBody):
+    fencingToken: int = Field(ge=1)
 
 
 class RollbackRequest(BaseModel):
@@ -1627,9 +1641,76 @@ def record_deployment_result(
         workload=Workload.TEMPORAL,
         deployment_id=deploymentId,
     )
-    deployment = platform.record_deployment_result(deploymentId, payload.status, payload.message)
+    deployment = platform.record_deployment_result(
+        deploymentId, payload.status, payload.message, fencing_token=payload.fencingToken
+    )
     portal.record_production_deployment_result(deploymentId, payload.status, payload.message)
     return deployment_json(deployment)
+
+
+@app.post("/deployments/{deploymentId}/heartbeat", status_code=status.HTTP_200_OK)
+def heartbeat_deployment(
+    deploymentId: UUID,
+    payload: HeartbeatRequest,
+    request: Request,
+    _: Principal = PipelineAccess,
+) -> dict[str, object]:
+    """Extend a running deployment's hold on its target.
+
+    A worker that stops heartbeating loses the target to the next deployment. That is the
+    point: a lease with no expiry is a deadlock waiting for a worker to crash, and one
+    that expires while work is genuinely in flight is a collision.
+    """
+
+    _authorize_callback(
+        request,
+        scope=Scope.DEPLOYMENT_RESULT,
+        workload=Workload.TEMPORAL,
+        deployment_id=deploymentId,
+    )
+    return platform.heartbeat_deployment(deploymentId, payload.fencingToken)
+
+
+@app.post("/deployments/{deploymentId}/rollback-result", status_code=status.HTTP_202_ACCEPTED)
+def record_rollback_result(
+    deploymentId: UUID,
+    payload: RollbackResultRequest,
+    request: Request,
+    _: Principal = PipelineAccess,
+) -> dict[str, object]:
+    """Report whether a rollback actually restored service.
+
+    `rollback_failed` exists because a rollback that did not work leaves the environment
+    in neither the new state nor the old one, and calling that `failed` loses the fact
+    that recovery was attempted. It also emits no DORA recovery event: nothing was
+    restored, and a metric that says otherwise is worse than no metric.
+    """
+
+    _authorize_callback(
+        request,
+        scope=Scope.DEPLOYMENT_RESULT,
+        workload=Workload.TEMPORAL,
+        deployment_id=deploymentId,
+    )
+    return deployment_json(
+        platform.record_rollback_result(
+            deploymentId, payload.succeeded, payload.message, fencing_token=payload.fencingToken
+        )
+    )
+
+
+@app.post("/deployment-leases/recover", status_code=status.HTTP_200_OK)
+def recover_deployment_leases(_: Principal = AdminAccess) -> dict[str, object]:
+    """Release leases whose owner stopped heartbeating, and record that it happened.
+
+    This is not what unblocks a target -- acquisition reclaims an expired lease at the
+    moment somebody wants it, so there is no window where a dead lease blocks work. This
+    exists so an operator can see that a worker died without waiting for the next
+    deployment to reveal it.
+    """
+
+    recovered = platform.recover_expired_leases()
+    return {"recovered": len(recovered), "items": recovered}
 
 
 @app.post("/deployments/{deploymentId}/rollback", status_code=status.HTTP_202_ACCEPTED, response_model=None)

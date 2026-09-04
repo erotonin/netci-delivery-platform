@@ -679,6 +679,63 @@ paths:
           $ref: '#/components/responses/Conflict'
         '422':
           $ref: '#/components/responses/UnprocessableEntity'
+  /deployments/{deploymentId}/heartbeat:
+    post:
+      operationId: heartbeatDeployment
+      summary: Extend a running deployment's exclusive hold on its target
+      description: >-
+        A deployment holds a lease on `application + environment + target` while it runs,
+        so two workflows cannot write to the same hosts. The lease expires if the worker
+        stops heartbeating -- a lease without an expiry is a deadlock waiting for a worker
+        to crash. `fencingToken` is the lease generation netCI handed the workflow when it
+        started it; a lower one means this workflow has been superseded.
+      parameters:
+        - $ref: '#/components/parameters/DeploymentId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/HeartbeatRequest' }
+      responses:
+        '200': { description: Lease extended }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /deployments/{deploymentId}/rollback-result:
+    post:
+      operationId: recordRollbackResult
+      summary: Report whether a rollback actually restored service
+      description: >-
+        A rollback that failed leaves the environment in neither the new state nor the old
+        one. Reporting that as `failed` would lose the fact that recovery was attempted and
+        did not work, so it has its own terminal state, `rollback_failed`, and it emits no
+        DORA recovery event -- nothing was restored.
+      parameters:
+        - $ref: '#/components/parameters/DeploymentId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RollbackResultRequest' }
+      responses:
+        '202': { description: Rollback outcome recorded }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /deployment-leases/recover:
+    post:
+      operationId: recoverDeploymentLeases
+      summary: Release leases whose owner stopped heartbeating
+      description: >-
+        Not what unblocks a target -- acquisition reclaims an expired lease at the moment
+        somebody wants it, so no dead lease ever blocks work. This exists so an operator
+        can see that a worker died without waiting for the next deployment to reveal it.
+        Every release is written to the audit trail.
+      responses:
+        '200': { description: Leases recovered }
+        '403': { $ref: '#/components/responses/Forbidden' }
   /deployments/{deploymentId}/rollback:
     post:
       operationId: rollbackDeployment
@@ -801,6 +858,25 @@ components:
           schema:
             $ref: '#/components/schemas/ErrorResponse'
   schemas:
+    HeartbeatRequest:
+      type: object
+      additionalProperties: false
+      required: [fencingToken]
+      properties:
+        fencingToken:
+          type: integer
+          minimum: 1
+          description: Lease generation this workflow was started under.
+    RollbackResultRequest:
+      type: object
+      additionalProperties: false
+      required: [succeeded]
+      properties:
+        succeeded:
+          type: boolean
+          description: Whether the previous version is actually back in service.
+        message: { type: string, maxLength: 2000 }
+        fencingToken: { type: integer, minimum: 1 }
     CallbackTokenRequest:
       type: object
       additionalProperties: false

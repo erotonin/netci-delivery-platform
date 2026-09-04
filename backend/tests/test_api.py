@@ -314,18 +314,67 @@ def test_deployment_result_and_rollback_complete_the_public_lifecycle():
         headers=MACHINE_HEADERS,
         json={'status': 'healthy', 'message': 'health check passed'},
     )
-    rolled_back = client.post(
+    started = client.post(
         f'/deployments/{deployment_id}/rollback',
         json={'targetArtifactDigest': f"sha256:{'d' * 64}", 'reason': 'mentor drill'},
     )
 
-    assert healthy.status_code == rolled_back.status_code == 202
+    assert healthy.status_code == started.status_code == 202
     assert healthy.json()['status'] == 'healthy'
+    # Requesting a rollback starts one. The old version is not back until the workflow
+    # says so, and recording the restore before it happened is the false-green this
+    # platform exists to remove.
+    assert started.json()['status'] == 'rollback_in_progress'
+    assert started.json()['artifactDigest'] == f"sha256:{'d' * 64}"
+    assert started.json()['previousArtifactDigest'] == f"sha256:{'c' * 64}"
+    assert client.get(f'/deployments/{deployment_id}').json()['status'] == 'rollback_in_progress'
+
+    restored = client.post(
+        f'/deployments/{deployment_id}/rollback-result',
+        headers=MACHINE_HEADERS,
+        json={'succeeded': True, 'message': 'previous version serving'},
+    )
+
+    assert restored.status_code == 202
+    assert restored.json()['status'] == 'rolled_back'
     assert client.get(f"/pipeline-runs/{run['id']}").json()['status'] == 'rolled_back'
     assert client.get(f'/deployments/{deployment_id}').json()['status'] == 'rolled_back'
-    assert rolled_back.json()['status'] == 'rolled_back'
-    assert rolled_back.json()['artifactDigest'] == f"sha256:{'d' * 64}"
-    assert rolled_back.json()['previousArtifactDigest'] == f"sha256:{'c' * 64}"
+
+
+def test_a_rollback_that_did_not_work_is_reported_as_such():
+    """`failed` would lose the fact that recovery was attempted and did not work."""
+
+    application = client.post('/applications', json=application_payload('rb-failed')).json()
+    run = client.post(
+        f"/applications/{application['id']}/pipeline-runs",
+        json={'commitSha': 'abcdef1234567', 'environment': 'staging'},
+    ).json()
+    client.post(f"/pipeline-runs/{run['id']}/ci-result", headers=MACHINE_HEADERS, json={'status': 'running'})
+    deployment_id = client.post(
+        f"/pipeline-runs/{run['id']}/ci-result",
+        headers=MACHINE_HEADERS,
+        json={'status': 'succeeded', 'artifactDigest': f"sha256:{'c' * 64}"},
+    ).json()['deployment']['id']
+    client.post(
+        f'/deployments/{deployment_id}/result',
+        headers=MACHINE_HEADERS,
+        json={'status': 'failed', 'message': 'boom'},
+    )
+    client.post(
+        f'/deployments/{deployment_id}/rollback',
+        json={'targetArtifactDigest': f"sha256:{'d' * 64}", 'reason': 'restore service'},
+    )
+
+    outcome = client.post(
+        f'/deployments/{deployment_id}/rollback-result',
+        headers=MACHINE_HEADERS,
+        json={'succeeded': False, 'message': 'ansible could not reach the host'},
+    )
+
+    assert outcome.status_code == 202
+    assert outcome.json()['status'] == 'rollback_failed'
+    events = client.get(f"/delivery-events?applicationId={application['id']}").json()['items']
+    assert [item for item in events if item['eventType'] == 'recovery'] == []
 
 
 def test_successful_ci_requires_an_exact_immutable_digest():

@@ -16,9 +16,9 @@ import copy
 import threading
 from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from ..domain.models import Application, DeliveryEvent, Deployment, PipelineRun
 from ..persistence import (
@@ -28,7 +28,7 @@ from ..persistence import (
     StillReferenced,
     UnitOfWork,
 )
-from .records import ModuleRow, RequestRow, SystemRow, VersionRow
+from .records import DeploymentLease, ModuleRow, RequestRow, SystemRow, VersionRow
 
 
 @dataclass
@@ -46,6 +46,9 @@ class _State:
     versions: dict[str, list[VersionRow]] = field(default_factory=dict)
     requests: dict[str, RequestRow] = field(default_factory=dict)
     callback_tokens: dict[str, tuple[str, str, Any]] = field(default_factory=dict)
+    leases: dict[UUID, DeploymentLease] = field(default_factory=dict)
+    fencing_counters: dict[tuple[UUID, str, str], int] = field(default_factory=dict)
+    log_sequences: dict[UUID, int] = field(default_factory=dict)
 
     def copy(self) -> "_State":
         return _State(
@@ -62,6 +65,9 @@ class _State:
             versions={key: list(value) for key, value in self.versions.items()},
             requests=dict(self.requests),
             callback_tokens=dict(self.callback_tokens),
+            leases=dict(self.leases),
+            fencing_counters=dict(self.fencing_counters),
+            log_sequences=dict(self.log_sequences),
         )
 
 
@@ -146,6 +152,96 @@ class InMemorySession:
     def callback_token_used(self, jti: str) -> bool:
         return jti in self._state.callback_tokens
 
+    # -------------------------------------------------------------------- leases
+
+    def acquire_deployment_lease(
+        self,
+        *,
+        application_id: UUID,
+        environment: str,
+        target: str,
+        deployment_id: UUID,
+        owner: str,
+        ttl_seconds: int,
+        now: datetime,
+    ) -> DeploymentLease | None:
+        key = (application_id, environment, target)
+        for lease in list(self._state.leases.values()):
+            if (
+                lease.released_at is None
+                and (lease.application_id, lease.environment, lease.target) == key
+            ):
+                if lease.expires_at > now:
+                    return None
+                self._state.leases[lease.id] = replace(
+                    lease, released_at=now, release_reason="expired"
+                )
+        token = self._state.fencing_counters.get(key, 0) + 1
+        self._state.fencing_counters[key] = token
+        lease = DeploymentLease(
+            id=uuid4(),
+            application_id=application_id,
+            environment=environment,
+            target=target,
+            deployment_id=deployment_id,
+            owner=owner,
+            fencing_token=token,
+            acquired_at=now,
+            heartbeat_at=now,
+            expires_at=now + timedelta(seconds=max(1, ttl_seconds)),
+        )
+        self._state.leases[lease.id] = lease
+        return lease
+
+    def active_deployment_lease(
+        self, *, application_id: UUID, environment: str, target: str
+    ) -> DeploymentLease | None:
+        return next(
+            (
+                lease
+                for lease in self._state.leases.values()
+                if lease.released_at is None
+                and (lease.application_id, lease.environment, lease.target)
+                == (application_id, environment, target)
+            ),
+            None,
+        )
+
+    def deployment_lease(self, deployment_id: UUID) -> DeploymentLease | None:
+        found = [
+            lease for lease in self._state.leases.values() if lease.deployment_id == deployment_id
+        ]
+        return max(found, key=lambda item: item.acquired_at) if found else None
+
+    def heartbeat_deployment_lease(
+        self, lease_id: UUID, *, ttl_seconds: int, now: datetime
+    ) -> bool:
+        lease = self._state.leases.get(lease_id)
+        if lease is None or lease.released_at is not None:
+            return False
+        self._state.leases[lease_id] = replace(
+            lease, heartbeat_at=now, expires_at=now + timedelta(seconds=max(1, ttl_seconds))
+        )
+        return True
+
+    def release_deployment_lease(self, lease_id: UUID, *, reason: str, now: datetime) -> bool:
+        lease = self._state.leases.get(lease_id)
+        if lease is None or lease.released_at is not None:
+            return False
+        self._state.leases[lease_id] = replace(
+            lease, released_at=now, release_reason=reason[:64]
+        )
+        return True
+
+    def expired_deployment_leases(
+        self, now: datetime, limit: int = 100
+    ) -> tuple[DeploymentLease, ...]:
+        found = sorted(
+            (lease for lease in self._state.leases.values() if lease.is_expired(now)),
+            key=lambda item: item.expires_at,
+        )
+        return tuple(found[:limit])
+
     # ------------------------------------------------------------ delivery writes
 
     def apply(self, unit: UnitOfWork) -> None:
@@ -172,6 +268,10 @@ class InMemorySession:
                 raise ConcurrentModification(f"deployment {deployment.id} changed since it was read")
             state.deployments[deployment.id] = deployment
         for run_id, lines in unit.logs:
+            if not lines:
+                continue
+            start = state.log_sequences.get(run_id, 1)
+            state.log_sequences[run_id] = start + len(lines)
             state.logs.setdefault(run_id, []).extend(line[:8000] for line in lines)
         state.events.extend(unit.events)
         state.audit.extend(unit.audit)

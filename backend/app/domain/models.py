@@ -37,7 +37,16 @@ class DeploymentStatus(str, Enum):
     DEPLOYING = "deploying"
     HEALTHY = "healthy"
     FAILED = "failed"
+    # A rollback is not instantaneous, and the window matters: "we are putting the old
+    # version back" and "the old version is back" are different things to an operator
+    # deciding whether to page someone.
+    ROLLBACK_IN_PROGRESS = "rollback_in_progress"
     ROLLED_BACK = "rolled_back"
+    # The state a platform that tells the truth has to be able to reach. A rollback that
+    # failed leaves the environment in neither the new state nor the old one, and calling
+    # that `failed` loses the fact that recovery was attempted and did not work.
+    ROLLBACK_FAILED = "rollback_failed"
+    CANCELLED = "cancelled"
 
 
 @dataclass(frozen=True)
@@ -89,6 +98,10 @@ class Deployment:
     status: DeploymentStatus = DeploymentStatus.PENDING_APPROVAL
     id: UUID = field(default_factory=uuid4)
     approved_by: str | None = None
+    # The lease generation this deployment was started under. A callback carrying a lower
+    # token comes from a workflow that has since been superseded, and applying it would
+    # let an older result overwrite a newer one.
+    fencing_token: int | None = None
     version: int = 1
     created_at: datetime = field(default_factory=utc_now)
     updated_at: datetime = field(default_factory=utc_now)
@@ -138,11 +151,25 @@ def can_transition_pipeline(current: PipelineStatus, target: PipelineStatus) -> 
 
 
 DEPLOYMENT_TRANSITIONS: dict[DeploymentStatus, frozenset[DeploymentStatus]] = {
-    DeploymentStatus.PENDING_APPROVAL: frozenset({DeploymentStatus.DEPLOYING, DeploymentStatus.FAILED}),
-    DeploymentStatus.DEPLOYING: frozenset({DeploymentStatus.HEALTHY, DeploymentStatus.FAILED}),
-    DeploymentStatus.HEALTHY: frozenset({DeploymentStatus.ROLLED_BACK}),
-    DeploymentStatus.FAILED: frozenset({DeploymentStatus.DEPLOYING, DeploymentStatus.ROLLED_BACK}),
+    DeploymentStatus.PENDING_APPROVAL: frozenset(
+        {DeploymentStatus.DEPLOYING, DeploymentStatus.FAILED, DeploymentStatus.CANCELLED}
+    ),
+    DeploymentStatus.DEPLOYING: frozenset(
+        {DeploymentStatus.HEALTHY, DeploymentStatus.FAILED, DeploymentStatus.CANCELLED}
+    ),
+    DeploymentStatus.HEALTHY: frozenset({DeploymentStatus.ROLLBACK_IN_PROGRESS}),
+    DeploymentStatus.FAILED: frozenset(
+        {DeploymentStatus.DEPLOYING, DeploymentStatus.ROLLBACK_IN_PROGRESS}
+    ),
+    DeploymentStatus.ROLLBACK_IN_PROGRESS: frozenset(
+        {DeploymentStatus.ROLLED_BACK, DeploymentStatus.ROLLBACK_FAILED}
+    ),
+    # A rollback that failed is not the end of the story: someone will try again.
+    DeploymentStatus.ROLLBACK_FAILED: frozenset(
+        {DeploymentStatus.ROLLBACK_IN_PROGRESS, DeploymentStatus.DEPLOYING}
+    ),
     DeploymentStatus.ROLLED_BACK: frozenset(),
+    DeploymentStatus.CANCELLED: frozenset(),
 }
 
 

@@ -21,5 +21,42 @@ def test_deployment_requires_approval_before_deploying():
     assert not can_transition_deployment(DeploymentStatus.PENDING_APPROVAL, DeploymentStatus.HEALTHY)
 
 
-def test_failed_deployment_can_rollback():
-    assert can_transition_deployment(DeploymentStatus.FAILED, DeploymentStatus.ROLLED_BACK)
+def test_a_rollback_passes_through_an_in_progress_state():
+    """`rolled_back` is the outcome, not the act.
+
+    "we are putting the old version back" and "the old version is back" are different
+    things to an operator deciding whether to page someone, so a rollback is no longer a
+    single instantaneous transition.
+    """
+
+    assert can_transition_deployment(
+        DeploymentStatus.FAILED, DeploymentStatus.ROLLBACK_IN_PROGRESS
+    )
+    assert can_transition_deployment(
+        DeploymentStatus.HEALTHY, DeploymentStatus.ROLLBACK_IN_PROGRESS
+    )
+    assert can_transition_deployment(
+        DeploymentStatus.ROLLBACK_IN_PROGRESS, DeploymentStatus.ROLLED_BACK
+    )
+
+
+def test_a_rollback_that_did_not_work_has_its_own_terminal_state():
+    """Calling it `failed` would lose the fact that recovery was attempted."""
+
+    assert can_transition_deployment(
+        DeploymentStatus.ROLLBACK_IN_PROGRESS, DeploymentStatus.ROLLBACK_FAILED
+    )
+    # And it is not the end: someone will try again.
+    assert can_transition_deployment(
+        DeploymentStatus.ROLLBACK_FAILED, DeploymentStatus.ROLLBACK_IN_PROGRESS
+    )
+    assert can_transition_deployment(
+        DeploymentStatus.ROLLBACK_FAILED, DeploymentStatus.DEPLOYING
+    )
+
+
+def test_a_rolled_back_or_cancelled_deployment_is_final():
+    for status in (DeploymentStatus.ROLLED_BACK, DeploymentStatus.CANCELLED):
+        assert all(
+            not can_transition_deployment(status, target) for target in DeploymentStatus
+        ), status

@@ -12,7 +12,7 @@ from fastapi.testclient import TestClient
 
 import app.main as main
 from app.delivery import DeliveryError
-from app.domain.models import DeploymentStatus, Environment, PipelineStatus
+from app.domain.models import DeploymentStatus
 from app.main import app
 from app.policy.rules import evaluate_artifact_evidence
 

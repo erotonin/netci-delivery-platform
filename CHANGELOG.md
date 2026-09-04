@@ -14,6 +14,13 @@ Changelog and releases use Semantic Versioning once the project reaches 1.0.0.
 
 ### Changed
 
+- **Deployment leases, monotonic fencing tokens and safe log sequences.**
+  Mutually exclusive deployments per (application, environment, target) are enforced
+  directly in PostgreSQL via partial unique index. Fencing tokens prevent stale/superseded
+  workflows from overwriting newer deployment state. Pipeline log sequence allocation
+  uses an atomic per-run counter table to prevent concurrent primary key clashes.
+  Deployments gain explicit lifecycle states (rollback_in_progress, rolled_back, rollback_failed).
+  See ADR-016.
 - **Machine callbacks use scoped, short-lived workload tokens.** The shared
   `NETCI_PIPELINE_API_KEY` could not say which build was calling; a token now names
   one workload, one application and one run or deployment, plus its scopes. A token

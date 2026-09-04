@@ -13,7 +13,7 @@ from uuid import UUID
 
 from ..domain.models import Application, DeliveryEvent, Deployment, PipelineRun
 from ..persistence import AuditRecord, IdempotencyRow, UnitOfWork
-from .records import ModuleRow, RequestRow, SystemRow, VersionRow
+from .records import DeploymentLease, ModuleRow, RequestRow, SystemRow, VersionRow
 
 
 class PlatformSession(Protocol):
@@ -61,6 +61,37 @@ class PlatformSession(Protocol):
         """Record a single-use callback token, returning False if it was already used."""
 
     def callback_token_used(self, jti: str) -> bool: ...
+
+    # --------------------------------------------------------------- deployment leases
+
+    def acquire_deployment_lease(
+        self,
+        *,
+        application_id: UUID,
+        environment: str,
+        target: str,
+        deployment_id: UUID,
+        owner: str,
+        ttl_seconds: int,
+        now: datetime,
+    ) -> DeploymentLease | None:
+        """Claim a target exclusively, or None when someone unexpired already holds it."""
+
+    def active_deployment_lease(
+        self, *, application_id: UUID, environment: str, target: str
+    ) -> DeploymentLease | None: ...
+
+    def deployment_lease(self, deployment_id: UUID) -> DeploymentLease | None: ...
+
+    def heartbeat_deployment_lease(
+        self, lease_id: UUID, *, ttl_seconds: int, now: datetime
+    ) -> bool: ...
+
+    def release_deployment_lease(self, lease_id: UUID, *, reason: str, now: datetime) -> bool: ...
+
+    def expired_deployment_leases(
+        self, now: datetime, limit: int = 100
+    ) -> tuple[DeploymentLease, ...]: ...
 
     # ------------------------------------------------------------ delivery writes
 

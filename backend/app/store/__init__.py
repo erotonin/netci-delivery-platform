@@ -23,10 +23,18 @@ from typing import Protocol
 from ..persistence import database_url
 from .memory import InMemoryDatabase
 from .postgres import PostgresDatabase
-from .records import ModuleRow, RequestModuleRow, RequestRow, SystemRow, VersionRow
+from .records import (
+    DeploymentLease,
+    ModuleRow,
+    RequestModuleRow,
+    RequestRow,
+    SystemRow,
+    VersionRow,
+)
 from .session import PlatformSession
 
 __all__ = [
+    "DeploymentLease",
     "InMemoryDatabase",
     "join",
     "ModuleRow",

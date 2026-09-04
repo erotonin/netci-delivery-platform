@@ -321,6 +321,7 @@ def test_a_rollback_is_durable_and_keeps_the_superseded_digest(database):
     platform.approve_deployment(deployment.id, "reviewer-1")
     platform.record_deployment_result(deployment.id, DeploymentStatus.HEALTHY.value, "ok")
     platform.rollback_deployment(deployment.id, ROLLBACK_DIGEST)
+    platform.record_rollback_result(deployment.id, succeeded=True, message="restored")
 
     restarted = DeliveryPlatform()
     recovered = restarted.get_deployment(deployment.id)

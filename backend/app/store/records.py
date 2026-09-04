@@ -62,3 +62,31 @@ class RequestRow:
     comment: str | None = None
     idempotency_key: str | None = None
     request_hash: str | None = None
+
+
+@dataclass(frozen=True)
+class DeploymentLease:
+    """Exclusive claim on one deployment target, held for a bounded time.
+
+    The lease is what stops two workflows writing to the same hosts. The fencing token is
+    what stops the loser writing *afterwards*: it rises every time the target is claimed,
+    every callback carries the one its deployment was started under, and a lower one is
+    refused. Without it, a workflow that paused past its expiry could come back and
+    overwrite the result of the workflow that replaced it.
+    """
+
+    id: UUID
+    application_id: UUID
+    environment: str
+    target: str
+    deployment_id: UUID
+    owner: str
+    fencing_token: int
+    acquired_at: datetime
+    heartbeat_at: datetime
+    expires_at: datetime
+    released_at: datetime | None = None
+    release_reason: str | None = None
+
+    def is_expired(self, now: datetime) -> bool:
+        return self.released_at is None and self.expires_at <= now

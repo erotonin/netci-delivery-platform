@@ -467,6 +467,15 @@ def test_rolling_back_a_failed_production_deployment_records_the_restore():
 
     platform.rollback_deployment(deployment.id, OTHER_DIGEST)
 
+    # Starting a rollback restores nothing yet, so no recovery is claimed.
+    assert [
+        item
+        for item in platform.delivery_events(application.id)
+        if item.event_type == DeliveryEventType.RECOVERY
+    ] == []
+
+    platform.record_rollback_result(deployment.id, succeeded=True, message="serving")
+
     recoveries = [item for item in platform.delivery_events(application.id) if item.event_type == DeliveryEventType.RECOVERY]
     assert len(recoveries) == 1
     assert recoveries[0].deployment_id == deployment.id

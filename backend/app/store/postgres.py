@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 import logging
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 from uuid import UUID
 
@@ -33,7 +33,14 @@ from ..persistence import (
     StillReferenced,
     UnitOfWork,
 )
-from .records import ModuleRow, RequestModuleRow, RequestRow, SystemRow, VersionRow
+from .records import (
+    DeploymentLease,
+    ModuleRow,
+    RequestModuleRow,
+    RequestRow,
+    SystemRow,
+    VersionRow,
+)
 
 try:
     import psycopg
@@ -55,7 +62,7 @@ RUN_COLUMNS = (
 )
 DEPLOYMENT_COLUMNS = (
     "id, application_id, pipeline_run_id, runtime, environment, status, artifact_digest,"
-    " previous_artifact_digest, approved_by, version, created_at, updated_at"
+    " previous_artifact_digest, approved_by, fencing_token, version, created_at, updated_at"
 )
 EVENT_COLUMNS = (
     "id, event_type, application_id, pipeline_run_id, deployment_id, commit_sha, environment,"
@@ -120,6 +127,7 @@ def _deployment(row: dict[str, Any]) -> Deployment:
         artifact_digest=row["artifact_digest"],
         previous_artifact_digest=row["previous_artifact_digest"],
         approved_by=row["approved_by"],
+        fencing_token=int(row["fencing_token"]) if row["fencing_token"] is not None else None,
         version=int(row["version"] or 1),
         created_at=row["created_at"],
         updated_at=row["updated_at"],
@@ -335,6 +343,166 @@ class PostgresSession:
         self._cursor.execute("SELECT 1 FROM callback_token_uses WHERE jti = %s", (jti,))
         return self._cursor.fetchone() is not None
 
+    # -------------------------------------------------------------------- leases
+
+    def acquire_deployment_lease(
+        self,
+        *,
+        application_id: UUID,
+        environment: str,
+        target: str,
+        deployment_id: UUID,
+        owner: str,
+        ttl_seconds: int,
+        now: datetime,
+    ) -> DeploymentLease | None:
+        """Claim a target, or return None if someone else holds it and has not expired.
+
+        Expiry is reclaimed here rather than by a sweeper, because the moment that matters
+        is the moment somebody wants the target. A sweeper adds a window in which the lease
+        is dead but still blocking, and a second thing that can be down.
+        """
+
+        self._cursor.execute(
+            """
+            UPDATE deployment_leases
+               SET released_at = %s, release_reason = 'expired'
+             WHERE application_id = %s AND environment = %s AND target = %s
+               AND released_at IS NULL AND expires_at <= %s
+            """,
+            (now, application_id, environment, target, now),
+        )
+        reclaimed = self._cursor.rowcount
+
+        # The counter is what keeps fencing tokens rising across releases: a new lease
+        # must never reissue a number a stale workflow still holds. The UPDATE takes a row
+        # lock, so two replicas racing here serialise on it.
+        self._cursor.execute(
+            """
+            INSERT INTO deployment_fencing_counters (application_id, environment, target, next_token)
+            VALUES (%s, %s, %s, 1)
+            ON CONFLICT (application_id, environment, target) DO NOTHING
+            """,
+            (application_id, environment, target),
+        )
+        self._cursor.execute(
+            """
+            UPDATE deployment_fencing_counters
+               SET next_token = next_token + 1
+             WHERE application_id = %s AND environment = %s AND target = %s
+            RETURNING next_token - 1 AS token
+            """,
+            (application_id, environment, target),
+        )
+        token = int(self._cursor.fetchone()["token"])
+
+        expires_at = now + timedelta(seconds=max(1, ttl_seconds))
+        # `ON CONFLICT ... DO NOTHING` rather than catching the violation: a raised
+        # UniqueViolation aborts the whole PostgreSQL transaction, so every statement
+        # after it fails with "current transaction is aborted" -- including the audit
+        # record explaining the conflict. Letting the index decide silently keeps the
+        # transaction usable, which is what makes a refusal reportable.
+        self._cursor.execute(
+            """
+            INSERT INTO deployment_leases (
+                application_id, environment, target, deployment_id, owner,
+                fencing_token, acquired_at, heartbeat_at, expires_at
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (application_id, environment, target) WHERE released_at IS NULL
+            DO NOTHING
+            RETURNING id
+            """,
+            (application_id, environment, target, deployment_id, owner, token,
+             now, now, expires_at),
+        )
+        row = self._cursor.fetchone()
+        if row is None:
+            # Someone else holds an unexpired lease. The partial unique index decided
+            # that, not a read this replica did a moment ago.
+            return None
+        lease_id = row["id"]
+        _ = reclaimed
+        return DeploymentLease(
+            id=lease_id,
+            application_id=application_id,
+            environment=environment,
+            target=target,
+            deployment_id=deployment_id,
+            owner=owner,
+            fencing_token=token,
+            acquired_at=now,
+            heartbeat_at=now,
+            expires_at=expires_at,
+        )
+
+    def active_deployment_lease(
+        self, *, application_id: UUID, environment: str, target: str
+    ) -> DeploymentLease | None:
+        self._cursor.execute(
+            """
+            SELECT id, application_id, environment, target, deployment_id, owner, fencing_token,
+                   acquired_at, heartbeat_at, expires_at, released_at, release_reason
+              FROM deployment_leases
+             WHERE application_id = %s AND environment = %s AND target = %s AND released_at IS NULL
+            """,
+            (application_id, environment, target),
+        )
+        row = self._cursor.fetchone()
+        return DeploymentLease(**row) if row else None
+
+    def deployment_lease(self, deployment_id: UUID) -> DeploymentLease | None:
+        self._cursor.execute(
+            """
+            SELECT id, application_id, environment, target, deployment_id, owner, fencing_token,
+                   acquired_at, heartbeat_at, expires_at, released_at, release_reason
+              FROM deployment_leases
+             WHERE deployment_id = %s
+             ORDER BY acquired_at DESC LIMIT 1
+            """,
+            (deployment_id,),
+        )
+        row = self._cursor.fetchone()
+        return DeploymentLease(**row) if row else None
+
+    def heartbeat_deployment_lease(
+        self, lease_id: UUID, *, ttl_seconds: int, now: datetime
+    ) -> bool:
+        """Extend a lease this owner still holds. False means it was lost or released."""
+
+        self._cursor.execute(
+            """
+            UPDATE deployment_leases
+               SET heartbeat_at = %s, expires_at = %s
+             WHERE id = %s AND released_at IS NULL
+            """,
+            (now, now + timedelta(seconds=max(1, ttl_seconds)), lease_id),
+        )
+        return self._cursor.rowcount == 1
+
+    def release_deployment_lease(self, lease_id: UUID, *, reason: str, now: datetime) -> bool:
+        self._cursor.execute(
+            """
+            UPDATE deployment_leases
+               SET released_at = %s, release_reason = %s
+             WHERE id = %s AND released_at IS NULL
+            """,
+            (now, reason[:64], lease_id),
+        )
+        return self._cursor.rowcount == 1
+
+    def expired_deployment_leases(self, now: datetime, limit: int = 100) -> tuple[DeploymentLease, ...]:
+        self._cursor.execute(
+            """
+            SELECT id, application_id, environment, target, deployment_id, owner, fencing_token,
+                   acquired_at, heartbeat_at, expires_at, released_at, release_reason
+              FROM deployment_leases
+             WHERE released_at IS NULL AND expires_at <= %s
+             ORDER BY expires_at LIMIT %s
+            """,
+            (now, limit),
+        )
+        return tuple(DeploymentLease(**row) for row in self._cursor.fetchall())
+
     # ------------------------------------------------------------ delivery writes
 
     def apply(self, unit: UnitOfWork) -> None:
@@ -367,12 +535,28 @@ class PostgresSession:
         for deployment, expected_version in unit.deployments:
             self._write_deployment(cursor, deployment, expected_version)
         for run_id, lines in unit.logs:
-            for line in lines:
+            if not lines:
+                continue
+            # `max(sequence) + 1` is not safe under concurrency: two transactions read the
+            # same max and both insert it, and one dies on the primary key taking its whole
+            # unit of work with it. Reserving a block with UPDATE ... RETURNING takes a row
+            # lock, so each number is handed out once and ordering is preserved within the
+            # block a writer reserved.
+            cursor.execute(
+                "INSERT INTO pipeline_log_sequences (pipeline_run_id, next_sequence)"
+                " VALUES (%s, 1) ON CONFLICT (pipeline_run_id) DO NOTHING",
+                (run_id,),
+            )
+            cursor.execute(
+                "UPDATE pipeline_log_sequences SET next_sequence = next_sequence + %s"
+                " WHERE pipeline_run_id = %s RETURNING next_sequence - %s AS start",
+                (len(lines), run_id, len(lines)),
+            )
+            start = int(cursor.fetchone()["start"])
+            for offset, line in enumerate(lines):
                 cursor.execute(
-                    "INSERT INTO pipeline_logs (pipeline_run_id, sequence, line)"
-                    " VALUES (%s, (SELECT coalesce(max(sequence), 0) + 1 FROM pipeline_logs"
-                    "              WHERE pipeline_run_id = %s), %s)",
-                    (run_id, run_id, line[:8000]),
+                    "INSERT INTO pipeline_logs (pipeline_run_id, sequence, line) VALUES (%s, %s, %s)",
+                    (run_id, start + offset, line[:8000]),
                 )
         for event in unit.events:
             cursor.execute(
@@ -518,8 +702,8 @@ class PostgresSession:
                 """
                 INSERT INTO deployments (id, application_id, pipeline_run_id, runtime, environment,
                                          status, artifact_digest, previous_artifact_digest,
-                                         approved_by, version, created_at, updated_at)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                                         approved_by, fencing_token, version, created_at, updated_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
                     deployment.id,
@@ -531,6 +715,7 @@ class PostgresSession:
                     deployment.artifact_digest,
                     deployment.previous_artifact_digest,
                     deployment.approved_by,
+                    deployment.fencing_token,
                     deployment.version,
                     deployment.created_at,
                     deployment.updated_at,
@@ -541,7 +726,7 @@ class PostgresSession:
             """
             UPDATE deployments
                SET status = %s, artifact_digest = %s, previous_artifact_digest = %s,
-                   approved_by = %s, version = %s, updated_at = %s
+                   approved_by = %s, fencing_token = %s, version = %s, updated_at = %s
              WHERE id = %s AND version = %s
             """,
             (
@@ -549,6 +734,7 @@ class PostgresSession:
                 deployment.artifact_digest,
                 deployment.previous_artifact_digest,
                 deployment.approved_by,
+                deployment.fencing_token,
                 deployment.version,
                 deployment.updated_at,
                 deployment.id,

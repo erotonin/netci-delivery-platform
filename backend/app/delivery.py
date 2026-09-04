@@ -22,7 +22,7 @@ import os
 import re
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
 from .adapters.cd_orchestrator import (
@@ -39,7 +39,7 @@ from .persistence import (
     IdempotencyRow,
     UnitOfWork,
 )
-from .store import PlatformDatabase, PlatformSession, build_database, join
+from .store import DeploymentLease, PlatformDatabase, PlatformSession, build_database, join
 from .runtime_environment import is_local_runtime
 from .policy.rules import PolicyDecision, evaluate_artifact_evidence
 from .domain.models import (
@@ -186,6 +186,21 @@ class DeliveryPlatform:
                 "PERSISTENCE_UNAVAILABLE", f"cannot reach delivery state: {exc}", 503
             ) from exc
 
+    def _audit_refusal(self, records: list[AuditRecord]) -> None:
+        """Record why a request was refused, in a transaction of its own.
+
+        The refusal itself raises, which rolls back the transaction the caller was in.
+        Writing the explanation there would roll it back too, and a refusal nobody can
+        explain afterwards is the thing an operator needs most during an incident.
+        """
+
+        unit = UnitOfWork(audit=list(records))
+        try:
+            with self.database.transaction() as transaction:
+                transaction.apply(unit)
+        except Exception:  # noqa: BLE001 - never let auditing mask the refusal
+            logger.exception("could not record the audit trail for a refused request")
+
     def _apply(self, session: PlatformSession, unit: UnitOfWork) -> None:
         """Write one unit of work, translating storage failures into API answers."""
 
@@ -212,6 +227,266 @@ class DeliveryPlatform:
 
     def persistence_health(self) -> str:
         return self.database.health()
+
+    # ------------------------------------------------------------------- leases
+
+    @staticmethod
+    def lease_ttl_seconds() -> int:
+        """How long a deployment may hold its target without a heartbeat.
+
+        Long enough that an ordinary deployment never loses its lease mid-flight, short
+        enough that a worker which died does not block the target until someone notices.
+        The workflow heartbeats, so this bounds *silence*, not duration.
+        """
+
+        try:
+            return max(30, int(os.getenv("NETCI_DEPLOYMENT_LEASE_TTL_SECONDS", "900")))
+        except ValueError:
+            return 900
+
+    @staticmethod
+    def lease_target(deployment: Deployment, run: PipelineRun | None) -> str:
+        """The logical thing a deployment writes to.
+
+        Two deployments collide when they would touch the same hosts or the same
+        namespace, not merely when they share an application. Taking the target from the
+        run's server-managed parameters -- which the Portal computed from the module's
+        registered configuration, and which a caller cannot supply -- means the lock is
+        over the real resource rather than over a name someone chose.
+        """
+
+        parameters = dict(run.parameters) if run else {}
+        namespace = str(parameters.get("target_namespace") or "").strip()
+        if namespace:
+            return f"namespace:{namespace}"
+        hosts = parameters.get("target_hosts")
+        if isinstance(hosts, (list, tuple)) and hosts:
+            return "hosts:" + ",".join(sorted(str(item) for item in hosts))[:200]
+        # No registered target: the whole application in this environment is the resource.
+        return f"application:{deployment.application_id}"
+
+    def _acquire_lease(
+        self,
+        transaction: PlatformSession,
+        unit: UnitOfWork,
+        deployment: Deployment,
+        run: PipelineRun | None,
+        owner: str,
+    ) -> DeploymentLease:
+        """Take the target, or refuse the deployment. Never proceed without it."""
+
+        target = self.lease_target(deployment, run)
+        now = _now()
+        lease = transaction.acquire_deployment_lease(
+            application_id=deployment.application_id,
+            environment=deployment.environment.value,
+            target=target,
+            deployment_id=deployment.id,
+            owner=owner,
+            ttl_seconds=self.lease_ttl_seconds(),
+            now=now,
+        )
+        if lease is None:
+            holder = transaction.active_deployment_lease(
+                application_id=deployment.application_id,
+                environment=deployment.environment.value,
+                target=target,
+            )
+            self._audit_refusal(
+                [
+                    AuditRecord(
+                        "deployment.lease_conflict",
+                        application_id=deployment.application_id,
+                        pipeline_run_id=deployment.pipeline_run_id,
+                        deployment_id=deployment.id,
+                        payload={
+                            "target": target,
+                            "environment": deployment.environment.value,
+                            "heldBy": holder.owner if holder else "unknown",
+                            "heldForDeploymentId": str(holder.deployment_id) if holder else None,
+                            "expiresAt": holder.expires_at.isoformat() if holder else None,
+                        },
+                    )
+                ]
+            )
+            raise DeliveryError(
+                "DEPLOYMENT_TARGET_BUSY",
+                f"another deployment is already running against {target} in "
+                f"{deployment.environment.value}",
+                409,
+            )
+        unit.audit.append(
+            AuditRecord(
+                "deployment.lease_acquired",
+                application_id=deployment.application_id,
+                pipeline_run_id=deployment.pipeline_run_id,
+                deployment_id=deployment.id,
+                actor=owner,
+                payload={
+                    "target": target,
+                    "environment": deployment.environment.value,
+                    "fencingToken": lease.fencing_token,
+                    "expiresAt": lease.expires_at.isoformat(),
+                },
+            )
+        )
+        return lease
+
+    def _release_lease(
+        self,
+        transaction: PlatformSession,
+        unit: UnitOfWork,
+        deployment: Deployment,
+        reason: str,
+    ) -> None:
+        """Give the target back so the next deployment does not wait for the expiry."""
+
+        lease = transaction.deployment_lease(deployment.id)
+        if lease is None or lease.released_at is not None:
+            return
+        transaction.release_deployment_lease(lease.id, reason=reason, now=_now())
+        unit.audit.append(
+            AuditRecord(
+                "deployment.lease_released",
+                application_id=deployment.application_id,
+                pipeline_run_id=deployment.pipeline_run_id,
+                deployment_id=deployment.id,
+                payload={"target": lease.target, "reason": reason,
+                         "fencingToken": lease.fencing_token},
+            )
+        )
+
+    def _reject_stale_writer(
+        self,
+        transaction: PlatformSession,
+        deployment: Deployment,
+        fencing_token: int | None,
+        operation: str,
+    ) -> None:
+        """Refuse a callback from a workflow that no longer owns this deployment.
+
+        Staleness is not "your token is small" -- a workflow always sends the token it was
+        started with, and that token matches its own deployment row. It is "a later
+        generation now holds this target": if the target has been claimed again since this
+        deployment took it, this writer has been superseded and its result would overwrite
+        a newer one.
+
+        A supplied token lower than the deployment's own generation is stale too, and
+        cheaper to detect. Both checks are needed: the first catches a workflow replaying
+        an old token, the second catches one that legitimately holds an old lease.
+
+        When the target has no current holder, nothing has superseded this deployment and
+        an idempotent retry is exactly what the callback looks like.
+        """
+
+        current = deployment.fencing_token
+        if current is None:
+            return
+
+        superseded_by: int | None = None
+        if fencing_token is not None and int(fencing_token) < current:
+            superseded_by = current
+        else:
+            lease = transaction.deployment_lease(deployment.id)
+            if lease is not None:
+                holder = transaction.active_deployment_lease(
+                    application_id=lease.application_id,
+                    environment=lease.environment,
+                    target=lease.target,
+                )
+                if holder is not None and holder.fencing_token > current:
+                    superseded_by = holder.fencing_token
+        if superseded_by is None:
+            return
+
+        self._audit_refusal(
+            [
+                AuditRecord(
+                    "deployment.stale_callback_rejected",
+                    application_id=deployment.application_id,
+                    pipeline_run_id=deployment.pipeline_run_id,
+                    deployment_id=deployment.id,
+                    payload={
+                        "operation": operation,
+                        "suppliedFencingToken": fencing_token,
+                        "currentFencingToken": current,
+                        "supersededBy": superseded_by,
+                    },
+                )
+            ]
+        )
+        raise DeliveryError(
+            "STALE_WORKFLOW",
+            "this deployment has been taken over by a newer workflow: generation "
+            f"{superseded_by} now holds its target, this one holds {current}",
+            409,
+        )
+
+    def heartbeat_deployment(self, deployment_id: UUID, fencing_token: int) -> dict[str, object]:
+        """Extend a running deployment's lease. Refused once it has been taken over."""
+
+        with self._transaction() as transaction:
+            deployment = transaction.deployment(deployment_id)
+            if deployment is None:
+                raise DeliveryError("DEPLOYMENT_NOT_FOUND", "deployment not found", 404)
+            self._reject_stale_writer(transaction, deployment, fencing_token, "heartbeat")
+            lease = transaction.deployment_lease(deployment_id)
+            if lease is None or lease.released_at is not None:
+                raise DeliveryError(
+                    "LEASE_LOST", "this deployment no longer holds its target", 409
+                )
+            transaction.heartbeat_deployment_lease(
+                lease.id, ttl_seconds=self.lease_ttl_seconds(), now=_now()
+            )
+            return {
+                "deploymentId": str(deployment_id),
+                "fencingToken": lease.fencing_token,
+                "expiresAt": (
+                    _now() + timedelta(seconds=self.lease_ttl_seconds())
+                ).isoformat(),
+            }
+
+    def recover_expired_leases(self, limit: int = 100) -> list[dict[str, object]]:
+        """Release leases whose owner stopped heartbeating, and say so in the audit trail.
+
+        This is not what unblocks a target -- `acquire_deployment_lease` reclaims an
+        expired lease at the moment somebody wants it, so there is no window in which a
+        dead lease blocks work. This exists so an operator can see that a worker died
+        without waiting for the next deployment to reveal it.
+        """
+
+        recovered: list[dict[str, object]] = []
+        with self._transaction() as transaction:
+            now = _now()
+            unit = UnitOfWork()
+            for lease in transaction.expired_deployment_leases(now, limit):
+                transaction.release_deployment_lease(lease.id, reason="expired", now=now)
+                unit.audit.append(
+                    AuditRecord(
+                        "deployment.lease_expired",
+                        application_id=lease.application_id,
+                        deployment_id=lease.deployment_id,
+                        payload={
+                            "target": lease.target,
+                            "environment": lease.environment,
+                            "owner": lease.owner,
+                            "fencingToken": lease.fencing_token,
+                            "lastHeartbeatAt": lease.heartbeat_at.isoformat(),
+                        },
+                    )
+                )
+                recovered.append(
+                    {
+                        "deploymentId": str(lease.deployment_id),
+                        "target": lease.target,
+                        "environment": lease.environment,
+                        "owner": lease.owner,
+                        "fencingToken": lease.fencing_token,
+                    }
+                )
+            if not unit.is_empty():
+                self._apply(transaction, unit)
+        return recovered
 
     def reset(self) -> None:
         """Clear the local in-memory store; local reset and test setup only."""
@@ -585,6 +860,24 @@ class DeliveryPlatform:
                 raise DeliveryError("PIPELINE_NOT_FOUND", "pipeline run not found", 404)
             return run, transaction.pipeline_logs(pipeline_run_id)
 
+    def append_pipeline_logs(self, pipeline_run_id: UUID, lines: list[str]) -> None:
+        """Append log lines to a run.
+
+        Sequence numbers come from a per-run counter reserved with `UPDATE ... RETURNING`,
+        not from `max(sequence) + 1`: under concurrency two writers read the same max, both
+        insert it, and the loser dies on the primary key taking its whole unit of work --
+        the state change it was carrying -- with it.
+        """
+
+        if not lines:
+            return
+        with self._transaction() as transaction:
+            if transaction.pipeline_run(pipeline_run_id) is None:
+                raise DeliveryError("PIPELINE_NOT_FOUND", "pipeline run not found", 404)
+            unit = UnitOfWork()
+            unit.logs.append((pipeline_run_id, list(lines)))
+            self._apply(transaction, unit)
+
     def get_deployment(
         self, deployment_id: UUID, session: PlatformSession | None = None
     ) -> Deployment:
@@ -874,6 +1167,14 @@ class DeliveryPlatform:
             updated_at=_now(),
         )
         unit = UnitOfWork(runs=[(updated, run.version)], deployments=[(deployment, None)])
+        if deployment.status == DeploymentStatus.DEPLOYING:
+            # Claim the target before anything is written that says a deployment is
+            # under way. If someone else holds it this raises, and nothing is committed.
+            lease = self._acquire_lease(
+                transaction, unit, deployment, updated, owner=f"ci:{run.id}"
+            )
+            deployment = replace(deployment, fencing_token=lease.fencing_token)
+            unit.deployments = [(deployment, None)]
         if log_lines:
             unit.logs.append((run.id, list(log_lines)))
         unit.audit.append(
@@ -910,6 +1211,10 @@ class DeliveryPlatform:
             elif deployment.runtime == Runtime.SYSTEMD and artifact_ref.startswith(("http://", "https://")):
                 parameters["artifact_url"] = artifact_ref
         parameters["artifact_sha256"] = deployment.artifact_digest.removeprefix("sha256:")
+        if deployment.fencing_token is not None:
+            # The workflow carries this back on every callback. Without it a workflow that
+            # timed out and resumed cannot be told apart from the one that replaced it.
+            parameters["fencing_token"] = deployment.fencing_token
         request = CdStartRequest(
             application_id=application.id,
             pipeline_run_id=run.id,
@@ -1158,14 +1463,27 @@ class DeliveryPlatform:
             raise DeliveryError("INVALID_DEPLOYMENT_STATE", "deployment is not waiting for approval", 409)
 
         now = _now()
+        run_for_target = (
+            transaction.pipeline_run(deployment.pipeline_run_id)
+            if deployment.pipeline_run_id
+            else None
+        )
+        unit = UnitOfWork()
+        # An approval is what starts a production deployment moving, so the target is
+        # claimed here. Two approvals seconds apart used to produce two workflows writing
+        # to the same hosts; now the second one is refused.
+        lease = self._acquire_lease(
+            transaction, unit, deployment, run_for_target, owner=f"approval:{actor}"
+        )
         updated = replace(
             deployment,
             status=DeploymentStatus.DEPLOYING,
             approved_by=actor,
+            fencing_token=lease.fencing_token,
             version=deployment.version + 1,
             updated_at=now,
         )
-        unit = UnitOfWork(deployments=[(updated, deployment.version)])
+        unit.deployments = [(updated, deployment.version)]
         unit.audit.append(
             AuditRecord(
                 "deployment.approved",
@@ -1208,9 +1526,12 @@ class DeliveryPlatform:
         deployment_id: UUID,
         result_status: str,
         message: str | None,
+        fencing_token: int | None = None,
     ) -> Deployment:
         with self._transaction() as transaction:
-            return self._write_deployment_result(transaction, deployment_id, result_status, message)
+            return self._write_deployment_result(
+                transaction, deployment_id, result_status, message, fencing_token
+            )
 
     def _write_deployment_result(
         self,
@@ -1218,10 +1539,14 @@ class DeliveryPlatform:
         deployment_id: UUID,
         result_status: str,
         message: str | None,
+        fencing_token: int | None = None,
     ) -> Deployment:
         deployment = transaction.deployment(deployment_id)
         if deployment is None:
             raise DeliveryError("DEPLOYMENT_NOT_FOUND", "deployment not found", 404)
+        # Before anything else: is this writer still the one that owns the deployment?
+        # A workflow that timed out and came back must not overwrite its replacement.
+        self._reject_stale_writer(transaction, deployment, fencing_token, "deployment.result")
         if deployment.status.value == result_status and deployment.status in {
             DeploymentStatus.HEALTHY,
             DeploymentStatus.FAILED,
@@ -1263,6 +1588,9 @@ class DeliveryPlatform:
         self._record_delivery_outcome(
             transaction, unit, updated, run, healthy=healthy, occurred_at=now
         )
+        # Terminal either way: hand the target back rather than making the next
+        # deployment wait out the lease expiry.
+        self._release_lease(transaction, unit, updated, reason=target_status.value)
         self._apply(transaction, unit)
         return updated
 
@@ -1276,65 +1604,151 @@ class DeliveryPlatform:
         deployment = transaction.deployment(deployment_id)
         if deployment is None:
             raise DeliveryError("DEPLOYMENT_NOT_FOUND", "deployment not found", 404)
-        if deployment.status not in {DeploymentStatus.HEALTHY, DeploymentStatus.FAILED}:
+        if deployment.status not in {
+            DeploymentStatus.HEALTHY,
+            DeploymentStatus.FAILED,
+            DeploymentStatus.ROLLBACK_FAILED,
+        }:
             raise DeliveryError(
-                "INVALID_DEPLOYMENT_STATE", "only a healthy or failed deployment can be rolled back", 409
+                "INVALID_DEPLOYMENT_STATE",
+                "only a healthy, failed or rollback-failed deployment can be rolled back",
+                409,
             )
         if not IMMUTABLE_DIGEST.fullmatch(target_artifact_digest):
             raise DeliveryError("IMMUTABLE_ARTIFACT_REQUIRED", "rollback requires a sha256 artifact digest", 422)
+        run = (
+            transaction.pipeline_run(deployment.pipeline_run_id)
+            if deployment.pipeline_run_id
+            else None
+        )
 
         now = _now()
         was_healthy = deployment.status == DeploymentStatus.HEALTHY
+        # A rollback writes to the same target the deployment did, so it needs the same
+        # exclusion. The lease is normally free by now -- the result released it -- but
+        # a rollback racing a redeploy must still be refused.
+        lease_unit = UnitOfWork()
+        lease = self._acquire_lease(
+            transaction, lease_unit, deployment, run, owner="rollback"
+        )
+        # `rollback_in_progress`, not `rolled_back`: this call *starts* the rollback. The
+        # old version is not back until the workflow says so, and a platform that records
+        # the restore before it happened is exactly the false-green this project exists to
+        # remove. `record_rollback_result` writes the outcome and the DORA event.
         updated = replace(
             deployment,
-            status=DeploymentStatus.ROLLED_BACK,
+            status=DeploymentStatus.ROLLBACK_IN_PROGRESS,
+            fencing_token=lease.fencing_token,
             previous_artifact_digest=deployment.artifact_digest,
             artifact_digest=target_artifact_digest,
             version=deployment.version + 1,
             updated_at=now,
         )
         unit = UnitOfWork(deployments=[(updated, deployment.version)])
+        unit.audit.extend(lease_unit.audit)
         unit.audit.append(
             AuditRecord(
-                "deployment.rolled_back",
+                "deployment.rollback_started",
                 application_id=deployment.application_id,
                 pipeline_run_id=deployment.pipeline_run_id,
                 deployment_id=deployment.id,
                 payload={"targetArtifactDigest": target_artifact_digest},
             )
         )
-        run = (
-            transaction.pipeline_run(deployment.pipeline_run_id)
-            if deployment.pipeline_run_id
-            else None
-        )
         if run is not None:
-            unit.runs.append(
-                (
-                    replace(run, status=PipelineStatus.ROLLED_BACK, version=run.version + 1, updated_at=now),
-                    run.version,
+            unit.logs.append((run.id, [f"rolling back to {target_artifact_digest}"]))
+
+        if deployment.environment == Environment.PROD and was_healthy:
+            # A healthy release that had to be pulled is a change failure, and that is
+            # true the moment the decision is made. Whether service is restored is a
+            # separate fact, recorded by `record_rollback_result`.
+            unit.events.append(
+                DeliveryEvent(
+                    event_type=DeliveryEventType.DEPLOYMENT,
+                    application_id=deployment.application_id,
+                    commit_sha=run.commit_sha if run else None,
+                    pipeline_run_id=deployment.pipeline_run_id,
+                    deployment_id=deployment.id,
+                    environment=deployment.environment,
+                    successful=False,
+                    requires_intervention=True,
+                    occurred_at=now,
                 )
             )
-            unit.logs.append((run.id, [f"rolled back to {target_artifact_digest}"]))
+        self._apply(transaction, unit)
+        return updated
 
-        if deployment.environment == Environment.PROD:
-            if was_healthy:
-                # A healthy release that had to be rolled back is a change failure.
-                unit.events.append(
-                    DeliveryEvent(
-                        event_type=DeliveryEventType.DEPLOYMENT,
-                        application_id=deployment.application_id,
-                        commit_sha=run.commit_sha if run else None,
-                        pipeline_run_id=deployment.pipeline_run_id,
-                        deployment_id=deployment.id,
-                        environment=deployment.environment,
-                        successful=False,
-                        requires_intervention=True,
-                        occurred_at=now,
+    def record_rollback_result(
+        self,
+        deployment_id: UUID,
+        succeeded: bool,
+        message: str | None = None,
+        fencing_token: int | None = None,
+    ) -> Deployment:
+        """Report whether a rollback actually restored service.
+
+        A rollback that failed leaves the environment in neither the new state nor the old
+        one. Recording that as `failed` would lose the fact that recovery was attempted
+        and did not work -- which is exactly what the person deciding whether to page
+        someone needs to know. It also must not emit a DORA recovery event: nothing was
+        restored.
+        """
+
+        with self._transaction() as transaction:
+            deployment = transaction.deployment(deployment_id)
+            if deployment is None:
+                raise DeliveryError("DEPLOYMENT_NOT_FOUND", "deployment not found", 404)
+            self._reject_stale_writer(transaction, deployment, fencing_token, "rollback.result")
+            if deployment.status not in {
+                DeploymentStatus.ROLLBACK_IN_PROGRESS,
+                DeploymentStatus.ROLLED_BACK,
+                DeploymentStatus.ROLLBACK_FAILED,
+            }:
+                raise DeliveryError(
+                    "INVALID_DEPLOYMENT_STATE", "this deployment is not rolling back", 409
+                )
+            target = (
+                DeploymentStatus.ROLLED_BACK if succeeded else DeploymentStatus.ROLLBACK_FAILED
+            )
+            if deployment.status == target:
+                return deployment
+            now = _now()
+            updated = replace(
+                deployment, status=target, version=deployment.version + 1, updated_at=now
+            )
+            unit = UnitOfWork(deployments=[(updated, deployment.version)])
+            unit.audit.append(
+                AuditRecord(
+                    f"deployment.{target.value}",
+                    application_id=deployment.application_id,
+                    pipeline_run_id=deployment.pipeline_run_id,
+                    deployment_id=deployment.id,
+                    payload={"message": message} if message else {},
+                )
+            )
+            run = (
+                transaction.pipeline_run(deployment.pipeline_run_id)
+                if deployment.pipeline_run_id
+                else None
+            )
+            if run is not None:
+                # The run follows its deployment: a restored release is not a success.
+                unit.runs.append(
+                    (
+                        replace(
+                            run,
+                            status=PipelineStatus.ROLLED_BACK
+                            if succeeded
+                            else PipelineStatus.FAILED,
+                            version=run.version + 1,
+                            updated_at=now,
+                        ),
+                        run.version,
                     )
                 )
-            else:
-                # The rollback itself restored service for the failure already recorded.
+                if message:
+                    unit.logs.append((run.id, [f"rollback={target.value} {message}"]))
+            if succeeded and deployment.environment == Environment.PROD:
                 unit.events.append(
                     DeliveryEvent(
                         event_type=DeliveryEventType.RECOVERY,
@@ -1347,8 +1761,9 @@ class DeliveryPlatform:
                         occurred_at=now,
                     )
                 )
-        self._apply(transaction, unit)
-        return updated
+            self._release_lease(transaction, unit, updated, reason=target.value)
+            self._apply(transaction, unit)
+            return updated
 
     def _record_delivery_outcome(
         self,
