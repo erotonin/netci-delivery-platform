@@ -94,6 +94,8 @@ def test_stage_catalog_contains_three_templates():
         'kubernetes-ci-cd-v1',
         'systemd-ansible-ci-cd-v1',
     }
+    systemd = next(item for item in response.json()['templates'] if item['id'] == 'systemd-ansible-ci-cd-v1')
+    assert {'sbom', 'vulnerability-scan', 'sign'} <= set(systemd['stageIds'])
 
 
 def test_validation_errors_use_the_public_error_contract_and_generated_correlation_id():

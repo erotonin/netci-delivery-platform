@@ -1,0 +1,38 @@
+name: Feature request
+description: Propose a scoped capability or architectural improvement.
+title: "feat: "
+labels: [enhancement, triage]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: Describe the user or operator problem without prescribing an implementation.
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Desired outcome
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+    validations:
+      required: true
+  - type: dropdown
+    id: interface
+    attributes:
+      label: Does this change a public interface, security boundary or durable schema?
+      options: ["No", "Yes", "Unsure"]
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Acceptance evidence
+      description: What real execution would prove the feature works?
+    validations:
+      required: true

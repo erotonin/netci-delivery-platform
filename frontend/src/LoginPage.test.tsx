@@ -39,6 +39,20 @@ describe('LoginPage', () => {
     expect(screen.queryByLabelText('Access token')).toBeNull()
   })
 
+  it('distinguishes a reachable API with unsafe auth configuration from an outage', async () => {
+    whoamiMock.mockImplementationOnce(() => Promise.reject(new NetciApiError(
+      403,
+      { code: 'AUTH_NOT_CONFIGURED' },
+      'auth is not configured for a proxied caller',
+    )))
+
+    render(<LoginPage onLogin={vi.fn()} />)
+
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toMatch(/API đang chạy/i))
+    expect(screen.getByRole('alert').textContent).toMatch(/NETCI_AUTH_MODE=token/)
+    expect(screen.queryByLabelText('Access token')).toBeNull()
+  })
+
   it('only creates a session from a token the server accepted', async () => {
     const user = userEvent.setup()
     const onLogin = vi.fn()

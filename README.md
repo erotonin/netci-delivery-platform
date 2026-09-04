@@ -1,8 +1,20 @@
 # netCI Delivery Platform
 
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+
+netCI is open-source software licensed under Apache-2.0. See
+[CONTRIBUTING.md](CONTRIBUTING.md), [SECURITY.md](SECURITY.md) and the
+[third-party inventory](THIRD_PARTY_NOTICES.md) before contributing or
+redistributing a release.
+
+> Live-data policy: a normal installation starts empty and never substitutes demo
+> systems, servers, pipeline history or metrics. Set `NETCI_DEMO_DATA=true` only for
+> an explicit demo/test run. Acceptance evidence checked into `evidence/` records a
+> historical execution; run the release profile again to certify the current commit.
+
 Local reference implementation của một delivery platform API-first: developer khai báo application từ Custom Portal hoặc Backstage, Jenkins thực hiện CI trên agent ephemeral, còn netCI/Temporal điều phối CD tới Docker, Kubernetes hoặc Systemd.
 
-> Trạng thái hiện tại: cả **11 acceptance gate** đều chạy thật trên Ubuntu 24.04 và tự ghi evidence — kind cluster, security gate (Syft/Trivy/Cosign), ba E2E runtime (Docker, Kubernetes, Systemd), DORA, CI loop qua Jenkins với agent ephemeral, rebuild controller từ JCasC, failure drill hai controller, benchmark ephemeral-vs-shared, và Backstage như một portal thứ hai. Không còn gate nào ở trạng thái `blocked`. `release-checklist.yaml` là nguồn sự thật, không phải README.
+> Evidence đã commit cho thấy một lần chạy trước đây hoàn tất **11 acceptance gate** trên Ubuntu 24.04. Đây không phải lời chứng nhận tự động cho commit hiện tại: `release-checklist.yaml` định nghĩa gate, còn một lần chạy release profile mới mới là bằng chứng hiện hành. Nếu thiếu Docker/Linux/credential, gate phải báo blocked/fail thay vì kế thừa màu xanh cũ.
 
 ## Output cần bàn giao
 
@@ -194,6 +206,8 @@ Chi tiết, gồm cả cách nối OIDC và các forgery mà verifier từ chố
 [security model](docs/security-model.md) và [ADR-011](docs/decisions/ADR-011-authentication-seam.md).
 
 ## Tài liệu
+
+- [Giải thích kiến trúc hiện tại từ bài toán đến code chạy thật](docs/GIAI-THICH-KIEN-TRUC-HIEN-TAI.md) — tài liệu bắt đầu nên đọc để hiểu toàn bộ project và ranh giới “source hỗ trợ live”/“môi trường đã live”.
 
 - [Architecture](docs/architecture.md)
 - [Domain model](docs/domain-model.md)

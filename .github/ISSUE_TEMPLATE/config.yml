@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/erotonin/netci-delivery-platform/security/advisories/new
+    about: Report security issues privately.
+  - name: Usage and design question
+    url: https://github.com/erotonin/netci-delivery-platform/discussions
+    about: Ask questions without opening a bug.

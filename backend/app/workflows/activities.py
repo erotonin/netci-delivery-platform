@@ -22,6 +22,8 @@ from .provision_and_deploy import DeliveryInput, DeliveryResult
 
 
 _SAFE_EVIDENCE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+_SAFE_INVENTORY_HOST = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,252}$")
+_SAFE_SECRET_REF = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 
 
 class EvidenceStore(Protocol):
@@ -34,6 +36,60 @@ class RuntimeRunner(Protocol):
     async def health_check(self, delivery: DeliveryInput) -> bool: ...
 
     async def rollback(self, delivery: DeliveryInput) -> None: ...
+
+
+class DeploymentReporter(Protocol):
+    async def report(self, result: DeliveryResult) -> None: ...
+
+
+class UnconfiguredDeploymentReporter:
+    async def report(self, result: DeliveryResult) -> None:
+        raise RuntimeError("deployment result reporting is not configured")
+
+
+class HttpDeploymentReporter:
+    """Close the workflow loop by writing its terminal result back to netCI."""
+
+    def __init__(self, base_url: str, api_key: str, *, timeout_seconds: float = 15.0) -> None:
+        self.base_url = base_url.rstrip("/")
+        self.api_key = api_key
+        self.timeout_seconds = timeout_seconds
+
+    async def report(self, result: DeliveryResult) -> None:
+        if not _SAFE_EVIDENCE_ID.fullmatch(result.deployment_id):
+            raise RuntimeError("invalid deployment id for result callback")
+        status = "healthy" if result.status == "healthy" else "failed"
+        body = json.dumps({"status": status, "message": result.message or result.status}).encode()
+        request = urllib.request.Request(
+            f"{self.base_url}/deployments/{result.deployment_id}/result",
+            data=body,
+            method="POST",
+            headers={
+                "Authorization": f"Bearer {self.api_key}",
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+            },
+        )
+
+        def send() -> None:
+            try:
+                with urllib.request.urlopen(request, timeout=self.timeout_seconds) as response:
+                    if response.status not in {200, 202}:
+                        raise RuntimeError(f"netCI returned {response.status} for deployment callback")
+            except urllib.error.HTTPError as exc:
+                raise RuntimeError(f"netCI returned {exc.code} for deployment callback") from exc
+            except urllib.error.URLError as exc:
+                raise RuntimeError(f"cannot report deployment result: {exc}") from exc
+
+        await asyncio.to_thread(send)
+
+
+def build_deployment_reporter() -> DeploymentReporter:
+    base_url = os.getenv("NETCI_API_URL", "").strip()
+    api_key = os.getenv("NETCI_PIPELINE_API_KEY", "").strip()
+    if not base_url or not api_key:
+        raise RuntimeError("NETCI_API_URL and NETCI_PIPELINE_API_KEY are required by the Temporal worker")
+    return HttpDeploymentReporter(base_url, api_key)
 
 
 class FileEvidenceStore:
@@ -110,10 +166,12 @@ class DeliveryActivities:
         evidence_store: EvidenceStore,
         runtime_runner: RuntimeRunner,
         signature_verifier: SignatureVerifier | None = None,
+        deployment_reporter: DeploymentReporter | None = None,
     ) -> None:
         self.evidence_store = evidence_store
         self.runtime_runner = runtime_runner
         self.signature_verifier = signature_verifier or NullSignatureVerifier()
+        self.deployment_reporter = deployment_reporter or UnconfiguredDeploymentReporter()
 
     @activity.defn(name="validate_artifact")
     async def validate_artifact(self, delivery: DeliveryInput) -> None:
@@ -157,9 +215,9 @@ class DeliveryActivities:
 
     @activity.defn(name="deploy")
     async def deploy(self, delivery: DeliveryInput) -> DeliveryResult:
-        deployment_id = await self.runtime_runner.deploy(delivery)
+        runtime_deployment_id = await self.runtime_runner.deploy(delivery)
         return DeliveryResult(
-            deployment_id=deployment_id,
+            deployment_id=delivery.deployment_id or runtime_deployment_id,
             status="deploying",
             artifact_digest=delivery.artifact_digest,
         )
@@ -171,6 +229,10 @@ class DeliveryActivities:
     @activity.defn(name="rollback")
     async def rollback(self, delivery: DeliveryInput) -> None:
         await self.runtime_runner.rollback(delivery)
+
+    @activity.defn(name="report_deployment_result")
+    async def report_deployment_result(self, result: DeliveryResult) -> None:
+        await self.deployment_reporter.report(result)
 
 
 class AnsibleRuntimeRunner:
@@ -194,24 +256,73 @@ class AnsibleRuntimeRunner:
             raise ValueError(f"unsupported runtime: {delivery.runtime}") from exc
         if action not in {"deploy", "rollback"}:
             raise ValueError(f"unsupported delivery action: {action}")
+        parameters = dict(delivery.parameters)
+        target_hosts = parameters.pop("target_hosts", None)
+        if delivery.runtime in {"docker", "systemd"}:
+            if not isinstance(target_hosts, list) or not target_hosts:
+                raise ValueError("docker and systemd delivery require explicit target_hosts")
+            if not all(isinstance(host, str) and _SAFE_INVENTORY_HOST.fullmatch(host) for host in target_hosts):
+                raise ValueError("target_hosts must contain safe inventory host names")
+
+        # A raw kubeconfig path is never accepted from the workflow payload. Only a
+        # basename-like reference resolved beneath the worker-owned secret directory is
+        # allowed to become the Ansible kubeconfig argument.
+        parameters.pop("kubeconfig", None)
+        kubeconfig_ref = parameters.pop("kubeconfig_ref", None)
+        if kubeconfig_ref is not None:
+            if not isinstance(kubeconfig_ref, str) or not _SAFE_SECRET_REF.fullmatch(kubeconfig_ref):
+                raise ValueError("kubeconfig_ref must be a safe secret file name")
+            secret_root = Path(os.getenv("NETCI_KUBECONFIG_DIR", "/run/secrets")).resolve()
+            kubeconfig = (secret_root / kubeconfig_ref).resolve()
+            if not kubeconfig.is_relative_to(secret_root):
+                raise ValueError("kubeconfig_ref escapes NETCI_KUBECONFIG_DIR")
+            parameters["kubeconfig"] = str(kubeconfig)
+
+        # Untrusted/configurable inputs go first. Identity, environment and immutable
+        # artifact facts are written last so no pipeline parameter can replace what the
+        # API and deploy-time verifier already proved.
         extra_vars: dict[str, object] = {
+            **parameters,
             "netci_action": action,
             "application_id": delivery.application_id,
             "pipeline_run_id": delivery.pipeline_run_id,
+            "deployment_id": delivery.deployment_id,
             "target_environment": delivery.environment,
             "artifact_digest": delivery.artifact_digest,
+            "artifact_sha256": delivery.artifact_digest.removeprefix("sha256:"),
             "release_name": delivery.release_name,
-            **delivery.parameters,
         }
         playbook = self.project_root / "deploy" / "ansible" / "playbooks" / playbook_name
-        return [
+        command = [
             self.executable,
             "-i",
             str(self.inventory),
-            str(playbook),
-            "--extra-vars",
-            json.dumps(extra_vars, sort_keys=True),
         ]
+        private_key_file = os.getenv("NETCI_ANSIBLE_PRIVATE_KEY_FILE", "").strip()
+        if private_key_file:
+            secret_root = Path(os.getenv("NETCI_ANSIBLE_SECRET_DIR", "/run/secrets/netci")).resolve()
+            private_key = Path(private_key_file).resolve()
+            if not private_key.is_relative_to(secret_root):
+                raise ValueError("NETCI_ANSIBLE_PRIVATE_KEY_FILE must stay beneath NETCI_ANSIBLE_SECRET_DIR")
+            if not private_key.is_file():
+                raise ValueError("NETCI_ANSIBLE_PRIVATE_KEY_FILE does not exist")
+            command.extend(["--private-key", str(private_key)])
+        known_hosts_file = os.getenv("NETCI_ANSIBLE_KNOWN_HOSTS_FILE", "").strip()
+        if known_hosts_file:
+            secret_root = Path(os.getenv("NETCI_ANSIBLE_SECRET_DIR", "/run/secrets/netci")).resolve()
+            known_hosts = Path(known_hosts_file).resolve()
+            if not known_hosts.is_relative_to(secret_root):
+                raise ValueError("NETCI_ANSIBLE_KNOWN_HOSTS_FILE must stay beneath NETCI_ANSIBLE_SECRET_DIR")
+            if not known_hosts.is_file():
+                raise ValueError("NETCI_ANSIBLE_KNOWN_HOSTS_FILE does not exist")
+            command.extend(
+                ["--ssh-common-args", f"-o UserKnownHostsFile={known_hosts} -o StrictHostKeyChecking=yes"]
+            )
+        command.append(str(playbook))
+        if isinstance(target_hosts, list) and target_hosts:
+            command.extend(["--limit", ",".join(target_hosts)])
+        command.extend(["--extra-vars", json.dumps(extra_vars, sort_keys=True)])
+        return command
 
     async def _run(self, command: list[str]) -> None:
         process = await asyncio.create_subprocess_exec(
@@ -231,6 +342,10 @@ class AnsibleRuntimeRunner:
 
     async def health_check(self, delivery: DeliveryInput) -> bool:
         health_url = delivery.parameters.get("health_url")
+        if health_url is None and delivery.parameters.get("runtime_health_verified") is True:
+            # The managed Ansible playbooks fail the deploy activity unless their
+            # runtime-native health gate succeeds (Helm wait/atomic or HTTP checks).
+            return True
         if not isinstance(health_url, str) or not health_url.startswith(("http://", "https://")):
             return False
 
@@ -245,4 +360,3 @@ class AnsibleRuntimeRunner:
 
     async def rollback(self, delivery: DeliveryInput) -> None:
         await self._run(self.command_for("rollback", delivery))
-

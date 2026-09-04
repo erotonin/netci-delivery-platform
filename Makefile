@@ -1,6 +1,7 @@
 SHELL := /usr/bin/env bash
 PYTHON ?= python3
 NPM ?= npm
+NODE ?= node
 
 # Where the executable gates point themselves. Override on the command line when the
 # lab runs on other ports, e.g. `make e2e-container NETCI_API_URL=http://127.0.0.1:8100`.
@@ -24,7 +25,7 @@ NETCI_BACKUP_DIR ?= backups
 NETCI_BACKUP ?=
 GATE_ENV = NETCI_API_URL=$(NETCI_API_URL) NETCI_REGISTRY=$(NETCI_REGISTRY)
 
-.PHONY: help doctor doctor-windows backend frontend frontend-install frontend-build \
+.PHONY: help doctor doctor-windows backend frontend frontend-install frontend-build oss-check \
 	lab-up lab-down lab-status \
 	compose-config compose-up up kind-up kind-down registry-connect jenkins-up jenkins-rebuild \
 	migrate migrate-status schema test test-durability validate release-check release-portable release-windows release-ubuntu \
@@ -34,7 +35,7 @@ GATE_ENV = NETCI_API_URL=$(NETCI_API_URL) NETCI_REGISTRY=$(NETCI_REGISTRY)
 
 help:
 	@printf '%s\n' \
-	  'Portable: validate test frontend-install frontend-build release-check release-portable' \
+	  'Portable: validate test frontend-install frontend-build oss-check release-check release-portable' \
 	  'Database: migrate migrate-status schema test-durability backup backup-verify' \
 	  'Ubuntu lab: doctor lab-up lab-status lab-down compose-config kind-up registry-connect' \
 	  'Jenkins lab: jenkins-lab-up jenkins-lab-status jenkins-lab-down  Backstage lab: backstage-lab-up' \
@@ -77,11 +78,15 @@ schema:
 # --------------------------------------------------------------------- checks
 
 validate:
+	$(NODE) scripts/validate_oss_readiness.mjs
 	$(PYTHON) scripts/validate_windows.py
 	$(PYTHON) scripts/validate_catalog.py
 	$(PYTHON) scripts/validate_platform.py
 	$(PYTHON) scripts/migrate.py --check-schema
 	$(PYTHON) scripts/validate_release.py
+
+oss-check:
+	$(NODE) scripts/validate_oss_readiness.mjs
 
 test:
 	$(PYTHON) -m pytest backend/tests tests/contract -q

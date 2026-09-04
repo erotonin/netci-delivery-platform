@@ -1,10 +1,10 @@
 # Assumptions và điểm thay thế
 
-| Chủ đề | Prototype local | Khi tích hợp production |
+| Chủ đề | Reference local | Khi tích hợp production |
 |---|---|---|
 | Kubernetes | kind với namespace `dev`, `staging`, `prod` | Kubernetes API tương thích; kubeconfig/service account và target namespace được cấu hình riêng từng môi trường |
-| Jenkins topology | Hai controller cùng host được chấp nhận cho demo routing/failure drill | Nhiều host/failure domain thật |
-| Authentication | Mock role `developer`, `reviewer`, `platform-admin` | SSO/RBAC nội bộ |
+| Jenkins topology | Hai controller cùng host chỉ chứng minh routing/failure drill | Nhiều host/failure domain thật |
+| Authentication | `none` chỉ dành cho loopback; token file dùng được cho pilot | OIDC issuer/audience/group mapping thật |
 | Artifact store | Local Registry + MinIO | Registry/object storage nội bộ |
 | Secrets | Environment variables/secret references, không commit secret | Secret manager nội bộ |
 | Scanner/signing | Syft + Trivy + Cosign | Toolchain nội bộ nếu có |
@@ -27,7 +27,7 @@ Các quyết định dưới đây không còn là câu hỏi mở:
 | Chủ đề | Quyết định chốt | Bằng chứng trong artifact |
 |---|---|---|
 | DORA | Hiển thị đúng 4 metric: Deployment Frequency, Lead Time for Changes, Change Failure Rate, Time to Restore Service | System Overview và tab DORA Metrics đều có 4 card/4 biểu đồ |
-| Production workflow | Là luồng demo chính; Temporalite điều phối các bước dài, chờ và resume | Timeline gồm SR/CR, GNOC approval, NOCPro5 alarm check, CD Production, deploy modules và close SR/CR |
+| Production workflow | Temporal điều phối schedule, approval, deploy, health, rollback và callback bền vững | Tích hợp SR/CR/alarm ngoài chỉ được tuyên bố khi có adapter và evidence thật |
 | Portal/Backstage | Custom Portal là UI chính; Backstage chỉ cần Software Template gọi cùng netCI API | Artifact chỉ mô tả Release Portal, không có Backstage status/log surface |
 | Docker target | Deploy tới target server qua Ansible | Add environment ghi `Executed via Ansible` |
 | Systemd target | Deploy tới target server qua Ansible | Add environment ghi `Executed via Ansible` |
@@ -39,6 +39,6 @@ Các quyết định dưới đây không còn là câu hỏi mở:
 
 1. Hai Jenkins controller cùng một Ubuntu host **được chấp nhận cho local reference demo** nếu tách controller/JCasC/port/queue/volume và failure drill chứng minh router chuyển request mới khi một controller dừng. Kết quả này không được gọi là production HA.
 2. Kubernetes production dùng contract trung lập distribution: Kubernetes API tương thích, kubeconfig gắn service account least-privilege và target namespace được khai báo rõ cho từng environment. Local dùng `dev`, `staging`, `prod`; core không tự đoán namespace production. Distribution, credential issuer và namespace là cấu hình có thể thay thế khi tích hợp thực tế.
-3. Registry + MinIO + Syft + Trivy + Cosign **được chấp nhận là toolchain chuẩn của local reference implementation**. UI, policy và evidence dùng contract trung lập vendor để có thể thay từng provider bằng công cụ nội bộ mà không sửa core domain.
+3. Registry + MinIO + Syft + Trivy + Cosign là toolchain của local reference implementation. UI, policy và evidence dùng contract trung lập vendor để có thể thay từng provider bằng công cụ nội bộ mà không sửa core domain.
 
-Ba quyết định này đủ để hoàn thành và nghiệm thu phạm vi local. Thông tin hạ tầng nội bộ cung cấp sau chỉ là production integration configuration, không làm thay đổi tiêu chí bàn giao local.
+Ba quyết định này đủ để chạy và đánh giá reference local, không tự chứng minh một môi trường production đã live. Production chỉ đạt khi credential, endpoint và runtime target thật được nối và bộ acceptance gate chạy lại trên đúng commit triển khai.

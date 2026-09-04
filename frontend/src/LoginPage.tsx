@@ -32,7 +32,9 @@ export function LoginPage({ onLogin }: { onLogin: (session: AuthSession) => void
       })
       .catch((cause) => {
         if (cancelled) return
-        setAuthMode(cause instanceof NetciApiError && cause.status === 401 ? 'token' : 'unreachable')
+        if (cause instanceof NetciApiError && cause.status === 401) setAuthMode('token')
+        else if (cause instanceof NetciApiError && cause.code === 'AUTH_NOT_CONFIGURED') setAuthMode('auth-required')
+        else setAuthMode('unreachable')
       })
     return () => {
       cancelled = true
@@ -84,6 +86,10 @@ export function LoginPage({ onLogin }: { onLogin: (session: AuthSession) => void
 
         {authMode === 'unreachable' && <div className="login-error" role="alert">
           <ShieldAlert size={16} />netCI API không phản hồi. Portal không thể đăng nhập khi chưa gọi được <code>/me</code>.
+        </div>}
+
+        {authMode === 'auth-required' && <div className="login-error" role="alert">
+          <ShieldAlert size={16} />API đang chạy nhưng từ chối chế độ không xác thực qua proxy. Hãy cấu hình <code>NETCI_AUTH_MODE=token</code> hoặc <code>oidc</code> cho topology này.
         </div>}
 
         {authMode === 'none' && <p className="login-checking" role="status"><Loader2 size={16} className="spin" />netCI đang chạy không bật xác thực — đang vào Portal…</p>}

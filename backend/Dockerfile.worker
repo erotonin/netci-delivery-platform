@@ -1,0 +1,32 @@
+FROM ghcr.io/sigstore/cosign/cosign:v3.1.2 AS cosign
+
+FROM python:3.12.10-slim-bookworm
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    ANSIBLE_COLLECTIONS_PATH=/opt/ansible/collections
+
+RUN apt-get update \
+    && apt-get install --yes --no-install-recommends openssh-client \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+COPY backend/requirements.txt /tmp/backend-requirements.txt
+COPY deploy/ansible/requirements.txt /tmp/ansible-requirements.txt
+COPY deploy/ansible/requirements.yml /tmp/ansible-requirements.yml
+RUN pip install --no-cache-dir \
+      -r /tmp/backend-requirements.txt \
+      -r /tmp/ansible-requirements.txt \
+      ansible-core==2.19.12 \
+    && ansible-galaxy collection install \
+      --requirements-file /tmp/ansible-requirements.yml \
+      --collections-path /opt/ansible/collections
+
+COPY --from=cosign /ko-app/cosign /usr/local/bin/cosign
+COPY backend/app ./app
+
+RUN useradd --create-home --uid 10001 netci \
+    && chown -R netci:netci /app /opt/ansible
+
+USER 10001
+CMD ["python", "-m", "app.workflows.worker"]

@@ -51,6 +51,7 @@ def test_machine_callbacks_use_the_documented_bearer_scheme():
     for path in (
         "/modules/{moduleId}/versions/{tag}/ci-report",
         "/pipeline-runs/{pipelineRunId}/ci-result",
+        "/pipeline-runs/{pipelineRunId}/security-evidence",
         "/deployments/{deploymentId}/result",
     ):
         assert contract["paths"][path]["post"]["security"] == [{"PipelineBearer": []}]
@@ -74,6 +75,14 @@ def test_portal_module_contract_requires_bounded_deployment_environments():
         "items": {"$ref": "#/components/schemas/DeploymentEnvironmentConfig"},
     }
     assert schemas["DeploymentEnvironmentConfig"]["additionalProperties"] is False
+
+
+def test_system_owner_is_the_authenticated_actor_not_a_body_field():
+    schema = load_contract()["paths"]["/systems"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+
+    assert schema["additionalProperties"] is False
+    assert set(schema["properties"]) == {"id", "unit", "description"}
+    assert "owner" not in schema["properties"]
 
 
 def test_checked_in_contract_covers_every_live_http_operation():

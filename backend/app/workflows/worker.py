@@ -8,7 +8,7 @@ from temporalio.client import Client
 from temporalio.worker import Worker
 
 from ..adapters.signature_verifier import build_signature_verifier
-from .activities import AnsibleRuntimeRunner, DeliveryActivities, build_evidence_store
+from .activities import AnsibleRuntimeRunner, DeliveryActivities, build_deployment_reporter, build_evidence_store
 from .provision_and_deploy import ProvisionAndDeployWorkflow
 
 
@@ -22,6 +22,7 @@ async def main() -> None:
         build_evidence_store(project_root),
         AnsibleRuntimeRunner(project_root=project_root, inventory=inventory),
         build_signature_verifier(),
+        build_deployment_reporter(),
     )
     worker = Worker(
         client,
@@ -32,6 +33,7 @@ async def main() -> None:
             activities.deploy,
             activities.health_check,
             activities.rollback,
+            activities.report_deployment_result,
         ],
     )
     await worker.run()

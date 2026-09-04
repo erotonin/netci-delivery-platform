@@ -8,12 +8,16 @@ projection queries without changing the HTTP response shapes.
 
 from __future__ import annotations
 
+import hashlib
+import json
+import os
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from uuid import UUID, uuid4
 
+from .adapters.dcim import DcimCatalog, build_dcim_catalog
 from .delivery import DeliveryPlatform
-from .domain.models import DeliveryEvent, Environment, Runtime
+from .domain.models import DeliveryEvent, Environment, PipelineStatus, Runtime
 from .persistence import PostgresPortalStore, StillReferenced
 from .projections.dora import DoraEvent, project_dora
 
@@ -72,18 +76,27 @@ class PortalProductionRequest:
     status: str
     deployment_id: UUID | None = None
     comment: str | None = None
+    idempotency_key: str | None = None
+    request_hash: str | None = None
 
 
 class PortalReadModel:
     """Small local projection with stable response shapes for the Portal UI."""
 
-    def __init__(self, platform: DeliveryPlatform) -> None:
+    def __init__(
+        self,
+        platform: DeliveryPlatform,
+        *,
+        store: PostgresPortalStore | None = None,
+        dcim_catalog: DcimCatalog | None = None,
+    ) -> None:
         self.platform = platform
-        self.store = PostgresPortalStore.from_env()
+        self.store = store if store is not None else PostgresPortalStore.from_env()
+        self.dcim_catalog = dcim_catalog or build_dcim_catalog()
         self._systems: dict[str, PortalSystem] = {}
         self._modules: dict[str, PortalModule] = {}
         self._requests: dict[str, PortalProductionRequest] = {}
-        self._request_idempotency: dict[str, tuple[tuple[object, ...], str]] = {}
+        self._request_idempotency: dict[str, tuple[str, str]] = {}
         self._version_records: dict[tuple[str, str], dict[str, object]] = {}
         self._persistence_error: str | None = None
         self._seed()
@@ -165,7 +178,14 @@ class PortalReadModel:
                 status=str(row["status"]),
                 deployment_id=row.get("deployment_id"),
                 comment=row.get("comment"),
+                idempotency_key=row.get("idempotency_key"),
+                request_hash=row.get("request_hash"),
             )
+            if row.get("idempotency_key"):
+                self._request_idempotency[str(row["idempotency_key"])] = (
+                    str(row.get("request_hash") or ""),
+                    request_id,
+                )
 
     def persistence_health(self) -> dict[str, str]:
         if self.store is None:
@@ -192,6 +212,8 @@ class PortalReadModel:
             ) from exc
 
     def _seed(self) -> None:
+        if os.getenv("NETCI_DEMO_DATA", "false").strip().lower() not in {"1", "true", "yes"}:
+            return
         sample_apps = [
             ("hello-container", "Hello Container", "Local container delivery application", Runtime.DOCKER, "container-ci-cd-v1"),
             ("hello-kubernetes", "Hello Kubernetes", "Local Kubernetes deployment application", Runtime.KUBERNETES, "kubernetes-ci-cd-v1"),
@@ -273,10 +295,10 @@ class PortalReadModel:
     def create_system(self, *, system_id: str, unit: str, description: str, owner: str) -> dict[str, object]:
         if system_id in self._systems:
             raise ValueError("system already exists")
-        record = PortalSystem(system_id, unit, description, owner, "healthy", [])
+        record = PortalSystem(system_id, unit, description, owner, "unknown", [])
         self._persist(
             "insert_system",
-            {"id": system_id, "unit": unit, "description": description, "owner": owner, "status": "healthy"},
+            {"id": system_id, "unit": unit, "description": description, "owner": owner, "status": "unknown"},
         )
         self._systems[system_id] = record
         return self.system(system_id)
@@ -291,6 +313,16 @@ class PortalReadModel:
 
         if system_id not in self._systems:
             raise KeyError("system not found")
+        requested_module_ids = {
+            item.module_id for request in self._requests.values() for item in request.modules
+        }
+        referenced = requested_module_ids.intersection(self._systems[system_id].module_ids)
+        if referenced:
+            raise PortalError(
+                "STILL_REFERENCED",
+                f"system {system_id} has modules referenced by production requests",
+                409,
+            )
         self._persist("delete_system", system_id)
 
         system = self._systems[system_id]
@@ -308,6 +340,16 @@ class PortalReadModel:
 
         if module_id not in self._modules:
             raise KeyError("module not found")
+        if any(
+            item.module_id == module_id
+            for request in self._requests.values()
+            for item in request.modules
+        ):
+            raise PortalError(
+                "STILL_REFERENCED",
+                f"module {module_id} is still referenced by a production request",
+                409,
+            )
         self._persist("delete_module", module_id)
 
         module = self._modules[module_id]
@@ -316,6 +358,23 @@ class PortalReadModel:
             if module_id in sys_mods:
                 sys_mods.remove(module_id)
         del self._modules[module_id]
+
+    def update_module(
+        self,
+        module_id: str,
+        *,
+        name: str,
+        module_type: str,
+        description: str,
+    ) -> dict[str, object]:
+        module = self._modules.get(module_id)
+        if module is None:
+            raise KeyError("module not found")
+        self._persist("update_module", module_id, name, module_type, description)
+        module.name = name
+        module.module_type = module_type
+        module.description = description
+        return self.module(module_id)
 
 
     def attach_module(
@@ -353,22 +412,60 @@ class PortalReadModel:
         if module_id in self._modules:
             raise ValueError("module already exists")
 
-    def systems(self) -> list[dict[str, object]]:
-        return [self.system(item.id) for item in self._systems.values()]
+    def systems(self, application_ids: set[UUID] | None = None) -> list[dict[str, object]]:
+        output: list[dict[str, object]] = []
+        for item in self._systems.values():
+            visible = self.system(item.id, application_ids)
+            if application_ids is None or not item.module_ids or visible["modules"]:
+                output.append(visible)
+        return output
 
-    def system(self, system_id: str) -> dict[str, object]:
+    def system(self, system_id: str, application_ids: set[UUID] | None = None) -> dict[str, object]:
         item = self._systems.get(system_id)
         if item is None:
             raise KeyError("system not found")
-        modules = [self._modules[module_id] for module_id in item.module_ids if module_id in self._modules]
+        modules = [
+            self._modules[module_id]
+            for module_id in item.module_ids
+            if module_id in self._modules
+            and (
+                application_ids is None
+                or self._modules[module_id].application_id in application_ids
+            )
+        ]
         runs = sum(self._module_runs(module) for module in modules)
         failed = sum(1 for module in modules for run in self._module_runs_raw(module) if run.status.value == "failed")
+        latest_deployments = {}
+        for module in modules:
+            if not module.application_id:
+                continue
+            for deployment in self.platform.list_deployments(module.application_id):
+                latest_deployments[(module.application_id, deployment.environment)] = deployment
+        deployment_states = [deployment.status.value for deployment in latest_deployments.values()]
+        latest_runs = [runs[-1] for module in modules for runs in [self._module_runs_raw(module)] if runs]
+        if any(state == "failed" for state in deployment_states):
+            system_status = "critical"
+        elif any(state in {"deploying", "pending_approval"} for state in deployment_states):
+            system_status = "degraded"
+        elif any(state in {"healthy", "rolled_back"} for state in deployment_states):
+            system_status = "healthy"
+        elif latest_runs:
+            # A queued/running/failed CI run is delivery activity, not runtime-health
+            # evidence. It may make the delivery surface degraded, but a successful build
+            # on its own can never turn a system green.
+            system_status = (
+                "degraded"
+                if any(run.status.value in {"queued", "running", "waiting_approval", "failed"} for run in latest_runs)
+                else "unknown"
+            )
+        else:
+            system_status = "unknown"
         return {
             "id": item.id,
             "unit": item.unit,
             "description": item.description,
             "owner": item.owner,
-            "status": item.status,
+            "status": system_status,
             "moduleCount": len(modules),
             "pipelineRuns": runs,
             "failedRuns": failed,
@@ -403,8 +500,64 @@ class PortalReadModel:
             "dora": self._dora(module_id),
         }
 
-    def dashboard(self) -> dict[str, object]:
-        systems = self.systems()
+    def delivery_parameters(
+        self,
+        module_id: str,
+        environment: Environment,
+        supplied: dict[str, object] | None = None,
+    ) -> dict[str, object]:
+        """Bind a run to the module's server-owned target configuration.
+
+        Callers may provide build inputs, but they may not replace target hosts,
+        namespaces or credential references selected during module registration. This
+        also prevents a production promotion from inheriting the source environment's
+        staging target.
+        """
+
+        module = self._modules.get(module_id)
+        if module is None:
+            raise KeyError("module not found")
+        target = next(
+            (
+                item
+                for item in module.deployment_environments
+                if (
+                    item.get("environment").value
+                    if isinstance(item.get("environment"), Environment)
+                    else str(item.get("environment"))
+                ) == environment.value
+            ),
+            None,
+        )
+        if target is None:
+            raise PortalError(
+                "DEPLOYMENT_TARGET_NOT_CONFIGURED",
+                f"module {module_id} has no {environment.value} deployment target",
+                409,
+            )
+
+        managed: dict[str, object] = {
+            "app_name": module.id,
+            "target_environment": environment.value,
+            "target_hosts": list(target.get("servers") or []),
+            # Browser/API compatibility fields are deliberately neutralized. Runtime
+            # commands come from reviewed playbooks, never arbitrary request metadata.
+            "deployment_tasks": [],
+            "task_settings": {},
+            # Every checked-in runtime playbook is atomic and contains its own health
+            # gate. A successful deploy activity therefore already proves runtime health.
+            "runtime_health_verified": True,
+        }
+        namespace = str(target.get("namespace") or "").strip()
+        kubeconfig_ref = str(target.get("kubeconfigRef") or "").strip()
+        if namespace:
+            managed["target_namespace"] = namespace
+        if kubeconfig_ref:
+            managed["kubeconfig_ref"] = kubeconfig_ref
+        return {**dict(supplied or {}), **managed}
+
+    def dashboard(self, application_ids: set[UUID] | None = None) -> dict[str, object]:
+        systems = self.systems(application_ids)
         total_runs = sum(int(item["pipelineRuns"]) for item in systems)
         failed_runs = sum(int(item["failedRuns"]) for item in systems)
         successful_runs = max(total_runs - failed_runs, 0)
@@ -416,31 +569,49 @@ class PortalReadModel:
                 "successRate": round(successful_runs / total_runs * 100, 1) if total_runs else 0,
                 "failureRate": round(failed_runs / total_runs * 100, 1) if total_runs else 0,
             },
-            "pipelineActivity": self._activity_by_day(),
+            "pipelineActivity": self._activity_by_day(application_ids),
             "systems": systems,
         }
 
     def module_overview(self, module_id: str) -> dict[str, object]:
         module = self.module(module_id)
+        module_record = self._modules[module_id]
+        deployments = (
+            list(self.platform.list_deployments(module_record.application_id))
+            if module_record.application_id
+            else []
+        )
+        recent_releases = []
+        for version in module["versions"][:3]:
+            record = self._version_records.get((module_id, str(version)), {})
+            digest = record.get("artifactDigest")
+            matching = [item for item in deployments if item.artifact_digest == digest]
+            recent_releases.append(
+                {
+                    "version": version,
+                    "status": matching[-1].status.value if matching else "not_deployed",
+                    "testStatus": (record.get("ciReport") or {}).get("autoTest", "not_available"),
+                }
+            )
+        reports = [
+            record.get("ciReport")
+            for version in module["versions"]
+            for record in [self._version_records.get((module_id, str(version)), {})]
+            if isinstance(record.get("ciReport"), dict)
+        ]
+        latest_report = reports[0] if reports else {}
         return {
             "module": module,
-            "mergeRequests": [
-                {"id": "MR-239", "branch": "main", "status": "running"},
-                {"id": "MR-241", "branch": "main", "status": "succeeded"},
-                {"id": "MR-240", "branch": "develop", "status": "failed"},
-            ],
+            "mergeRequests": [],
             "deployments": [
-                {"environment": "dev", "status": "deployed"},
-                {"environment": "staging", "status": "deployed"},
+                {"environment": item.environment.value, "status": item.status.value}
+                for item in deployments
             ],
-            "recentReleases": [
-                {"version": version, "status": "deployed", "testStatus": "passed"}
-                for version in module["versions"][:3]
-            ],
+            "recentReleases": recent_releases,
             "trends": {
-                "testCoverage": 87,
-                "automationPassRate": 100,
-                "securityFindings": {"total": 10, "critical": 0, "high": 2, "medium": 4, "low": 4},
+                "testCoverage": latest_report.get("coveragePercentage"),
+                "automationPassRate": latest_report.get("automationPassRate"),
+                "securityFindings": latest_report.get("securityFindings"),
             },
         }
 
@@ -454,11 +625,7 @@ class PortalReadModel:
         module = self._modules.get(module_id)
         if module is None:
             raise KeyError("module not found")
-        environments = [
-            {"dev": "deployed", "staging": "deployed", "prod": "deployed"},
-            {"dev": "deployed", "staging": "deployed", "prod": "superseded"},
-            {"dev": "deployed", "staging": "not_deployed", "prod": "not_deployed"},
-        ]
+        deployments = self.platform.list_deployments(module.application_id) if module.application_id else ()
         return {
             "moduleId": module_id,
             "items": [
@@ -468,10 +635,22 @@ class PortalReadModel:
                     "signed": False,
                     "sbom": "not_available",
                     "scan": "not_available",
-                    "environments": environments[index] if index < len(environments) else environments[-1],
+                    "environments": {
+                        environment.value: next(
+                            (
+                                deployment.status.value
+                                for deployment in reversed(deployments)
+                                if deployment.environment == environment
+                                and deployment.artifact_digest
+                                == self._version_records.get((module_id, version), {}).get("artifactDigest")
+                            ),
+                            "not_deployed",
+                        )
+                        for environment in Environment
+                    },
                     **self._version_records.get((module_id, version), {}),
                 }
-                for index, version in enumerate(module.versions)
+                for version in module.versions
             ],
         }
 
@@ -482,6 +661,8 @@ class PortalReadModel:
         tag: str,
         git_tag_url: str,
         artifact_url: str,
+        pipeline_run_id: UUID | None,
+        artifact_digest: str | None,
         created_by: str = "Admin",
     ) -> dict[str, object]:
         module = self._modules.get(module_id)
@@ -489,9 +670,30 @@ class PortalReadModel:
             raise KeyError("module not found")
         if tag in module.versions:
             raise ValueError("version already exists")
+        run = None
+        evidence: dict[str, object] = {}
+        if pipeline_run_id is not None or artifact_digest is not None:
+            if pipeline_run_id is None or artifact_digest is None:
+                raise ValueError("pipelineRunId and artifactDigest must be supplied together")
+            if module.application_id is None:
+                raise ValueError("module has no delivery application")
+            run = self.platform.get_pipeline(pipeline_run_id)
+            if run.application_id != module.application_id:
+                raise ValueError("pipeline run belongs to another module")
+            if run.status != PipelineStatus.SUCCEEDED or run.artifact_digest != artifact_digest:
+                raise ValueError("version requires a successful pipeline run with the same artifact digest")
+            evidence = self.platform.security_evidence(run.id)
+            if evidence.get("decision") != "allow" or evidence.get("artifactDigest") != artifact_digest:
+                raise ValueError("version requires allowed security evidence for the same artifact digest")
         record = {
             "gitTagUrl": git_tag_url,
             "artifactUrl": artifact_url,
+            "pipelineRunId": str(run.id) if run else None,
+            "artifactDigest": artifact_digest,
+            "promotable": run is not None,
+            "signed": bool((evidence.get("signature") or {}).get("verified")),
+            "sbom": "available" if evidence.get("sbom") else "not_available",
+            "scan": (evidence.get("vulnerabilityScan") or {}).get("status", "not_available"),
             "createdBy": created_by,
             "createdAt": datetime.now(timezone.utc).isoformat(),
             "ciReport": None,
@@ -586,6 +788,12 @@ class PortalReadModel:
         run_automation_tests: bool,
         idempotency_key: str | None = None,
     ) -> dict[str, object]:
+        if len(modules) != 1:
+            raise PortalError(
+                "MULTI_MODULE_ORCHESTRATION_UNAVAILABLE",
+                "production requests currently require exactly one module",
+                422,
+            )
         signature: tuple[object, ...] = (
             tuple((str(item["moduleId"]), str(item["version"]), int(item["deploymentOrder"])) for item in modules),
             requested_by,
@@ -593,9 +801,12 @@ class PortalReadModel:
             rollback_strategy,
             run_automation_tests,
         )
+        request_hash = hashlib.sha256(
+            json.dumps(signature, separators=(",", ":"), default=str).encode()
+        ).hexdigest()
         if idempotency_key and idempotency_key in self._request_idempotency:
-            existing_signature, existing_id = self._request_idempotency[idempotency_key]
-            if existing_signature != signature:
+            existing_hash, existing_id = self._request_idempotency[idempotency_key]
+            if existing_hash != request_hash:
                 raise PortalError("IDEMPOTENCY_CONFLICT", "idempotency key was already used with a different request", 409)
             return next(item for item in self.production_requests() if item["id"] == existing_id)
 
@@ -608,6 +819,7 @@ class PortalReadModel:
             version = str(item["version"])
             if version not in module.versions:
                 raise ValueError(f"version {version} is not registered for module {module_id}")
+            self.delivery_parameters(module_id, Environment.PROD)
             requested_modules.append(
                 PortalProductionModule(module_id, version, int(item["deploymentOrder"]))
             )
@@ -621,6 +833,8 @@ class PortalReadModel:
             rollback_strategy=rollback_strategy,
             run_automation_tests=run_automation_tests,
             status="waiting_approval",
+            idempotency_key=idempotency_key,
+            request_hash=request_hash,
         )
         self._persist(
             "insert_request",
@@ -631,6 +845,8 @@ class PortalReadModel:
                 "rollback_strategy": request.rollback_strategy,
                 "run_automation_tests": request.run_automation_tests,
                 "status": request.status,
+                "idempotency_key": request.idempotency_key,
+                "request_hash": request.request_hash,
             },
             [
                 {
@@ -644,14 +860,87 @@ class PortalReadModel:
         )
         self._requests[request_id] = request
         if idempotency_key:
-            self._request_idempotency[idempotency_key] = (signature, request_id)
+            self._request_idempotency[idempotency_key] = (request_hash, request_id)
         return next(item for item in self.production_requests() if item["id"] == request_id)
 
     def approve_request(self, request_id: str, actor: str, comment: str | None = None) -> dict[str, object]:
-        return self._set_request_status(request_id, "approved", actor, comment)
+        request = self._requests.get(request_id)
+        if request is None:
+            raise KeyError("production request not found")
+        if request.status != "waiting_approval":
+            raise ValueError("production request is not waiting for approval")
+        if len(request.modules) != 1:
+            raise PortalError(
+                "MULTI_MODULE_ORCHESTRATION_UNAVAILABLE",
+                "production requests currently require exactly one module",
+                422,
+            )
+        requested = request.modules[0]
+        version = self._version_records.get((requested.module_id, requested.version)) or {}
+        pipeline_run_id = version.get("pipelineRunId")
+        artifact_digest = version.get("artifactDigest")
+        if not pipeline_run_id or not artifact_digest:
+            raise PortalError(
+                "VERSION_NOT_PROMOTABLE",
+                "registered version is not linked to a verified pipeline artifact",
+                409,
+            )
+        report = version.get("ciReport")
+        if request.run_automation_tests and (
+            not isinstance(report, dict) or report.get("autoTest") != "passed"
+        ):
+            raise PortalError(
+                "AUTOMATION_GATE_FAILED",
+                "production request requires a passing automation-test result on the selected version",
+                409,
+            )
+        deployment = self.platform.create_production_promotion(
+            UUID(str(pipeline_run_id)),
+            requested_by=request.requested_by,
+            correlation_id=f"production-request:{request.id}",
+            production_request_id=request.id,
+            scheduled_for=request.scheduled_for,
+            rollback_strategy=request.rollback_strategy,
+            run_automation_tests=request.run_automation_tests,
+            deployment_parameters=self.delivery_parameters(requested.module_id, Environment.PROD),
+        )
+        next_comment = comment or f"approved by {actor}"
+        self._persist("update_request", request_id, "approved", next_comment, deployment.id)
+        request.status = "approved"
+        request.comment = next_comment
+        request.deployment_id = deployment.id
+        try:
+            self.platform.approve_deployment(deployment.id, actor)
+        except Exception as exc:
+            blocked_comment = f"deployment could not start: {exc}"
+            self._persist("update_request", request_id, "blocked", blocked_comment, deployment.id)
+            request.status = "blocked"
+            request.comment = blocked_comment
+            raise
+        return next(item for item in self.production_requests() if item["id"] == request_id)
 
     def reject_request(self, request_id: str, actor: str, comment: str | None = None) -> dict[str, object]:
         return self._set_request_status(request_id, "rejected", actor, comment)
+
+    def record_production_deployment_result(
+        self,
+        deployment_id: UUID,
+        status: str,
+        message: str | None,
+    ) -> None:
+        request = next(
+            (item for item in self._requests.values() if item.deployment_id == deployment_id),
+            None,
+        )
+        if request is None:
+            return
+        target = "succeeded" if status == "healthy" else "blocked"
+        if request.status == target:
+            return
+        comment = message or f"deployment {status}"
+        self._persist("update_request", request.id, target, comment, deployment_id)
+        request.status = target
+        request.comment = comment
 
     def _set_request_status(self, request_id: str, status: str, actor: str, comment: str | None) -> dict[str, object]:
         request = self._requests.get(request_id)
@@ -660,84 +949,112 @@ class PortalReadModel:
         if request.status != "waiting_approval":
             raise ValueError("production request is not waiting for approval")
         next_comment = comment or f"{status} by {actor}"
-        self._persist("update_request", request_id, status, next_comment)
+        self._persist("update_request", request_id, status, next_comment, None)
         request.status = status
         request.comment = next_comment
         return next(item for item in self.production_requests() if item["id"] == request_id)
 
-    def servers(self) -> list[dict[str, object]]:
-        result: list[dict[str, object]] = [
-            {"id": "localhost", "hostname": "localhost", "systemId": "hello-container", "ipAddress": "127.0.0.1", "environment": "dev", "status": "online", "kind": "runtime-target", "runtime": "docker"},
-            {"id": "kind-local", "hostname": "kind-local", "systemId": "hello-kubernetes", "ipAddress": "127.0.0.1", "environment": "dev", "status": "online", "kind": "runtime-target", "runtime": "kubernetes"},
-            {"id": "jenkins-local", "hostname": "jenkins-local", "systemId": "netCI", "ipAddress": "127.0.0.1", "environment": "dev", "status": "online", "kind": "jenkins-controller", "executors": {"busy": 0, "total": 4}},
-        ]
-        for sys_id in self._systems:
-            if sys_id not in [str(r["systemId"]) for r in result]:
-                result.append({"id": f"srv-{sys_id}", "hostname": f"srv-{sys_id}", "systemId": sys_id, "ipAddress": "127.0.0.1", "environment": "dev", "status": "online", "kind": "runtime-target", "runtime": "docker"})
+    def servers(self, application_ids: set[UUID] | None = None) -> list[dict[str, object]]:
+        result: list[dict[str, object]] = []
+        seen: set[tuple[str, str, str]] = set()
+        for module in self._modules.values():
+            if application_ids is not None and module.application_id not in application_ids:
+                continue
+            for target in module.deployment_environments:
+                environment = str(target.get("environment") or "dev")
+                for hostname in target.get("servers") or []:
+                    key = (module.system_id, environment, str(hostname))
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    result.append(
+                        {
+                            "id": f"{module.id}:{environment}:{hostname}",
+                            "hostname": str(hostname),
+                            "systemId": module.system_id,
+                            "moduleId": module.id,
+                            "ipAddress": "",
+                            "environment": environment,
+                            "status": "unknown",
+                            "kind": "configured-runtime-target",
+                            "runtime": module.runtime.value,
+                        }
+                    )
         return result
 
-    def dcim_services(self, query: str) -> list[dict[str, object]]:
-        normalized = query.strip().lower()
-        candidates = [
-            {"id": "svc-payment-service", "name": "payment-service", "code": "VTN_PAYMENT", "tenant": "Fintech Unit", "tier": "Tier 1", "description": "Core payment processing and gateway integration service."},
-            {"id": "svc-billing-engine", "name": "billing-engine", "code": "VTN_BILLING", "tenant": "Finance Operations", "tier": "Tier 1", "description": "Automated billing, invoicing, and subscription management system."},
-            {"id": "svc-notification-hub", "name": "notification-hub", "code": "VTN_NOTIF", "tenant": "Platform Services", "tier": "Tier 2", "description": "Multi-channel push, SMS, and email notification distribution engine."},
-            {"id": "svc-user-portal", "name": "user-portal", "code": "VTN_USERPORTAL", "tenant": "Digital Experience", "tier": "Tier 2", "description": "Customer self-service management and profile portal."},
-            {"id": "svc-analytics-pipeline", "name": "analytics-pipeline", "code": "VTN_ANALYTICS", "tenant": "Data Engineering", "tier": "Tier 1", "description": "Real-time telemetry event ingestion and DORA analytics engine."},
-        ]
-        existing = [
-            {"id": f"svc-{s.id}", "name": s.id, "code": f"VTN_{s.id.upper()}", "tenant": s.unit, "tier": "Tier 1", "description": s.description}
-            for s in self._systems.values()
-        ]
-        all_services = existing + candidates
-        if not normalized:
-            return candidates
-        return [item for item in all_services if normalized in str(item["name"]).lower() or normalized in str(item["code"]).lower() or normalized in str(item["tenant"]).lower()]
+    def dcim_services(self, query: str) -> dict[str, object]:
+        page = self.dcim_catalog.search_services(query)
+        return {"source": page.source, "status": page.status, "items": page.items}
 
-    def dcim_modules(self, system_id: str) -> list[dict[str, object]]:
+    def dcim_modules(self, system_id: str) -> dict[str, object]:
         if system_id not in self._systems:
             raise KeyError("system not found")
-        sys_obj = self._systems[system_id]
-        registered_ids = set(sys_obj.module_ids)
-        existing = [
-            {
-                "id": m.id,
-                "name": m.name,
-                "code": f"{m.id.upper()}_APP",
-                "type": m.module_type,
-                "repositoryUrl": f"https://github.com/example/{m.id}",
-                "registered": True,
-            }
-            for m_id in sys_obj.module_ids if m_id in self._modules for m in [self._modules[m_id]]
+        page = self.dcim_catalog.list_modules(system_id)
+        registered_ids = set(self._systems[system_id].module_ids)
+        items = [
+            {**item, "registered": str(item.get("id")) in registered_ids}
+            for item in page.items
         ]
-        candidates = [
-            {"id": f"{system_id}-api", "name": f"{system_id.capitalize()} REST API", "code": f"{system_id.upper()}_API", "type": "Backend", "repositoryUrl": f"https://github.com/example/{system_id}-api", "registered": False},
-            {"id": f"{system_id}-web", "name": f"{system_id.capitalize()} Web Portal", "code": f"{system_id.upper()}_WEB", "type": "Frontend", "repositoryUrl": f"https://github.com/example/{system_id}-web", "registered": False},
-            {"id": f"{system_id}-worker", "name": f"{system_id.capitalize()} Worker Engine", "code": f"{system_id.upper()}_WRK", "type": "Backend", "repositoryUrl": f"https://github.com/example/{system_id}-worker", "registered": False},
-        ]
-        unregistered = [c for c in candidates if c["id"] not in registered_ids and c["id"] not in self._modules]
-        return existing + unregistered
+        return {"source": page.source, "status": page.status, "systemId": system_id, "items": items}
 
-    def audit_events(self, *, system_id: str | None = None, module_id: str | None = None) -> list[dict[str, object]]:
-        events: list[dict[str, object]] = []
-        idx = 1
-        for mod in self._modules.values():
-            runs = self._module_runs_raw(mod)
-            for run in runs:
-                events.append({
-                    "id": f"audit-{idx}",
-                    "action": f"pipeline.{run.status.value}",
-                    "actor": str(run.parameters.get("started_by", "operator")),
-                    "target": mod.id,
-                    "createdAt": run.created_at.isoformat(),
-                })
-                idx += 1
-        if system_id:
-            module_ids = set(self._systems.get(system_id, PortalSystem("", "", "", "", "", [])).module_ids)
-            events = [e for e in events if e["target"] in module_ids or e["target"] == system_id]
-        if module_id:
-            events = [e for e in events if e["target"] == module_id]
-        return events
+    def dcim_servers(self, system_id: str, module_id: str | None = None) -> dict[str, object]:
+        if system_id not in self._systems:
+            raise KeyError("system not found")
+        page = self.dcim_catalog.list_servers(system_id, module_id)
+        return {
+            "source": page.source,
+            "status": page.status,
+            "systemId": system_id,
+            "moduleId": module_id,
+            "items": page.items,
+        }
+
+    def audit_events(
+        self,
+        *,
+        system_id: str | None = None,
+        module_id: str | None = None,
+        application_ids: set[UUID] | None = None,
+    ) -> list[dict[str, object]]:
+        if module_id is not None and module_id not in self._modules:
+            raise KeyError("module not found")
+        if system_id is not None and system_id not in self._systems:
+            raise KeyError("system not found")
+
+        application_to_module = {
+            module.application_id: module for module in self._modules.values() if module.application_id is not None
+        }
+        allowed_modules: set[str] | None = None
+        if module_id is not None:
+            allowed_modules = {module_id}
+        elif system_id is not None:
+            allowed_modules = set(self._systems[system_id].module_ids)
+
+        allowed_application_ids = {
+            module.application_id
+            for module in self._modules.values()
+            if module.application_id is not None
+            and (allowed_modules is None or module.id in allowed_modules)
+        }
+        if application_ids is not None:
+            allowed_application_ids &= application_ids
+        records = self.platform.audit_records(allowed_application_ids)
+        return [
+            {
+                "id": str(record.id),
+                "action": record.event_type,
+                "actor": record.actor or "system",
+                "target": application_to_module[record.application_id].id,
+                "applicationId": str(record.application_id),
+                "pipelineRunId": str(record.pipeline_run_id) if record.pipeline_run_id else None,
+                "deploymentId": str(record.deployment_id) if record.deployment_id else None,
+                "correlationId": record.correlation_id,
+                "details": dict(record.payload),
+                "createdAt": record.occurred_at.isoformat(),
+            }
+            for record in records
+            if record.application_id in application_to_module
+        ]
 
     def _module_runs_raw(self, module: PortalModule):
         if module.application_id is None:
@@ -751,16 +1068,19 @@ class PortalReadModel:
     def _run_json(run) -> dict[str, object]:
         return {
             "id": str(run.id),
+            "applicationId": str(run.application_id),
             "status": run.status.value,
             "commitSha": run.commit_sha,
             "branch": run.branch,
             "environment": run.environment.value,
             "parameters": dict(run.parameters),
+            "correlationId": run.correlation_id,
             "createdAt": run.created_at.isoformat(),
             "updatedAt": run.updated_at.isoformat(),
             "jenkinsRunId": run.jenkins_run_id,
             "workflowId": run.workflow_id,
             "artifactDigest": run.artifact_digest,
+            "startedBy": run.started_by,
         }
 
     @staticmethod
@@ -844,11 +1164,11 @@ class PortalReadModel:
         assert isinstance(metrics, list)
         return metrics
 
-    def _activity_by_day(self) -> list[dict[str, object]]:
+    def _activity_by_day(self, application_ids: set[UUID] | None = None) -> list[dict[str, object]]:
         today = datetime.now(timezone.utc).date()
         all_runs = []
         for mod in self._modules.values():
-            if mod.application_id:
+            if mod.application_id and (application_ids is None or mod.application_id in application_ids):
                 all_runs.extend(self.platform.list_pipeline_runs(mod.application_id))
 
         days = []
@@ -856,10 +1176,6 @@ class PortalReadModel:
             day_date = today - timedelta(days=offset)
             succeeded = sum(1 for r in all_runs if r.created_at.date() == day_date and r.status.value == "succeeded")
             failed = sum(1 for r in all_runs if r.created_at.date() == day_date and r.status.value == "failed")
-            # If no runs on that date yet, use baseline representation
-            if succeeded == 0 and failed == 0:
-                succeeded = [4, 2, 6, 5, 8, 11, 7][offset]
-                failed = [0, 0, 0, 1, 0, 0, 0][offset]
             days.append({"date": day_date.isoformat(), "succeeded": succeeded, "failed": failed})
         return days
 

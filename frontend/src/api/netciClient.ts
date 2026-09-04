@@ -64,6 +64,7 @@ export type PipelineRun = {
   jenkinsRunId: string | null
   workflowId: string | null
   artifactDigest: string | null
+  startedBy: string | null
   createdAt: string
   updatedAt: string
 }
@@ -333,8 +334,22 @@ export function getModule(moduleId: string): Promise<PortalModule> {
   return request<PortalModule>(`/modules/${encodeURIComponent(moduleId)}`)
 }
 
-export function getModuleOverview(moduleId: string): Promise<Record<string, unknown>> {
-  return request<Record<string, unknown>>(`/modules/${encodeURIComponent(moduleId)}/overview`)
+export function updateModule(moduleId: string, payload: { displayName: string; moduleType: string; description: string }): Promise<PortalModule> {
+  return request<PortalModule>(`/modules/${encodeURIComponent(moduleId)}`, {
+    method: 'PATCH',
+    headers: { 'X-Correlation-Id': requestId() },
+    body: JSON.stringify(payload),
+  })
+}
+
+export type ModuleOverview = {
+  deployments: Array<{ environment: Environment; status: string }>
+  recentReleases: Array<{ version: string; status: string; testStatus: string }>
+  trends: { testCoverage: number | null; automationPassRate: number | null; securityFindings: number | null }
+}
+
+export function getModuleOverview(moduleId: string): Promise<ModuleOverview> {
+  return request<ModuleOverview>(`/modules/${encodeURIComponent(moduleId)}/overview`)
 }
 
 export function listModulePipelineRuns(moduleId: string): Promise<{ moduleId: string; items: PipelineRun[] }> {
@@ -349,8 +364,21 @@ export function getPipelineLogs(pipelineRunId: string): Promise<{ pipelineRunId:
   return request<{ pipelineRunId: string; correlationId: string; lines: string[] }>(`/pipeline-runs/${encodeURIComponent(pipelineRunId)}/logs`)
 }
 
-export function listModuleVersions(moduleId: string): Promise<Record<string, unknown>> {
-  return request<Record<string, unknown>>(`/modules/${encodeURIComponent(moduleId)}/versions`)
+export type ModuleVersion = {
+  version: string
+  artifactDigest: string | null
+  signed: boolean
+  sbom: string
+  scan: string
+  promotable?: boolean
+  createdBy?: string | null
+  createdAt?: string | null
+  ciReport?: { coveragePercentage?: number; automationPassRate?: number; autoTest?: string; commit?: string } | null
+  environments: Record<Environment, string>
+}
+
+export function listModuleVersions(moduleId: string): Promise<{ moduleId: string; items: ModuleVersion[] }> {
+  return request<{ moduleId: string; items: ModuleVersion[] }>(`/modules/${encodeURIComponent(moduleId)}/versions`)
 }
 
 /** The reporting window and source-event count travel with the metrics on purpose:
@@ -387,7 +415,7 @@ export function approveProductionRequest(productionRequestId: string, payload: {
   })
 }
 
-export function createSystem(payload: { id: string; unit: string; description: string; owner?: string }): Promise<PortalSystem> {
+export function createSystem(payload: { id: string; unit: string; description: string }): Promise<PortalSystem> {
   return request<PortalSystem>('/systems', {
     method: 'POST',
     headers: { 'Idempotency-Key': requestId(), 'X-Correlation-Id': requestId() },
@@ -395,7 +423,7 @@ export function createSystem(payload: { id: string; unit: string; description: s
   })
 }
 
-export function createModule(systemId: string, payload: { name: string; displayName: string; repositoryUrl: string; pipelineTemplate: string; runtime: Runtime; moduleType: string; description: string; defaultEnvironment: Environment; deploymentEnvironments: DeploymentEnvironmentConfig[]; stages?: string[]; pipelineConfig?: ModulePipelineConfig }): Promise<PortalModule> {
+export function createModule(systemId: string, payload: { name: string; displayName: string; repositoryUrl: string; pipelineTemplate: string; runtime: Runtime; moduleType: string; description: string; defaultEnvironment: Environment; deploymentEnvironments: DeploymentEnvironmentConfig[]; stages?: string[]; pipelineConfig?: ModulePipelineConfig; ownerTeam?: string }): Promise<PortalModule> {
   return request<PortalModule>(`/systems/${encodeURIComponent(systemId)}/modules`, {
     method: 'POST',
     headers: { 'Idempotency-Key': requestId(), 'X-Correlation-Id': requestId() },
@@ -437,6 +465,14 @@ export type DcimModule = {
   registered: boolean
 }
 
+export type DcimServer = {
+  id: string
+  hostname: string
+  ipAddress?: string
+  environment: Environment
+  status?: string
+}
+
 export type ServerInventoryItem = {
   id: string
   hostname: string
@@ -448,19 +484,42 @@ export type ServerInventoryItem = {
   runtime?: Runtime
 }
 
-export function searchDcimServices(query: string): Promise<{ source: string; items: DcimService[] }> {
-  return request<{ source: string; items: DcimService[] }>(`/dcim/services?query=${encodeURIComponent(query)}`)
+export type AuditEvent = {
+  id: string
+  action: string
+  actor: string
+  target: string
+  applicationId: string
+  pipelineRunId: string | null
+  deploymentId: string | null
+  correlationId: string | null
+  details: Record<string, unknown>
+  createdAt: string
 }
 
-export function listDcimModules(systemId: string): Promise<{ source: string; systemId: string; items: DcimModule[] }> {
-  return request<{ source: string; systemId: string; items: DcimModule[] }>(`/dcim/modules?systemId=${encodeURIComponent(systemId)}`)
+export function listAuditEvents(moduleId: string): Promise<AuditEvent[]> {
+  return request<AuditEvent[]>(`/audit-events?moduleId=${encodeURIComponent(moduleId)}`)
+}
+
+export function searchDcimServices(query: string): Promise<{ source: string; status: string; items: DcimService[] }> {
+  return request<{ source: string; status: string; items: DcimService[] }>(`/dcim/services?query=${encodeURIComponent(query)}`)
+}
+
+export function listDcimModules(systemId: string): Promise<{ source: string; status: string; systemId: string; items: DcimModule[] }> {
+  return request<{ source: string; status: string; systemId: string; items: DcimModule[] }>(`/dcim/modules?systemId=${encodeURIComponent(systemId)}`)
+}
+
+export function listDcimServers(systemId: string, moduleId?: string): Promise<{ source: string; status: string; systemId: string; moduleId: string | null; items: DcimServer[] }> {
+  const query = new URLSearchParams({ systemId })
+  if (moduleId) query.set('moduleId', moduleId)
+  return request<{ source: string; status: string; systemId: string; moduleId: string | null; items: DcimServer[] }>(`/dcim/servers?${query}`)
 }
 
 export function listServerInventory(): Promise<ServerInventoryItem[]> {
   return request<ServerInventoryItem[]>('/servers')
 }
 
-export function createModuleVersion(moduleId: string, payload: { tag: string; gitTagUrl: string; artifactUrl: string }): Promise<Record<string, unknown>> {
+export function createModuleVersion(moduleId: string, payload: { tag: string; gitTagUrl: string; artifactUrl: string; pipelineRunId: string; artifactDigest: string }): Promise<Record<string, unknown>> {
   return request<Record<string, unknown>>(`/modules/${encodeURIComponent(moduleId)}/versions`, {
     method: 'POST',
     headers: { 'X-Correlation-Id': requestId() },
@@ -481,4 +540,3 @@ export function deleteSystem(systemId: string): Promise<void> {
     headers: { 'X-Correlation-Id': requestId() },
   })
 }
-

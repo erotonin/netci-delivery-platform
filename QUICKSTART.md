@@ -51,15 +51,34 @@ npm --prefix frontend run dev
 
 Mở `http://localhost:5173`. Portal gọi `/api/*`; Vite bỏ prefix và proxy tới `http://127.0.0.1:8000`, vì vậy không cần mở rộng CORS cho development.
 
-Kết quả smoke test hiện tại:
+Hành vi hiện tại cần kiểm tra bằng smoke test:
 
-1. Màn hình đăng nhập bảo vệ toàn bộ Portal; local preview chấp nhận tài khoản demo nhưng không lưu mật khẩu.
+1. Portal hỏi `/me` trước khi vào ứng dụng. `NETCI_AUTH_MODE=none` chỉ tự vào ở local loopback; token/OIDC yêu cầu bearer token thật và quyền do API trả về.
 2. Dashboard, Systems, Servers, Production Requests, module overview, pipeline, versions, DORA và settings đều có route và trạng thái tương tác đầy đủ.
-3. Wizard New Module tải DCIM candidates, lưu runner/branching/pipeline stages, deployment environment, server và health-check settings qua `POST /systems/{systemId}/modules`.
+3. Wizard New Module tải candidates/server từ DCIM thật, lưu runner/branching/pipeline stages và deployment target qua `POST /systems/{systemId}/modules`. Health/deploy sequence do playbook đã review trong Git sở hữu, không phải script tùy ý nhập từ browser.
 4. Pipeline trigger, version registration và production request/approve/reject gọi netCI API; loading, validation và structured API error được hiển thị trong Portal.
 5. `npm --prefix frontend test` chạy component tests cho session guard, login/logout và settings interaction.
 
-Khi không có `DATABASE_URL`, backend lưu dữ liệu trong memory và restart process sẽ mất dữ liệu tạo thêm. Khi có PostgreSQL, Portal mutation fail closed nếu persistence lỗi; nghiệm thu restart/recovery vẫn thuộc gate Ubuntu.
+Khi không có `DATABASE_URL` trong `NETCI_ENVIRONMENT=local`, backend lưu dữ liệu trong memory và restart process sẽ mất dữ liệu tạo thêm. Ngoài local, thiếu database làm API từ chối start. Khi có PostgreSQL, Portal mutation fail closed nếu persistence lỗi; nghiệm thu restart/recovery vẫn thuộc gate Ubuntu.
+
+### Chạy toàn bộ topology bằng container
+
+```bash
+cp .env.example .env
+
+# Browser đi qua container proxy nên auth=none bị API từ chối có chủ đích. Cấp một
+# credential local, chép token được in một lần để đăng nhập Portal, rồi đặt trong .env:
+python scripts/netci_token.py --file secrets/auth-tokens.yaml issue \
+  --subject local-admin --name "Local Admin" --role platform-admin
+# NETCI_AUTH_MODE=token
+# NETCI_AUTH_TOKENS_FILE=/run/secrets/netci/auth-tokens.yaml
+
+# Thay credential/endpoint local mặc định bằng giá trị thật khi bật Jenkins, OIDC,
+# DCIM, Cosign hoặc deploy tới cluster/host thật.
+docker compose up --build
+```
+
+Mở `http://localhost:5173`. Service `portal` là static production bundle chạy bằng Nginx non-root và proxy `/api` tới container FastAPI; nó không dùng Vite dev server. Cấu hình mặc định vẫn để CI/CD/signature ở chế độ `none`, nghĩa là ghi state và chờ callback chứ không giả lập thành công. Muốn pipeline end-to-end, bật các mode tương ứng và cung cấp toàn bộ secret/target được liệt kê trong `.env.example`.
 
 ## 2. Backstage experiment
 

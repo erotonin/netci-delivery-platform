@@ -6,11 +6,11 @@ import {
 } from 'lucide-react'
 import { listSystems } from './api/netciClient'
 import type { AuthSession } from './LoginPage'
-import { dora, systems, type PageId } from './portalData'
+import type { DoraCardMetric, PageId } from './portalTypes'
 
 export type Navigate = (page: PageId, options?: { systemId?: string; moduleId?: string }) => void
 
-const systemTone: Record<string, string> = { healthy: 'green', degraded: 'amber', critical: 'red' }
+const systemTone: Record<string, string> = { unknown: 'gray', healthy: 'green', degraded: 'amber', critical: 'red' }
 const iconMap = { frequency: Activity, lead: Clock3, failure: ShieldAlert, recovery: Gauge }
 
 export function StatusPill({ status }: { status: string }) {
@@ -22,13 +22,13 @@ export function PageHeader({ title, description, action }: { title: string; desc
   return <div className="page-heading"><div><h1>{title}</h1><p>{description}</p></div>{action}</div>
 }
 
-export function DoraCards({ metrics = dora }: { metrics?: typeof dora }) {
+export function DoraCards({ metrics = [] }: { metrics?: DoraCardMetric[] }) {
   return <div className="dora-grid">{metrics.map((metric) => {
-    const MetricIcon = iconMap[metric.key as keyof typeof iconMap]
+    const MetricIcon = iconMap[metric.key as keyof typeof iconMap] ?? Gauge
     return <article className="dora-card" key={metric.key}>
       <div className={`metric-icon tone-${metric.tone}`}><MetricIcon size={18} /></div>
       <div className="metric-copy"><span>{metric.label}</span><strong>{metric.value}<small>{metric.unit}</small></strong><p>{metric.hint}</p></div>
-      <em className={metric.trend.startsWith('+') && metric.key === 'failure' ? 'bad-trend' : ''}>{metric.trend}</em>
+      {metric.trend && <em className={metric.trend.startsWith('+') && metric.key === 'failure' ? 'bad-trend' : ''}>{metric.trend}</em>}
     </article>
   })}</div>
 }
@@ -81,14 +81,11 @@ export function Modal({ title, description, children, footer, onClose, wide = fa
 type NavigationModule = { id: string; name: string }
 type NavigationSystem = { id: string; status: string; modules: NavigationModule[] }
 
-const initialNavigationSystems: NavigationSystem[] = systems.map((system) => ({
-  id: system.id,
-  status: system.status,
-  modules: system.modules.map((module) => ({ id: module.id, name: module.name })),
-}))
+const initialNavigationSystems: NavigationSystem[] = []
 
 function Sidebar({ page, systemId, moduleId, moduleLinks, navigationSystems, session, navigate, onLogout, open, close }: { page: PageId; systemId: string; moduleId: string; moduleLinks: NavigationModule[]; navigationSystems: NavigationSystem[]; session: AuthSession; navigate: Navigate; onLogout: () => void; open: boolean; close: () => void }) {
   const inSystem = ['system', 'requests', 'module', 'new-module'].includes(page)
+  const currentSystemTone = systemTone[navigationSystems.find((system) => system.id === systemId)?.status ?? 'unknown'] ?? 'gray'
   return <aside className={`sidebar ${open ? 'sidebar-open' : ''}`}>
     <button className="brand" onClick={() => navigate('dashboard')}>
       <span className="brand-mark">R</span><span><strong>Release Portal</strong><small>netCI Platform</small></span><ChevronDown size={15} />
@@ -96,7 +93,7 @@ function Sidebar({ page, systemId, moduleId, moduleLinks, navigationSystems, ses
     <nav>
       {inSystem ? <>
         <button className="nav-back" onClick={() => navigate('systems')}><ChevronRight size={16} className="rotate-180" /> All Systems</button>
-        <div className="nav-context"><span className="system-health health-green" /><strong>{systemId}</strong></div>
+        <div className="nav-context"><span className={`system-health health-${currentSystemTone}`} /><strong>{systemId}</strong></div>
         <button aria-current={page === 'system' ? 'page' : undefined} className={page === 'system' ? 'nav-item active' : 'nav-item'} onClick={() => navigate('system', { systemId })}><Grid2X2 size={17} />Overview</button>
         <button aria-current={page === 'requests' ? 'page' : undefined} className={page === 'requests' ? 'nav-item active' : 'nav-item'} onClick={() => navigate('requests', { systemId })}><ShieldAlert size={17} />Production Requests</button>
         <span className="nav-label">Modules</span>
@@ -107,7 +104,7 @@ function Sidebar({ page, systemId, moduleId, moduleLinks, navigationSystems, ses
         <button aria-current={page === 'systems' ? 'page' : undefined} className={page === 'systems' ? 'nav-item active' : 'nav-item'} onClick={() => navigate('systems')}><Layers3 size={17} />Systems</button>
         <button aria-current={page === 'servers' ? 'page' : undefined} className={page === 'servers' ? 'nav-item active' : 'nav-item'} onClick={() => navigate('servers')}><Server size={17} />Servers</button>
         <span className="nav-label nav-label-spaced">Systems</span>
-        {navigationSystems.map((system) => <button key={system.id} className="nav-item system-link" onClick={() => navigate('system', { systemId: system.id })}><i className={`system-health health-${systemTone[system.status] ?? 'green'}`} />{system.id}</button>)}
+        {navigationSystems.map((system) => <button key={system.id} className="nav-item system-link" onClick={() => navigate('system', { systemId: system.id })}><i className={`system-health health-${systemTone[system.status] ?? 'gray'}`} />{system.id}</button>)}
       </>}
     </nav>
     {/* With NETCI_AUTH_MODE=none there is no credential to drop, so a logout button would

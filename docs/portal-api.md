@@ -27,13 +27,13 @@ Các response read model có thể materialize từ PostgreSQL query hoặc proj
 
 `POST /systems` tạo system. `POST /systems/{systemId}/modules` tạo module đồng thời tạo application delivery record theo pipeline template/runtime đã chọn và lưu `deploymentEnvironments` (environment, runtime, server/task hoặc kubeconfig reference/namespace). Mọi environment của một application dùng chung runtime; Docker/Systemd bắt buộc có server, Kubernetes bắt buộc có kubeconfig reference và namespace. `POST /modules/{moduleId}/pipeline-runs` là command Portal-level để trigger pipeline; backend resolve `moduleId → applicationId` rồi gọi delivery application layer.
 
-`POST /production-requests/{requestId}/approve` lưu actor/comment, thay đổi approval state và phải tạo audit event. Khi deployment thật đã tồn tại, command này phải tiếp tục gọi deployment approval của delivery domain thay vì chỉ đổi trạng thái read model.
+`POST /production-requests/{requestId}/approve` tạo một production promotion run và deployment thật từ pipeline run/digest/evidence của version, ghi liên kết `deploymentId`, rồi gọi delivery approval. Temporal hoặc callback mode hoàn tất deployment và đồng bộ request sang `succeeded`/`blocked`. Hiện API chỉ nhận đúng một module; multi-module bị từ chối rõ cho tới khi có coordinator đảm bảo deployment order.
 
 ## Persistence rule
 
-Trong local source-only mode, read model có fallback in-memory để test deterministic. Khi `DATABASE_URL` tồn tại, service bootstrap các bảng `systems`, `modules`, `release_versions`, `production_requests`, load projection từ PostgreSQL và persist các create/approval command. Các mutation Portal fail closed trước khi đổi state in-memory nếu PostgreSQL lỗi; `/healthz` công bố trạng thái persistence. Trước khi mentor nghiệm thu runtime vẫn phải kiểm tra migration, restart/recovery và transaction behavior trên container PostgreSQL thật.
+In-memory mode chỉ là seam phục vụ unit test/local source-only; nó không sinh dữ liệu mẫu nếu `NETCI_DEMO_DATA` không được bật rõ ràng. Khi `DATABASE_URL` tồn tại, service bootstrap các bảng `systems`, `modules`, `release_versions`, `production_requests`, load projection từ PostgreSQL và persist các command. Các mutation Portal fail closed trước khi đổi state in-memory nếu PostgreSQL lỗi; `/healthz` công bố trạng thái persistence. Production phải cấu hình PostgreSQL và chạy migration/restart/recovery gate trên database thật.
 
-Module lưu `pipelineConfig` gồm runner, branching strategy và cấu hình từng pipeline. Mỗi deployment environment lưu `taskSettings` có cấu hình health check có kiểu dữ liệu rõ ràng. Production request hỗ trợ nhiều module, version bất biến, deployment order, lịch có timezone, rollback strategy và automation-test policy. Pipeline run lưu `parameters.portalPipeline` để không trộn lịch sử của các pipeline dùng chung environment.
+Module lưu `pipelineConfig` gồm runner routing label, branching strategy và cấu hình từng pipeline. Target host/namespace/kubeconfig reference do server bind vào run; các field `tasks/taskSettings` cũ chỉ được đọc để tương thích và không bao giờ được thực thi. Deploy, health và rollback chỉ chạy playbook đã review trong Git. Production request hiện hỗ trợ đúng một module; version bất biến, lịch có timezone, rollback strategy và automation-test gate đều được backend cưỡng chế. Pipeline run lưu `parameters.portalPipeline` để không trộn lịch sử của các pipeline dùng chung environment.
 
 ## UI states
 
@@ -45,10 +45,11 @@ Các màn hình mới dùng ba contract bổ sung để giữ đúng luồng c�
 
 - `GET /dcim/services?query={nameOrCode}`: tra cứu service khi tạo System.
 - `GET /dcim/modules?systemId={systemId}`: lấy module ứng viên cho wizard New Module.
-- `GET /servers`: inventory server theo system, IP, environment và trạng thái.
-- `POST /modules/{moduleId}/versions`: đăng ký version thủ công bằng Git tag và artifact URL.
+- `GET /dcim/servers?systemId={systemId}&moduleId={moduleId}`: lấy target server thật cho wizard từ DCIM.
+- `GET /servers`: read-only projection của các runtime target đã được lưu trong cấu hình module; endpoint này không tự nhận là inventory/health source.
+- `POST /modules/{moduleId}/versions`: đăng ký version; `pipelineRunId` và `artifactDigest` phải đi cùng nhau để version đủ điều kiện promote production. API kiểm tra run đã `succeeded`, digest khớp và security evidence là `allow`.
 - `POST /modules/{moduleId}/versions/{tag}/ci-report`: pipeline đẩy coverage, automation test, SAST, vulnerability counts và commit SHA vào version đã đăng ký.
 
 Endpoint CI report, callback `POST /pipeline-runs/{id}/ci-result` và callback `POST /deployments/{id}/result` đều yêu cầu `Authorization: Bearer <pipeline-api-key>`. Key đọc từ `NETCI_PIPELINE_API_KEY`; giá trị mặc định chỉ phục vụ local development và phải thay bằng secret manager khi triển khai thật.
 
-Hiện tại DCIM và server inventory là fixture-backed adapter để Windows demo chạy độc lập. Khi có thông tin endpoint và credential thật, thay implementation adapter nhưng giữ nguyên response contract để frontend không phải đổi.
+DCIM dùng HTTP adapter khi có `NETCI_DCIM_BASE_URL`. Contract upstream là `GET /services?query=...`, `GET /systems/{id}/modules` và `GET /systems/{id}/servers?moduleId=...`; mỗi response chứa mảng `items`. Khi chưa cấu hình, API trả `status: not_configured` cùng mảng rỗng; không sinh service/server thay thế. `/servers` chỉ chiếu các runtime target đã lưu trong module và dùng trạng thái `unknown` khi chưa có health provider.

@@ -102,6 +102,7 @@ class TemporalCdOrchestrator:
             runtime=request.runtime,
             environment=request.environment,
             artifact_digest=request.artifact_digest,
+            deployment_id=str(request.deployment_id),
             release_name=request.release_name,
             parameters=dict(request.parameters),
             require_approval=request.require_approval,

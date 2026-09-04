@@ -27,6 +27,10 @@ checks:
     profiles: [portable, windows, ubuntu]
     state: ready
     command: [python, scripts/validate_windows.py]
+  - id: open-source-readiness
+    profiles: [portable, windows, ubuntu]
+    state: ready
+    command: [node, scripts/validate_oss_readiness.mjs]
   - id: release-manifest
     profiles: [portable, windows, ubuntu]
     state: ready

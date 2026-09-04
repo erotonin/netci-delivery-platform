@@ -241,10 +241,17 @@ def test_the_approver_is_the_credential_holder_not_the_request_body(token_app):
         json={"status": "succeeded", "artifactDigest": f"sha256:{'d' * 64}"},
     ).json()
 
-    approved = client.post(
+    forged = client.post(
         f"/deployments/{completed['deployment']['id']}/approve",
         headers=headers["raj"],
         json={"comment": "shipping it", "actor": "somebody-else"},
+    )
+    assert forged.status_code == 422
+
+    approved = client.post(
+        f"/deployments/{completed['deployment']['id']}/approve",
+        headers=headers["raj"],
+        json={"comment": "shipping it"},
     )
     assert approved.status_code == 202
     assert approved.json()["approvedBy"] == "raj"
@@ -403,6 +410,23 @@ def test_another_teams_pipeline_cannot_be_started(team_app):
     assert theirs.status_code == 403
     assert theirs.json()["code"] == "APPLICATION_FORBIDDEN"
     assert "payments" in theirs.json()["message"]
+
+
+def test_another_teams_delivery_data_cannot_be_read(team_app):
+    client, headers, _ = team_app
+    application = _owned_application(client, headers["dana"], "payments").json()
+    run = client.post(
+        f"/applications/{application['id']}/pipeline-runs",
+        headers=headers["dana"],
+        json={"commitSha": "abcdef1234567", "environment": "staging"},
+    ).json()
+
+    visible_ids = {item["id"] for item in client.get("/applications", headers=headers["sam"]).json()}
+    assert application["id"] not in visible_ids
+    assert client.get(f"/applications/{application['id']}/dora", headers=headers["sam"]).status_code == 403
+    assert client.get(f"/delivery-events?applicationId={application['id']}", headers=headers["sam"]).status_code == 403
+    assert client.get(f"/pipeline-runs/{run['id']}", headers=headers["sam"]).status_code == 403
+    assert client.get(f"/pipeline-runs/{run['id']}/logs", headers=headers["sam"]).status_code == 403
 
 
 def test_a_reviewer_from_another_team_cannot_approve_your_production_release(team_app):

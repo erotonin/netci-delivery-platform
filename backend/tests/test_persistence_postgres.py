@@ -50,7 +50,7 @@ def truncate() -> None:
     with psycopg.connect(DATABASE_URL) as connection:
         with connection.cursor() as cursor:
             cursor.execute(
-                "TRUNCATE delivery_events, pipeline_logs, audit_events, idempotency_records,"
+                "TRUNCATE security_evidence, delivery_events, pipeline_logs, audit_events, idempotency_records,"
                 " deployments, pipeline_runs, applications RESTART IDENTITY CASCADE"
             )
 
@@ -243,6 +243,28 @@ def test_security_evidence_decisions_are_written_to_the_audit_trail(database):
     recorded = {row[0]: row[1] for row in rows}
     assert "artifact.evidence_recorded" in recorded
     assert recorded["artifact.evidence_recorded"]["decision"] == "allow"
+
+
+def test_security_evidence_and_its_audit_identity_survive_a_restart(database):
+    platform = DeliveryPlatform()
+    _, run = seed(platform, unique_name(), environment=Environment.STAGING)
+    evidence = {
+        "artifactDigest": DIGEST,
+        "sbom": {"generatedBy": "syft", "location": "s3://netci-evidence/sbom.json"},
+        "vulnerabilityScan": {"scanner": "trivy", "status": "passed", "critical": 0, "high": 0},
+        "signature": {"provider": "cosign", "verified": True},
+    }
+    platform.record_security_evidence(run.id, evidence)
+    audit_id = next(
+        record.id for record in platform.audit_records() if record.event_type == "artifact.evidence_recorded"
+    )
+
+    restarted = DeliveryPlatform()
+
+    assert restarted.security_evidence(run.id)["artifactDigest"] == DIGEST
+    assert next(
+        record.id for record in restarted.audit_records() if record.event_type == "artifact.evidence_recorded"
+    ) == audit_id
 
 
 def test_a_rollback_is_durable_and_keeps_the_superseded_digest(database):

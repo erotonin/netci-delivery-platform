@@ -55,7 +55,7 @@ paths:
   /dcim/services:
     get:
       operationId: searchDcimServices
-      description: Search the fixture-backed DCIM service catalog used by the local reference implementation.
+      description: Search the configured DCIM service catalog; returns not_configured with no items when absent.
       parameters:
         - name: query
           in: query
@@ -66,7 +66,7 @@ paths:
   /dcim/modules:
     get:
       operationId: listDcimModules
-      description: List fixture-backed DCIM modules for a system.
+      description: List modules returned by the configured DCIM integration.
       parameters:
         - name: systemId
           in: query
@@ -75,6 +75,23 @@ paths:
       responses:
         '200': { description: DCIM modules and source metadata }
         '404': { $ref: '#/components/responses/NotFound' }
+  /dcim/servers:
+    get:
+      operationId: listDcimServers
+      description: List real server inventory for a system and optional module from the configured DCIM integration.
+      parameters:
+        - name: systemId
+          in: query
+          required: true
+          schema: { type: string, minLength: 1 }
+        - name: moduleId
+          in: query
+          required: false
+          schema: { type: string, minLength: 1 }
+      responses:
+        '200': { description: DCIM servers and source metadata }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { description: Configured DCIM integration is unreachable or returned an invalid response }
   /systems:
     get:
       operationId: listSystems
@@ -93,7 +110,14 @@ paths:
         required: true
         content:
           application/json:
-            schema: { type: object, required: [id, unit, description], additionalProperties: false }
+            schema:
+              type: object
+              additionalProperties: false
+              required: [id, unit, description]
+              properties:
+                id: { type: string, pattern: '^[a-zA-Z][a-zA-Z0-9-]{2,62}$' }
+                unit: { type: string, minLength: 2, maxLength: 200 }
+                description: { type: string, minLength: 2, maxLength: 1000 }
       responses:
         '201': { description: System created }
         '409': { $ref: '#/components/responses/Conflict' }
@@ -155,6 +179,20 @@ paths:
         - $ref: '#/components/parameters/ModuleId'
       responses:
         '204': { description: Module removed }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      operationId: updateModule
+      parameters:
+        - $ref: '#/components/parameters/ModuleId'
+        - $ref: '#/components/parameters/CorrelationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ModuleUpdate' }
+      responses:
+        '200': { description: Module settings persisted }
+        '403': { description: Caller does not have access to the owning team }
         '404': { $ref: '#/components/responses/NotFound' }
   /modules/{moduleId}/overview:
     get:
@@ -290,7 +328,7 @@ paths:
     get:
       operationId: listServers
       responses:
-        '200': { description: Jenkins controllers and runtime targets }
+        '200': { description: Read-only projection of runtime targets already referenced by module configuration; unknown health is not promoted to online }
   /audit-events:
     get:
       operationId: listAuditEvents
@@ -502,7 +540,7 @@ paths:
         artifact. netCI returns the supply-chain policy verdict and re-applies the same
         rules before any deployment is created.
       security:
-        - pipelineApiKey: []
+        - PipelineBearer: []
       parameters:
         - $ref: '#/components/parameters/PipelineRunId'
       requestBody:
@@ -713,11 +751,24 @@ components:
         defaultEnvironment: { $ref: '#/components/schemas/Environment', default: dev }
         stages: { type: array, items: { type: string } }
         pipelineConfig: { $ref: '#/components/schemas/ModulePipelineConfig' }
+        ownerTeam:
+          type: string
+          minLength: 1
+          maxLength: 255
+          nullable: true
         deploymentEnvironments:
           type: array
           minItems: 1
           maxItems: 3
           items: { $ref: '#/components/schemas/DeploymentEnvironmentConfig' }
+    ModuleUpdate:
+      type: object
+      additionalProperties: false
+      required: [displayName, moduleType]
+      properties:
+        displayName: { type: string, minLength: 2, maxLength: 255 }
+        moduleType: { type: string, minLength: 2, maxLength: 64 }
+        description: { type: string, maxLength: 1000, default: '' }
     DeploymentEnvironmentConfig:
       type: object
       additionalProperties: false
@@ -734,7 +785,13 @@ components:
           type: array
           maxItems: 100
           items: { type: string }
-        taskSettings: { $ref: '#/components/schemas/ModuleTaskSettings' }
+          deprecated: true
+          description: Legacy display metadata; never executed by a runtime adapter.
+        taskSettings:
+          allOf:
+            - $ref: '#/components/schemas/ModuleTaskSettings'
+          deprecated: true
+          description: Legacy display metadata; never executed by a runtime adapter.
         kubeconfigRef: { type: string, minLength: 1, maxLength: 255, nullable: true }
         namespace: { type: string, pattern: '^[a-z0-9]([-a-z0-9]*[a-z0-9])?$', maxLength: 63, nullable: true }
     ModuleTaskSettings:
@@ -934,6 +991,7 @@ components:
         jenkinsRunId: { type: string, nullable: true }
         workflowId: { type: string, nullable: true }
         artifactDigest: { type: string, nullable: true }
+        startedBy: { type: string, nullable: true }
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
     CiResultRequest:
@@ -1001,7 +1059,8 @@ components:
         tag: { type: string, pattern: '^v?\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$' }
         gitTagUrl: { type: string, format: uri }
         artifactUrl: { type: string, format: uri }
-        createdBy: { type: string, minLength: 2, maxLength: 120, default: Admin }
+        pipelineRunId: { type: string, format: uuid, nullable: true }
+        artifactDigest: { type: string, pattern: '^sha256:[0-9a-f]{64}$', nullable: true }
     ProductionRequestCreate:
       type: object
       required: [modules, scheduledFor]
@@ -1010,9 +1069,8 @@ components:
         modules:
           type: array
           minItems: 1
-          maxItems: 20
+          maxItems: 1
           items: { $ref: '#/components/schemas/ProductionRequestModuleCreate' }
-        requestedBy: { type: string, minLength: 2, maxLength: 120, default: Admin }
         scheduledFor: { type: string, format: date-time }
         rollbackStrategy: { type: string, enum: [automatic, manual], default: automatic }
         runAutomationTests: { type: boolean, default: true }
@@ -1026,8 +1084,8 @@ components:
         deploymentOrder: { type: integer, minimum: 1, maximum: 100 }
     ApprovalRequest:
       type: object
+      additionalProperties: false
       properties:
-        actor: { type: string, default: local-reviewer }
         comment: { type: string, maxLength: 1000 }
     RollbackRequest:
       type: object

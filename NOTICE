@@ -1,0 +1,12 @@
+netCI Delivery Platform
+Copyright 2026 netCI contributors
+
+This product is licensed under the Apache License, Version 2.0.
+
+This product includes and integrates third-party open-source software. Those
+components remain under their respective licenses. See THIRD_PARTY_NOTICES.md
+and the dependency manifests for attribution and version information.
+
+The name "netCI" identifies this project. The Apache License does not grant
+permission to use project or contributor trademarks except to describe the
+origin of the software.

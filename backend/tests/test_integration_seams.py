@@ -99,7 +99,106 @@ def drive_to_deployment(platform: DeliveryPlatform, run, environment=Environment
     return result.deployment
 
 
+def record_allowed_evidence(platform: DeliveryPlatform, run) -> None:
+    platform.record_security_evidence(
+        run.id,
+        {
+            "artifactDigest": DIGEST,
+            "sbom": {"generatedBy": "syft", "location": "s3://evidence/sbom.json"},
+            "vulnerabilityScan": {"scanner": "trivy", "status": "passed", "critical": 0, "high": 0},
+            "signature": {"provider": "cosign", "verified": True},
+        },
+    )
+
+
 # --------------------------------------------------------------------- CI seam
+
+
+def test_verified_release_artifact_becomes_a_real_scheduled_production_deployment():
+    orchestrator = RecordingCdOrchestrator()
+    platform = build_platform(orchestrator=orchestrator)
+    application = create_application(platform)
+    source = start_run(platform, application, Environment.STAGING)
+    platform.record_ci_result(source.id, PipelineStatus.RUNNING.value, None, [])
+    record_allowed_evidence(platform, source)
+    source_deployment = platform.record_ci_result(
+        source.id, PipelineStatus.SUCCEEDED.value, DIGEST, ["built"]
+    ).deployment
+    assert source_deployment is not None
+    platform.record_deployment_result(source_deployment.id, DeploymentStatus.HEALTHY.value, "ok")
+    scheduled_for = datetime.now(timezone.utc) + timedelta(hours=2)
+
+    production = platform.create_production_promotion(
+        source.id,
+        requested_by="developer-1",
+        correlation_id="production-request:one",
+        production_request_id="one",
+        scheduled_for=scheduled_for,
+        rollback_strategy="manual",
+        run_automation_tests=False,
+    )
+    approved = platform.approve_deployment(production.id, "reviewer-1")
+
+    assert approved.status == DeploymentStatus.DEPLOYING
+    assert approved.artifact_digest == DIGEST
+    request = orchestrator.started[-1]
+    assert request.deployment_id == production.id
+    assert request.environment == "prod"
+    assert request.parameters["notBefore"] == scheduled_for.isoformat()
+    assert request.parameters["rollbackStrategy"] == "manual"
+    assert request.parameters["runAutomationTests"] is False
+    assert platform.deployment_requested_by(production.id) == "developer-1"
+
+
+def test_retrying_the_same_production_request_reuses_its_run_and_deployment():
+    platform = build_platform()
+    application = create_application(platform)
+    source = start_run(platform, application, Environment.STAGING)
+    platform.record_ci_result(source.id, PipelineStatus.RUNNING.value, None, [])
+    record_allowed_evidence(platform, source)
+    platform.record_ci_result(source.id, PipelineStatus.SUCCEEDED.value, DIGEST, ["built"])
+    scheduled_for = datetime.now(timezone.utc) + timedelta(hours=2)
+    arguments = {
+        "requested_by": "developer-1",
+        "correlation_id": "production-request:retry-safe",
+        "production_request_id": "retry-safe",
+        "scheduled_for": scheduled_for,
+    }
+
+    first = platform.create_production_promotion(source.id, **arguments)
+    replay = platform.create_production_promotion(source.id, **arguments)
+
+    assert replay.id == first.id
+    assert len(platform.list_deployments(application.id)) == 2  # staging + one production
+    assert len(platform.list_pipeline_runs(application.id)) == 2  # source + one promotion
+
+
+def test_reusing_a_production_request_id_with_different_inputs_is_rejected():
+    platform = build_platform()
+    application = create_application(platform)
+    source = start_run(platform, application, Environment.STAGING)
+    platform.record_ci_result(source.id, PipelineStatus.RUNNING.value, None, [])
+    record_allowed_evidence(platform, source)
+    platform.record_ci_result(source.id, PipelineStatus.SUCCEEDED.value, DIGEST, ["built"])
+    scheduled_for = datetime.now(timezone.utc) + timedelta(hours=2)
+
+    platform.create_production_promotion(
+        source.id,
+        requested_by="developer-1",
+        correlation_id="production-request:conflict",
+        production_request_id="conflict",
+        scheduled_for=scheduled_for,
+    )
+    with pytest.raises(DeliveryError) as failure:
+        platform.create_production_promotion(
+            source.id,
+            requested_by="someone-else",
+            correlation_id="production-request:conflict",
+            production_request_id="conflict",
+            scheduled_for=scheduled_for,
+        )
+
+    assert failure.value.code == "IDEMPOTENCY_KEY_REUSED"
 
 
 def test_starting_a_pipeline_dispatches_to_the_ci_engine_and_records_its_identity():
@@ -260,6 +359,19 @@ def test_only_production_deployments_produce_deployment_events():
 
     types = [event.event_type for event in platform.delivery_events(application.id)]
     assert types == [DeliveryEventType.COMMIT]
+
+
+def test_retried_terminal_deployment_callback_is_idempotent():
+    platform = build_platform()
+    application = create_application(platform)
+    run = start_run(platform, application, Environment.STAGING)
+    deployment = drive_to_deployment(platform, run)
+
+    first = platform.record_deployment_result(deployment.id, DeploymentStatus.HEALTHY.value, "ok")
+    replay = platform.record_deployment_result(deployment.id, DeploymentStatus.HEALTHY.value, "retry")
+
+    assert replay == first
+    assert len([record for record in platform.audit_records() if record.event_type == "deployment.healthy"]) == 1
 
 
 def test_a_failed_production_deployment_and_its_later_recovery_are_linked_by_deployment_id():

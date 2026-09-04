@@ -11,8 +11,9 @@ import json
 import logging
 import os
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from .domain.models import (
     Application,
@@ -64,6 +65,8 @@ class AuditRecord:
     actor: str | None = None
     correlation_id: str | None = None
     payload: dict[str, Any] = field(default_factory=dict)
+    id: UUID = field(default_factory=uuid4)
+    occurred_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 @dataclass(frozen=True)
@@ -92,11 +95,21 @@ class UnitOfWork:
     events: list[DeliveryEvent] = field(default_factory=list)
     audit: list[AuditRecord] = field(default_factory=list)
     logs: list[tuple[UUID, list[str]]] = field(default_factory=list)
+    security_evidence: list[tuple[UUID, UUID, str, dict[str, Any]]] = field(default_factory=list)
     idempotency: list[IdempotencyRow] = field(default_factory=list)
 
     def is_empty(self) -> bool:
         return not any(
-            (self.applications, self.runs, self.deployments, self.events, self.audit, self.logs, self.idempotency)
+            (
+                self.applications,
+                self.runs,
+                self.deployments,
+                self.events,
+                self.audit,
+                self.logs,
+                self.security_evidence,
+                self.idempotency,
+            )
         )
 
 
@@ -121,8 +134,13 @@ class PostgresDeliveryStore:
     @classmethod
     def from_env(cls) -> "PostgresDeliveryStore | None":
         url = database_url()
-        if not url or psycopg is None:
+        environment = os.getenv("NETCI_ENVIRONMENT", "local").strip().lower()
+        if not url:
+            if environment != "local":
+                raise RuntimeError("DATABASE_URL (or DATABASE_URL_FILE) is required outside local mode")
             return None
+        if psycopg is None:
+            raise RuntimeError("psycopg is required when DATABASE_URL is configured")
         return cls(url)
 
     def _connect(self):
@@ -250,6 +268,30 @@ class PostgresDeliveryStore:
                         )
                         for row in cursor.fetchall()
                     ]
+                    cursor.execute(
+                        "SELECT pipeline_run_id, evidence FROM security_evidence ORDER BY updated_at"
+                    )
+                    security_evidence = {
+                        row["pipeline_run_id"]: dict(row["evidence"] or {}) for row in cursor.fetchall()
+                    }
+                    cursor.execute(
+                        "SELECT id, event_type, application_id, pipeline_run_id, deployment_id, actor,"
+                        " correlation_id, payload, occurred_at FROM audit_events ORDER BY occurred_at, id"
+                    )
+                    audit = [
+                        AuditRecord(
+                            id=row["id"],
+                            event_type=row["event_type"],
+                            application_id=row["application_id"],
+                            pipeline_run_id=row["pipeline_run_id"],
+                            deployment_id=row["deployment_id"],
+                            actor=row["actor"],
+                            correlation_id=row["correlation_id"],
+                            payload=dict(row["payload"] or {}),
+                            occurred_at=row["occurred_at"],
+                        )
+                        for row in cursor.fetchall()
+                    ]
             self.last_error = None
             return {
                 "applications": applications,
@@ -258,6 +300,8 @@ class PostgresDeliveryStore:
                 "events": events,
                 "logs": logs,
                 "idempotency": idempotency,
+                "security_evidence": security_evidence,
+                "audit": audit,
             }
         except Exception as exc:
             self.last_error = str(exc)
@@ -325,9 +369,10 @@ class PostgresDeliveryStore:
                     )
                 for record in unit.audit:
                     cursor.execute(
-                        "INSERT INTO audit_events (event_type, application_id, pipeline_run_id, deployment_id, actor, correlation_id, payload)"
-                        " VALUES (%s, %s, %s, %s, %s, %s, %s::jsonb)",
+                        "INSERT INTO audit_events (id, event_type, application_id, pipeline_run_id, deployment_id, actor, correlation_id, payload, occurred_at)"
+                        " VALUES (%s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s) ON CONFLICT (id) DO NOTHING",
                         (
+                            record.id,
                             record.event_type,
                             record.application_id,
                             record.pipeline_run_id,
@@ -335,6 +380,29 @@ class PostgresDeliveryStore:
                             record.actor,
                             record.correlation_id,
                             json.dumps(record.payload, default=str),
+                            record.occurred_at,
+                        ),
+                    )
+                for pipeline_run_id, application_id, artifact_digest, evidence in unit.security_evidence:
+                    cursor.execute(
+                        """
+                        INSERT INTO security_evidence (
+                            pipeline_run_id, application_id, artifact_digest, evidence, decision, reason
+                        ) VALUES (%s, %s, %s, %s::jsonb, %s, %s)
+                        ON CONFLICT (pipeline_run_id) DO UPDATE
+                           SET artifact_digest = EXCLUDED.artifact_digest,
+                               evidence = EXCLUDED.evidence,
+                               decision = EXCLUDED.decision,
+                               reason = EXCLUDED.reason,
+                               updated_at = now()
+                        """,
+                        (
+                            pipeline_run_id,
+                            application_id,
+                            artifact_digest,
+                            json.dumps(evidence, default=str),
+                            evidence["decision"],
+                            evidence["reason"],
                         ),
                     )
                 for row in unit.idempotency:
@@ -343,6 +411,7 @@ class PostgresDeliveryStore:
                         INSERT INTO idempotency_records (scope, idempotency_key, request_hash, resource_type, resource_id, response_status, response_body)
                         VALUES (%s, %s, %s, %s, %s, %s, %s::jsonb)
                         ON CONFLICT (scope, idempotency_key) DO NOTHING
+                        RETURNING resource_id
                         """,
                         (
                             row.scope,
@@ -354,6 +423,13 @@ class PostgresDeliveryStore:
                             json.dumps({"resourceId": str(row.resource_id)}),
                         ),
                     )
+                    if cursor.fetchone() is None:
+                        # A competing request won this key after our in-memory replay
+                        # check. Raising inside this transaction rolls back every resource
+                        # written above, so concurrent retries cannot create duplicates.
+                        raise ConcurrentModification(
+                            f"idempotency key {row.scope}/{row.idempotency_key} was committed concurrently"
+                        )
 
     @staticmethod
     def _write_run(cursor, run: PipelineRun, expected_version: int | None) -> None:
@@ -461,8 +537,13 @@ class PostgresPortalStore:
     @classmethod
     def from_env(cls) -> "PostgresPortalStore | None":
         url = database_url()
-        if not url or psycopg is None:
+        environment = os.getenv("NETCI_ENVIRONMENT", "local").strip().lower()
+        if not url:
+            if environment != "local":
+                raise RuntimeError("DATABASE_URL (or DATABASE_URL_FILE) is required outside local mode")
             return None
+        if psycopg is None:
+            raise RuntimeError("psycopg is required when DATABASE_URL is configured")
         return cls(url)
 
     def _connect(self):
@@ -474,26 +555,27 @@ class PostgresPortalStore:
         try:
             with self._connect() as connection:
                 with connection.cursor() as cursor:
-                    cursor.execute(
-                        """
-                        INSERT INTO systems (id, unit, description, owner, status)
-                        VALUES
-                          ('hello-container', 'Local Infrastructure', 'Local container delivery application', 'Admin', 'healthy'),
-                          ('hello-kubernetes', 'Local Infrastructure', 'Local Kubernetes deployment application', 'Admin', 'healthy'),
-                          ('hello-systemd-go', 'Local Infrastructure', 'Local systemd service application', 'Admin', 'healthy')
-                        ON CONFLICT (id) DO NOTHING
-                        """
-                    )
-                    cursor.execute(
-                        """
-                        INSERT INTO modules (id, system_id, runtime, name, module_type, description)
-                        VALUES
-                          ('hello-container', 'hello-container', 'docker', 'Hello Container', 'Backend', 'Local container delivery application'),
-                          ('hello-kubernetes', 'hello-kubernetes', 'kubernetes', 'Hello Kubernetes', 'Workload', 'Local Kubernetes deployment application'),
-                          ('hello-systemd-go', 'hello-systemd-go', 'systemd', 'Hello Systemd Go', 'Backend', 'Local systemd service application')
-                        ON CONFLICT (id) DO NOTHING
-                        """
-                    )
+                    if os.getenv("NETCI_DEMO_DATA", "false").strip().lower() in {"1", "true", "yes"}:
+                        cursor.execute(
+                            """
+                            INSERT INTO systems (id, unit, description, owner, status)
+                            VALUES
+                              ('hello-container', 'Local Infrastructure', 'Local container delivery application', 'Admin', 'healthy'),
+                              ('hello-kubernetes', 'Local Infrastructure', 'Local Kubernetes deployment application', 'Admin', 'healthy'),
+                              ('hello-systemd-go', 'Local Infrastructure', 'Local systemd service application', 'Admin', 'healthy')
+                            ON CONFLICT (id) DO NOTHING
+                            """
+                        )
+                        cursor.execute(
+                            """
+                            INSERT INTO modules (id, system_id, runtime, name, module_type, description)
+                            VALUES
+                              ('hello-container', 'hello-container', 'docker', 'Hello Container', 'Backend', 'Local container delivery application'),
+                              ('hello-kubernetes', 'hello-kubernetes', 'kubernetes', 'Hello Kubernetes', 'Workload', 'Local Kubernetes deployment application'),
+                              ('hello-systemd-go', 'hello-systemd-go', 'systemd', 'Hello Systemd Go', 'Backend', 'Local systemd service application')
+                            ON CONFLICT (id) DO NOTHING
+                            """
+                        )
             self.last_error = None
             return True
         except Exception as exc:
@@ -511,7 +593,7 @@ class PostgresPortalStore:
                     modules = list(cursor.fetchall())
                     cursor.execute("SELECT module_id, version, metadata FROM release_versions ORDER BY created_at DESC, version DESC")
                     versions = list(cursor.fetchall())
-                    cursor.execute("SELECT id, module_id, version, requested_by, scheduled_for, rollback_strategy, run_automation_tests, status, deployment_id, comment FROM production_requests ORDER BY created_at, id")
+                    cursor.execute("SELECT id, module_id, version, requested_by, scheduled_for, rollback_strategy, run_automation_tests, status, deployment_id, comment, idempotency_key, request_hash FROM production_requests ORDER BY created_at, id")
                     requests = list(cursor.fetchall())
                     cursor.execute("SELECT request_id, module_id, version, deployment_order FROM production_request_modules ORDER BY request_id, deployment_order, module_id")
                     request_modules = list(cursor.fetchall())
@@ -541,6 +623,16 @@ class PostgresPortalStore:
                     {**record, "deployment_config": json.dumps(record["deployment_config"]), "pipeline_config": json.dumps(record["pipeline_config"])},
                 )
 
+    def update_module(self, module_id: str, name: str, module_type: str, description: str) -> None:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "UPDATE modules SET name = %s, module_type = %s, description = %s WHERE id = %s",
+                    (name, module_type, description, module_id),
+                )
+                if cursor.rowcount != 1:
+                    raise KeyError("module not found")
+
     def upsert_version(self, module_id: str, version: str, metadata: dict[str, Any]) -> None:
         with self._connect() as connection:
             with connection.cursor() as cursor:
@@ -561,10 +653,10 @@ class PostgresPortalStore:
                     """
                     INSERT INTO production_requests (
                         id, module_id, version, requested_by, scheduled_for,
-                        rollback_strategy, run_automation_tests, status
+                        rollback_strategy, run_automation_tests, status, idempotency_key, request_hash
                     ) VALUES (
                         %(id)s, %(module_id)s, %(version)s, %(requested_by)s, %(scheduled_for)s,
-                        %(rollback_strategy)s, %(run_automation_tests)s, %(status)s
+                        %(rollback_strategy)s, %(run_automation_tests)s, %(status)s, %(idempotency_key)s, %(request_hash)s
                     )
                     """,
                     {**record, "id": UUID(str(record["id"])), "module_id": primary["module_id"], "version": primary["version"]},
@@ -578,12 +670,18 @@ class PostgresPortalStore:
                         {**module, "request_id": UUID(str(module["request_id"]))},
                     )
 
-    def update_request(self, request_id: str, status: str, comment: str | None) -> None:
+    def update_request(
+        self,
+        request_id: str,
+        status: str,
+        comment: str | None,
+        deployment_id: UUID | None = None,
+    ) -> None:
         with self._connect() as connection:
             with connection.cursor() as cursor:
                 cursor.execute(
-                    "UPDATE production_requests SET status = %s, comment = %s WHERE id = %s",
-                    (status, comment, UUID(request_id)),
+                    "UPDATE production_requests SET status = %s, comment = %s, deployment_id = COALESCE(%s, deployment_id) WHERE id = %s",
+                    (status, comment, deployment_id, UUID(request_id)),
                 )
 
     def delete_system(self, system_id: str) -> None:
@@ -614,4 +712,3 @@ class PostgresPortalStore:
             raise StillReferenced(
                 f"module {module_id} is still referenced by a production request"
             ) from exc
-

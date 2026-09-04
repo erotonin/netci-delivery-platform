@@ -100,6 +100,7 @@ svg { flex: 0 0 auto; }
 .rotate-180 { transform: rotate(180deg); }
 .nav-context { height: 42px; display: flex; align-items: center; gap: 10px; padding: 0 11px; margin-bottom: 6px; font-size: 15px; }
 .system-health { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #a0a5ae; flex: 0 0 auto; }
+.health-gray { background: #8a919d; box-shadow: 0 0 0 3px #eceef1; }
 .health-green { background: #21ae75; box-shadow: 0 0 0 3px #e4f7ef; }
 .health-amber { background: #e7a522; box-shadow: 0 0 0 3px #fff4dc; }
 .health-red { background: #ec5360; box-shadow: 0 0 0 3px #fde9ec; }
@@ -254,14 +255,14 @@ textarea { min-height: 78px; padding: 9px 10px; resize: vertical; font-size: 11p
 
 .status { width: fit-content; min-height: 21px; border-radius: 20px; display: inline-flex !important; align-items: center; gap: 5px; padding: 2px 8px; font-size: 9px; font-weight: 600; white-space: nowrap; }
 .status i { width: 5px; height: 5px; border-radius: 50%; }
-.status-healthy, .status-online, .status-success, .status-deployed, .status-passed { background: #eaf8f2; color: #16875c; }
-.status-healthy i, .status-online i, .status-success i, .status-deployed i, .status-passed i { background: #20a972; }
-.status-degraded, .status-maintenance, .status-pending, .status-running, .status-superseded { background: #fff4df; color: #9d6b0c; }
-.status-degraded i, .status-maintenance i, .status-pending i, .status-running i, .status-superseded i { background: #dda11d; }
-.status-critical, .status-offline, .status-failed, .status-rolled-back { background: #ffedef; color: #c73d49; }
-.status-critical i, .status-offline i, .status-failed i, .status-rolled-back i { background: #e44e59; }
-.status-not-deployed { background: #f1f2f4; color: #7a818d; }
-.status-not-deployed i { background: #a1a6ae; }
+.status-healthy, .status-online, .status-success, .status-succeeded, .status-deployed, .status-passed { background: #eaf8f2; color: #16875c; }
+.status-healthy i, .status-online i, .status-success i, .status-succeeded i, .status-deployed i, .status-passed i { background: #20a972; }
+.status-degraded, .status-maintenance, .status-pending, .status-pending-checks, .status-approved, .status-running, .status-superseded { background: #fff4df; color: #9d6b0c; }
+.status-degraded i, .status-maintenance i, .status-pending i, .status-pending-checks i, .status-approved i, .status-running i, .status-superseded i { background: #dda11d; }
+.status-critical, .status-offline, .status-failed, .status-blocked, .status-rejected, .status-rolled-back { background: #ffedef; color: #c73d49; }
+.status-critical i, .status-offline i, .status-failed i, .status-blocked i, .status-rejected i, .status-rolled-back i { background: #e44e59; }
+.status-not-deployed, .status-unknown { background: #f1f2f4; color: #69717d; }
+.status-not-deployed i, .status-unknown i { background: #8a919d; }
 
 .modal-backdrop { position: fixed; inset: 0; z-index: 100; background: rgba(22, 25, 34, .48); display: grid; place-items: center; padding: 24px; }
 .modal { width: min(560px, 100%); max-height: calc(100vh - 48px); border-radius: 9px; background: #fff; box-shadow: 0 22px 70px rgba(15, 20, 31, .28); display: flex; flex-direction: column; overflow: hidden; }
@@ -552,19 +553,3 @@ textarea { min-height: 78px; padding: 9px 10px; resize: vertical; font-size: 11p
   max-width: 640px; padding: 10px 14px; border-radius: 6px;
   background: var(--surface-alt, #f2f4f7); font-size: 11px; word-break: break-word;
 }
-
-/* ------------------------------------------------------------------- demo mode
-   What is fixture-backed or browser-only, said plainly. See src/DemoMode.tsx. */
-.demo-badge {
-  display: inline-flex; align-items: center; gap: 5px; vertical-align: middle;
-  margin-left: 8px; padding: 2px 8px; border-radius: 999px;
-  border: 1px solid var(--border); background: var(--canvas);
-  color: var(--muted); font-size: 10px; font-weight: 600; letter-spacing: .01em;
-}
-.demo-note {
-  display: flex; align-items: center; gap: 9px; margin: 0 0 14px;
-  padding: 9px 13px; border-radius: 7px;
-  border: 1px dashed var(--border); background: var(--canvas);
-  color: var(--muted); font-size: 11px;
-}
-.demo-note > svg { flex: none; }

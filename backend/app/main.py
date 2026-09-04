@@ -12,11 +12,12 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response, 
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field, HttpUrl, model_validator
+from pydantic import BaseModel, ConfigDict, Field, HttpUrl, model_validator
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from .adapters.cd_orchestrator import build_cd_orchestrator
 from .adapters.ci_launcher import build_ci_launcher
+from .adapters.dcim import DcimUnavailable
 from .auth import AuthError, Principal, build_authenticator
 from .client_address import LOOPBACK_HOSTS, resolve_client
 from .ratelimit import build_rate_limiter
@@ -336,6 +337,59 @@ def _require_application_access(application: Application, principal: Principal) 
         ) from exc
 
 
+def _can_access_application(application: Application, principal: Principal) -> bool:
+    try:
+        require_team_access(
+            application.owner_team,
+            principal.teams,
+            is_platform_admin=principal.has_any(Role.PLATFORM_ADMIN),
+            require_owner=require_application_owner(),
+        )
+        return True
+    except PolicyViolation:
+        return False
+
+
+def _visible_application_ids(principal: Principal) -> set[UUID]:
+    return {
+        application.id
+        for application in platform.list_applications()
+        if _can_access_application(application, principal)
+    }
+
+
+def _application_owner_for_create(owner_team: str | None, principal: Principal) -> str | None:
+    """Validate ownership once for both application creation entry points."""
+
+    normalized = (owner_team or "").strip() or None
+    if normalized and not principal.has_any(Role.PLATFORM_ADMIN) and not principal.belongs_to(normalized):
+        held = ", ".join(sorted(principal.teams)) or "no teams"
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "code": "APPLICATION_FORBIDDEN",
+                "message": f"cannot create an application owned by {normalized!r}; you belong to {held}",
+            },
+        )
+    if normalized is None and require_application_owner() and not principal.has_any(Role.PLATFORM_ADMIN):
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "OWNER_TEAM_REQUIRED",
+                "message": "ownerTeam is required: NETCI_REQUIRE_APPLICATION_OWNER is set",
+            },
+        )
+    return normalized
+
+
+def _require_module_access(module_id: str, principal: Principal) -> dict[str, object]:
+    module = portal.module(module_id)
+    application_id = module.get("applicationId")
+    if application_id:
+        _require_application_access(platform.get_application(UUID(str(application_id))), principal)
+    return module
+
+
 def separation_of_duties_enabled(principal: Principal | None = None) -> bool:
     """Whether the requester and the approver must be different people.
 
@@ -377,6 +431,12 @@ def delivery_event_json(item: DeliveryEvent) -> dict[str, object]:
     }
 
 
+class StrictBody(BaseModel):
+    """Request body whose checked-in OpenAPI schema forbids undeclared fields."""
+
+    model_config = ConfigDict(extra="forbid")
+
+
 class ApplicationCreate(BaseModel):
     name: str = Field(pattern=r"^[a-z0-9][a-z0-9-]{2,62}$")
     # The team accountable for this application. Optional while ownership is being
@@ -396,20 +456,20 @@ class PipelineRunCreate(BaseModel):
     parameters: dict[str, object] = Field(default_factory=dict)
 
 
-class CiResultRequest(BaseModel):
+class CiResultRequest(StrictBody):
     status: PipelineStatus
     artifactDigest: str | None = None
     logLines: list[str] = Field(default_factory=list, max_length=1000)
 
 
-class ApprovalRequest(BaseModel):
+class ApprovalRequest(StrictBody):
     # No actor field: the approver is the authenticated principal. A body-supplied actor
     # would be a claim the server has no way to check, and an audit trail of claims is
     # not an audit trail.
     comment: str | None = None
 
 
-class DeploymentResultRequest(BaseModel):
+class DeploymentResultRequest(StrictBody):
     status: Literal["healthy", "failed"]
     message: str | None = Field(default=None, max_length=2000)
 
@@ -419,36 +479,35 @@ class RollbackRequest(BaseModel):
     reason: str = Field(min_length=3)
 
 
-class SystemCreate(BaseModel):
+class SystemCreate(StrictBody):
     id: str = Field(pattern=r"^[a-zA-Z][a-zA-Z0-9-]{2,62}$")
     unit: str = Field(min_length=2, max_length=200)
     description: str = Field(min_length=2, max_length=1000)
-    owner: str = Field(default="Admin", min_length=2, max_length=120)
 
 
-class HealthCheckSettings(BaseModel):
+class HealthCheckSettings(StrictBody):
     script: str = Field(min_length=1, max_length=4000)
     retries: int = Field(default=3, ge=1, le=20)
     delay: str = Field(default="10s", pattern=r"^\d+(ms|s|m)$")
 
 
-class ModuleTaskSettings(BaseModel):
+class ModuleTaskSettings(StrictBody):
     healthCheck: HealthCheckSettings | None = None
 
 
-class ModulePipelineTabConfig(BaseModel):
+class ModulePipelineTabConfig(StrictBody):
     branch: str = Field(min_length=1, max_length=500)
     coverageReportPath: str = Field(min_length=1, max_length=500)
     stages: list[str] = Field(default_factory=list, min_length=1, max_length=100)
 
 
-class ModulePipelineConfig(BaseModel):
+class ModulePipelineConfig(StrictBody):
     runner: str = Field(min_length=1, max_length=255)
     strategy: Literal["Gitflow", "Trunk-based", "Custom Pipeline"]
     pipelines: dict[str, ModulePipelineTabConfig] = Field(min_length=1, max_length=10)
 
 
-class ModuleEnvironmentCreate(BaseModel):
+class ModuleEnvironmentCreate(StrictBody):
     displayName: str = Field(min_length=1, max_length=120)
     environment: Environment
     runtime: Runtime
@@ -485,6 +544,7 @@ class ModuleCreate(BaseModel):
     stages: list[str] = Field(default_factory=list)
     pipelineConfig: ModulePipelineConfig | None = None
     deploymentEnvironments: list[ModuleEnvironmentCreate] = Field(min_length=1, max_length=3)
+    ownerTeam: str | None = Field(default=None, min_length=1, max_length=255)
 
     @model_validator(mode="after")
     def validate_deployment_environments(self) -> "ModuleCreate":
@@ -505,18 +565,24 @@ class ModuleCreate(BaseModel):
         return self
 
 
-class PortalApprovalRequest(BaseModel):
+class PortalApprovalRequest(StrictBody):
     comment: str | None = Field(default=None, max_length=1000)
 
 
-class ProductionRequestModuleCreate(BaseModel):
+class ModuleUpdate(StrictBody):
+    displayName: str = Field(min_length=2, max_length=255)
+    moduleType: str = Field(min_length=2, max_length=64)
+    description: str = Field(default="", max_length=1000)
+
+
+class ProductionRequestModuleCreate(StrictBody):
     moduleId: str = Field(pattern=r"^[a-z0-9][a-z0-9-]{2,62}$")
     version: str = Field(pattern=r"^v?\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$")
     deploymentOrder: int = Field(ge=1, le=100)
 
 
-class ProductionRequestCreate(BaseModel):
-    modules: list[ProductionRequestModuleCreate] = Field(min_length=1, max_length=20)
+class ProductionRequestCreate(StrictBody):
+    modules: list[ProductionRequestModuleCreate] = Field(min_length=1, max_length=1)
     # requestedBy is the authenticated principal; see ApprovalRequest.
     scheduledFor: datetime
     rollbackStrategy: Literal["automatic", "manual"] = "automatic"
@@ -532,10 +598,12 @@ class ProductionRequestCreate(BaseModel):
         return self
 
 
-class VersionCreate(BaseModel):
+class VersionCreate(StrictBody):
     tag: str = Field(pattern=r"^v?\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$")
     gitTagUrl: HttpUrl
     artifactUrl: HttpUrl
+    pipelineRunId: UUID | None = None
+    artifactDigest: str | None = Field(default=None, pattern=r"^sha256:[0-9a-f]{64}$")
 
 
 class SbomEvidence(BaseModel):
@@ -590,13 +658,13 @@ class SecurityEvidenceRequest(BaseModel):
     buildRunId: str | None = Field(default=None, max_length=255)
 
 
-class VulnerabilityCounts(BaseModel):
+class VulnerabilityCounts(StrictBody):
     critical: int = Field(default=0, ge=0)
     high: int = Field(default=0, ge=0)
     medium: int = Field(default=0, ge=0)
 
 
-class VersionCiReport(BaseModel):
+class VersionCiReport(StrictBody):
     coverage: float = Field(ge=0, le=100)
     autoTest: Literal["passed", "failed", "skipped"]
     sast: Literal["passed", "failed"]
@@ -694,52 +762,80 @@ def stage_catalog(_: Principal = ReadAccess) -> dict[str, list[dict[str, object]
 
 
 @app.get("/portal/dashboard")
-def portal_dashboard(_: Principal = ReadAccess) -> dict[str, object]:
-    return portal.dashboard()
+def portal_dashboard(principal: Principal = ReadAccess) -> dict[str, object]:
+    return portal.dashboard(_visible_application_ids(principal))
 
 
 @app.get("/dcim/services")
 def search_dcim_services(query: str = "", _: Principal = ReadAccess) -> dict[str, object]:
-    return {"source": "fixture", "items": portal.dcim_services(query)}
+    try:
+        return portal.dcim_services(query)
+    except DcimUnavailable as exc:
+        raise HTTPException(status_code=503, detail={"code": "DCIM_UNAVAILABLE", "message": str(exc)}) from exc
 
 
 @app.get("/dcim/modules")
 def list_dcim_modules(systemId: str, _: Principal = ReadAccess) -> dict[str, object]:
     try:
-        return {"source": "fixture", "systemId": systemId, "items": portal.dcim_modules(systemId)}
+        return portal.dcim_modules(systemId)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail={"code": "SYSTEM_NOT_FOUND", "message": str(exc)}) from exc
+    except DcimUnavailable as exc:
+        raise HTTPException(status_code=503, detail={"code": "DCIM_UNAVAILABLE", "message": str(exc)}) from exc
+
+
+@app.get("/dcim/servers")
+def list_dcim_servers(
+    systemId: str,
+    moduleId: str | None = None,
+    _: Principal = ReadAccess,
+) -> dict[str, object]:
+    try:
+        return portal.dcim_servers(systemId, moduleId)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail={"code": "SYSTEM_NOT_FOUND", "message": str(exc)}) from exc
+    except DcimUnavailable as exc:
+        raise HTTPException(status_code=503, detail={"code": "DCIM_UNAVAILABLE", "message": str(exc)}) from exc
 
 
 @app.get("/systems")
-def list_systems(_: Principal = ReadAccess) -> list[dict[str, object]]:
-    return portal.systems()
+def list_systems(principal: Principal = ReadAccess) -> list[dict[str, object]]:
+    return portal.systems(_visible_application_ids(principal))
 
 
 @app.post("/systems", status_code=status.HTTP_201_CREATED)
-def create_system(payload: SystemCreate, _: Principal = DeveloperAccess) -> dict[str, object]:
+def create_system(payload: SystemCreate, principal: Principal = DeveloperAccess) -> dict[str, object]:
     try:
         return portal.create_system(
             system_id=payload.id,
             unit=payload.unit,
             description=payload.description,
-            owner=payload.owner,
+            owner=principal.subject,
         )
     except ValueError as exc:
         raise HTTPException(status_code=409, detail={"code": "SYSTEM_EXISTS", "message": str(exc)}) from exc
 
 
 @app.get("/systems/{systemId}")
-def get_system(systemId: str, _: Principal = ReadAccess) -> dict[str, object]:
+def get_system(systemId: str, principal: Principal = ReadAccess) -> dict[str, object]:
     try:
-        return portal.system(systemId)
+        unfiltered = portal.system(systemId)
+        visible = portal.system(systemId, _visible_application_ids(principal))
+        if unfiltered["modules"] and not visible["modules"]:
+            raise HTTPException(
+                status_code=403,
+                detail={"code": "APPLICATION_FORBIDDEN", "message": "system has no modules accessible to this principal"},
+            )
+        return visible
     except KeyError as exc:
         raise HTTPException(status_code=404, detail={"code": "SYSTEM_NOT_FOUND", "message": str(exc)}) from exc
 
 
 @app.delete("/systems/{systemId}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_system(systemId: str, _: Principal = DeveloperAccess):
+def delete_system(systemId: str, principal: Principal = DeveloperAccess):
     try:
+        for module in portal.system(systemId).get("modules") or []:
+            _require_module_access(str(module["id"]), principal)
         portal.remove_system(systemId)
         return Response(status_code=status.HTTP_204_NO_CONTENT)
     except KeyError as exc:
@@ -751,8 +847,9 @@ def delete_system(systemId: str, _: Principal = DeveloperAccess):
 
 
 @app.delete("/modules/{moduleId}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_module(moduleId: str, _: Principal = DeveloperAccess):
+def delete_module(moduleId: str, principal: Principal = DeveloperAccess):
     try:
+        _require_module_access(moduleId, principal)
         portal.remove_module(moduleId)
         return Response(status_code=status.HTTP_204_NO_CONTENT)
     except KeyError as exc:
@@ -764,9 +861,16 @@ def delete_module(moduleId: str, _: Principal = DeveloperAccess):
 
 
 @app.get("/systems/{systemId}/modules")
-def list_system_modules(systemId: str, _: Principal = ReadAccess) -> list[dict[str, object]]:
+def list_system_modules(systemId: str, principal: Principal = ReadAccess) -> list[dict[str, object]]:
     try:
-        return list(portal.system(systemId)["modules"])
+        unfiltered = portal.system(systemId)
+        visible = portal.system(systemId, _visible_application_ids(principal))
+        if unfiltered["modules"] and not visible["modules"]:
+            raise HTTPException(
+                status_code=403,
+                detail={"code": "APPLICATION_FORBIDDEN", "message": "system has no modules accessible to this principal"},
+            )
+        return list(visible["modules"])
     except KeyError as exc:
         raise HTTPException(status_code=404, detail={"code": "SYSTEM_NOT_FOUND", "message": str(exc)}) from exc
 
@@ -776,11 +880,13 @@ def create_module(
     systemId: str,
     payload: ModuleCreate,
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key", min_length=1, max_length=128),
+    principal: Principal = DeveloperAccess,
 ) -> dict[str, object]:
     try:
         # Validate the Portal aggregate before provisioning its delivery application;
         # otherwise an invalid system could leave an orphan application behind.
         portal.validate_module_slot(systemId, payload.name)
+        owner_team = _application_owner_for_create(payload.ownerTeam, principal)
         application = platform.create_application(
             name=payload.name,
             repository_url=str(payload.repositoryUrl),
@@ -789,6 +895,7 @@ def create_module(
             default_environment=payload.defaultEnvironment,
             stages=payload.stages,
             idempotency_key=idempotency_key,
+            owner_team=owner_team,
         )
         return portal.attach_module(
             system_id=systemId,
@@ -808,16 +915,31 @@ def create_module(
 
 
 @app.get("/modules/{moduleId}")
-def get_module(moduleId: str, _: Principal = ReadAccess) -> dict[str, object]:
+def get_module(moduleId: str, principal: Principal = ReadAccess) -> dict[str, object]:
     try:
-        return portal.module(moduleId)
+        return _require_module_access(moduleId, principal)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail={"code": "MODULE_NOT_FOUND", "message": str(exc)}) from exc
+
+
+@app.patch("/modules/{moduleId}")
+def update_module(moduleId: str, payload: ModuleUpdate, principal: Principal = DeveloperAccess) -> dict[str, object]:
+    try:
+        _require_module_access(moduleId, principal)
+        return portal.update_module(
+            moduleId,
+            name=payload.displayName,
+            module_type=payload.moduleType,
+            description=payload.description,
+        )
     except KeyError as exc:
         raise HTTPException(status_code=404, detail={"code": "MODULE_NOT_FOUND", "message": str(exc)}) from exc
 
 
 @app.get("/modules/{moduleId}/overview")
-def get_module_overview(moduleId: str, _: Principal = ReadAccess) -> dict[str, object]:
+def get_module_overview(moduleId: str, principal: Principal = ReadAccess) -> dict[str, object]:
     try:
+        _require_module_access(moduleId, principal)
         return portal.module_overview(moduleId)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail={"code": "MODULE_NOT_FOUND", "message": str(exc)}) from exc
@@ -843,7 +965,7 @@ def start_module_pipeline_run(
             commit_sha=payload.commitSha,
             branch=payload.branch,
             environment=payload.environment,
-            parameters=payload.parameters,
+            parameters=portal.delivery_parameters(moduleId, payload.environment, payload.parameters),
             correlation_id=request.state.correlation_id,
             idempotency_key=idempotency_key,
             started_by=principal.subject,
@@ -851,19 +973,23 @@ def start_module_pipeline_run(
         return pipeline_json(run)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail={"code": "MODULE_NOT_FOUND", "message": str(exc)}) from exc
+    except PortalError as exc:
+        raise HTTPException(status_code=exc.status_code, detail={"code": exc.code, "message": exc.message}) from exc
 
 
 @app.get("/modules/{moduleId}/pipeline-runs")
-def list_module_pipeline_runs(moduleId: str, _: Principal = ReadAccess) -> dict[str, object]:
+def list_module_pipeline_runs(moduleId: str, principal: Principal = ReadAccess) -> dict[str, object]:
     try:
+        _require_module_access(moduleId, principal)
         return portal.pipeline_runs(moduleId)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail={"code": "MODULE_NOT_FOUND", "message": str(exc)}) from exc
 
 
 @app.get("/modules/{moduleId}/versions")
-def list_module_versions(moduleId: str, _: Principal = ReadAccess) -> dict[str, object]:
+def list_module_versions(moduleId: str, principal: Principal = ReadAccess) -> dict[str, object]:
     try:
+        _require_module_access(moduleId, principal)
         return portal.versions(moduleId)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail={"code": "MODULE_NOT_FOUND", "message": str(exc)}) from exc
@@ -876,11 +1002,15 @@ def create_module_version(
     principal: Principal = Depends(requires(Role.DEVELOPER, Role.PLATFORM_ADMIN, Role.PIPELINE)),
 ) -> dict[str, object]:
     try:
+        if not principal.has_any(Role.PIPELINE):
+            _require_module_access(moduleId, principal)
         return portal.register_version(
             moduleId,
             tag=payload.tag,
             git_tag_url=str(payload.gitTagUrl),
             artifact_url=str(payload.artifactUrl),
+            pipeline_run_id=payload.pipelineRunId,
+            artifact_digest=payload.artifactDigest,
             created_by=principal.subject,
         )
     except KeyError as exc:
@@ -903,24 +1033,43 @@ def publish_module_ci_report(
 
 
 @app.get("/modules/{moduleId}/dora")
-def get_module_dora(moduleId: str, _: Principal = ReadAccess) -> dict[str, object]:
+def get_module_dora(moduleId: str, principal: Principal = ReadAccess) -> dict[str, object]:
     try:
+        _require_module_access(moduleId, principal)
         return portal.dora(moduleId)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail={"code": "MODULE_NOT_FOUND", "message": str(exc)}) from exc
 
 
 @app.get("/systems/{systemId}/dora")
-def get_system_dora(systemId: str, _: Principal = ReadAccess) -> dict[str, object]:
+def get_system_dora(systemId: str, principal: Principal = ReadAccess) -> dict[str, object]:
     try:
-        return portal.dora(systemId)
+        unfiltered = portal.system(systemId)
+        visible = portal.system(systemId, _visible_application_ids(principal))
+        if unfiltered["modules"] and not visible["modules"]:
+            raise HTTPException(
+                status_code=403,
+                detail={"code": "APPLICATION_FORBIDDEN", "message": "system has no modules accessible to this principal"},
+            )
+        application_ids = [UUID(str(module["applicationId"])) for module in visible["modules"] if module.get("applicationId")]
+        return {"scope": "system", "scopeId": systemId, **portal.dora_projection(application_ids)}
     except KeyError as exc:
         raise HTTPException(status_code=404, detail={"code": "SYSTEM_NOT_FOUND", "message": str(exc)}) from exc
 
 
 @app.get("/production-requests")
-def list_production_requests(_: Principal = ReadAccess) -> list[dict[str, object]]:
-    return portal.production_requests()
+def list_production_requests(principal: Principal = ReadAccess) -> list[dict[str, object]]:
+    visible: list[dict[str, object]] = []
+    for request in portal.production_requests():
+        try:
+            for module in request.get("modules") or []:
+                _require_module_access(str(module["moduleId"]), principal)
+        except HTTPException as exc:
+            if exc.status_code == 403:
+                continue
+            raise
+        visible.append(request)
+    return visible
 
 
 @app.post("/production-requests", status_code=status.HTTP_201_CREATED)
@@ -930,6 +1079,11 @@ def create_production_request(
     principal: Principal = DeveloperAccess,
 ) -> dict[str, object]:
     try:
+        for requested_module in payload.modules:
+            module = portal.module(requested_module.moduleId)
+            application_id = module.get("applicationId")
+            if application_id:
+                _require_application_access(platform.get_application(UUID(str(application_id))), principal)
         # requested_by comes from the verified identity, never from the body: it is the
         # half of the separation-of-duties check that the approver is compared against.
         return portal.create_production_request(
@@ -944,18 +1098,25 @@ def create_production_request(
         raise HTTPException(status_code=404, detail={"code": "MODULE_NOT_FOUND", "message": str(exc)}) from exc
     except ValueError as exc:
         raise HTTPException(status_code=409, detail={"code": "VERSION_NOT_AVAILABLE", "message": str(exc)}) from exc
+    except PortalError as exc:
+        raise HTTPException(status_code=exc.status_code, detail={"code": exc.code, "message": exc.message}) from exc
 
 
 @app.post("/production-requests/{requestId}/approve", status_code=status.HTTP_202_ACCEPTED)
 def approve_production_request(
     requestId: str, payload: PortalApprovalRequest, principal: Principal = ReviewerAccess
 ) -> dict[str, object]:
+    existing = portal.production_request(requestId)
+    if existing is None:
+        raise HTTPException(
+            status_code=404, detail={"code": "REQUEST_NOT_FOUND", "message": "production request not found"}
+        )
+    for requested_module in existing.get("modules") or []:
+        module = portal.module(str(requested_module["moduleId"]))
+        application_id = module.get("applicationId")
+        if application_id:
+            _require_application_access(platform.get_application(UUID(str(application_id))), principal)
     if separation_of_duties_enabled(principal):
-        existing = portal.production_request(requestId)
-        if existing is None:
-            raise HTTPException(
-                status_code=404, detail={"code": "REQUEST_NOT_FOUND", "message": "production request not found"}
-            )
         try:
             require_separation_of_duties(str(existing.get("requestedBy") or ""), principal.subject)
         except PolicyViolation as exc:
@@ -968,6 +1129,8 @@ def approve_production_request(
         raise HTTPException(status_code=404, detail={"code": "REQUEST_NOT_FOUND", "message": str(exc)}) from exc
     except ValueError as exc:
         raise HTTPException(status_code=409, detail={"code": "REQUEST_STATE_INVALID", "message": str(exc)}) from exc
+    except PortalError as exc:
+        raise HTTPException(status_code=exc.status_code, detail={"code": exc.code, "message": exc.message}) from exc
 
 
 @app.post("/production-requests/{requestId}/reject", status_code=status.HTTP_202_ACCEPTED)
@@ -975,6 +1138,11 @@ def reject_production_request(
     requestId: str, payload: PortalApprovalRequest, principal: Principal = ReviewerAccess
 ) -> dict[str, object]:
     try:
+        existing = portal.production_request(requestId)
+        if existing is None:
+            raise KeyError("production request not found")
+        for requested_module in existing.get("modules") or []:
+            _require_module_access(str(requested_module["moduleId"]), principal)
         return portal.reject_request(requestId, principal.subject, payload.comment)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail={"code": "REQUEST_NOT_FOUND", "message": str(exc)}) from exc
@@ -983,13 +1151,23 @@ def reject_production_request(
 
 
 @app.get("/servers")
-def list_servers(_: Principal = ReadAccess) -> list[dict[str, object]]:
-    return portal.servers()
+def list_servers(principal: Principal = ReadAccess) -> list[dict[str, object]]:
+    return portal.servers(_visible_application_ids(principal))
 
 
 @app.get("/audit-events")
-def list_audit_events(systemId: str | None = None, moduleId: str | None = None, _: Principal = ReadAccess) -> list[dict[str, object]]:
-    return portal.audit_events(system_id=systemId, module_id=moduleId)
+def list_audit_events(systemId: str | None = None, moduleId: str | None = None, principal: Principal = ReadAccess) -> list[dict[str, object]]:
+    try:
+        return portal.audit_events(
+            system_id=systemId,
+            module_id=moduleId,
+            application_ids=_visible_application_ids(principal),
+        )
+    except KeyError as exc:
+        raise HTTPException(
+            status_code=404,
+            detail={"code": "AUDIT_SCOPE_NOT_FOUND", "message": str(exc)},
+        ) from exc
 
 
 @app.post("/applications", status_code=status.HTTP_201_CREATED, response_model=None)
@@ -1000,24 +1178,7 @@ def create_application(
 ) -> dict[str, object]:
     # You may hand an application to a team you belong to, and no other. Otherwise
     # ownership would be a field anyone could set to anything, which is not a control.
-    owner_team = (payload.ownerTeam or "").strip() or None
-    if owner_team and not principal.has_any(Role.PLATFORM_ADMIN) and not principal.belongs_to(owner_team):
-        held = ", ".join(sorted(principal.teams)) or "no teams"
-        raise HTTPException(
-            status_code=403,
-            detail={
-                "code": "APPLICATION_FORBIDDEN",
-                "message": f"cannot create an application owned by {owner_team!r}; you belong to {held}",
-            },
-        )
-    if owner_team is None and require_application_owner() and not principal.has_any(Role.PLATFORM_ADMIN):
-        raise HTTPException(
-            status_code=422,
-            detail={
-                "code": "OWNER_TEAM_REQUIRED",
-                "message": "ownerTeam is required: NETCI_REQUIRE_APPLICATION_OWNER is set",
-            },
-        )
+    owner_team = _application_owner_for_create(payload.ownerTeam, principal)
     application = platform.create_application(
         name=payload.name,
         repository_url=str(payload.repositoryUrl),
@@ -1032,19 +1193,23 @@ def create_application(
 
 
 @app.get("/applications")
-def list_applications(_: Principal = ReadAccess) -> list[dict[str, object]]:
-    return [application_json(item) for item in platform.list_applications()]
+def list_applications(principal: Principal = ReadAccess) -> list[dict[str, object]]:
+    return [
+        application_json(item)
+        for item in platform.list_applications()
+        if _can_access_application(item, principal)
+    ]
 
 
 @app.get("/applications/{applicationId}/dora")
-def get_application_dora(applicationId: UUID, _: Principal = ReadAccess) -> dict[str, object]:
+def get_application_dora(applicationId: UUID, principal: Principal = ReadAccess) -> dict[str, object]:
     """DORA for one delivery application, in the api/dora-dashboard.schema.json shape.
 
     `sourceEvents` is the number of durable delivery events the metrics were
     projected from, so a dashboard figure can always be traced back to its input.
     """
 
-    platform.get_application(applicationId)
+    _require_application_access(platform.get_application(applicationId), principal)
     projection = portal.dora_projection([applicationId])
     window = projection["window"]
     assert isinstance(window, dict)
@@ -1063,10 +1228,15 @@ def get_application_dora(applicationId: UUID, _: Principal = ReadAccess) -> dict
 
 
 @app.get("/delivery-events")
-def list_delivery_events(applicationId: UUID | None = None, _: Principal = ReadAccess) -> dict[str, object]:
+def list_delivery_events(applicationId: UUID | None = None, principal: Principal = ReadAccess) -> dict[str, object]:
     """Raw source events behind every DORA number, for evidence collection."""
 
-    events = platform.delivery_events(applicationId)
+    if applicationId is not None:
+        _require_application_access(platform.get_application(applicationId), principal)
+        events = platform.delivery_events(applicationId)
+    else:
+        visible_ids = _visible_application_ids(principal)
+        events = tuple(event for event in platform.delivery_events() if event.application_id in visible_ids)
     return {"count": len(events), "items": [delivery_event_json(item) for item in events]}
 
 
@@ -1094,13 +1264,16 @@ def start_pipeline_run(
 
 
 @app.get("/pipeline-runs/{pipelineRunId}")
-def get_pipeline_run(pipelineRunId: UUID, _: Principal = ReadAccess) -> dict[str, object]:
-    return pipeline_json(platform.get_pipeline(pipelineRunId))
+def get_pipeline_run(pipelineRunId: UUID, principal: Principal = ReadAccess) -> dict[str, object]:
+    run = platform.get_pipeline(pipelineRunId)
+    _require_application_access(platform.get_application(run.application_id), principal)
+    return pipeline_json(run)
 
 
 @app.get("/pipeline-runs/{pipelineRunId}/logs")
-def get_pipeline_logs(pipelineRunId: UUID, _: Principal = ReadAccess) -> dict[str, object]:
+def get_pipeline_logs(pipelineRunId: UUID, principal: Principal = ReadAccess) -> dict[str, object]:
     run, lines = platform.get_pipeline_logs(pipelineRunId)
+    _require_application_access(platform.get_application(run.application_id), principal)
     return {"pipelineRunId": str(pipelineRunId), "correlationId": run.correlation_id, "lines": list(lines)}
 
 
@@ -1139,7 +1312,12 @@ def publish_security_evidence(
 
 
 @app.get("/pipeline-runs/{pipelineRunId}/security-evidence")
-def get_security_evidence(pipelineRunId: UUID, _: Principal = ReadAccess) -> dict[str, object]:
+def get_security_evidence(pipelineRunId: UUID, principal: Principal = ReadAccess) -> dict[str, object]:
+    run = platform.get_pipeline(pipelineRunId)
+    # The Temporal worker is the only machine reader: it re-verifies the artifact just
+    # before deploy. Human readers remain team-scoped.
+    if not principal.has_any(Role.PIPELINE):
+        _require_application_access(platform.get_application(run.application_id), principal)
     return platform.security_evidence(pipelineRunId)
 
 
@@ -1168,8 +1346,10 @@ def approve_deployment(
 
 
 @app.get("/deployments/{deploymentId}")
-def get_deployment(deploymentId: UUID, _: Principal = ReadAccess) -> dict[str, object]:
-    return deployment_json(platform.get_deployment(deploymentId))
+def get_deployment(deploymentId: UUID, principal: Principal = ReadAccess) -> dict[str, object]:
+    deployment = platform.get_deployment(deploymentId)
+    _require_application_access(platform.get_application(deployment.application_id), principal)
+    return deployment_json(deployment)
 
 
 @app.post("/deployments/{deploymentId}/result", status_code=status.HTTP_202_ACCEPTED)
@@ -1178,9 +1358,9 @@ def record_deployment_result(
     payload: DeploymentResultRequest,
     _: Principal = PipelineAccess,
 ) -> dict[str, object]:
-    return deployment_json(
-        platform.record_deployment_result(deploymentId, payload.status, payload.message)
-    )
+    deployment = platform.record_deployment_result(deploymentId, payload.status, payload.message)
+    portal.record_production_deployment_result(deploymentId, payload.status, payload.message)
+    return deployment_json(deployment)
 
 
 @app.post("/deployments/{deploymentId}/rollback", status_code=status.HTTP_202_ACCEPTED, response_model=None)

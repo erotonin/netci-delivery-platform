@@ -278,3 +278,43 @@ COMMENT ON COLUMN applications.owner_team IS
 
 -- Listing "my team''s applications" is the common Portal query once ownership is in use.
 CREATE INDEX IF NOT EXISTS applications_owner_team_idx ON applications (owner_team);
+
+-- >>> migration: 0005_security_evidence.sql
+-- Durable supply-chain evidence.
+--
+-- Deployment policy is evaluated again after process restarts, so retaining only the
+-- allow/deny audit decision is insufficient: the signed digest, SBOM and vulnerability
+-- report that produced the decision must remain available as one authoritative record.
+CREATE TABLE IF NOT EXISTS security_evidence (
+    pipeline_run_id UUID PRIMARY KEY REFERENCES pipeline_runs(id) ON DELETE CASCADE,
+    application_id UUID NOT NULL REFERENCES applications(id),
+    artifact_digest TEXT NOT NULL CHECK (artifact_digest ~ '^sha256:[0-9a-f]{64}$'),
+    evidence JSONB NOT NULL,
+    decision VARCHAR(16) NOT NULL CHECK (decision IN ('allow', 'deny')),
+    reason TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS security_evidence_application_idx
+    ON security_evidence (application_id, updated_at DESC);
+
+-- >>> migration: 0006_production_request_completion.sql
+-- Production requests track the terminal result of the deployment they created.
+ALTER TABLE production_requests DROP CONSTRAINT IF EXISTS production_requests_status_check;
+ALTER TABLE production_requests ADD CONSTRAINT production_requests_status_check
+    CHECK (status IN ('waiting_approval', 'approved', 'rejected', 'blocked', 'succeeded'));
+
+-- >>> migration: 0007_production_request_idempotency.sql
+-- Portal command idempotency must survive API restarts.
+ALTER TABLE production_requests ADD COLUMN IF NOT EXISTS idempotency_key VARCHAR(128);
+ALTER TABLE production_requests ADD COLUMN IF NOT EXISTS request_hash CHAR(64);
+CREATE UNIQUE INDEX IF NOT EXISTS production_requests_idempotency_idx
+    ON production_requests (idempotency_key) WHERE idempotency_key IS NOT NULL;
+
+-- >>> migration: 0008_system_unknown_status.sql
+-- A newly registered system has no health evidence yet and must not start green.
+ALTER TABLE systems DROP CONSTRAINT IF EXISTS systems_status_check;
+ALTER TABLE systems ALTER COLUMN status SET DEFAULT 'unknown';
+ALTER TABLE systems ADD CONSTRAINT systems_status_check
+    CHECK (status IN ('unknown', 'healthy', 'degraded', 'critical'));

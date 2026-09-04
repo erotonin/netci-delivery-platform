@@ -37,7 +37,10 @@ def delivery() -> DeliveryInput:
         runtime="docker",
         environment="staging",
         artifact_digest="sha256:" + "a" * 64,
-        parameters={"artifact_ref": "registry.local/hello@sha256:" + "a" * 64},
+        parameters={
+            "artifact_ref": "registry.local/hello@sha256:" + "a" * 64,
+            "target_hosts": ["app-01"],
+        },
     )
 
 
@@ -90,6 +93,84 @@ def test_ansible_runner_builds_runtime_specific_immutable_command(tmp_path: Path
     extra_vars = json.loads(command[-1])
     assert extra_vars["artifact_digest"] == delivery().artifact_digest
     assert extra_vars["artifact_ref"].endswith(delivery().artifact_digest)
+    assert command[4:6] == ["--limit", "app-01"]
+
+
+def test_ansible_runner_never_allows_parameters_to_override_verified_identity(tmp_path: Path):
+    runner = AnsibleRuntimeRunner(project_root=tmp_path, inventory=tmp_path / "inventory.ini")
+    item = delivery()
+    poisoned = DeliveryInput(
+        **{
+            **item.__dict__,
+            "deployment_id": "deployment-trusted",
+            "release_name": "release-trusted",
+            "parameters": {
+                **item.parameters,
+                "application_id": "attacker-application",
+                "pipeline_run_id": "attacker-run",
+                "target_environment": "prod",
+                "artifact_digest": "sha256:" + "b" * 64,
+                "release_name": "attacker-release",
+            },
+        }
+    )
+
+    command = runner.command_for("deploy", poisoned)
+    extra_vars = json.loads(command[-1])
+
+    assert extra_vars["application_id"] == item.application_id
+    assert extra_vars["pipeline_run_id"] == item.pipeline_run_id
+    assert extra_vars["deployment_id"] == "deployment-trusted"
+    assert extra_vars["target_environment"] == item.environment
+    assert extra_vars["artifact_digest"] == item.artifact_digest
+    assert extra_vars["release_name"] == "release-trusted"
+
+
+def test_ansible_runner_refuses_missing_or_unsafe_host_scope(tmp_path: Path):
+    runner = AnsibleRuntimeRunner(project_root=tmp_path, inventory=tmp_path / "inventory.ini")
+    item = delivery()
+
+    with pytest.raises(ValueError, match="explicit target_hosts"):
+        runner.command_for("deploy", DeliveryInput(**{**item.__dict__, "parameters": {}}))
+    with pytest.raises(ValueError, match="safe inventory host"):
+        runner.command_for(
+            "deploy",
+            DeliveryInput(**{**item.__dict__, "parameters": {"target_hosts": ["all:!protected"]}}),
+        )
+
+
+def test_ansible_ssh_material_must_be_real_files_under_the_secret_root(tmp_path: Path, monkeypatch):
+    runner = AnsibleRuntimeRunner(project_root=tmp_path, inventory=tmp_path / "inventory.ini")
+    secret_root = tmp_path / "secrets"
+    secret_root.mkdir()
+    key = secret_root / "id_ed25519"
+    key.write_text("test-key", encoding="utf-8")
+    known_hosts = secret_root / "known_hosts"
+    known_hosts.write_text("app-01 ssh-ed25519 test-key", encoding="utf-8")
+    monkeypatch.setenv("NETCI_ANSIBLE_SECRET_DIR", str(secret_root))
+    monkeypatch.setenv("NETCI_ANSIBLE_PRIVATE_KEY_FILE", str(key))
+    monkeypatch.setenv("NETCI_ANSIBLE_KNOWN_HOSTS_FILE", str(known_hosts))
+
+    command = runner.command_for("deploy", delivery())
+
+    assert command[3:5] == ["--private-key", str(key)]
+    assert command[5] == "--ssh-common-args"
+    assert f"UserKnownHostsFile={known_hosts}" in command[6]
+
+    monkeypatch.setenv("NETCI_ANSIBLE_PRIVATE_KEY_FILE", str(tmp_path / "outside-key"))
+    with pytest.raises(ValueError, match="beneath NETCI_ANSIBLE_SECRET_DIR"):
+        runner.command_for("deploy", delivery())
+
+
+@pytest.mark.asyncio
+async def test_managed_playbook_success_is_the_runtime_health_gate(tmp_path: Path):
+    runner = AnsibleRuntimeRunner(project_root=tmp_path, inventory=tmp_path / "inventory.ini")
+    item = delivery()
+    managed = DeliveryInput(
+        **{**item.__dict__, "parameters": {**item.parameters, "runtime_health_verified": True}}
+    )
+
+    assert await runner.health_check(managed) is True
 
 
 def test_kubernetes_playbook_uses_explicit_kubeconfig_and_namespace():

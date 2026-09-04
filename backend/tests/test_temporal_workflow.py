@@ -35,6 +35,14 @@ class HealthyRuntimeRunner:
         raise AssertionError("healthy delivery must not roll back")
 
 
+class RecordingDeploymentReporter:
+    def __init__(self) -> None:
+        self.results = []
+
+    async def report(self, result) -> None:
+        self.results.append(result)
+
+
 @pytest.mark.skipif(
     os.getenv("NETCI_RUN_TEMPORAL_TEST") != "1",
     reason="Temporal time-skipping test server download is opt-in",
@@ -48,9 +56,15 @@ async def test_temporal_delivery_reaches_healthy_without_production_approval():
         runtime="docker",
         environment="dev",
         artifact_digest=digest,
+        deployment_id="deployment-core-1",
         parameters={"health_url": "http://example.invalid/healthz"},
     )
-    activities = DeliveryActivities(InMemoryEvidenceStore(digest), HealthyRuntimeRunner())
+    reporter = RecordingDeploymentReporter()
+    activities = DeliveryActivities(
+        InMemoryEvidenceStore(digest),
+        HealthyRuntimeRunner(),
+        deployment_reporter=reporter,
+    )
 
     async with await WorkflowEnvironment.start_time_skipping() as environment:
         task_queue = f"netci-test-{uuid.uuid4()}"
@@ -63,6 +77,7 @@ async def test_temporal_delivery_reaches_healthy_without_production_approval():
                 activities.deploy,
                 activities.health_check,
                 activities.rollback,
+                activities.report_deployment_result,
             ],
         ):
             result = await environment.client.execute_workflow(
@@ -73,5 +88,8 @@ async def test_temporal_delivery_reaches_healthy_without_production_approval():
             )
 
     assert result.status == "healthy"
-    assert result.deployment_id == "deployment-1"
+    assert result.deployment_id == "deployment-core-1"
     assert result.artifact_digest == digest
+    assert [(item.deployment_id, item.status) for item in reporter.results] == [
+        ("deployment-core-1", "healthy")
+    ]

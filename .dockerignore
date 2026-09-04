@@ -1,5 +1,9 @@
 .git
 .gitignore
+.env
+.env.*
+.tmp
+secrets
 .pytest_cache
 **/__pycache__
 **/*.pyc
@@ -9,4 +13,3 @@ frontend/dist
 evidence/raw
 evidence/failure-drill
 evidence/screenshots
-

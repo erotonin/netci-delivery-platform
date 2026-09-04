@@ -84,7 +84,7 @@ TEMPLATES: dict[str, TemplateDefinition] = {
     ),
     "systemd-ansible-ci-cd-v1": TemplateDefinition(
         Runtime.SYSTEMD,
-        ("checkout", "unit-test", "build", "publish", "deploy", "health-check"),
+        ("checkout", "unit-test", "build", "sbom", "vulnerability-scan", "sign", "publish", "deploy", "health-check"),
     ),
 }
 
@@ -128,6 +128,7 @@ class DeliveryPlatform:
         self._deployments: dict[UUID, Deployment] = {}
         self._pipeline_logs: dict[UUID, list[str]] = {}
         self._delivery_events: list[DeliveryEvent] = []
+        self._audit_records: list[AuditRecord] = []
         self._security_evidence: dict[UUID, dict[str, object]] = {}
         self._idempotency_records: dict[tuple[object, ...], IdempotencyRecord] = {}
         self._store = PostgresDeliveryStore.from_env()
@@ -145,6 +146,10 @@ class DeliveryPlatform:
         self._pipeline_runs = {item.id: item for item in data["runs"]}
         self._deployments = {item.id: item for item in data["deployments"]}
         self._delivery_events = list(data.get("events", []))
+        self._audit_records = list(data.get("audit", []))
+        self._security_evidence = {
+            run_id: dict(evidence) for run_id, evidence in (data.get("security_evidence") or {}).items()
+        }
         logs = data.get("logs") or {}
         self._pipeline_logs = {item.id: list(logs.get(item.id, [])) for item in data["runs"]}
         self._rehydrate_idempotency(data.get("idempotency") or [])
@@ -160,7 +165,10 @@ class DeliveryPlatform:
                 result = self._pipeline_runs.get(row.resource_id)
                 if result is None:
                     continue
-                scope = ("pipeline.start", result.application_id, row.idempotency_key)
+                if row.scope == "production.promotion":
+                    scope = ("production.promotion", row.idempotency_key)
+                else:
+                    scope = ("pipeline.start", result.application_id, row.idempotency_key)
             else:
                 continue
             if result is not None:
@@ -211,6 +219,9 @@ class DeliveryPlatform:
         for run_id, lines in unit.logs:
             self._pipeline_logs.setdefault(run_id, []).extend(lines)
         self._delivery_events.extend(unit.events)
+        self._audit_records.extend(unit.audit)
+        for pipeline_run_id, _, _, evidence in unit.security_evidence:
+            self._security_evidence[pipeline_run_id] = dict(evidence)
 
     def persistence_health(self) -> str:
         if self._store is None:
@@ -225,6 +236,7 @@ class DeliveryPlatform:
         self._deployments.clear()
         self._pipeline_logs.clear()
         self._delivery_events.clear()
+        self._audit_records.clear()
         self._security_evidence.clear()
         self._idempotency_records.clear()
         self._load_persistent_state()
@@ -599,9 +611,8 @@ class DeliveryPlatform:
         decision = evaluate_artifact_evidence(stored, expected_digest=digest, require_evidence=True)
         stored["decision"] = "allow" if decision.allowed else "deny"
         stored["reason"] = decision.reason
-        self._security_evidence[run.id] = stored
-
         unit = UnitOfWork()
+        unit.security_evidence.append((run.id, run.application_id, digest, stored))
         unit.logs.append((run.id, [f"security-evidence decision={stored['decision']} reason={decision.reason}"]))
         unit.audit.append(
             AuditRecord(
@@ -620,6 +631,19 @@ class DeliveryPlatform:
         if evidence is None:
             raise DeliveryError("EVIDENCE_NOT_FOUND", "no security evidence for this pipeline run", 404)
         return dict(evidence)
+
+    def audit_records(self, application_ids: set[UUID] | None = None) -> tuple[AuditRecord, ...]:
+        """Return the immutable audit ledger, optionally scoped to applications.
+
+        Portal code consumes this interface instead of reconstructing audit facts from
+        mutable run state. That preserves the actor, correlation id and exact event type
+        written at decision time.
+        """
+
+        records = self._audit_records
+        if application_ids is not None:
+            records = [record for record in records if record.application_id in application_ids]
+        return tuple(sorted(records, key=lambda record: (record.occurred_at, str(record.id)), reverse=True))
 
     def _enforce_artifact_policy(self, run: PipelineRun, artifact_digest: str) -> PolicyDecision:
         """Refuse to move an artifact that cannot prove where it came from."""
@@ -759,6 +783,16 @@ class DeliveryPlatform:
 
         if deployment.status != DeploymentStatus.DEPLOYING:
             return deployment
+        parameters = dict(run.parameters)
+        evidence = self._security_evidence.get(run.id) or {}
+        artifact_ref = str(evidence.get("artifactRef") or "").strip()
+        if artifact_ref:
+            parameters["artifact_ref"] = artifact_ref
+            if deployment.runtime in {Runtime.DOCKER, Runtime.KUBERNETES}:
+                parameters["image_repository"] = artifact_ref.split("@", 1)[0]
+            elif deployment.runtime == Runtime.SYSTEMD and artifact_ref.startswith(("http://", "https://")):
+                parameters["artifact_url"] = artifact_ref
+        parameters["artifact_sha256"] = deployment.artifact_digest.removeprefix("sha256:")
         request = CdStartRequest(
             application_id=application.id,
             pipeline_run_id=run.id,
@@ -768,7 +802,7 @@ class DeliveryPlatform:
             artifact_digest=deployment.artifact_digest,
             release_name=application.name,
             require_approval=False,
-            parameters=dict(run.parameters),
+            parameters=parameters,
         )
         try:
             workflow_id = self.cd_orchestrator.start(request)
@@ -806,6 +840,134 @@ class DeliveryPlatform:
             )
         )
         self._commit(unit)
+        return deployment
+
+    def create_production_promotion(
+        self,
+        source_pipeline_run_id: UUID,
+        *,
+        requested_by: str,
+        correlation_id: str,
+        production_request_id: str,
+        scheduled_for: datetime,
+        rollback_strategy: str = "automatic",
+        run_automation_tests: bool = True,
+        deployment_parameters: dict[str, object] | None = None,
+    ) -> Deployment:
+        """Create an approval-bound production run from a verified release artifact."""
+
+        request_payload = {
+            "sourcePipelineRunId": str(source_pipeline_run_id),
+            "requestedBy": requested_by,
+            "correlationId": correlation_id,
+            "scheduledFor": scheduled_for.isoformat(),
+            "rollbackStrategy": rollback_strategy,
+            "runAutomationTests": run_automation_tests,
+            "deploymentParameters": dict(deployment_parameters or {}),
+        }
+        scope = ("production.promotion", production_request_id)
+        replay = self._idempotent_replay(scope, production_request_id, request_payload)
+        if replay is not None:
+            if not isinstance(replay, PipelineRun):
+                raise AssertionError("production promotion idempotency returned another result type")
+            existing = next(
+                (item for item in self._deployments.values() if item.pipeline_run_id == replay.id),
+                None,
+            )
+            if existing is None:
+                raise DeliveryError(
+                    "INCONSISTENT_PRODUCTION_PROMOTION",
+                    "the production run exists without its deployment",
+                    500,
+                )
+            return existing
+
+        source = self.get_pipeline(source_pipeline_run_id)
+        if source.status != PipelineStatus.SUCCEEDED or not source.artifact_digest:
+            raise DeliveryError(
+                "VERSION_NOT_PROMOTABLE",
+                "source pipeline must have completed successfully with an immutable artifact",
+                409,
+            )
+        evidence = self._security_evidence.get(source.id)
+        decision = evaluate_artifact_evidence(
+            evidence,
+            expected_digest=source.artifact_digest,
+            require_evidence=True,
+        )
+        if not decision.allowed:
+            raise DeliveryError("ARTIFACT_POLICY_DENIED", decision.reason, 422)
+        application = self.get_application(source.application_id)
+        now = _now()
+        run = PipelineRun(
+            application_id=source.application_id,
+            commit_sha=source.commit_sha,
+            branch=source.branch,
+            environment=Environment.PROD,
+            parameters={
+                **source.parameters,
+                **dict(deployment_parameters or {}),
+                "sourcePipelineRunId": str(source.id),
+                "productionRequestId": production_request_id,
+                "notBefore": scheduled_for.isoformat(),
+                "rollbackStrategy": rollback_strategy,
+                "runAutomationTests": run_automation_tests,
+            },
+            correlation_id=correlation_id,
+            status=PipelineStatus.WAITING_APPROVAL,
+            started_by=requested_by,
+            artifact_digest=source.artifact_digest,
+            created_at=now,
+            updated_at=now,
+        )
+        deployment = Deployment(
+            application_id=application.id,
+            pipeline_run_id=run.id,
+            runtime=application.runtime,
+            environment=Environment.PROD,
+            artifact_digest=source.artifact_digest,
+            status=DeploymentStatus.PENDING_APPROVAL,
+            created_at=now,
+            updated_at=now,
+        )
+        copied_evidence = {
+            **dict(evidence or {}),
+            "pipelineRunId": str(run.id),
+            "sourcePipelineRunId": str(source.id),
+        }
+        unit = UnitOfWork(runs=[(run, None)], deployments=[(deployment, None)])
+        unit.idempotency.append(
+            IdempotencyRow(
+                scope="production.promotion",
+                idempotency_key=production_request_id,
+                request_hash=self._payload_hash(request_payload),
+                resource_type="pipeline_run",
+                resource_id=run.id,
+                response_status=202,
+            )
+        )
+        unit.security_evidence.append((run.id, application.id, source.artifact_digest, copied_evidence))
+        unit.logs.append((run.id, [f"production promotion sourcePipelineRunId={source.id}"]))
+        unit.audit.append(
+            AuditRecord(
+                "production.promotion_created",
+                application_id=application.id,
+                pipeline_run_id=run.id,
+                deployment_id=deployment.id,
+                actor=requested_by,
+                correlation_id=correlation_id,
+                payload={
+                    "productionRequestId": production_request_id,
+                    "sourcePipelineRunId": str(source.id),
+                    "artifactDigest": source.artifact_digest,
+                    "scheduledFor": scheduled_for.isoformat(),
+                    "rollbackStrategy": rollback_strategy,
+                    "runAutomationTests": run_automation_tests,
+                },
+            )
+        )
+        self._commit(unit)
+        self._remember(scope, production_request_id, request_payload, run)
         return deployment
 
     # -------------------------------------------------------------- approvals
@@ -885,6 +1047,11 @@ class DeliveryPlatform:
         deployment = self._deployments.get(deployment_id)
         if deployment is None:
             raise DeliveryError("DEPLOYMENT_NOT_FOUND", "deployment not found", 404)
+        if deployment.status.value == result_status and deployment.status in {
+            DeploymentStatus.HEALTHY,
+            DeploymentStatus.FAILED,
+        }:
+            return deployment
         if deployment.status != DeploymentStatus.DEPLOYING:
             raise DeliveryError("INVALID_DEPLOYMENT_STATE", "deployment is not deploying", 409)
         if result_status not in {DeploymentStatus.HEALTHY.value, DeploymentStatus.FAILED.value}:

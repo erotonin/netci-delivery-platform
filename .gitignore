@@ -28,6 +28,9 @@ minio-data/
 jenkins-*-home/
 evidence/raw/
 *.tsbuildinfo
+secrets/
+netci-source-sbom.spdx.json
+deploy/ansible/netci-delivery-*.tar.gz
 
 # Playwright output: reports, traces and screenshots are run artefacts, not source.
 frontend/test-results/

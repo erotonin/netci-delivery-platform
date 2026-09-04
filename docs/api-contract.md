@@ -24,7 +24,7 @@
 | `POST /systems/{systemId}/modules` | Provision a Portal module and its delivery application | `201` |
 | `POST /modules/{moduleId}/pipeline-runs` | Queue a named Portal pipeline | `202` |
 | `POST /modules/{moduleId}/versions` | Register an immutable release version | `201` |
-| `POST /production-requests` | Create an ordered, multi-module production request | `201` |
+| `POST /production-requests` | Create a single-module production promotion request | `201` |
 | `POST /production-requests/{requestId}/approve` | Approve a pending production request | `202` |
 | `POST /production-requests/{requestId}/reject` | Reject a pending production request | `202` |
 
@@ -33,10 +33,12 @@
 - Mutating operations use `Idempotency-Key`; clients reuse a key only when retrying the same logical request.
 - `X-Correlation-Id` crosses Portal/Backstage, netCI, workflow, Jenkins, adapter and audit/evidence.
 - Machine callbacks (`ci-result`, deployment `result` and module CI report) require `Authorization: Bearer <pipeline-api-key>`; the key comes from `NETCI_PIPELINE_API_KEY` and must be injected from a secret outside local development.
+- Human actor fields are never accepted from a request body. A system's `owner`, application `startedBy`, request `requestedBy` and approval actor all come from the authenticated principal.
 - Portal module creation carries one to three unique `deploymentEnvironments`. The selected pipeline template, application runtime and every environment runtime must agree. Docker/Systemd targets declare at least one DCIM server; Kubernetes targets declare a secret reference and explicit namespace, never raw kubeconfig content.
-- `pipelineConfig` stores the runner, branching strategy and the branch, coverage path and ordered stage identifiers for each configured pipeline tab. Health-check task details are stored under `deploymentEnvironments[].taskSettings.healthCheck`; delay values use an explicit unit such as `500ms`, `10s` or `1m`.
+- `pipelineConfig` stores the runner, branching strategy and the branch, coverage path and ordered stage identifiers for each configured pipeline tab. Legacy `deploymentEnvironments[].tasks/taskSettings` fields remain readable for compatibility, but are never converted into commands. Deployment, health and rollback execute only reviewed playbooks checked into Git.
 - Pipeline runs preserve `parameters.portalPipeline` so CI, CD Development, CD Staging, CD Production and Automation Test remain distinct in the Portal even when they target the same environment.
-- Production requests contain one to twenty unique modules, an immutable registered version and deployment order for each module, an offset-aware schedule, rollback strategy and automation-test policy. Reusing an `Idempotency-Key` with a different payload is a conflict.
+- Production requests currently contain exactly one module and one immutable, evidence-linked version. Approval re-checks the security evidence and, when `runAutomationTests=true`, requires that version's pipeline-reported `autoTest` result to be `passed`. The target host/namespace is rebound from that module's **production** deployment configuration; it is not inherited from the source run. The offset-aware schedule and rollback strategy are carried into Temporal. Multi-module requests are rejected until an ordered coordinator exists. Reusing an `Idempotency-Key` with a different payload is a conflict.
+- Creating the approval-bound production run uses the production request ID as a second durable idempotency boundary. A retry after Portal persistence failure reuses the existing run/deployment; a concurrent loser is rolled back by the database transaction instead of creating a second promotion.
 - JSON fields use camelCase at the HTTP boundary.
 - Runtime/template mismatch and unknown templates are validation errors, not implicit fallback.
 - Every pipeline-run and deployment record carries a `version`. A write supplies the version it read; a mismatch is `409 CONCURRENT_MODIFICATION` rather than a silent overwrite, so two callbacks racing the same transition cannot both win.
@@ -81,13 +83,13 @@ Error response:
 
 ## Browser clients
 
-Vite serves Portal requests through same-origin `/api` and rewrites that prefix to FastAPI during development. `VITE_NETCI_API_URL` is an explicit deployment override. Backstage uses `/api/proxy/netci` configured by `backstage/app-config.example.yaml`; it does not call Jenkins.
+Vite serves Portal requests through same-origin `/api` and rewrites that prefix to FastAPI during development. The Compose `portal` service builds the same bundle and Nginx proxies `/api` to `netci-api`; no development server is present in that image. `VITE_NETCI_API_URL` is an explicit deployment override for a separately hosted UI. Backstage uses `/api/proxy/netci` configured by `backstage/app-config.example.yaml`; it does not call Jenkins.
 
 For a separately hosted browser client, `NETCI_ALLOWED_ORIGINS` is a comma-separated list of exact `http` or `https` origins. Wildcards, credentials in URLs, paths, queries and fragments are rejected at startup. Only `GET`, `POST` and the headers required by this contract are allowed through CORS; `X-Correlation-Id` is exposed to the browser.
 
 ## Persistence
 
-When `DATABASE_URL` is absent the API uses deterministic in-memory state, which keeps unit tests fast and the Windows preview usable. With PostgreSQL configured:
+When `DATABASE_URL` is absent in `NETCI_ENVIRONMENT=local`, the API uses deterministic in-memory state, which keeps unit tests fast and a portable preview usable. Outside local mode, missing `DATABASE_URL`/`DATABASE_URL_FILE` is a startup error. With PostgreSQL configured:
 
 - state is written before the in-memory projection is updated, so a storage failure returns `503 PERSISTENCE_UNAVAILABLE` instead of reporting a state the database does not hold;
 - idempotency records are persisted, so a restart cannot double-create a resource a client already got a response for;

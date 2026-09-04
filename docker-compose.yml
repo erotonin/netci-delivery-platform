@@ -65,14 +65,53 @@ services:
       MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:-netci}
       MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-netci-local-only}
       TEMPORAL_ADDRESS: temporalite:7233
+      TEMPORAL_NAMESPACE: ${TEMPORAL_NAMESPACE:-default}
+      TEMPORAL_TASK_QUEUE: ${TEMPORAL_TASK_QUEUE:-netci-delivery}
+      NETCI_ENVIRONMENT: ${NETCI_ENVIRONMENT:-local}
       NETCI_ALLOWED_ORIGINS: ${NETCI_ALLOWED_ORIGINS:-http://localhost:5173}
       NETCI_PIPELINE_API_KEY: ${NETCI_PIPELINE_API_KEY:-netci-local-pipeline-key}
+      NETCI_AUTH_MODE: ${NETCI_AUTH_MODE:-none}
+      NETCI_AUTH_TOKENS_FILE: ${NETCI_AUTH_TOKENS_FILE:-}
+      NETCI_OIDC_ISSUER: ${NETCI_OIDC_ISSUER:-}
+      NETCI_OIDC_AUDIENCE: ${NETCI_OIDC_AUDIENCE:-}
+      NETCI_OIDC_ROLE_MAP: ${NETCI_OIDC_ROLE_MAP:-}
+      NETCI_OIDC_TEAM_CLAIM: ${NETCI_OIDC_TEAM_CLAIM:-groups}
+      NETCI_REQUIRE_APPLICATION_OWNER: ${NETCI_REQUIRE_APPLICATION_OWNER:-false}
+      NETCI_REQUIRE_SEPARATION_OF_DUTIES: ${NETCI_REQUIRE_SEPARATION_OF_DUTIES:-true}
+      NETCI_DEMO_DATA: ${NETCI_DEMO_DATA:-false}
+      NETCI_DCIM_BASE_URL: ${NETCI_DCIM_BASE_URL:-}
+      NETCI_DCIM_API_TOKEN: ${NETCI_DCIM_API_TOKEN:-}
+      NETCI_DCIM_API_TOKEN_FILE: ${NETCI_DCIM_API_TOKEN_FILE:-}
+      NETCI_SECURITY_EXCEPTIONS_FILE: ${NETCI_SECURITY_EXCEPTIONS_FILE:-}
+      NETCI_RATE_LIMIT: ${NETCI_RATE_LIMIT:-0}
+      NETCI_RATE_LIMIT_WINDOW: ${NETCI_RATE_LIMIT_WINDOW:-60}
+      NETCI_TRUSTED_PROXY_HOPS: ${NETCI_TRUSTED_PROXY_HOPS:-0}
       # "none" means netCI records state and waits for authenticated callbacks.
       # Set jenkins/temporal once those engines are reachable from this container.
       NETCI_CI_MODE: ${NETCI_CI_MODE:-none}
       NETCI_CD_MODE: ${NETCI_CD_MODE:-none}
       NETCI_REQUIRE_SECURITY_EVIDENCE: ${NETCI_REQUIRE_SECURITY_EVIDENCE:-false}
+      NETCI_JENKINS_CONTROLLERS: ${NETCI_JENKINS_CONTROLLERS:-A,B}
+      JENKINS_A_URL: ${JENKINS_A_URL:-http://jenkins-a:8080}
+      JENKINS_A_USERNAME: ${JENKINS_A_USERNAME:-admin}
+      JENKINS_A_API_TOKEN: ${JENKINS_A_API_TOKEN:-change-me-local-only}
+      JENKINS_A_API_TOKEN_FILE: ${JENKINS_A_API_TOKEN_FILE:-}
+      JENKINS_B_URL: ${JENKINS_B_URL:-http://jenkins-b:8080}
+      JENKINS_B_USERNAME: ${JENKINS_B_USERNAME:-admin}
+      JENKINS_B_API_TOKEN: ${JENKINS_B_API_TOKEN:-change-me-local-only}
+      JENKINS_B_API_TOKEN_FILE: ${JENKINS_B_API_TOKEN_FILE:-}
+      NETCI_CALLBACK_URL: ${NETCI_CALLBACK_URL:-http://netci-api:8000}
+      NETCI_CALLBACK_CREDENTIALS_ID: ${NETCI_CALLBACK_CREDENTIALS_ID:-netci-pipeline-api-key}
+      NETCI_AGENT_LABEL: ${NETCI_AGENT_LABEL:-netci-ephemeral}
+      NETCI_SHARED_LIBRARY: ${NETCI_SHARED_LIBRARY:-netci-shared-library}
+      NETCI_REGISTRY_PUSH_HOST: ${NETCI_REGISTRY_PUSH_HOST:-registry:5000}
+      NETCI_REGISTRY_PULL_HOST: ${NETCI_REGISTRY_PULL_HOST:-registry:5000}
+      NETCI_BUILD_BASE_IMAGE: ${NETCI_BUILD_BASE_IMAGE:-}
+      NETCI_TRIVY_DB_REPOSITORY: ${NETCI_TRIVY_DB_REPOSITORY:-}
+      NETCI_COSIGN_CREDENTIALS_ID: ${NETCI_COSIGN_CREDENTIALS_ID:-netci-cosign-key}
     ports: ["${NETCI_API_HOST_PORT:-8000}:8000"]
+    volumes:
+      - ./secrets:/run/secrets/netci:ro
     depends_on:
       postgres:
         condition: service_healthy
@@ -90,22 +129,43 @@ services:
       timeout: 3s
       retries: 20
 
+  portal:
+    build: ./frontend
+    ports: ["${NETCI_PORTAL_HOST_PORT:-5173}:8080"]
+    depends_on:
+      netci-api:
+        condition: service_healthy
+    restart: unless-stopped
+
   temporal-worker:
-    build: ./backend
+    build:
+      context: .
+      dockerfile: backend/Dockerfile.worker
     command: ["python", "-m", "app.workflows.worker"]
     environment:
       TEMPORAL_ADDRESS: temporalite:7233
-      TEMPORAL_NAMESPACE: default
-      TEMPORAL_TASK_QUEUE: netci-delivery
+      TEMPORAL_NAMESPACE: ${TEMPORAL_NAMESPACE:-default}
+      TEMPORAL_TASK_QUEUE: ${TEMPORAL_TASK_QUEUE:-netci-delivery}
       NETCI_ANSIBLE_INVENTORY: ${NETCI_ANSIBLE_INVENTORY:-/workspace/deploy/ansible/inventories/local.ini}
+      NETCI_ANSIBLE_SECRET_DIR: ${NETCI_ANSIBLE_SECRET_DIR:-/run/secrets/netci}
+      NETCI_ANSIBLE_PRIVATE_KEY_FILE: ${NETCI_ANSIBLE_PRIVATE_KEY_FILE:-}
+      NETCI_ANSIBLE_KNOWN_HOSTS_FILE: ${NETCI_ANSIBLE_KNOWN_HOSTS_FILE:-}
+      ANSIBLE_HOST_KEY_CHECKING: ${ANSIBLE_HOST_KEY_CHECKING:-true}
       # With these set the worker reads security evidence from the API rather than
       # from a shared volume, so CI and CD agree on one record.
       NETCI_API_URL: ${NETCI_WORKER_API_URL:-http://netci-api:8000}
       NETCI_PIPELINE_API_KEY: ${NETCI_PIPELINE_API_KEY:-netci-local-pipeline-key}
+      NETCI_SIGNATURE_VERIFY_MODE: ${NETCI_SIGNATURE_VERIFY_MODE:-none}
+      NETCI_COSIGN_PUBLIC_KEY_FILE: ${NETCI_COSIGN_PUBLIC_KEY_FILE:-/run/secrets/netci/cosign.pub}
+      NETCI_SIGNATURE_REQUIRE_TLOG: ${NETCI_SIGNATURE_REQUIRE_TLOG:-false}
+      NETCI_KUBECONFIG_DIR: ${NETCI_KUBECONFIG_DIR:-/run/secrets/netci/kubeconfigs}
     volumes:
       - ./:/workspace:ro
+      - ./secrets:/run/secrets/netci:ro
     depends_on:
       temporalite:
+        condition: service_healthy
+      netci-api:
         condition: service_healthy
 
   jenkins-a:
@@ -117,9 +177,20 @@ services:
       JENKINS_CONTROLLER_ID: jenkins-a
       JENKINS_ADMIN_PASSWORD: ${JENKINS_ADMIN_PASSWORD:-change-me-local-only}
       KUBERNETES_API_URL: ${KUBERNETES_API_URL:-https://host.docker.internal:6443}
-      KUBERNETES_CREDENTIALS_ID: ${KUBERNETES_CREDENTIALS_ID:-netci-kind-kubeconfig}
+      KUBERNETES_SERVER_CA: ${KUBERNETES_SERVER_CA:-}
+      KUBERNETES_CREDENTIALS_ID: ${KUBERNETES_CREDENTIALS_ID:-netci-kind-token}
+      KUBERNETES_SERVICE_ACCOUNT_TOKEN: ${KUBERNETES_SERVICE_ACCOUNT_TOKEN:-replace-me-local-only}
+      JENKINS_AGENT_NAMESPACE: ${JENKINS_AGENT_NAMESPACE:-netci-build}
+      JENKINS_AGENT_SERVICE_ACCOUNT: ${JENKINS_AGENT_SERVICE_ACCOUNT:-jenkins-agent}
       JENKINS_AGENT_URL: ${JENKINS_A_AGENT_URL:-http://host.docker.internal:8081}
       JENKINS_AGENT_TUNNEL: ${JENKINS_A_AGENT_TUNNEL:-host.docker.internal:50001}
+      JENKINS_SHARED_LIBRARY_REMOTE: ${JENKINS_SHARED_LIBRARY_REMOTE:-file:///opt/netci-shared-library}
+      JENKINS_INBOUND_AGENT_IMAGE: ${JENKINS_INBOUND_AGENT_IMAGE:-jenkins/inbound-agent:3386.v353e57a_1b_ea_0-1-jdk21}
+      JENKINS_TOOLBOX_IMAGE: ${JENKINS_TOOLBOX_IMAGE:-netci/ci-toolbox:0.4.0}
+      NETCI_CALLBACK_CREDENTIALS_ID: ${NETCI_CALLBACK_CREDENTIALS_ID:-netci-pipeline-api-key}
+      NETCI_PIPELINE_API_KEY: ${NETCI_PIPELINE_API_KEY:-netci-local-pipeline-key}
+      NETCI_COSIGN_CREDENTIALS_ID: ${NETCI_COSIGN_CREDENTIALS_ID:-netci-cosign-key}
+      NETCI_COSIGN_PRIVATE_KEY: ${NETCI_COSIGN_PRIVATE_KEY:-replace-me-local-only}
     ports: ["${JENKINS_A_HOST_PORT:-8081}:8080", "${JENKINS_A_AGENT_HOST_PORT:-50001}:50000"]
     extra_hosts: ["host.docker.internal:host-gateway"]
     volumes:
@@ -136,9 +207,20 @@ services:
       JENKINS_CONTROLLER_ID: jenkins-b
       JENKINS_ADMIN_PASSWORD: ${JENKINS_ADMIN_PASSWORD:-change-me-local-only}
       KUBERNETES_API_URL: ${KUBERNETES_API_URL:-https://host.docker.internal:6443}
-      KUBERNETES_CREDENTIALS_ID: ${KUBERNETES_CREDENTIALS_ID:-netci-kind-kubeconfig}
+      KUBERNETES_SERVER_CA: ${KUBERNETES_SERVER_CA:-}
+      KUBERNETES_CREDENTIALS_ID: ${KUBERNETES_CREDENTIALS_ID:-netci-kind-token}
+      KUBERNETES_SERVICE_ACCOUNT_TOKEN: ${KUBERNETES_SERVICE_ACCOUNT_TOKEN:-replace-me-local-only}
+      JENKINS_AGENT_NAMESPACE: ${JENKINS_AGENT_NAMESPACE:-netci-build}
+      JENKINS_AGENT_SERVICE_ACCOUNT: ${JENKINS_AGENT_SERVICE_ACCOUNT:-jenkins-agent}
       JENKINS_AGENT_URL: ${JENKINS_B_AGENT_URL:-http://host.docker.internal:8082}
       JENKINS_AGENT_TUNNEL: ${JENKINS_B_AGENT_TUNNEL:-host.docker.internal:50002}
+      JENKINS_SHARED_LIBRARY_REMOTE: ${JENKINS_SHARED_LIBRARY_REMOTE:-file:///opt/netci-shared-library}
+      JENKINS_INBOUND_AGENT_IMAGE: ${JENKINS_INBOUND_AGENT_IMAGE:-jenkins/inbound-agent:3386.v353e57a_1b_ea_0-1-jdk21}
+      JENKINS_TOOLBOX_IMAGE: ${JENKINS_TOOLBOX_IMAGE:-netci/ci-toolbox:0.4.0}
+      NETCI_CALLBACK_CREDENTIALS_ID: ${NETCI_CALLBACK_CREDENTIALS_ID:-netci-pipeline-api-key}
+      NETCI_PIPELINE_API_KEY: ${NETCI_PIPELINE_API_KEY:-netci-local-pipeline-key}
+      NETCI_COSIGN_CREDENTIALS_ID: ${NETCI_COSIGN_CREDENTIALS_ID:-netci-cosign-key}
+      NETCI_COSIGN_PRIVATE_KEY: ${NETCI_COSIGN_PRIVATE_KEY:-replace-me-local-only}
     ports: ["${JENKINS_B_HOST_PORT:-8082}:8080", "${JENKINS_B_AGENT_HOST_PORT:-50002}:50000"]
     extra_hosts: ["host.docker.internal:host-gateway"]
     volumes:

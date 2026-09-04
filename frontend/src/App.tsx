@@ -10,7 +10,7 @@ import { NewModuleWizard } from './NewModuleWizard'
 import { PortalFeedbackProvider } from './PortalFeedback'
 import { PortalShell, type Navigate } from './PortalShell'
 import { ProductionRequestsPage } from './ProductionRequestsPage'
-import { dcimModules, type PageId } from './portalData'
+import type { PageId } from './portalTypes'
 import './styles.css'
 
 const pipelineTemplateForRuntime: Record<Runtime, string> = {
@@ -98,7 +98,7 @@ function PortalApp({ session, onLogout }: { session: AuthSession; onLogout: () =
 
   const { page, systemId, moduleId, settingsOpen } = route
   return <PortalShell page={page} systemId={systemId} moduleId={moduleId} session={session} navigate={navigate} onLogout={onLogout} onSettings={() => moveTo({ page: 'module', systemId, moduleId, settingsOpen: true })}>
-    {apiState === 'offline' && <div className="connection-banner" role="status"><WifiOff size={16} /><span><strong>Backend chưa kết nối.</strong> Dữ liệu demo vẫn dùng được trong phiên; các thao tác cần tích hợp sẽ hiển thị lỗi rõ ràng.</span><button onClick={checkApi}><RefreshCw size={15} />Thử lại</button></div>}
+    {apiState === 'offline' && <div className="connection-banner" role="status"><WifiOff size={16} /><span><strong>Backend chưa kết nối.</strong> Portal không hiển thị dữ liệu thay thế; hãy khôi phục API để tiếp tục.</span><button onClick={checkApi}><RefreshCw size={15} />Thử lại</button></div>}
     {settingsOpen ? <ModuleSettings systemId={systemId} moduleId={moduleId} onClose={() => moveTo({ ...route, settingsOpen: false })} onDeleted={() => navigate('system', { systemId })} /> : <>
       {page === 'dashboard' && <DashboardPage navigate={navigate} />}
       {page === 'systems' && <SystemsPage navigate={navigate} />}
@@ -106,13 +106,11 @@ function PortalApp({ session, onLogout }: { session: AuthSession; onLogout: () =
       {page === 'system' && <SystemPage systemId={systemId} navigate={navigate} />}
       {page === 'requests' && <ProductionRequestsPage systemId={systemId} />}
       {page === 'module' && <ModulePage moduleId={moduleId} onSettings={() => moveTo({ ...route, settingsOpen: true })} />}
-      {page === 'new-module' && <NewModuleWizard onCancel={() => navigate('system', { systemId })} onCreate={async (selectedId, configuration) => {
-        const selected = dcimModules.find((item) => item.id === selectedId)
-        if (!selected) throw new Error('Không tìm thấy module đã chọn trong DCIM.')
+      {page === 'new-module' && <NewModuleWizard systemId={systemId} ownerTeams={session.identity.principal.teams} onCancel={() => navigate('system', { systemId })} onCreate={async (selected, configuration) => {
         await createModule(systemId, {
           name: selected.id,
           displayName: configuration.displayName,
-          repositoryUrl: selected.repo,
+          repositoryUrl: selected.repositoryUrl,
           pipelineTemplate: pipelineTemplateForRuntime[configuration.runtime],
           runtime: configuration.runtime,
           moduleType: configuration.moduleType,
@@ -121,6 +119,7 @@ function PortalApp({ session, onLogout }: { session: AuthSession; onLogout: () =
           deploymentEnvironments: configuration.deploymentEnvironments,
           stages: configuration.stages,
           pipelineConfig: configuration.pipelineConfig,
+          ownerTeam: configuration.ownerTeam,
         })
         navigate('module', { systemId, moduleId: selected.id })
       }} />}

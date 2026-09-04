@@ -1,5 +1,7 @@
 # Báo cáo toàn diện dự án netCI Delivery Platform
 
+> Lưu ý cập nhật 2026-09: tài liệu này lưu cả bối cảnh và ảnh chụp thiết kế cũ. Các mô tả về fixture/fallback UI, server CRUD trong browser, multi-module production và trạng thái acceptance đã bị thay thế bởi [ADR-013](decisions/ADR-013-truthful-live-projections.md), [portal-api.md](portal-api.md) và trạng thái gate của commit hiện tại. Runtime production mặc định không seed dữ liệu; DCIM/CI/CD chưa cấu hình trả trạng thái rỗng hoặc lỗi rõ; production promotion hiện chỉ hỗ trợ một module và yêu cầu provenance/evidence thật.
+
 > Mục đích của tài liệu: giúp người thực hiện hiểu, vận hành, giải thích và bảo vệ các quyết định kỹ thuật của dự án; đồng thời phân biệt trung thực giữa phần đã chạy được trên Windows và phần phải hoàn thiện, kiểm chứng trên Ubuntu 24.04.
 
 ## 1. Kết luận ngắn gọn trước khi đi vào chi tiết
