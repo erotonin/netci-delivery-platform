@@ -858,20 +858,21 @@ NETCI_DEPLOYMENT_LEASE_TTL_SECONDS=900
 | **6** | SCM webhook, private repo, commit status | ✅ Xong | `0b66569` |
 | **7** | Pipeline lifecycle, reconciler, stage event | ✅ Xong | `6b38fc3` |
 | **8** | Config có phiên bản + DCIM lifecycle | ✅ Xong | `5a26d03` |
-| **9** | Observability, notification, pagination, DR | ✅ Xong | *(sẵn sàng commit)* |
-| **10** | Multi-module saga + progressive delivery | 🔨 **Tiếp theo** | |
-| **11** | Policy-as-code + governance | ⬜ Chưa | |
-| **12** | Catalog, template, preview env, self-service | ⬜ Chưa | |
+| **9** | Observability, notification, pagination, DR | ✅ Xong | `f952f77` |
+| **10** | Multi-module DAG + progressive delivery | ✅ Xong | `57c2243` |
+| **11** | Policy engine, security exception, break-glass, quota, admission | ✅ Xong | *(sẵn sàng commit)* |
+| **12** | Catalog, template, preview env, self-service | 🔨 **Tiếp theo** | |
 | **13** | Chứng nhận production cuối cùng | ⬜ Chưa | |
 
-**Đã xong: 9/13 phase** — toàn bộ **P0 (phase 1–5)** và **P1 (phase 6–9)** đã hoàn thành 100%.
+**Đã xong: 11/13 phase** — toàn bộ **P0 (phase 1–5)**, **P1 (phase 6–9)**, và **P2.1, P2.2 (phase 10–11)** đã hoàn thành 100%.
 
 **Trạng thái test hiện tại** (chạy với PostgreSQL 16 thật):
 
 | Bộ test | Kết quả |
 |---|---|
-| Backend + contract | **406 pass, 49 skipped, 0 fail** |
-| Frontend unit (vitest) | 21 pass / 6 file |
+| Backend + contract | **423 pass, 50 skipped, 0 fail** |
+| Durability PostgreSQL (17 migrations) | **24 pass, 0 fail** |
+| Frontend unit (vitest) | **22 pass / 7 file** |
 | Frontend build (`tsc -b && vite build`) | ✅ pass |
 
 ### 8.3. Từng phase đã làm được gì
@@ -986,6 +987,19 @@ NETCI_DEPLOYMENT_LEASE_TTL_SECONDS=900
 - Động cơ Progressive Delivery (`TrafficRoutingAdapter`, `CanaryAnalyzer`): điều tiết lưu lượng Canary theo từng bước (10% -> 25% -> 50% -> 100%) và đánh giá ngưỡng lỗi/độ trễ (SLO), hỗ trợ Blue/Green cutover tức thì.
 - Giao diện Release Portal (`ProductionRequestsPage.tsx`): hỗ trợ chọn nhiều module và liên kết phụ thuộc, chọn chiến lược triển khai (Rolling DAG, Canary, Blue/Green), hiển thị trực quan các Wave và bảng điều khiển Canary thời gian thực.
 </details>
+
+<details>
+<summary><b>Phase 11 — Enterprise Policy Engine, Security Waivers, Break-Glass & Kubernetes Admission</b></summary>
+
+- Migration cơ sở dữ liệu `0017_policy_engine_governance_and_admission.sql`: bảng lưu trữ bền vững quyết định chính sách `policy_decisions`, ngoại lệ bảo mật CVE `security_exceptions`, quy trình phá kính khẩn cấp `break_glass_requests`, và hạn ngạch tài nguyên `resource_quotas`.
+- Động cơ chính sách thống nhất (`PolicyEngine` & `BuiltinPolicyEngine`): đánh giá và lưu vết kiểm toán vĩnh viễn cho kiểm định artifact, phê duyệt sản xuất và cổng triển khai.
+- Máy tính điểm rủi ro minh bạch (`RiskCalculator`): tính điểm từ 0 đến 100 dựa trên môi trường đích, quy mô wave đa module, độ phủ kiểm thử tự động, số lượng ngoại lệ CVE hoạt động, chiến lược rollback và cờ phá kính.
+- Kiểm soát hạn ngạch tài nguyên (`QuotaEnforcer`): phân cấp hạn ngạch (application -> team -> global) để giới hạn số pipeline và deployment đồng thời, chống cạn kiệt tài nguyên.
+- Cơ chế phá kính hai người (`BreakGlassService`): bắt buộc dual-control (`requested_by != approved_by`), cấm tự phê duyệt (403 `SEPARATION_OF_DUTIES`), giới hạn thời gian sống (TTL tối đa 4h) và gắn với mã sự cố (incident ticket).
+- Bộ điều khiển tiếp nhận động Kubernetes (`AdmissionController` & `/admission/validate`): webhook tiếp nhận AdmissionReview v1 từ cụm Kubernetes, từ chối tag có thể thay đổi (mutable tag như `:latest`) trên môi trường sản xuất, xác minh digest sha256 với bằng chứng SBOM, Trivy scan và chữ ký Cosign, cho phép tiếp nhận khẩn cấp khi có break-glass hợp lệ.
+- Giao diện Release Portal (`ProductionRequestsPage.tsx`): hiển thị thẻ Enterprise Governance & Policy Verification với huy hiệu điểm rủi ro thời gian thực, trạng thái dual-control và chỉ báo phá kính.
+</details>
+
 
 ### 8.4. Còn phải làm gì
 

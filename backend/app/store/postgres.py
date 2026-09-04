@@ -49,10 +49,14 @@ from ..persistence import (
     VersionConflict,
 )
 from .records import (
+    BreakGlassRecord,
     DeploymentLease,
     ModuleRow,
+    PolicyDecisionRecord,
     RequestModuleRow,
     RequestRow,
+    ResourceQuotaRecord,
+    SecurityExceptionRecord,
     SystemRow,
     VersionRow,
 )
@@ -121,6 +125,18 @@ NOTIFICATION_COLUMNS = (
     "id, event_type, aggregate_type, aggregate_id, payload, recipient, status, "
     "attempt, max_attempts, last_attempt_at, next_attempt_at, last_error, created_at, delivered_at"
 )
+POLICY_DECISION_COLUMNS = (
+    "id, scope, target_type, target_id, allowed, reason, risk_score, checks, rules_evaluated, evaluator, evaluated_at, metadata"
+)
+SECURITY_EXCEPTION_COLUMNS = (
+    "id, cve, artifact_digest, owner, reason, approved_by, status, created_at, expires_at, revoked_at, revoked_by"
+)
+BREAK_GLASS_COLUMNS = (
+    "id, target_type, target_id, requested_by, reason, incident_ticket, status, approved_by, created_at, approved_at, expires_at"
+)
+RESOURCE_QUOTA_COLUMNS = (
+    "id, scope, scope_id, max_concurrent_pipelines, max_concurrent_deployments, max_production_requests_per_day, created_at, updated_at"
+)
 
 
 def encode_cursor(timestamp: datetime, record_id: UUID | str) -> str:
@@ -155,6 +171,68 @@ def _notification(row: dict[str, Any]) -> NotificationRecord:
         last_error=row["last_error"],
         created_at=row["created_at"],
         delivered_at=row["delivered_at"],
+    )
+
+
+def _policy_decision(row: dict[str, Any]) -> PolicyDecisionRecord:
+    return PolicyDecisionRecord(
+        id=row["id"],
+        scope=row["scope"],
+        target_type=row["target_type"],
+        target_id=row["target_id"],
+        allowed=bool(row["allowed"]),
+        reason=row["reason"],
+        risk_score=int(row["risk_score"] or 0),
+        checks=dict(row["checks"] or {}),
+        rules_evaluated=list(row["rules_evaluated"] or []),
+        evaluator=row["evaluator"],
+        evaluated_at=row["evaluated_at"],
+        metadata=dict(row["metadata"] or {}),
+    )
+
+
+def _security_exception(row: dict[str, Any]) -> SecurityExceptionRecord:
+    return SecurityExceptionRecord(
+        id=row["id"],
+        cve=row["cve"],
+        artifact_digest=row["artifact_digest"],
+        owner=row["owner"],
+        reason=row["reason"],
+        approved_by=row["approved_by"],
+        status=row["status"],
+        created_at=row["created_at"],
+        expires_at=row["expires_at"],
+        revoked_at=row["revoked_at"],
+        revoked_by=row["revoked_by"],
+    )
+
+
+def _break_glass(row: dict[str, Any]) -> BreakGlassRecord:
+    return BreakGlassRecord(
+        id=row["id"],
+        target_type=row["target_type"],
+        target_id=row["target_id"],
+        requested_by=row["requested_by"],
+        reason=row["reason"],
+        incident_ticket=row["incident_ticket"],
+        status=row["status"],
+        created_at=row["created_at"],
+        approved_by=row["approved_by"],
+        approved_at=row["approved_at"],
+        expires_at=row["expires_at"],
+    )
+
+
+def _resource_quota(row: dict[str, Any]) -> ResourceQuotaRecord:
+    return ResourceQuotaRecord(
+        id=row["id"],
+        scope=row["scope"],
+        scope_id=row["scope_id"],
+        max_concurrent_pipelines=int(row["max_concurrent_pipelines"]),
+        max_concurrent_deployments=int(row["max_concurrent_deployments"]),
+        max_production_requests_per_day=int(row["max_production_requests_per_day"]),
+        created_at=row["created_at"],
+        updated_at=row["updated_at"],
     )
 
 
@@ -1850,6 +1928,210 @@ class PostgresSession:
             "DELETE FROM delivery_events WHERE occurred_at < %s", (cutoff,)
         )
         return self._cursor.rowcount
+
+    # ----------------------------------------------------------- governance & policy
+
+    def record_policy_decision(self, decision: PolicyDecisionRecord) -> None:
+        self._cursor.execute(
+            f"""
+            INSERT INTO policy_decisions (
+                id, scope, target_type, target_id, allowed, reason, risk_score,
+                checks, rules_evaluated, evaluator, evaluated_at, metadata
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s::jsonb)
+            """,
+            (
+                decision.id,
+                decision.scope,
+                decision.target_type,
+                decision.target_id,
+                decision.allowed,
+                decision.reason,
+                decision.risk_score,
+                json.dumps(decision.checks, default=str),
+                decision.rules_evaluated,
+                decision.evaluator,
+                decision.evaluated_at,
+                json.dumps(decision.metadata, default=str),
+            ),
+        )
+
+    def policy_decisions_paginated(
+        self,
+        scope: str | None = None,
+        target_type: str | None = None,
+        target_id: str | None = None,
+        limit: int = 50,
+        cursor: str | None = None,
+    ) -> tuple[tuple[PolicyDecisionRecord, ...], str | None, bool]:
+        clauses: list[str] = []
+        arguments: list[Any] = []
+        if scope is not None:
+            clauses.append("scope = %s")
+            arguments.append(scope)
+        if target_type is not None:
+            clauses.append("target_type = %s")
+            arguments.append(target_type)
+        if target_id is not None:
+            clauses.append("target_id = %s")
+            arguments.append(target_id)
+        decoded = decode_cursor(cursor)
+        if decoded is not None:
+            ts, record_id = decoded
+            clauses.append("(evaluated_at, id) < (%s, %s)")
+            arguments.extend([ts, record_id])
+        where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+        query = f"SELECT {POLICY_DECISION_COLUMNS} FROM policy_decisions{where} ORDER BY evaluated_at DESC, id DESC LIMIT %s"
+        arguments.append(limit + 1)
+        self._cursor.execute(query, tuple(arguments))
+        rows = self._cursor.fetchall()
+        has_more = len(rows) > limit
+        result_rows = rows[:limit]
+        items = tuple(_policy_decision(row) for row in result_rows)
+        next_cursor = encode_cursor(items[-1].evaluated_at, items[-1].id) if (has_more and items) else None
+        return items, next_cursor, has_more
+
+    def insert_security_exception(self, exception: SecurityExceptionRecord) -> None:
+        self._cursor.execute(
+            f"""
+            INSERT INTO security_exceptions (
+                id, cve, artifact_digest, owner, reason, approved_by, status,
+                created_at, expires_at, revoked_at, revoked_by
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """,
+            (
+                exception.id,
+                exception.cve,
+                exception.artifact_digest,
+                exception.owner,
+                exception.reason,
+                exception.approved_by,
+                exception.status,
+                exception.created_at,
+                exception.expires_at,
+                exception.revoked_at,
+                exception.revoked_by,
+            ),
+        )
+
+    def security_exceptions(
+        self, active_only: bool = False, now: datetime | None = None
+    ) -> tuple[SecurityExceptionRecord, ...]:
+        clauses: list[str] = []
+        arguments: list[Any] = []
+        if active_only:
+            ts = now or datetime.now(timezone.utc)
+            clauses.append("status = 'active' AND expires_at > %s AND revoked_at IS NULL")
+            arguments.append(ts)
+        where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+        query = f"SELECT {SECURITY_EXCEPTION_COLUMNS} FROM security_exceptions{where} ORDER BY created_at DESC"
+        self._cursor.execute(query, tuple(arguments))
+        return tuple(_security_exception(row) for row in self._cursor.fetchall())
+
+    def revoke_security_exception(
+        self, exception_id: UUID, revoked_by: str, revoked_at: datetime
+    ) -> bool:
+        self._cursor.execute(
+            """
+            UPDATE security_exceptions
+               SET status = 'revoked', revoked_by = %s, revoked_at = %s
+             WHERE id = %s AND status = 'active'
+            """,
+            (revoked_by, revoked_at, exception_id),
+        )
+        return self._cursor.rowcount > 0
+
+    def insert_break_glass_request(self, record: BreakGlassRecord) -> None:
+        self._cursor.execute(
+            f"""
+            INSERT INTO break_glass_requests (
+                id, target_type, target_id, requested_by, reason, incident_ticket,
+                status, approved_by, created_at, approved_at, expires_at
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """,
+            (
+                record.id,
+                record.target_type,
+                record.target_id,
+                record.requested_by,
+                record.reason,
+                record.incident_ticket,
+                record.status,
+                record.approved_by,
+                record.created_at,
+                record.approved_at,
+                record.expires_at,
+            ),
+        )
+
+    def break_glass_request(self, request_id: UUID) -> BreakGlassRecord | None:
+        self._cursor.execute(
+            f"SELECT {BREAK_GLASS_COLUMNS} FROM break_glass_requests WHERE id = %s",
+            (request_id,),
+        )
+        row = self._cursor.fetchone()
+        return _break_glass(row) if row else None
+
+    def approve_break_glass_request(
+        self, request_id: UUID, approved_by: str, approved_at: datetime, expires_at: datetime
+    ) -> BreakGlassRecord | None:
+        self._cursor.execute(
+            f"""
+            UPDATE break_glass_requests
+               SET status = 'active', approved_by = %s, approved_at = %s, expires_at = %s
+             WHERE id = %s AND status = 'pending'
+            RETURNING {BREAK_GLASS_COLUMNS}
+            """,
+            (approved_by, approved_at, expires_at, request_id),
+        )
+        row = self._cursor.fetchone()
+        return _break_glass(row) if row else None
+
+    def active_break_glass(
+        self, target_type: str, target_id: str, now: datetime
+    ) -> BreakGlassRecord | None:
+        self._cursor.execute(
+            f"""
+            SELECT {BREAK_GLASS_COLUMNS} FROM break_glass_requests
+             WHERE target_type = %s AND target_id = %s AND status = 'active' AND expires_at > %s
+             ORDER BY expires_at DESC LIMIT 1
+            """,
+            (target_type, target_id, now),
+        )
+        row = self._cursor.fetchone()
+        return _break_glass(row) if row else None
+
+    def get_resource_quota(self, scope: str, scope_id: str) -> ResourceQuotaRecord | None:
+        self._cursor.execute(
+            f"SELECT {RESOURCE_QUOTA_COLUMNS} FROM resource_quotas WHERE scope = %s AND scope_id = %s",
+            (scope, scope_id),
+        )
+        row = self._cursor.fetchone()
+        return _resource_quota(row) if row else None
+
+    def set_resource_quota(self, record: ResourceQuotaRecord) -> None:
+        self._cursor.execute(
+            """
+            INSERT INTO resource_quotas (
+                id, scope, scope_id, max_concurrent_pipelines, max_concurrent_deployments,
+                max_production_requests_per_day, created_at, updated_at
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (scope, scope_id) DO UPDATE SET
+                max_concurrent_pipelines = EXCLUDED.max_concurrent_pipelines,
+                max_concurrent_deployments = EXCLUDED.max_concurrent_deployments,
+                max_production_requests_per_day = EXCLUDED.max_production_requests_per_day,
+                updated_at = EXCLUDED.updated_at
+            """,
+            (
+                record.id,
+                record.scope,
+                record.scope_id,
+                record.max_concurrent_pipelines,
+                record.max_concurrent_deployments,
+                record.max_production_requests_per_day,
+                record.created_at,
+                record.updated_at,
+            ),
+        )
 
 
 class PostgresConnectionPool:

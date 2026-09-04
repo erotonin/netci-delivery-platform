@@ -8,7 +8,7 @@ from leaking into the API layer and stops response formatting from leaking into 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID
 
@@ -101,3 +101,67 @@ class DeploymentLease:
 
     def is_expired(self, now: datetime) -> bool:
         return self.released_at is None and self.expires_at <= now
+
+
+@dataclass(frozen=True)
+class PolicyDecisionRecord:
+    id: UUID
+    scope: str
+    target_type: str
+    target_id: str
+    allowed: bool
+    reason: str
+    risk_score: int = 0
+    checks: dict[str, Any] = field(default_factory=dict)
+    rules_evaluated: list[str] = field(default_factory=list)
+    evaluator: str = "builtin"
+    evaluated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class SecurityExceptionRecord:
+    id: UUID
+    cve: str
+    artifact_digest: str
+    owner: str
+    reason: str
+    approved_by: str
+    status: str
+    created_at: datetime
+    expires_at: datetime
+    revoked_at: datetime | None = None
+    revoked_by: str | None = None
+
+    def is_active(self, now: datetime) -> bool:
+        return self.status == "active" and self.expires_at > now and self.revoked_at is None
+
+
+@dataclass(frozen=True)
+class BreakGlassRecord:
+    id: UUID
+    target_type: str
+    target_id: str
+    requested_by: str
+    reason: str
+    incident_ticket: str
+    status: str
+    created_at: datetime
+    approved_by: str | None = None
+    approved_at: datetime | None = None
+    expires_at: datetime | None = None
+
+    def is_active(self, now: datetime) -> bool:
+        return self.status == "active" and self.expires_at is not None and self.expires_at > now
+
+
+@dataclass(frozen=True)
+class ResourceQuotaRecord:
+    id: UUID
+    scope: str
+    scope_id: str
+    max_concurrent_pipelines: int = 5
+    max_concurrent_deployments: int = 2
+    max_production_requests_per_day: int = 20
+    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))

@@ -1403,8 +1403,251 @@ paths:
                 type: object
         '401':
           $ref: '#/components/responses/Unauthorized'
+  /policy/decisions:
+    get:
+      operationId: listPolicyDecisions
+      summary: List policy decisions with cursor pagination
+      parameters:
+        - name: scope
+          in: query
+          required: false
+          schema: { type: string }
+        - name: targetType
+          in: query
+          required: false
+          schema: { type: string }
+        - name: targetId
+          in: query
+          required: false
+          schema: { type: string }
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, default: 50 }
+        - name: cursor
+          in: query
+          required: false
+          schema: { type: string }
+      responses:
+        '200':
+          description: Paginated policy decisions
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/PolicyDecision' }
+                  nextCursor: { type: string, nullable: true }
+                  hasMore: { type: boolean }
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /security-exceptions:
+    get:
+      operationId: listSecurityExceptions
+      summary: List security exceptions
+      parameters:
+        - name: activeOnly
+          in: query
+          required: false
+          schema: { type: boolean, default: false }
+      responses:
+        '200':
+          description: List of security exceptions
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/SecurityException' }
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    post:
+      operationId: createSecurityException
+      summary: Create time-boxed, CVE-bound security exception with dual control
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SecurityExceptionCreate' }
+      responses:
+        '201':
+          description: Created security exception
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SecurityException' }
+        '401':
+          $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
+        '422':
+          description: Validation error or expired date
+
+  /security-exceptions/{exceptionId}/revoke:
+    post:
+      operationId: revokeSecurityException
+      summary: Revoke active security exception
+      parameters:
+        - name: exceptionId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Exception revoked
+          content:
+            application/json:
+              schema:
+                type: object
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /break-glass/requests:
+    post:
+      operationId: createBreakGlassRequest
+      summary: Request emergency break-glass procedure
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/BreakGlassCreate' }
+      responses:
+        '201':
+          description: Created break-glass request
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BreakGlassRecord' }
+        '400':
+          description: Bad request
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /break-glass/requests/{requestId}/approve:
+    post:
+      operationId: approveBreakGlassRequest
+      summary: Dual-control approval for break-glass emergency bypass
+      parameters:
+        - name: requestId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/BreakGlassApprove' }
+      responses:
+        '200':
+          description: Break-glass activated
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BreakGlassRecord' }
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Conflict or invalid state
+
+  /break-glass/active:
+    get:
+      operationId: getActiveBreakGlass
+      summary: Check if break-glass is actively bypassing gates for target
+      parameters:
+        - name: targetType
+          in: query
+          required: true
+          schema: { type: string }
+        - name: targetId
+          in: query
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Active break-glass record
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BreakGlassRecord' }
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /quotas/{scope}/{scopeId}:
+    get:
+      operationId: getResourceQuota
+      summary: Get resource concurrency and rate quota
+      parameters:
+        - name: scope
+          in: path
+          required: true
+          schema: { type: string }
+        - name: scopeId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Resource quota configuration
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ResourceQuota' }
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    put:
+      operationId: setResourceQuota
+      summary: Update resource quota configuration
+      parameters:
+        - name: scope
+          in: path
+          required: true
+          schema: { type: string }
+        - name: scopeId
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ResourceQuotaUpdate' }
+      responses:
+        '200':
+          description: Updated resource quota
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ResourceQuota' }
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /admission/validate:
+    post:
+      operationId: validateKubernetesAdmission
+      summary: Kubernetes Dynamic Admission Controller webhook validating container images
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Kubernetes AdmissionReview response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
 
 components:
   securitySchemes:
@@ -2057,3 +2300,92 @@ components:
         freshnessSeconds: { type: integer }
         details: { type: object, additionalProperties: true }
         observedAt: { type: string, format: date-time }
+    PolicyDecision:
+      type: object
+      required: [id, scope, targetType, targetId, allowed, reason, riskScore, evaluator, evaluatedAt]
+      properties:
+        id: { type: string, format: uuid }
+        scope: { type: string }
+        targetType: { type: string }
+        targetId: { type: string }
+        allowed: { type: boolean }
+        reason: { type: string }
+        riskScore: { type: integer }
+        checks: { type: object, additionalProperties: true }
+        rulesEvaluated: { type: array, items: { type: string } }
+        evaluator: { type: string }
+        evaluatedAt: { type: string, format: date-time }
+        metadata: { type: object, additionalProperties: true }
+    SecurityExceptionCreate:
+      type: object
+      required: [cve, artifactDigest, owner, reason, expiresAt]
+      additionalProperties: false
+      properties:
+        cve: { type: string, minLength: 3, maxLength: 64 }
+        artifactDigest: { type: string, pattern: '^sha256:[0-9a-f]{64}$' }
+        owner: { type: string, minLength: 1, maxLength: 128 }
+        reason: { type: string, minLength: 1, maxLength: 1000 }
+        expiresAt: { type: string, format: date-time }
+    SecurityException:
+      type: object
+      required: [id, cve, artifactDigest, owner, reason, approvedBy, status, createdAt, expiresAt]
+      properties:
+        id: { type: string, format: uuid }
+        cve: { type: string }
+        artifactDigest: { type: string }
+        owner: { type: string }
+        reason: { type: string }
+        approvedBy: { type: string }
+        status: { type: string }
+        createdAt: { type: string, format: date-time }
+        expiresAt: { type: string, format: date-time }
+        revokedAt: { type: string, format: date-time, nullable: true }
+        revokedBy: { type: string, nullable: true }
+    BreakGlassCreate:
+      type: object
+      required: [targetType, targetId, reason, incidentTicket]
+      additionalProperties: false
+      properties:
+        targetType: { type: string, minLength: 1, maxLength: 64 }
+        targetId: { type: string, minLength: 1, maxLength: 128 }
+        reason: { type: string, minLength: 1, maxLength: 1000 }
+        incidentTicket: { type: string, minLength: 1, maxLength: 64 }
+    BreakGlassApprove:
+      type: object
+      additionalProperties: false
+      properties:
+        ttlMinutes: { type: integer, default: 60, minimum: 1, maximum: 240 }
+    BreakGlassRecord:
+      type: object
+      required: [id, targetType, targetId, requestedBy, reason, incidentTicket, status, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        targetType: { type: string }
+        targetId: { type: string }
+        requestedBy: { type: string }
+        reason: { type: string }
+        incidentTicket: { type: string }
+        status: { type: string }
+        approvedBy: { type: string, nullable: true }
+        createdAt: { type: string, format: date-time }
+        approvedAt: { type: string, format: date-time, nullable: true }
+        expiresAt: { type: string, format: date-time, nullable: true }
+    ResourceQuotaUpdate:
+      type: object
+      additionalProperties: false
+      properties:
+        maxConcurrentPipelines: { type: integer, default: 5, minimum: 1, maximum: 1000 }
+        maxConcurrentDeployments: { type: integer, default: 2, minimum: 1, maximum: 1000 }
+        maxProductionRequestsPerDay: { type: integer, default: 20, minimum: 1, maximum: 10000 }
+    ResourceQuota:
+      type: object
+      required: [id, scope, scopeId, maxConcurrentPipelines, maxConcurrentDeployments, maxProductionRequestsPerDay, createdAt, updatedAt]
+      properties:
+        id: { type: string, format: uuid }
+        scope: { type: string }
+        scopeId: { type: string }
+        maxConcurrentPipelines: { type: integer }
+        maxConcurrentDeployments: { type: integer }
+        maxProductionRequestsPerDay: { type: integer }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }

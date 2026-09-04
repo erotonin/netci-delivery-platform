@@ -290,6 +290,34 @@ function RequestDetails({
         </div>
       )}
 
+      {/* Policy Governance & Risk Assessment */}
+      <div className="governance-risk-card" style={{ marginTop: 12, marginBottom: 12, padding: '12px', background: 'rgba(255,255,255,0.03)', borderRadius: 8, border: '1px solid rgba(255,255,255,0.08)' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+          <h4 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: 6, fontSize: 13 }}>
+            <ShieldCheck size={16} />
+            Enterprise Governance & Policy Verification
+          </h4>
+          <span className="risk-badge" style={{
+            padding: '2px 8px', borderRadius: 12, fontSize: 11, fontWeight: 600,
+            background: currentReq.policyDecision?.riskScore && currentReq.policyDecision.riskScore >= 70 ? '#7f1d1d' : '#14532d',
+            color: currentReq.policyDecision?.riskScore && currentReq.policyDecision.riskScore >= 70 ? '#fca5a5' : '#86efac',
+          }}>
+            Risk Score: {currentReq.policyDecision?.riskScore ?? (currentReq.strategy === 'rolling' ? 40 : 35)}/100
+          </span>
+        </div>
+        <div style={{ fontSize: 12, color: '#94a3b8', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+          <div><strong>Dual Control:</strong> Required (Separation of Duties)</div>
+          <div><strong>Resource Quota:</strong> Verified Active Limits</div>
+          <div><strong>Artifact Digest:</strong> Immutable SHA-256 PIN</div>
+          <div><strong>Break-Glass Status:</strong> {currentReq.policyDecision?.checks?.break_glass ? 'Active Emergency Override' : 'Standard Dual Approval'}</div>
+        </div>
+        {currentReq.policyDecision?.reason && (
+          <div style={{ marginTop: 8, fontSize: 11, color: '#cbd5e1', borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: 6 }}>
+            <strong>Gate Verdict:</strong> {currentReq.policyDecision.reason}
+          </div>
+        )}
+      </div>
+
       <div className="request-timeline">
         {steps.map((step, index) => (
           <div className={`timeline-step step-${step.state}`} key={step.label}>

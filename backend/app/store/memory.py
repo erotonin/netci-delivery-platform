@@ -45,7 +45,17 @@ from ..persistence import (
     UnitOfWork,
     VersionConflict,
 )
-from .records import DeploymentLease, ModuleRow, RequestRow, SystemRow, VersionRow
+from .records import (
+    BreakGlassRecord,
+    DeploymentLease,
+    ModuleRow,
+    PolicyDecisionRecord,
+    RequestRow,
+    ResourceQuotaRecord,
+    SecurityExceptionRecord,
+    SystemRow,
+    VersionRow,
+)
 
 
 @dataclass
@@ -73,6 +83,10 @@ class _State:
     config_revisions: dict[UUID, ModuleConfigRevision] = field(default_factory=dict)
     server_health: dict[str, ServerHealthRecord] = field(default_factory=dict)
     notifications: dict[UUID, NotificationRecord] = field(default_factory=dict)
+    policy_decisions: list[PolicyDecisionRecord] = field(default_factory=list)
+    security_exceptions: dict[UUID, SecurityExceptionRecord] = field(default_factory=dict)
+    break_glass_requests: dict[UUID, BreakGlassRecord] = field(default_factory=dict)
+    resource_quotas: dict[tuple[str, str], ResourceQuotaRecord] = field(default_factory=dict)
 
     def copy(self) -> "_State":
         return _State(
@@ -99,6 +113,10 @@ class _State:
             config_revisions=dict(self.config_revisions),
             server_health=dict(self.server_health),
             notifications=dict(self.notifications),
+            policy_decisions=list(self.policy_decisions),
+            security_exceptions=dict(self.security_exceptions),
+            break_glass_requests=dict(self.break_glass_requests),
+            resource_quotas=dict(self.resource_quotas),
         )
 
 
@@ -843,6 +861,98 @@ class InMemorySession:
         orig_len = len(self._state.events)
         self._state.events = [e for e in self._state.events if e.occurred_at >= cutoff]
         return orig_len - len(self._state.events)
+
+    # ----------------------------------------------------------- governance & policy
+
+    def record_policy_decision(self, decision: PolicyDecisionRecord) -> None:
+        self._state.policy_decisions.append(decision)
+
+    def policy_decisions_paginated(
+        self,
+        scope: str | None = None,
+        target_type: str | None = None,
+        target_id: str | None = None,
+        limit: int = 50,
+        cursor: str | None = None,
+    ) -> tuple[tuple[PolicyDecisionRecord, ...], str | None, bool]:
+        records = list(self._state.policy_decisions)
+        if scope is not None:
+            records = [r for r in records if r.scope == scope]
+        if target_type is not None:
+            records = [r for r in records if r.target_type == target_type]
+        if target_id is not None:
+            records = [r for r in records if r.target_id == target_id]
+        records.sort(key=lambda r: (r.evaluated_at, r.id), reverse=True)
+        return self._paginate(records, limit, cursor, lambda r: (r.evaluated_at, r.id))
+
+    def insert_security_exception(self, exception: SecurityExceptionRecord) -> None:
+        self._state.security_exceptions[exception.id] = exception
+
+    def security_exceptions(
+        self, active_only: bool = False, now: datetime | None = None
+    ) -> tuple[SecurityExceptionRecord, ...]:
+        records = list(self._state.security_exceptions.values())
+        if active_only:
+            ts = now or datetime.now(timezone.utc)
+            records = [r for r in records if r.is_active(ts)]
+        records.sort(key=lambda r: r.created_at, reverse=True)
+        return tuple(records)
+
+    def revoke_security_exception(
+        self, exception_id: UUID, revoked_by: str, revoked_at: datetime
+    ) -> bool:
+        rec = self._state.security_exceptions.get(exception_id)
+        if rec and rec.status == "active":
+            self._state.security_exceptions[exception_id] = replace(
+                rec, status="revoked", revoked_by=revoked_by, revoked_at=revoked_at
+            )
+            return True
+        return False
+
+    def insert_break_glass_request(self, record: BreakGlassRecord) -> None:
+        self._state.break_glass_requests[record.id] = record
+
+    def break_glass_request(self, request_id: UUID) -> BreakGlassRecord | None:
+        return self._state.break_glass_requests.get(request_id)
+
+    def approve_break_glass_request(
+        self, request_id: UUID, approved_by: str, approved_at: datetime, expires_at: datetime
+    ) -> BreakGlassRecord | None:
+        rec = self._state.break_glass_requests.get(request_id)
+        if rec and rec.status == "pending":
+            updated = replace(
+                rec,
+                status="active",
+                approved_by=approved_by,
+                approved_at=approved_at,
+                expires_at=expires_at,
+            )
+            self._state.break_glass_requests[request_id] = updated
+            return updated
+        return None
+
+    def active_break_glass(
+        self, target_type: str, target_id: str, now: datetime
+    ) -> BreakGlassRecord | None:
+        active = [
+            r
+            for r in self._state.break_glass_requests.values()
+            if r.target_type == target_type
+            and r.target_id == target_id
+            and r.status == "active"
+            and r.expires_at is not None
+            and r.expires_at > now
+        ]
+        if not active:
+            return None
+        active.sort(key=lambda r: r.expires_at or now, reverse=True)
+        return active[0]
+
+    def get_resource_quota(self, scope: str, scope_id: str) -> ResourceQuotaRecord | None:
+        return self._state.resource_quotas.get((scope, scope_id))
+
+    def set_resource_quota(self, record: ResourceQuotaRecord) -> None:
+        self._state.resource_quotas[(record.scope, record.scope_id)] = record
 
 
 class InMemoryDatabase:

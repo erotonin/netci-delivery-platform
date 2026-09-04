@@ -429,6 +429,7 @@ export type ProductionRequest = {
   strategy?: 'rolling' | 'canary' | 'blue_green'
   strategyConfig?: Record<string, unknown>
   releasePlan?: ReleasePlan | null
+  policyDecision?: { id: string; allowed: boolean; riskScore: number; reason: string; checks: Record<string, unknown> } | null
 }
 
 export type ProductionRequestCreate = {
@@ -777,4 +778,142 @@ export function detectDrift(moduleId: string): Promise<ConfigDriftReport> {
 export function listServersHealth(serverName?: string): Promise<{ count: number; items: ServerHealthRecord[] }> {
   const query = serverName ? `?serverName=${encodeURIComponent(serverName)}` : ''
   return request<{ count: number; items: ServerHealthRecord[] }>(`/servers/health${query}`)
+}
+
+// ----------------------------------------------------------- governance & policy
+
+export type PolicyDecision = {
+  id: string
+  scope: string
+  targetType: string
+  targetId: string
+  allowed: boolean
+  reason: string
+  riskScore: number
+  checks: Record<string, unknown>
+  rulesEvaluated: string[]
+  evaluator: string
+  evaluatedAt: string
+  metadata: Record<string, unknown>
+}
+
+export type SecurityException = {
+  id: string
+  cve: string
+  artifactDigest: string
+  owner: string
+  reason: string
+  approvedBy: string
+  status: string
+  createdAt: string
+  expiresAt: string
+  revokedAt?: string | null
+  revokedBy?: string | null
+}
+
+export type BreakGlassRecord = {
+  id: string
+  targetType: string
+  targetId: string
+  requestedBy: string
+  reason: string
+  incidentTicket: string
+  status: string
+  approvedBy?: string | null
+  createdAt: string
+  approvedAt?: string | null
+  expiresAt?: string | null
+}
+
+export type ResourceQuota = {
+  id: string
+  scope: string
+  scopeId: string
+  maxConcurrentPipelines: number
+  maxConcurrentDeployments: number
+  maxProductionRequestsPerDay: number
+  createdAt: string
+  updatedAt: string
+}
+
+export function listPolicyDecisions(
+  params?: { scope?: string; targetType?: string; targetId?: string; limit?: number; cursor?: string }
+): Promise<{ items: PolicyDecision[]; nextCursor?: string | null; hasMore: boolean }> {
+  const q = new URLSearchParams()
+  if (params?.scope) q.set('scope', params.scope)
+  if (params?.targetType) q.set('targetType', params.targetType)
+  if (params?.targetId) q.set('targetId', params.targetId)
+  if (params?.limit) q.set('limit', String(params.limit))
+  if (params?.cursor) q.set('cursor', params.cursor)
+  const qs = q.toString() ? `?${q.toString()}` : ''
+  return request<{ items: PolicyDecision[]; nextCursor?: string | null; hasMore: boolean }>(`/policy/decisions${qs}`)
+}
+
+export function listSecurityExceptions(activeOnly: boolean = false): Promise<SecurityException[]> {
+  return request<SecurityException[]>(`/security-exceptions?activeOnly=${activeOnly}`)
+}
+
+export function createSecurityException(payload: {
+  cve: string
+  artifactDigest: string
+  owner: string
+  reason: string
+  expiresAt: string
+}): Promise<SecurityException> {
+  return request<SecurityException>('/security-exceptions', {
+    method: 'POST',
+    headers: { 'X-Correlation-Id': requestId() },
+    body: JSON.stringify(payload),
+  })
+}
+
+export function revokeSecurityException(exceptionId: string): Promise<{ id: string; status: string; revokedBy: string }> {
+  return request<{ id: string; status: string; revokedBy: string }>(`/security-exceptions/${encodeURIComponent(exceptionId)}/revoke`, {
+    method: 'POST',
+    headers: { 'X-Correlation-Id': requestId() },
+  })
+}
+
+export function createBreakGlassRequest(payload: {
+  targetType: string
+  targetId: string
+  reason: string
+  incidentTicket: string
+}): Promise<BreakGlassRecord> {
+  return request<BreakGlassRecord>('/break-glass/requests', {
+    method: 'POST',
+    headers: { 'X-Correlation-Id': requestId() },
+    body: JSON.stringify(payload),
+  })
+}
+
+export function approveBreakGlassRequest(
+  requestIdParam: string,
+  payload?: { ttlMinutes?: number }
+): Promise<BreakGlassRecord> {
+  return request<BreakGlassRecord>(`/break-glass/requests/${encodeURIComponent(requestIdParam)}/approve`, {
+    method: 'POST',
+    headers: { 'X-Correlation-Id': requestId() },
+    body: payload ? JSON.stringify(payload) : undefined,
+  })
+}
+
+export function getActiveBreakGlass(targetType: string, targetId: string): Promise<BreakGlassRecord> {
+  return request<BreakGlassRecord>(`/break-glass/active?targetType=${encodeURIComponent(targetType)}&targetId=${encodeURIComponent(targetId)}`)
+}
+
+export function getResourceQuota(scope: string, scopeId: string): Promise<ResourceQuota> {
+  return request<ResourceQuota>(`/quotas/${encodeURIComponent(scope)}/${encodeURIComponent(scopeId)}`)
+}
+
+export function setResourceQuota(
+  scope: string,
+  scopeId: string,
+  payload: { maxConcurrentPipelines: number; maxConcurrentDeployments: number; maxProductionRequestsPerDay: number }
+): Promise<ResourceQuota> {
+  return request<ResourceQuota>(`/quotas/${encodeURIComponent(scope)}/${encodeURIComponent(scopeId)}`, {
+    method: 'PUT',
+    headers: { 'X-Correlation-Id': requestId() },
+    body: JSON.stringify(payload),
+  })
 }

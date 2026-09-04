@@ -5,6 +5,35 @@ Changelog and releases use Semantic Versioning once the project reaches 1.0.0.
 
 ## [Unreleased]
 
+### Added - Phase 11 (P2.2): Enterprise Governance, Policy Engine, Security Exceptions, Break-Glass Dual Control, Quotas & Kubernetes Admission Control
+- **Database Schema Migration 0017 (`backend/migrations/0017_policy_engine_governance_and_admission.sql`)**:
+  - `policy_decisions`: Durable records of all evaluated rules, checks, risk scores, and reasons with target/cursor indexing.
+  - `security_exceptions`: Time-boxed, CVE-bound vulnerability waivers pinned to immutable sha256 artifact digests with owner/approver dual control.
+  - `break_glass_requests`: Two-person emergency bypass mechanism requiring incident tickets and short-lived leases (TTL <= 4h).
+  - `resource_quotas`: Scope-based (team, application, global) concurrency and rate limits for pipelines and deployments.
+- **Enterprise Policy Engine & Risk Scoring (`backend/app/policy/`)**:
+  - `RiskCalculator`: Deterministic 0-100 deployment risk score based on target environment, blast radius, test automation coverage, active CVE waivers, rollback strategy, and break-glass invocation.
+  - `QuotaEnforcer`: Concurrency checking across pipeline runs and deployment executions against hierarchical quotas.
+  - `BreakGlassService`: Dual-control emergency override service strictly enforcing separation of duties (`requested_by != approved_by`).
+  - `PolicyEngine` & `BuiltinPolicyEngine`: Durable evaluation and audit recording for artifact admission, production approvals, and deployment gates.
+- **Kubernetes Dynamic Admission Controller (`backend/app/admission.py`)**:
+  - `AdmissionController` validating `AdmissionReview` v1 webhooks.
+  - Rejects unpinned mutable image tags (e.g. `:latest`) in production namespaces.
+  - Verifies container images against stored Syft SBOM, Trivy scan, and Cosign signature evidence.
+  - Permits emergency admission when covered by an active break-glass request.
+- **REST API & Contract Parity (`backend/app/main.py`, `api/openapi.yaml`)**:
+  - `GET /policy/decisions`: Paginated policy decisions.
+  - `GET /security-exceptions`, `POST /security-exceptions`, `POST /security-exceptions/{id}/revoke`: Security waiver lifecycle management.
+  - `POST /break-glass/requests`, `POST /break-glass/requests/{id}/approve`, `GET /break-glass/active`: Two-person break-glass emergency flow.
+  - `GET /quotas/{scope}/{scopeId}`, `PUT /quotas/{scope}/{scopeId}`: Resource quota management.
+  - `POST /admission/validate`: Dynamic Kubernetes admission review endpoint.
+  - Verified 100% parity against OpenAPI 3.1.0 contract tests (`tests/contract/test_openapi.py`).
+- **Portal UI Enhancement (`ProductionRequestsPage.tsx`, `netciClient.ts`)**:
+  - Extended API client with governance, exception, quota, and break-glass types and functions.
+  - Added Enterprise Governance & Policy Verification card to Request Details modal with real-time risk score badge, dual control status, and break-glass indicators.
+  - Vitest test suite and TypeScript production build passing without error.
+- See ADR-024.
+
 ### Added - Phase 10 (P2.1): Multi-Module DAG Release Plan, SAGA Orchestration & Progressive Delivery
 - **Topological DAG Wave Computation (`backend/app/domain/dag.py`)**:
   - Implemented Kahn's algorithm with wave layering (`compute_dag_waves`).

@@ -51,7 +51,8 @@ def truncate() -> None:
         with connection.cursor() as cursor:
             cursor.execute(
                 "TRUNCATE security_evidence, delivery_events, pipeline_logs, audit_events, idempotency_records,"
-                " deployments, pipeline_runs, applications RESTART IDENTITY CASCADE"
+                " deployments, pipeline_runs, applications, policy_decisions, security_exceptions,"
+                " break_glass_requests, resource_quotas RESTART IDENTITY CASCADE"
             )
 
 
@@ -774,3 +775,113 @@ def test_the_demo_seed_writes_nothing_unless_it_is_explicitly_enabled(monkeypatc
     # Seeding again is a no-op rather than a duplicate-key failure.
     assert seed_demo_data(platform, portal) is False
     assert len(platform.list_applications()) == 3
+
+
+def test_governance_records_persist_in_postgres(monkeypatch, portal_database):
+    """Verify durable PostgreSQL persistence for policy decisions, waivers, break-glass, and quotas."""
+    from datetime import datetime, timezone, timedelta
+    from uuid import uuid4
+    from app.store.postgres import PostgresDatabase
+    from app.store.records import (
+        PolicyDecisionRecord,
+        SecurityExceptionRecord,
+        BreakGlassRecord,
+        ResourceQuotaRecord,
+    )
+
+    db = PostgresDatabase(DATABASE_URL)
+    now = datetime.now(timezone.utc)
+
+    with db.transaction() as session:
+        # 1. Policy decision
+        decision_id = uuid4()
+        session.record_policy_decision(
+            PolicyDecisionRecord(
+                id=decision_id,
+                scope="production_request",
+                target_type="production_request",
+                target_id="PR-999",
+                allowed=True,
+                reason="All checks passed",
+                risk_score=42,
+                checks={"sbom": "pass", "trivy": "pass"},
+                rules_evaluated=["environment_permission", "separation_of_duties"],
+                evaluator="builtin",
+                evaluated_at=now,
+                metadata={"risk_level": "medium"},
+            )
+        )
+        decisions, _, _ = session.policy_decisions_paginated(scope="production_request")
+        assert len(decisions) >= 1
+        found_dec = next(d for d in decisions if d.id == decision_id)
+        assert found_dec.risk_score == 42
+        assert found_dec.checks["sbom"] == "pass"
+        assert "separation_of_duties" in found_dec.rules_evaluated
+
+        # 2. Security exception
+        exc_id = uuid4()
+        session.insert_security_exception(
+            SecurityExceptionRecord(
+                id=exc_id,
+                cve="CVE-2026-8888",
+                artifact_digest=DIGEST,
+                owner="dana",
+                reason="upstream fix scheduled",
+                approved_by="raj",
+                status="active",
+                created_at=now,
+                expires_at=now + timedelta(days=7),
+            )
+        )
+        active_excs = session.security_exceptions(active_only=True, now=now)
+        assert any(e.id == exc_id for e in active_excs)
+
+        # Revoke
+        revoked = session.revoke_security_exception(exc_id, revoked_by="raj", revoked_at=now)
+        assert revoked is True
+        active_after = session.security_exceptions(active_only=True, now=now)
+        assert not any(e.id == exc_id for e in active_after)
+
+        # 3. Break glass
+        bg_id = uuid4()
+        session.insert_break_glass_request(
+            BreakGlassRecord(
+                id=bg_id,
+                target_type="artifact",
+                target_id=DIGEST,
+                requested_by="dana",
+                reason="p0 recovery",
+                incident_ticket="INC-111",
+                status="pending",
+                created_at=now,
+            )
+        )
+        appr_bg = session.approve_break_glass_request(
+            request_id=bg_id,
+            approved_by="raj",
+            approved_at=now,
+            expires_at=now + timedelta(hours=1),
+        )
+        assert appr_bg is not None
+        assert appr_bg.status == "active"
+        active_bg = session.active_break_glass(target_type="artifact", target_id=DIGEST, now=now)
+        assert active_bg is not None
+        assert active_bg.id == bg_id
+
+        # 4. Resource quota
+        quota_rec = ResourceQuotaRecord(
+            id=uuid4(),
+            scope="team",
+            scope_id="core-banking",
+            max_concurrent_pipelines=8,
+            max_concurrent_deployments=3,
+            max_production_requests_per_day=30,
+            created_at=now,
+            updated_at=now,
+        )
+        session.set_resource_quota(quota_rec)
+        fetched_quota = session.get_resource_quota("team", "core-banking")
+        assert fetched_quota is not None
+        assert fetched_quota.max_concurrent_pipelines == 8
+        assert fetched_quota.max_concurrent_deployments == 3
+

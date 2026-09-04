@@ -26,7 +26,17 @@ from ..domain.models import (
     ServerHealthRecord,
 )
 from ..persistence import AuditRecord, IdempotencyRow, UnitOfWork
-from .records import DeploymentLease, ModuleRow, RequestRow, SystemRow, VersionRow
+from .records import (
+    BreakGlassRecord,
+    DeploymentLease,
+    ModuleRow,
+    PolicyDecisionRecord,
+    RequestRow,
+    ResourceQuotaRecord,
+    SecurityExceptionRecord,
+    SystemRow,
+    VersionRow,
+)
 
 
 class PlatformSession(Protocol):
@@ -312,4 +322,43 @@ class PlatformSession(Protocol):
     def purge_completed_notifications(self, cutoff: datetime) -> int: ...
 
     def purge_old_delivery_events(self, cutoff: datetime) -> int: ...
+
+    # ----------------------------------------------------------- governance & policy
+
+    def record_policy_decision(self, decision: PolicyDecisionRecord) -> None: ...
+
+    def policy_decisions_paginated(
+        self,
+        scope: str | None = None,
+        target_type: str | None = None,
+        target_id: str | None = None,
+        limit: int = 50,
+        cursor: str | None = None,
+    ) -> tuple[tuple[PolicyDecisionRecord, ...], str | None, bool]: ...
+
+    def insert_security_exception(self, exception: SecurityExceptionRecord) -> None: ...
+
+    def security_exceptions(
+        self, active_only: bool = False, now: datetime | None = None
+    ) -> tuple[SecurityExceptionRecord, ...]: ...
+
+    def revoke_security_exception(
+        self, exception_id: UUID, revoked_by: str, revoked_at: datetime
+    ) -> bool: ...
+
+    def insert_break_glass_request(self, record: BreakGlassRecord) -> None: ...
+
+    def break_glass_request(self, request_id: UUID) -> BreakGlassRecord | None: ...
+
+    def approve_break_glass_request(
+        self, request_id: UUID, approved_by: str, approved_at: datetime, expires_at: datetime
+    ) -> BreakGlassRecord | None: ...
+
+    def active_break_glass(
+        self, target_type: str, target_id: str, now: datetime
+    ) -> BreakGlassRecord | None: ...
+
+    def get_resource_quota(self, scope: str, scope_id: str) -> ResourceQuotaRecord | None: ...
+
+    def set_resource_quota(self, record: ResourceQuotaRecord) -> None: ...
 

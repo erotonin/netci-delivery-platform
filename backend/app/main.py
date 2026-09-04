@@ -43,7 +43,14 @@ from .adapters.scm import MAX_WEBHOOK_PAYLOAD_BYTES, get_scm_provider
 from .delivery import CiResult, DeliveryError, DeliveryPlatform
 from .logging import current_correlation_id
 from .metrics import PrometheusMetricsMiddleware, metrics
+from .admission import AdmissionController
+from .coordinator import ReleasePlanCoordinator
+from .demo_data import seed_demo_data
 from .notifications import NotificationOutboxWorker
+from .policy.break_glass import BreakGlassError, BreakGlassService
+from .policy.engine import PolicyEngine
+from .policy.quota import QuotaEnforcer, QuotaViolation
+from .policy.risk import RiskCalculator
 from .policy.rules import (
     PolicyViolation,
     Role,
@@ -51,14 +58,18 @@ from .policy.rules import (
     require_separation_of_duties,
     require_team_access,
 )
-from .demo_data import seed_demo_data
 from .portal import PortalError, PortalService
 from .readiness import probe_readiness
 from .reconciler import Reconciler
 from .retention import RetentionManager
-from .coordinator import ReleasePlanCoordinator
-from .traffic import default_traffic_router
 from .store import build_database
+from .store.records import (
+    BreakGlassRecord,
+    PolicyDecisionRecord,
+    ResourceQuotaRecord,
+    SecurityExceptionRecord,
+)
+from .traffic import default_traffic_router
 from . import workload_identity
 from .workload_identity import (
     CallbackClaims,
@@ -669,6 +680,68 @@ def delivery_event_json(item: DeliveryEvent) -> dict[str, object]:
     }
 
 
+def policy_decision_json(item: PolicyDecisionRecord) -> dict[str, object]:
+    return {
+        "id": str(item.id),
+        "scope": item.scope,
+        "targetType": item.target_type,
+        "targetId": item.target_id,
+        "allowed": item.allowed,
+        "reason": item.reason,
+        "riskScore": item.risk_score,
+        "checks": item.checks,
+        "rulesEvaluated": item.rules_evaluated,
+        "evaluator": item.evaluator,
+        "evaluatedAt": item.evaluated_at.isoformat(),
+        "metadata": item.metadata,
+    }
+
+
+def security_exception_json(item: SecurityExceptionRecord) -> dict[str, object]:
+    return {
+        "id": str(item.id),
+        "cve": item.cve,
+        "artifactDigest": item.artifact_digest,
+        "owner": item.owner,
+        "reason": item.reason,
+        "approvedBy": item.approved_by,
+        "status": item.status,
+        "createdAt": item.created_at.isoformat(),
+        "expiresAt": item.expires_at.isoformat(),
+        "revokedAt": item.revoked_at.isoformat() if item.revoked_at else None,
+        "revokedBy": item.revoked_by,
+    }
+
+
+def break_glass_json(item: BreakGlassRecord) -> dict[str, object]:
+    return {
+        "id": str(item.id),
+        "targetType": item.target_type,
+        "targetId": item.target_id,
+        "requestedBy": item.requested_by,
+        "reason": item.reason,
+        "incidentTicket": item.incident_ticket,
+        "status": item.status,
+        "approvedBy": item.approved_by,
+        "createdAt": item.created_at.isoformat(),
+        "approvedAt": item.approved_at.isoformat() if item.approved_at else None,
+        "expiresAt": item.expires_at.isoformat() if item.expires_at else None,
+    }
+
+
+def resource_quota_json(item: ResourceQuotaRecord) -> dict[str, object]:
+    return {
+        "id": str(item.id),
+        "scope": item.scope,
+        "scopeId": item.scope_id,
+        "maxConcurrentPipelines": item.max_concurrent_pipelines,
+        "maxConcurrentDeployments": item.max_concurrent_deployments,
+        "maxProductionRequestsPerDay": item.max_production_requests_per_day,
+        "createdAt": item.created_at.isoformat(),
+        "updatedAt": item.updated_at.isoformat(),
+    }
+
+
 class StrictBody(BaseModel):
     """Request body whose checked-in OpenAPI schema forbids undeclared fields."""
 
@@ -1009,6 +1082,31 @@ class VersionCiReport(StrictBody):
     sastIssues: int = Field(ge=0)
     vulnerabilities: VulnerabilityCounts
     commit: str = Field(pattern=r"^[0-9a-fA-F]{7,64}$")
+
+
+class SecurityExceptionCreate(StrictBody):
+    cve: str = Field(min_length=3, max_length=64)
+    artifactDigest: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+    owner: str = Field(min_length=1, max_length=128)
+    reason: str = Field(min_length=1, max_length=1000)
+    expiresAt: datetime
+
+
+class BreakGlassCreate(StrictBody):
+    targetType: str = Field(min_length=1, max_length=64)
+    targetId: str = Field(min_length=1, max_length=128)
+    reason: str = Field(min_length=1, max_length=1000)
+    incidentTicket: str = Field(min_length=1, max_length=64)
+
+
+class BreakGlassApprove(StrictBody):
+    ttlMinutes: int = Field(default=60, ge=1, le=240)
+
+
+class ResourceQuotaUpdate(StrictBody):
+    maxConcurrentPipelines: int = Field(default=5, ge=1, le=1000)
+    maxConcurrentDeployments: int = Field(default=2, ge=1, le=1000)
+    maxProductionRequestsPerDay: int = Field(default=20, ge=1, le=10000)
 
 
 @app.exception_handler(StarletteHTTPException)
@@ -1736,20 +1834,59 @@ def approve_production_request(
         raise HTTPException(
             status_code=404, detail={"code": "REQUEST_NOT_FOUND", "message": "production request not found"}
         )
+    target_apps: list[Application] = []
     for requested_module in existing.get("modules") or []:
         module = portal.module(str(requested_module["moduleId"]))
         application_id = module.get("applicationId")
         if application_id:
-            _require_application_access(platform.get_application(UUID(str(application_id))), principal)
-    if separation_of_duties_enabled(principal):
-        try:
-            require_separation_of_duties(str(existing.get("requestedBy") or ""), principal.subject)
-        except PolicyViolation as exc:
+            app_obj = platform.get_application(UUID(str(application_id)))
+            _require_application_access(app_obj, principal)
+            target_apps.append(app_obj)
+
+    # Evaluate Policy Engine with durable auditing
+    with database.transaction() as session:
+        first_app = target_apps[0] if target_apps else Application(
+            name="default",
+            repository_url="https://github.com/example/repo",
+            pipeline_template="container-ci-cd-v1",
+            runtime=Runtime.DOCKER,
+            default_environment=Environment.PROD,
+            stages=(),
+            owner_team=None,
+            id=uuid4(),
+            created_at=datetime.now(timezone.utc),
+        )
+        decision = PolicyEngine.evaluate_and_record_production_approval(
+            session,
+            request_id=requestId,
+            application=first_app,
+            requested_by=str(existing.get("requestedBy") or ""),
+            approver=principal.subject,
+            approver_roles=principal.roles,
+            module_count=len(existing.get("modules") or []),
+            run_automation_tests=bool(existing.get("runAutomationTests", True)),
+            rollback_strategy=str(existing.get("rollbackStrategy") or "automatic"),
+        )
+        if not decision.allowed and separation_of_duties_enabled(principal):
+            sod_status = decision.checks.get("separation_of_duties")
+            if sod_status and sod_status != "pass":
+                raise HTTPException(
+                    status_code=403, detail={"code": "SEPARATION_OF_DUTIES", "message": decision.reason}
+                )
             raise HTTPException(
-                status_code=403, detail={"code": "SEPARATION_OF_DUTIES", "message": str(exc)}
-            ) from exc
+                status_code=403, detail={"code": "POLICY_DENIED", "message": decision.reason}
+            )
+
     try:
-        return portal.approve_request(requestId, principal.subject, payload.comment)
+        res = portal.approve_request(requestId, principal.subject, payload.comment)
+        res["policyDecision"] = {
+            "id": str(decision.id),
+            "allowed": decision.allowed,
+            "riskScore": decision.risk_score,
+            "reason": decision.reason,
+            "checks": decision.checks,
+        }
+        return res
     except KeyError as exc:
         raise HTTPException(status_code=404, detail={"code": "REQUEST_NOT_FOUND", "message": str(exc)}) from exc
     except ValueError as exc:
@@ -2556,4 +2693,209 @@ def trigger_reconciliation(
     limit = payload.limit if payload else 50
     timeout_seconds = payload.timeoutSeconds if payload else None
     return reconciler.reconcile(limit=limit, timeout_seconds=timeout_seconds)
+
+
+# ----------------------------------------------------------- governance & policy
+
+@app.get("/policy/decisions")
+def list_policy_decisions(
+    scope: str | None = None,
+    targetType: str | None = None,
+    targetId: str | None = None,
+    limit: int | None = None,
+    cursor: str | None = None,
+    principal: Principal = ReadAccess,
+) -> dict[str, object]:
+    bounded_limit = max(1, min(limit or 50, 100))
+    with database.transaction() as session:
+        records, next_cursor, has_more = session.policy_decisions_paginated(
+            scope=scope, target_type=targetType, target_id=targetId, limit=bounded_limit, cursor=cursor
+        )
+    return {
+        "items": [policy_decision_json(r) for r in records],
+        "nextCursor": next_cursor,
+        "hasMore": has_more,
+    }
+
+
+@app.get("/security-exceptions")
+def list_security_exceptions(
+    activeOnly: bool = False,
+    principal: Principal = ReadAccess,
+) -> list[dict[str, object]]:
+    with database.transaction() as session:
+        records = session.security_exceptions(active_only=activeOnly)
+    return [security_exception_json(r) for r in records]
+
+
+@app.post("/security-exceptions", status_code=status.HTTP_201_CREATED)
+def create_security_exception(
+    payload: SecurityExceptionCreate,
+    principal: Principal = ReviewerAccess,
+) -> dict[str, object]:
+    now = datetime.now(timezone.utc)
+    if payload.expiresAt <= now:
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "EXPIRED_DATE", "message": "Security exception expiresAt must be in the future"},
+        )
+    if separation_of_duties_enabled(principal) and principal.subject == payload.owner:
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "code": "SEPARATION_OF_DUTIES",
+                "message": "The owner of a security exception cannot approve their own exception",
+            },
+        )
+    record = SecurityExceptionRecord(
+        id=uuid4(),
+        cve=payload.cve.upper(),
+        artifact_digest=payload.artifactDigest,
+        owner=payload.owner,
+        reason=payload.reason,
+        approved_by=principal.subject,
+        status="active",
+        created_at=now,
+        expires_at=payload.expiresAt,
+    )
+    with database.transaction() as session:
+        session.insert_security_exception(record)
+    return security_exception_json(record)
+
+
+@app.post("/security-exceptions/{exceptionId}/revoke", status_code=status.HTTP_200_OK)
+def revoke_security_exception(
+    exceptionId: UUID,
+    principal: Principal = ReviewerAccess,
+) -> dict[str, object]:
+    now = datetime.now(timezone.utc)
+    with database.transaction() as session:
+        success = session.revoke_security_exception(
+            exception_id=exceptionId,
+            revoked_by=principal.subject,
+            revoked_at=now,
+        )
+    if not success:
+        raise HTTPException(
+            status_code=404,
+            detail={"code": "EXCEPTION_NOT_FOUND", "message": f"Active security exception {exceptionId} not found"},
+        )
+    return {"id": str(exceptionId), "status": "revoked", "revokedBy": principal.subject}
+
+
+@app.post("/break-glass/requests", status_code=status.HTTP_201_CREATED)
+def create_break_glass_request(
+    payload: BreakGlassCreate,
+    principal: Principal = DeveloperAccess,
+) -> dict[str, object]:
+    with database.transaction() as session:
+        try:
+            record = BreakGlassService.create_request(
+                session,
+                target_type=payload.targetType,
+                target_id=payload.targetId,
+                requested_by=principal.subject,
+                reason=payload.reason,
+                incident_ticket=payload.incidentTicket,
+            )
+        except BreakGlassError as exc:
+            raise HTTPException(status_code=400, detail={"code": "BREAK_GLASS_INVALID", "message": str(exc)}) from exc
+    return break_glass_json(record)
+
+
+@app.post("/break-glass/requests/{requestId}/approve", status_code=status.HTTP_200_OK)
+def approve_break_glass_request(
+    requestId: UUID,
+    payload: BreakGlassApprove | None = None,
+    principal: Principal = ReviewerAccess,
+) -> dict[str, object]:
+    ttl = payload.ttlMinutes if payload else 60
+    with database.transaction() as session:
+        try:
+            record = BreakGlassService.approve_request(
+                session,
+                request_id=requestId,
+                approved_by=principal.subject,
+                ttl_minutes=ttl,
+            )
+        except BreakGlassError as exc:
+            msg = str(exc)
+            if "dual-control" in msg.lower():
+                raise HTTPException(
+                    status_code=403, detail={"code": "SEPARATION_OF_DUTIES", "message": msg}
+                ) from exc
+            if "not found" in msg.lower():
+                raise HTTPException(
+                    status_code=404, detail={"code": "REQUEST_NOT_FOUND", "message": msg}
+                ) from exc
+            raise HTTPException(
+                status_code=409, detail={"code": "BREAK_GLASS_STATE_INVALID", "message": msg}
+            ) from exc
+    return break_glass_json(record)
+
+
+@app.get("/break-glass/active")
+def get_active_break_glass(
+    targetType: str,
+    targetId: str,
+    principal: Principal = ReadAccess,
+) -> dict[str, object]:
+    with database.transaction() as session:
+        record = BreakGlassService.active_break_glass(session, target_type=targetType, target_id=targetId)
+    if not record:
+        raise HTTPException(
+            status_code=404,
+            detail={"code": "BREAK_GLASS_NOT_ACTIVE", "message": f"No active break-glass for {targetType}:{targetId}"},
+        )
+    return break_glass_json(record)
+
+
+@app.get("/quotas/{scope}/{scopeId}")
+def get_resource_quota(
+    scope: str,
+    scopeId: str,
+    principal: Principal = ReadAccess,
+) -> dict[str, object]:
+    with database.transaction() as session:
+        record = session.get_resource_quota(scope, scopeId)
+        if not record:
+            record = ResourceQuotaRecord(
+                id=uuid4(),
+                scope=scope,
+                scope_id=scopeId,
+                max_concurrent_pipelines=5,
+                max_concurrent_deployments=2,
+                max_production_requests_per_day=20,
+            )
+    return resource_quota_json(record)
+
+
+@app.put("/quotas/{scope}/{scopeId}", status_code=status.HTTP_200_OK)
+def set_resource_quota(
+    scope: str,
+    scopeId: str,
+    payload: ResourceQuotaUpdate,
+    principal: Principal = AdminAccess,
+) -> dict[str, object]:
+    record = ResourceQuotaRecord(
+        id=uuid4(),
+        scope=scope,
+        scope_id=scopeId,
+        max_concurrent_pipelines=payload.maxConcurrentPipelines,
+        max_concurrent_deployments=payload.maxConcurrentDeployments,
+        max_production_requests_per_day=payload.maxProductionRequestsPerDay,
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc),
+    )
+    with database.transaction() as session:
+        session.set_resource_quota(record)
+    return resource_quota_json(record)
+
+
+@app.post("/admission/validate", status_code=status.HTTP_200_OK)
+def validate_kubernetes_admission(
+    payload: dict[str, Any],
+) -> dict[str, Any]:
+    with database.transaction() as session:
+        return AdmissionController.handle_admission_review(session, payload)
 
