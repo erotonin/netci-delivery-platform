@@ -29,6 +29,8 @@ from pathlib import Path
 from typing import Protocol
 from urllib.parse import urlsplit
 
+from ..runtime_environment import require_live_mode
+
 logger = logging.getLogger(__name__)
 
 DIGEST_PREFIX = "sha256:"
@@ -225,6 +227,7 @@ def build_signature_verifier() -> SignatureVerifier:
     """Select the verifier from configuration. Called once, where the worker is composed."""
 
     mode = os.getenv("NETCI_SIGNATURE_VERIFY_MODE", "none").strip().lower()
+    require_live_mode("NETCI_SIGNATURE_VERIFY_MODE", mode, disabled={"", "none"})
     if mode in {"", "none"}:
         return NullSignatureVerifier()
     if mode == "cosign":

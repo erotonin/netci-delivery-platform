@@ -36,6 +36,7 @@ from .persistence import (
     PostgresDeliveryStore,
     UnitOfWork,
 )
+from .runtime_environment import is_local_runtime
 from .policy.rules import PolicyDecision, evaluate_artifact_evidence
 from .domain.models import (
     Application,
@@ -121,6 +122,10 @@ class DeliveryPlatform:
         ci_launcher: CiLauncher | None = None,
         cd_orchestrator: CdOrchestrator | None = None,
     ) -> None:
+        if not is_local_runtime() and not self.security_evidence_required():
+            raise RuntimeError(
+                "NETCI_REQUIRE_SECURITY_EVIDENCE=true is required outside local mode"
+            )
         self.ci_launcher: CiLauncher = ci_launcher or NullCiLauncher()
         self.cd_orchestrator: CdOrchestrator = cd_orchestrator or NullCdOrchestrator()
         self._applications: dict[UUID, Application] = {}

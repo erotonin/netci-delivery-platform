@@ -286,8 +286,8 @@ NETCI_OIDC_ISSUER=...
 NETCI_OIDC_AUDIENCE=...
 NETCI_OIDC_ROLE_MAP=...
 NETCI_PIPELINE_API_KEY=...
-NETCI_CI_MODE=jenkins              # hoặc CI ngoài + callback
-NETCI_CD_MODE=temporal             # hoặc CD ngoài + callback
+NETCI_CI_MODE=jenkins
+NETCI_CD_MODE=temporal
 NETCI_DCIM_BASE_URL=...
 NETCI_SIGNATURE_VERIFY_MODE=cosign
 NETCI_COSIGN_PUBLIC_KEY_FILE=/run/secrets/netci/cosign.pub
@@ -297,6 +297,11 @@ NETCI_REQUIRE_APPLICATION_OWNER=true
 NETCI_REQUIRE_SEPARATION_OF_DUTIES=true
 NETCI_REQUIRE_SECURITY_EVIDENCE=true
 ```
+
+Các chế độ `none`/`callback` chỉ là seam phát triển local. Khi
+`NETCI_ENVIRONMENT` khác `local`, API/worker fail-fast nếu auth, CI, CD,
+security evidence hoặc deploy-time signature verification chưa bật; production
+không thể khởi động trong trạng thái chỉ ghi nhận mà không thực thi.
 
 `docker compose up --build` dựng Portal ở `http://localhost:5173`, API, PostgreSQL, Temporal worker, registry, MinIO và hai Jenkins controller. Vì Portal đi qua reverse proxy, `auth=none` bị API từ chối có chủ đích; ngay cả local Compose cũng phải dùng token file hoặc OIDC (xem `QUICKSTART.md`). Các giá trị `change-me-local-only`/`replace-me-local-only` chỉ giúp topology local khởi động; một môi trường non-local phải thay chúng bằng secret thật trước khi được coi là live.
 

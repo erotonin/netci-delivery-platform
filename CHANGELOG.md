@@ -21,6 +21,8 @@ Changelog and releases use Semantic Versioning once the project reaches 1.0.0.
   undeclared identity fields are rejected instead of silently ignored.
 - Ansible runtime parameters can no longer override the verified artifact,
   deployment, application or environment identity.
+- Non-local runtimes now fail at startup when auth, CI, CD, security evidence or
+  deploy-time signature verification is disabled.
 - Portal projections display unknown state instead of invented healthy data.
 
 ### Removed

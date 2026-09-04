@@ -93,8 +93,9 @@ app.add_middleware(
 )
 
 # Composition root: the engines are chosen here from configuration, never inside
-# the domain. NETCI_CI_MODE / NETCI_CD_MODE default to "none", which means netCI
-# records state and waits for authenticated callbacks instead of pretending work ran.
+# the domain. NETCI_CI_MODE / NETCI_CD_MODE may be "none" only in local mode; outside
+# local their factories fail at startup instead of running a control plane that cannot
+# execute the work it accepts.
 platform = DeliveryPlatform(build_ci_launcher(), build_cd_orchestrator())
 portal = PortalReadModel(platform)
 authenticator = build_authenticator()

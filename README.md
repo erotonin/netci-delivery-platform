@@ -148,7 +148,7 @@ Xem [QUICKSTART](QUICKSTART.md) cho lab trên host không có bridge network, v�
 - netCI sở hữu policy, approval, audit, promotion, deploy, health check và rollback.
 - Staging và production dùng cùng artifact digest; không rebuild khi promote.
 - Core domain không import SDK/CLI của Jenkins, Temporal, Docker, Helm hoặc Systemd.
-- Engine thật nằm sau seam có thể cấu hình: `NETCI_CI_MODE` (`none`|`jenkins`), `NETCI_CD_MODE` (`none`|`temporal`), `NETCI_AUTH_MODE` (`none`|`token`|`oidc`) và `NETCI_SIGNATURE_VERIFY_MODE` (`none`|`cosign`). Mặc định `none` nghĩa là netCI ghi nhận trạng thái và chờ callback đã xác thực — nó không bao giờ giả vờ đã chạy một build.
+- Engine thật nằm sau seam có thể cấu hình: `NETCI_CI_MODE` (`none`|`jenkins`), `NETCI_CD_MODE` (`none`|`temporal`), `NETCI_AUTH_MODE` (`none`|`token`|`oidc`) và `NETCI_SIGNATURE_VERIFY_MODE` (`none`|`cosign`). `none` chỉ hợp lệ khi `NETCI_ENVIRONMENT=local`: netCI ghi nhận trạng thái và không giả vờ đã chạy build. Ngoài local, process fail-fast nếu auth, CI, CD, security evidence hoặc deploy-time signature verification bị tắt.
 - **netCI tự kiểm chữ ký lúc deploy** khi bật `cosign`, thay vì tin vào boolean `signature.verified` do chính CI ghi về công việc của mình.
 - **Actor luôn lấy từ credential đã xác thực**, không lấy từ request body. Vì vậy `actor`/`requestedBy`/`createdBy` đã bị bỏ khỏi API: một field mà server nhận rồi âm thầm bỏ qua còn tệ hơn là không có.
 - State, source event, audit và log được ghi trong **cùng một transaction**, nên không thể có trường hợp trạng thái đã đổi nhưng DORA event bị mất.

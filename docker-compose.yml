@@ -143,6 +143,7 @@ services:
       dockerfile: backend/Dockerfile.worker
     command: ["python", "-m", "app.workflows.worker"]
     environment:
+      NETCI_ENVIRONMENT: ${NETCI_ENVIRONMENT:-local}
       TEMPORAL_ADDRESS: temporalite:7233
       TEMPORAL_NAMESPACE: ${TEMPORAL_NAMESPACE:-default}
       TEMPORAL_TASK_QUEUE: ${TEMPORAL_TASK_QUEUE:-netci-delivery}

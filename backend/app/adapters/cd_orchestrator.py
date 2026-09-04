@@ -14,6 +14,8 @@ from dataclasses import dataclass
 from typing import Protocol
 from uuid import UUID
 
+from ..runtime_environment import require_live_mode
+
 logger = logging.getLogger(__name__)
 
 
@@ -142,6 +144,7 @@ def build_cd_orchestrator() -> CdOrchestrator:
     """Compose the configured orchestrator from the environment."""
 
     mode = os.getenv("NETCI_CD_MODE", "none").strip().lower()
+    require_live_mode("NETCI_CD_MODE", mode)
     if mode in {"", "none", "callback"}:
         return NullCdOrchestrator()
     if mode != "temporal":

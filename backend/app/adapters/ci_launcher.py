@@ -15,6 +15,7 @@ from uuid import UUID
 
 from .interfaces import JenkinsAdapter
 from .jenkins_router import ControllerState, JenkinsController, JenkinsRouter
+from ..runtime_environment import require_live_mode
 
 logger = logging.getLogger(__name__)
 
@@ -136,6 +137,7 @@ def build_ci_launcher() -> CiLauncher:
     """Compose the configured launcher from the environment (see docs/api-contract.md)."""
 
     mode = os.getenv("NETCI_CI_MODE", "none").strip().lower()
+    require_live_mode("NETCI_CI_MODE", mode)
     if mode in {"", "none", "callback"}:
         return NullCiLauncher()
     if mode != "jenkins":

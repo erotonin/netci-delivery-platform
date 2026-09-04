@@ -36,6 +36,7 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from .policy.rules import Role
+from .runtime_environment import require_live_mode
 
 
 class AuthError(Exception):
@@ -484,6 +485,7 @@ def build_authenticator() -> Authenticator:
     """Select the authenticator from configuration. Called once, at import of main."""
 
     mode = os.getenv("NETCI_AUTH_MODE", "none").strip().lower()
+    require_live_mode("NETCI_AUTH_MODE", mode, disabled={"", "none"})
     if mode in {"", "none"}:
         return OpenAuthenticator()
     if mode == "token":
