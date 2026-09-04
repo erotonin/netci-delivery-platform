@@ -1649,6 +1649,551 @@ paths:
                 type: object
                 additionalProperties: true
 
+  /catalog/services:
+    post:
+      operationId: registerCatalogService
+      summary: Register a service in the enterprise catalog
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CatalogServiceCreate'
+      responses:
+        '201':
+          description: Service successfully registered
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CatalogService'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+    get:
+      operationId: listCatalogServices
+      summary: List services registered in the enterprise catalog
+      parameters:
+        - name: owningTeam
+          in: query
+          required: false
+          schema: { type: string }
+        - name: tier
+          in: query
+          required: false
+          schema: { type: string }
+        - name: lifecycle
+          in: query
+          required: false
+          schema: { type: string }
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, default: 50 }
+        - name: cursor
+          in: query
+          required: false
+          schema: { type: string }
+      responses:
+        '200':
+          description: Paginated catalog services
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/CatalogService' }
+                  nextCursor: { type: string, nullable: true }
+                  hasMore: { type: boolean }
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /catalog/services/{serviceId}:
+    get:
+      operationId: getCatalogService
+      summary: Get details of a registered catalog service
+      parameters:
+        - name: serviceId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Catalog service details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CatalogService'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    put:
+      operationId: updateCatalogService
+      summary: Update metadata, tier, or lifecycle of a catalog service
+      parameters:
+        - name: serviceId
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CatalogServiceUpdate'
+      responses:
+        '200':
+          description: Updated catalog service
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CatalogService'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /catalog/services/{serviceId}/dependencies:
+    get:
+      operationId: getServiceDependencies
+      summary: Get upstream and downstream dependency graph for a service
+      parameters:
+        - name: serviceId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Service dependency graph
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ServiceDependencyGraph'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    post:
+      operationId: addServiceDependency
+      summary: Declare a dependency between services
+      parameters:
+        - name: serviceId
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ServiceDependencyCreate'
+      responses:
+        '201':
+          description: Dependency created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ServiceDependency'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /catalog/services/{serviceId}/dependencies/{targetServiceId}:
+    delete:
+      operationId: removeServiceDependency
+      summary: Remove a declared dependency between services
+      parameters:
+        - name: serviceId
+          in: path
+          required: true
+          schema: { type: string }
+        - name: targetServiceId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '204':
+          description: Dependency removed
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /catalog/templates:
+    post:
+      operationId: registerCatalogTemplate
+      summary: Register a versioned golden path template
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CatalogTemplateCreate'
+      responses:
+        '201':
+          description: Template registered
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CatalogTemplate'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+    get:
+      operationId: listCatalogTemplates
+      summary: List versioned golden path templates
+      parameters:
+        - name: category
+          in: query
+          required: false
+          schema: { type: string }
+        - name: includeDeprecated
+          in: query
+          required: false
+          schema: { type: boolean, default: false }
+      responses:
+        '200':
+          description: List of golden path templates
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/CatalogTemplate' }
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /catalog/templates/{templateId}:
+    get:
+      operationId: getCatalogTemplate
+      summary: Get details of a golden path template
+      parameters:
+        - name: templateId
+          in: path
+          required: true
+          schema: { type: string }
+        - name: version
+          in: query
+          required: false
+          schema: { type: string }
+      responses:
+        '200':
+          description: Golden path template details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CatalogTemplate'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /catalog/templates/{templateId}/instantiate:
+    post:
+      operationId: instantiateCatalogTemplate
+      summary: Instantiate a golden path template with parameter validation
+      parameters:
+        - name: templateId
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TemplateInstantiateRequest'
+      responses:
+        '200':
+          description: Instantiated template configuration plan
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TemplateInstantiatedPlan'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /preview-environments:
+    post:
+      operationId: createPreviewEnvironment
+      summary: Create or refresh an ephemeral preview environment for a pull request
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PreviewEnvironmentCreate'
+      responses:
+        '201':
+          description: Preview environment created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PreviewEnvironment'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+    get:
+      operationId: listPreviewEnvironments
+      summary: List ephemeral preview environments
+      parameters:
+        - name: applicationId
+          in: query
+          required: false
+          schema: { type: string, format: uuid }
+        - name: status
+          in: query
+          required: false
+          schema: { type: string }
+      responses:
+        '200':
+          description: List of preview environments
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/PreviewEnvironment' }
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /preview-environments/{previewId}:
+    get:
+      operationId: getPreviewEnvironment
+      summary: Get details of an ephemeral preview environment
+      parameters:
+        - name: previewId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Preview environment details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PreviewEnvironment'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /preview-environments/{previewId}/teardown:
+    post:
+      operationId: teardownPreviewEnvironment
+      summary: Teardown an ephemeral preview environment
+      parameters:
+        - name: previewId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Preview environment destroyed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PreviewEnvironment'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /preview-environments/reconcile-expiry:
+    post:
+      operationId: reconcilePreviewEnvironmentsExpiry
+      summary: Reconcile expired preview environments based on TTL
+      responses:
+        '200':
+          description: Expired preview environments reconciled
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  reconciledCount: { type: integer }
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/PreviewEnvironment' }
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /self-service/resources:
+    post:
+      operationId: requestSelfServiceResource
+      summary: Request self-service infrastructure resource (DB, cache, bucket, queue, domain)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ResourceRequestCreate'
+      responses:
+        '201':
+          description: Resource request submitted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResourceRequest'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+    get:
+      operationId: listSelfServiceResources
+      summary: List requested self-service resources
+      parameters:
+        - name: applicationId
+          in: query
+          required: false
+          schema: { type: string, format: uuid }
+        - name: teamId
+          in: query
+          required: false
+          schema: { type: string }
+        - name: environment
+          in: query
+          required: false
+          schema: { type: string }
+        - name: status
+          in: query
+          required: false
+          schema: { type: string }
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, default: 50 }
+        - name: cursor
+          in: query
+          required: false
+          schema: { type: string }
+      responses:
+        '200':
+          description: Paginated resource requests
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/ResourceRequest' }
+                  nextCursor: { type: string, nullable: true }
+                  hasMore: { type: boolean }
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /self-service/resources/{requestId}:
+    get:
+      operationId: getSelfServiceResource
+      summary: Get details and status of a self-service resource request
+      parameters:
+        - name: requestId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Resource request details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResourceRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /self-service/resources/{requestId}/approve:
+    post:
+      operationId: approveSelfServiceResource
+      summary: Approve a self-service resource request for non-ephemeral environments with dual control
+      parameters:
+        - name: requestId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ResourceApproveRequest'
+      responses:
+        '200':
+          description: Resource approved and provisioned
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResourceRequest'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /self-service/resources/{requestId}/deprovision:
+    post:
+      operationId: deprovisionSelfServiceResource
+      summary: Deprovision a self-service resource
+      parameters:
+        - name: requestId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Resource deprovisioned
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResourceRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
 components:
   securitySchemes:
     PipelineBearer:
@@ -2389,3 +2934,204 @@ components:
         maxProductionRequestsPerDay: { type: integer }
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
+    CatalogServiceCreate:
+      type: object
+      required: [serviceId, name, owningTeam]
+      additionalProperties: false
+      properties:
+        serviceId: { type: string, minLength: 1, maxLength: 128 }
+        name: { type: string, minLength: 1, maxLength: 255 }
+        description: { type: string, maxLength: 2000, default: "" }
+        owningTeam: { type: string, minLength: 1, maxLength: 128 }
+        tier: { type: string, maxLength: 32, default: "tier-2" }
+        lifecycle: { type: string, maxLength: 32, default: "active" }
+        repoUrl: { type: string, maxLength: 1000, default: "" }
+        docsUrl: { type: string, maxLength: 1000, default: "" }
+        metadata: { type: object, additionalProperties: true }
+    CatalogServiceUpdate:
+      type: object
+      additionalProperties: false
+      properties:
+        name: { type: string, maxLength: 255, nullable: true }
+        description: { type: string, maxLength: 2000, nullable: true }
+        owningTeam: { type: string, maxLength: 128, nullable: true }
+        tier: { type: string, maxLength: 32, nullable: true }
+        lifecycle: { type: string, maxLength: 32, nullable: true }
+        repoUrl: { type: string, maxLength: 1000, nullable: true }
+        docsUrl: { type: string, maxLength: 1000, nullable: true }
+        metadata: { type: object, additionalProperties: true, nullable: true }
+    CatalogService:
+      type: object
+      required: [serviceId, name, owningTeam, tier, lifecycle, createdAt, updatedAt]
+      properties:
+        serviceId: { type: string }
+        name: { type: string }
+        description: { type: string }
+        owningTeam: { type: string }
+        tier: { type: string }
+        lifecycle: { type: string }
+        repoUrl: { type: string }
+        docsUrl: { type: string }
+        metadata: { type: object, additionalProperties: true }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    ServiceDependencyCreate:
+      type: object
+      required: [targetServiceId]
+      additionalProperties: false
+      properties:
+        targetServiceId: { type: string, minLength: 1, maxLength: 128 }
+        dependencyType: { type: string, maxLength: 32, default: "sync" }
+        description: { type: string, maxLength: 1000, default: "" }
+    ServiceDependency:
+      type: object
+      required: [dependencyId, sourceServiceId, targetServiceId, dependencyType, description, createdAt]
+      properties:
+        dependencyId: { type: string }
+        sourceServiceId: { type: string }
+        targetServiceId: { type: string }
+        dependencyType: { type: string }
+        description: { type: string }
+        createdAt: { type: string, format: date-time }
+    ServiceDependencyGraph:
+      type: object
+      required: [serviceId, nodes, edges, upstream, downstream, hasCycle, cycles]
+      properties:
+        serviceId: { type: string }
+        nodes:
+          type: array
+          items:
+            $ref: '#/components/schemas/CatalogService'
+        edges:
+          type: array
+          items:
+            type: object
+            required: [source, target, dependencyType]
+            properties:
+              source: { type: string }
+              target: { type: string }
+              dependencyType: { type: string }
+              description: { type: string }
+        upstream:
+          type: array
+          items: { type: string }
+        downstream:
+          type: array
+          items: { type: string }
+        hasCycle: { type: boolean }
+        cycles:
+          type: array
+          items:
+            type: array
+            items: { type: string }
+    CatalogTemplateCreate:
+      type: object
+      required: [templateId, version, name]
+      additionalProperties: false
+      properties:
+        templateId: { type: string, minLength: 1, maxLength: 128 }
+        version: { type: string, minLength: 1, maxLength: 32 }
+        name: { type: string, minLength: 1, maxLength: 255 }
+        description: { type: string, maxLength: 2000, default: "" }
+        category: { type: string, maxLength: 64, default: "backend" }
+        parametersSchema: { type: object, additionalProperties: true }
+        pipelineDefinition: { type: object, additionalProperties: true }
+        isDeprecated: { type: boolean, default: false }
+    CatalogTemplate:
+      type: object
+      required: [templateId, version, name, category, parametersSchema, pipelineDefinition, isDeprecated, createdAt, updatedAt]
+      properties:
+        templateId: { type: string }
+        version: { type: string }
+        name: { type: string }
+        description: { type: string }
+        category: { type: string }
+        parametersSchema: { type: object, additionalProperties: true }
+        pipelineDefinition: { type: object, additionalProperties: true }
+        isDeprecated: { type: boolean }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    TemplateInstantiateRequest:
+      type: object
+      required: [applicationName, owningTeam]
+      additionalProperties: false
+      properties:
+        version: { type: string, maxLength: 32, nullable: true }
+        applicationName: { type: string, minLength: 1, maxLength: 63 }
+        owningTeam: { type: string, minLength: 1, maxLength: 128 }
+        parameters: { type: object, additionalProperties: true }
+    TemplateInstantiatedPlan:
+      type: object
+      required: [templateId, version, applicationName, owningTeam, runtime, stages, pipelineConfig, deploymentConfig]
+      properties:
+        templateId: { type: string }
+        version: { type: string }
+        applicationName: { type: string }
+        owningTeam: { type: string }
+        runtime: { type: string }
+        stages:
+          type: array
+          items: { type: string }
+        pipelineConfig: { type: object, additionalProperties: true }
+        deploymentConfig: { type: object, additionalProperties: true }
+    PreviewEnvironmentCreate:
+      type: object
+      required: [applicationId, pullRequestId, commitSha]
+      additionalProperties: false
+      properties:
+        applicationId: { type: string, format: uuid }
+        pullRequestId: { type: string, minLength: 1, maxLength: 64 }
+        commitSha: { type: string, minLength: 1, maxLength: 64 }
+        ttlSeconds: { type: integer, default: 86400, minimum: 3600, maximum: 259200 }
+        createdBy: { type: string, maxLength: 128, nullable: true }
+    PreviewEnvironment:
+      type: object
+      required: [previewId, applicationId, pullRequestId, commitSha, namespace, url, status, ttlSeconds, expiresAt, createdBy, createdAt]
+      properties:
+        previewId: { type: string }
+        applicationId: { type: string, format: uuid }
+        pullRequestId: { type: string }
+        commitSha: { type: string }
+        namespace: { type: string }
+        url: { type: string }
+        status: { type: string }
+        ttlSeconds: { type: integer }
+        expiresAt: { type: string, format: date-time }
+        createdBy: { type: string }
+        createdAt: { type: string, format: date-time }
+        destroyedAt: { type: string, format: date-time, nullable: true }
+    ResourceRequestCreate:
+      type: object
+      required: [applicationId, teamId, resourceType]
+      additionalProperties: false
+      properties:
+        applicationId: { type: string, format: uuid }
+        teamId: { type: string, minLength: 1, maxLength: 128 }
+        environment: { type: string, maxLength: 32, default: "preview" }
+        resourceType: { type: string, minLength: 1, maxLength: 64 }
+        spec: { type: object, additionalProperties: true }
+        requestedBy: { type: string, maxLength: 128, nullable: true }
+    ResourceApproveRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        approvedBy: { type: string, nullable: true }
+    ResourceRequest:
+      type: object
+      required: [requestId, applicationId, teamId, environment, resourceType, spec, status, statusReason, provider, outputs, requestedBy, createdAt, updatedAt]
+      properties:
+        requestId: { type: string, format: uuid }
+        applicationId: { type: string, format: uuid }
+        teamId: { type: string }
+        environment: { type: string }
+        resourceType: { type: string }
+        spec: { type: object, additionalProperties: true }
+        status: { type: string }
+        statusReason: { type: string }
+        provider: { type: string }
+        outputs: { type: object, additionalProperties: true }
+        requestedBy: { type: string }
+        approvedBy: { type: string, nullable: true }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+

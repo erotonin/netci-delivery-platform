@@ -52,8 +52,10 @@ def truncate() -> None:
             cursor.execute(
                 "TRUNCATE security_evidence, delivery_events, pipeline_logs, audit_events, idempotency_records,"
                 " deployments, pipeline_runs, applications, policy_decisions, security_exceptions,"
-                " break_glass_requests, resource_quotas RESTART IDENTITY CASCADE"
+                " break_glass_requests, resource_quotas, catalog_services, catalog_service_dependencies,"
+                " catalog_templates, preview_environments, resource_requests RESTART IDENTITY CASCADE"
             )
+
 
 
 def unique_name() -> str:
@@ -884,4 +886,163 @@ def test_governance_records_persist_in_postgres(monkeypatch, portal_database):
         assert fetched_quota is not None
         assert fetched_quota.max_concurrent_pipelines == 8
         assert fetched_quota.max_concurrent_deployments == 3
+
+
+def test_phase12_catalog_and_self_service_durability(database: str) -> None:
+    """Phase 12: Catalog, service dependencies, templates, preview environments, and resource requests persist in real Postgres."""
+    from datetime import datetime, timezone, timedelta
+    from uuid import uuid4
+    from app.store.postgres import PostgresDatabase
+    from app.store.records import (
+        CatalogServiceRecord,
+        ServiceDependencyRecord,
+        CatalogTemplateRecord,
+        PreviewEnvironmentRecord,
+        ResourceRequestRecord,
+    )
+
+    db = PostgresDatabase(database)
+    platform = DeliveryPlatform()
+    now = datetime.now(timezone.utc)
+
+    # Create an application first for foreign keys
+    app = platform.create_application(
+        name=f"app-{uuid4().hex[:8]}",
+        repository_url="https://github.com/org/payments",
+        pipeline_template="container-ci-cd-v1",
+        runtime=Runtime.DOCKER,
+        default_environment=Environment.DEV,
+        owner_team="payments-team",
+        stages=[],
+        idempotency_key=f"create-app-{uuid4().hex[:8]}",
+    )
+    app_id = app.id
+
+    with db.transaction() as session:
+        # 1. Catalog Services
+        svc_a = CatalogServiceRecord(
+            id="svc-auth-core",
+            name="Auth Core Service",
+            description="Identity and access management",
+            owning_team="security-team",
+            tier="tier-0",
+            lifecycle="active",
+            repo_url="https://github.com/org/auth-core",
+            docs_url="https://docs.org/auth",
+            metadata={"slo": "99.99%"},
+            created_at=now,
+            updated_at=now,
+        )
+        svc_b = CatalogServiceRecord(
+            id="svc-pay-api",
+            name="Payments API",
+            description="Public payment gateway API",
+            owning_team="payments-team",
+            tier="tier-1",
+            lifecycle="active",
+            repo_url="https://github.com/org/pay-api",
+            docs_url="https://docs.org/pay",
+            metadata={"slo": "99.9%"},
+            created_at=now,
+            updated_at=now,
+        )
+        session.insert_catalog_service(svc_a)
+        session.insert_catalog_service(svc_b)
+
+        fetched_a = session.catalog_service("svc-auth-core")
+        assert fetched_a is not None
+        assert fetched_a.owning_team == "security-team"
+        assert fetched_a.tier == "tier-0"
+
+        # List services
+        services, cursor, has_more = session.list_catalog_services(owning_team="payments-team")
+        assert len(services) == 1
+        assert services[0].id == "svc-pay-api"
+
+        # 2. Service Dependencies
+        dep_id = uuid4()
+        dep = ServiceDependencyRecord(
+            id=dep_id,
+            source_service_id="svc-pay-api",
+            target_service_id="svc-auth-core",
+            dependency_type="sync",
+            description="Token validation RPC",
+            created_at=now,
+        )
+        session.insert_service_dependency(dep)
+        deps = session.service_dependencies("svc-pay-api")
+        assert len(deps) == 1
+        assert deps[0].target_service_id == "svc-auth-core"
+
+        # 3. Catalog Templates
+        tmpl = CatalogTemplateRecord(
+            id="fastapi-service",
+            version="v1.0.0",
+            name="FastAPI Microservice",
+            description="Production-ready FastAPI scaffold",
+            category="backend",
+            parameters_schema={"type": "object", "properties": {"python_version": {"type": "string"}}},
+            pipeline_definition={"stages": ["lint", "test", "build", "deploy"]},
+            is_deprecated=False,
+            created_at=now,
+            updated_at=now,
+        )
+        session.insert_catalog_template(tmpl)
+        fetched_tmpl = session.catalog_template("fastapi-service", "v1.0.0")
+        assert fetched_tmpl is not None
+        assert fetched_tmpl.category == "backend"
+
+        # 4. Preview Environments
+        prv_id = f"prv-pay-{uuid4().hex[:6]}"
+        prv = PreviewEnvironmentRecord(
+            id=prv_id,
+            application_id=app_id,
+            pull_request_id="PR-42",
+            commit_sha="a" * 40,
+            namespace=f"ns-{prv_id}",
+            url=f"https://{prv_id}.preview.netci.internal",
+            status="active",
+            ttl_seconds=86400,
+            expires_at=now + timedelta(hours=24),
+            created_by="developer-1",
+            created_at=now,
+        )
+        session.insert_preview_environment(prv)
+        fetched_prv = session.preview_environment(prv_id)
+        assert fetched_prv is not None
+        assert fetched_prv.status == "active"
+        assert fetched_prv.url == f"https://{prv_id}.preview.netci.internal"
+
+        # 5. Resource Requests
+        req_id = uuid4()
+        rreq = ResourceRequestRecord(
+            id=req_id,
+            application_id=app_id,
+            team_id="payments-team",
+            environment="preview",
+            resource_type="postgres_database",
+            spec={"size_gb": 10, "version": "16"},
+            status="pending_approval",
+            status_reason="",
+            provider="unconfigured",
+            outputs={},
+            requested_by="developer-1",
+            created_at=now,
+            updated_at=now,
+        )
+        session.insert_resource_request(rreq)
+        fetched_rreq = session.resource_request(req_id)
+        assert fetched_rreq is not None
+        assert fetched_rreq.resource_type == "postgres_database"
+
+        # Update resource request
+        updated_rreq = session.update_resource_request(
+            req_id,
+            status="provider_not_configured",
+            status_reason="Terraform/Crossplane provider is not configured",
+            provider="terraform",
+        )
+        assert updated_rreq is not None
+        assert updated_rreq.status == "provider_not_configured"
+
 

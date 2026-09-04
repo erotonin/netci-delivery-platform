@@ -65,10 +65,20 @@ from .retention import RetentionManager
 from .store import build_database
 from .store.records import (
     BreakGlassRecord,
+    CatalogServiceRecord,
+    CatalogTemplateRecord,
     PolicyDecisionRecord,
+    PreviewEnvironmentRecord,
     ResourceQuotaRecord,
+    ResourceRequestRecord,
     SecurityExceptionRecord,
+    ServiceDependencyRecord,
 )
+from .catalog.services import CatalogServiceManager, CatalogValidationError
+from .catalog.templates import PipelineTemplateEngine, TemplateValidationError, seed_builtin_templates
+from .catalog.previews import PreviewEnvironmentManager, PreviewEnvironmentError
+from .catalog.resources import SelfServiceResourceManager, ResourceRequestError
+
 from .traffic import default_traffic_router
 from . import workload_identity
 from .workload_identity import (
@@ -2898,4 +2908,551 @@ def validate_kubernetes_admission(
 ) -> dict[str, Any]:
     with database.transaction() as session:
         return AdmissionController.handle_admission_review(session, payload)
+
+
+# ------------------------------------------------------------- Phase 12: Catalog & Self-Service
+
+class CatalogServiceCreate(StrictBody):
+    serviceId: str = Field(min_length=1, max_length=128)
+    name: str = Field(min_length=1, max_length=255)
+    description: str = Field(default="", max_length=2000)
+    owningTeam: str = Field(min_length=1, max_length=128)
+    tier: str = Field(default="tier-2", max_length=32)
+    lifecycle: str = Field(default="active", max_length=32)
+    repoUrl: str = Field(default="", max_length=1000)
+    docsUrl: str = Field(default="", max_length=1000)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class CatalogServiceUpdate(StrictBody):
+    name: str | None = Field(default=None, max_length=255)
+    description: str | None = Field(default=None, max_length=2000)
+    owningTeam: str | None = Field(default=None, max_length=128)
+    tier: str | None = Field(default=None, max_length=32)
+    lifecycle: str | None = Field(default=None, max_length=32)
+    repoUrl: str | None = Field(default=None, max_length=1000)
+    docsUrl: str | None = Field(default=None, max_length=1000)
+    metadata: dict[str, Any] | None = None
+
+
+class ServiceDependencyCreate(StrictBody):
+    targetServiceId: str = Field(min_length=1, max_length=128)
+    dependencyType: str = Field(default="sync", max_length=32)
+    description: str = Field(default="", max_length=1000)
+
+
+class CatalogTemplateCreate(StrictBody):
+    templateId: str = Field(min_length=1, max_length=128)
+    version: str = Field(min_length=1, max_length=32)
+    name: str = Field(min_length=1, max_length=255)
+    description: str = Field(default="", max_length=2000)
+    category: str = Field(default="backend", max_length=64)
+    parametersSchema: dict[str, Any] = Field(default_factory=dict)
+    pipelineDefinition: dict[str, Any] = Field(default_factory=dict)
+    isDeprecated: bool = False
+
+
+class TemplateInstantiateRequest(StrictBody):
+    version: str | None = Field(default=None, max_length=32)
+    applicationName: str = Field(min_length=1, max_length=63)
+    owningTeam: str = Field(min_length=1, max_length=128)
+    parameters: dict[str, Any] = Field(default_factory=dict)
+
+
+class PreviewEnvironmentCreate(StrictBody):
+    applicationId: UUID
+    pullRequestId: str = Field(min_length=1, max_length=64)
+    commitSha: str = Field(min_length=1, max_length=64)
+    ttlSeconds: int = Field(default=86400, ge=3600, le=259200)
+    createdBy: str | None = Field(default=None, max_length=128)
+
+
+class ResourceRequestCreate(StrictBody):
+    applicationId: UUID
+    teamId: str = Field(min_length=1, max_length=128)
+    environment: str = Field(default="preview", max_length=32)
+    resourceType: str = Field(min_length=1, max_length=64)
+    spec: dict[str, Any] = Field(default_factory=dict)
+    requestedBy: str | None = Field(default=None, max_length=128)
+
+
+
+def catalog_service_json(rec: CatalogServiceRecord) -> dict[str, Any]:
+    return {
+        "serviceId": rec.id,
+        "name": rec.name,
+        "description": rec.description,
+        "owningTeam": rec.owning_team,
+        "tier": rec.tier,
+        "lifecycle": rec.lifecycle,
+        "repoUrl": rec.repo_url,
+        "docsUrl": rec.docs_url,
+        "metadata": rec.metadata,
+        "createdAt": rec.created_at.isoformat(),
+        "updatedAt": rec.updated_at.isoformat(),
+    }
+
+
+def catalog_template_json(rec: CatalogTemplateRecord) -> dict[str, Any]:
+    return {
+        "templateId": rec.id,
+        "version": rec.version,
+        "name": rec.name,
+        "description": rec.description,
+        "category": rec.category,
+        "parametersSchema": rec.parameters_schema,
+        "pipelineDefinition": rec.pipeline_definition,
+        "isDeprecated": rec.is_deprecated,
+        "createdAt": rec.created_at.isoformat(),
+        "updatedAt": rec.updated_at.isoformat(),
+    }
+
+
+def preview_environment_json(rec: PreviewEnvironmentRecord) -> dict[str, Any]:
+    return {
+        "previewId": rec.id,
+        "applicationId": str(rec.application_id),
+        "pullRequestId": rec.pull_request_id,
+        "commitSha": rec.commit_sha,
+        "namespace": rec.namespace,
+        "url": rec.url,
+        "status": rec.status,
+        "ttlSeconds": rec.ttl_seconds,
+        "expiresAt": rec.expires_at.isoformat(),
+        "createdBy": rec.created_by,
+        "createdAt": rec.created_at.isoformat(),
+        "destroyedAt": rec.destroyed_at.isoformat() if rec.destroyed_at else None,
+    }
+
+
+def resource_request_json(rec: ResourceRequestRecord) -> dict[str, Any]:
+    return {
+        "requestId": str(rec.id),
+        "applicationId": str(rec.application_id),
+        "teamId": rec.team_id,
+        "environment": rec.environment,
+        "resourceType": rec.resource_type,
+        "spec": rec.spec,
+        "status": rec.status,
+        "statusReason": rec.status_reason,
+        "provider": rec.provider,
+        "outputs": rec.outputs,
+        "requestedBy": rec.requested_by,
+        "approvedBy": rec.approved_by,
+        "createdAt": rec.created_at.isoformat(),
+        "updatedAt": rec.updated_at.isoformat(),
+    }
+
+
+# --- Catalog Services Endpoints ---
+
+@app.post("/catalog/services", status_code=status.HTTP_201_CREATED)
+def register_catalog_service(
+    payload: CatalogServiceCreate,
+    principal: Principal = DeveloperAccess,
+) -> dict[str, Any]:
+    with database.transaction() as session:
+        mgr = CatalogServiceManager(session)
+        try:
+            record = mgr.register_service(
+                service_id=payload.serviceId,
+                name=payload.name,
+                owning_team=payload.owningTeam,
+                description=payload.description,
+                tier=payload.tier,
+                lifecycle=payload.lifecycle,
+                repo_url=payload.repoUrl,
+                docs_url=payload.docsUrl,
+                metadata=payload.metadata,
+            )
+        except CatalogValidationError as exc:
+            raise HTTPException(status_code=400, detail={"code": "CATALOG_VALIDATION_ERROR", "message": str(exc)}) from exc
+    return catalog_service_json(record)
+
+
+@app.get("/catalog/services")
+def list_catalog_services(
+    owningTeam: str | None = None,
+    tier: str | None = None,
+    lifecycle: str | None = None,
+    limit: int = 50,
+    cursor: str | None = None,
+    principal: Principal = ReadAccess,
+) -> dict[str, Any]:
+    with database.transaction() as session:
+        items, next_cursor, has_more = session.list_catalog_services(
+            owning_team=owningTeam,
+            tier=tier,
+            lifecycle=lifecycle,
+            limit=limit,
+            cursor=cursor,
+        )
+    return {
+        "items": [catalog_service_json(s) for s in items],
+        "nextCursor": next_cursor,
+        "hasMore": has_more,
+    }
+
+
+@app.get("/catalog/services/{serviceId}")
+def get_catalog_service(
+    serviceId: str,
+    principal: Principal = ReadAccess,
+) -> dict[str, Any]:
+    with database.transaction() as session:
+        record = session.catalog_service(serviceId)
+    if not record:
+        raise HTTPException(status_code=404, detail={"code": "SERVICE_NOT_FOUND", "message": f"Service '{serviceId}' not found"})
+    return catalog_service_json(record)
+
+
+@app.put("/catalog/services/{serviceId}")
+def update_catalog_service(
+    serviceId: str,
+    payload: CatalogServiceUpdate,
+    principal: Principal = DeveloperAccess,
+) -> dict[str, Any]:
+    with database.transaction() as session:
+        mgr = CatalogServiceManager(session)
+        try:
+            record = mgr.update_service(
+                service_id=serviceId,
+                name=payload.name,
+                description=payload.description,
+                owning_team=payload.owningTeam,
+                tier=payload.tier,
+                lifecycle=payload.lifecycle,
+                repo_url=payload.repoUrl,
+                docs_url=payload.docsUrl,
+                metadata=payload.metadata,
+            )
+        except CatalogValidationError as exc:
+            raise HTTPException(status_code=400, detail={"code": "CATALOG_VALIDATION_ERROR", "message": str(exc)}) from exc
+    return catalog_service_json(record)
+
+
+@app.get("/catalog/services/{serviceId}/dependencies")
+def get_service_dependencies(
+    serviceId: str,
+    principal: Principal = ReadAccess,
+) -> dict[str, Any]:
+    with database.transaction() as session:
+        mgr = CatalogServiceManager(session)
+        try:
+            graph = mgr.get_dependency_graph(serviceId)
+        except CatalogValidationError as exc:
+            raise HTTPException(status_code=404, detail={"code": "SERVICE_NOT_FOUND", "message": str(exc)}) from exc
+    return {
+        "serviceId": graph.service_id,
+        "nodes": [catalog_service_json(n) for n in graph.nodes],
+        "edges": graph.edges,
+        "upstream": graph.upstream,
+        "downstream": graph.downstream,
+        "hasCycle": graph.has_cycle,
+        "cycles": graph.cycles,
+    }
+
+
+@app.post("/catalog/services/{serviceId}/dependencies", status_code=status.HTTP_201_CREATED)
+def add_service_dependency(
+    serviceId: str,
+    payload: ServiceDependencyCreate,
+    principal: Principal = DeveloperAccess,
+) -> dict[str, Any]:
+    with database.transaction() as session:
+        mgr = CatalogServiceManager(session)
+        try:
+            dep = mgr.add_dependency(
+                source_service_id=serviceId,
+                target_service_id=payload.targetServiceId,
+                dependency_type=payload.dependencyType,
+                description=payload.description,
+            )
+        except CatalogValidationError as exc:
+            raise HTTPException(status_code=400, detail={"code": "DEPENDENCY_ERROR", "message": str(exc)}) from exc
+    return {
+        "dependencyId": str(dep.id),
+        "sourceServiceId": dep.source_service_id,
+        "targetServiceId": dep.target_service_id,
+        "dependencyType": dep.dependency_type,
+        "description": dep.description,
+        "createdAt": dep.created_at.isoformat(),
+    }
+
+
+@app.delete("/catalog/services/{serviceId}/dependencies/{targetServiceId}", status_code=status.HTTP_204_NO_CONTENT)
+def remove_service_dependency(
+    serviceId: str,
+    targetServiceId: str,
+    principal: Principal = DeveloperAccess,
+) -> None:
+    with database.transaction() as session:
+        mgr = CatalogServiceManager(session)
+        deleted = mgr.remove_dependency(serviceId, targetServiceId)
+    if not deleted:
+        raise HTTPException(status_code=404, detail={"code": "DEPENDENCY_NOT_FOUND", "message": "dependency does not exist"})
+
+
+# --- Catalog Templates Endpoints ---
+
+@app.post("/catalog/templates", status_code=status.HTTP_201_CREATED)
+def register_catalog_template(
+    payload: CatalogTemplateCreate,
+    principal: Principal = AdminAccess,
+) -> dict[str, Any]:
+    with database.transaction() as session:
+        engine = PipelineTemplateEngine(session)
+        try:
+            record = engine.register_template(
+                template_id=payload.templateId,
+                version=payload.version,
+                name=payload.name,
+                description=payload.description,
+                category=payload.category,
+                parameters_schema=payload.parametersSchema,
+                pipeline_definition=payload.pipelineDefinition,
+                is_deprecated=payload.isDeprecated,
+            )
+        except TemplateValidationError as exc:
+            raise HTTPException(status_code=400, detail={"code": "TEMPLATE_VALIDATION_ERROR", "message": str(exc)}) from exc
+    return catalog_template_json(record)
+
+
+@app.get("/catalog/templates")
+def list_catalog_templates(
+    category: str | None = None,
+    includeDeprecated: bool = False,
+    principal: Principal = ReadAccess,
+) -> dict[str, Any]:
+    with database.transaction() as session:
+        templates = session.list_catalog_templates(category=category, include_deprecated=includeDeprecated)
+        if not templates and not category:
+            seed_builtin_templates(session)
+            templates = session.list_catalog_templates(category=category, include_deprecated=includeDeprecated)
+    return {
+        "items": [catalog_template_json(t) for t in templates],
+    }
+
+
+@app.get("/catalog/templates/{templateId}")
+def get_catalog_template(
+    templateId: str,
+    version: str | None = None,
+    principal: Principal = ReadAccess,
+) -> dict[str, Any]:
+    with database.transaction() as session:
+        record = session.catalog_template(templateId, version=version)
+        if not record and not version:
+            seed_builtin_templates(session)
+            record = session.catalog_template(templateId)
+    if not record:
+        ver_msg = f" (version {version})" if version else ""
+        raise HTTPException(status_code=404, detail={"code": "TEMPLATE_NOT_FOUND", "message": f"Template '{templateId}'{ver_msg} not found"})
+    return catalog_template_json(record)
+
+
+@app.post("/catalog/templates/{templateId}/instantiate")
+def instantiate_catalog_template(
+    templateId: str,
+    payload: TemplateInstantiateRequest,
+    principal: Principal = DeveloperAccess,
+) -> dict[str, Any]:
+    with database.transaction() as session:
+        engine = PipelineTemplateEngine(session)
+        try:
+            inst = engine.instantiate(
+                template_id=templateId,
+                version=payload.version,
+                application_name=payload.applicationName,
+                owning_team=payload.owningTeam,
+                parameters=payload.parameters,
+            )
+        except TemplateValidationError as exc:
+            raise HTTPException(status_code=400, detail={"code": "INSTANTIATION_ERROR", "message": str(exc)}) from exc
+    return {
+        "templateId": inst.template_id,
+        "version": inst.version,
+        "applicationName": inst.application_name,
+        "owningTeam": inst.owning_team,
+        "runtime": inst.runtime,
+        "stages": inst.stages,
+        "pipelineConfig": inst.pipeline_config,
+        "deploymentConfig": inst.deployment_config,
+    }
+
+
+# --- Preview Environments Endpoints ---
+
+@app.post("/preview-environments", status_code=status.HTTP_201_CREATED)
+def create_preview_environment(
+    payload: PreviewEnvironmentCreate,
+    principal: Principal = DeveloperAccess,
+) -> dict[str, Any]:
+    with database.transaction() as session:
+        mgr = PreviewEnvironmentManager(session)
+        try:
+            record = mgr.create_preview(
+                application_id=payload.applicationId,
+                pull_request_id=payload.pullRequestId,
+                commit_sha=payload.commitSha,
+                ttl_seconds=payload.ttlSeconds,
+                created_by=payload.createdBy or principal.subject,
+            )
+        except PreviewEnvironmentError as exc:
+            raise HTTPException(status_code=400, detail={"code": "PREVIEW_ERROR", "message": str(exc)}) from exc
+    return preview_environment_json(record)
+
+
+@app.get("/preview-environments")
+def list_preview_environments(
+    applicationId: UUID | None = None,
+    status: str | None = None,
+    principal: Principal = ReadAccess,
+) -> dict[str, Any]:
+    with database.transaction() as session:
+        items = session.list_preview_environments(application_id=applicationId, status=status)
+    return {
+        "items": [preview_environment_json(p) for p in items],
+    }
+
+
+@app.get("/preview-environments/{previewId}")
+def get_preview_environment(
+    previewId: str,
+    principal: Principal = ReadAccess,
+) -> dict[str, Any]:
+    with database.transaction() as session:
+        record = session.preview_environment(previewId)
+    if not record:
+        raise HTTPException(status_code=404, detail={"code": "PREVIEW_NOT_FOUND", "message": f"Preview environment '{previewId}' not found"})
+    return preview_environment_json(record)
+
+
+@app.post("/preview-environments/{previewId}/teardown")
+def teardown_preview_environment(
+    previewId: str,
+    principal: Principal = DeveloperAccess,
+) -> dict[str, Any]:
+    with database.transaction() as session:
+        mgr = PreviewEnvironmentManager(session)
+        try:
+            record = mgr.teardown_preview(previewId)
+        except PreviewEnvironmentError as exc:
+            raise HTTPException(status_code=404, detail={"code": "PREVIEW_NOT_FOUND", "message": str(exc)}) from exc
+    return preview_environment_json(record)
+
+
+@app.post("/preview-environments/reconcile-expiry")
+def reconcile_preview_environments_expiry(
+    principal: Principal = AdminAccess,
+) -> dict[str, Any]:
+    with database.transaction() as session:
+        mgr = PreviewEnvironmentManager(session)
+        expired = mgr.reconcile_expiry()
+    return {
+        "reconciledCount": len(expired),
+        "items": [preview_environment_json(p) for p in expired],
+    }
+
+
+# --- Self-Service Resources Endpoints ---
+
+@app.post("/self-service/resources", status_code=status.HTTP_201_CREATED)
+def request_self_service_resource(
+    payload: ResourceRequestCreate,
+    principal: Principal = DeveloperAccess,
+) -> dict[str, Any]:
+    with database.transaction() as session:
+        mgr = SelfServiceResourceManager(session)
+        try:
+            record = mgr.request_resource(
+                application_id=payload.applicationId,
+                team_id=payload.teamId,
+                environment=payload.environment,
+                resource_type=payload.resourceType,
+                spec=payload.spec,
+                requested_by=payload.requestedBy or principal.subject,
+            )
+        except ResourceRequestError as exc:
+            raise HTTPException(status_code=400, detail={"code": "RESOURCE_REQUEST_ERROR", "message": str(exc)}) from exc
+    return resource_request_json(record)
+
+
+@app.get("/self-service/resources")
+def list_self_service_resources(
+    applicationId: UUID | None = None,
+    teamId: str | None = None,
+    environment: str | None = None,
+    status: str | None = None,
+    limit: int = 50,
+    cursor: str | None = None,
+    principal: Principal = ReadAccess,
+) -> dict[str, Any]:
+    with database.transaction() as session:
+        items, next_cursor, has_more = session.list_resource_requests(
+            application_id=applicationId,
+            team_id=teamId,
+            environment=environment,
+            status=status,
+            limit=limit,
+            cursor=cursor,
+        )
+    return {
+        "items": [resource_request_json(r) for r in items],
+        "nextCursor": next_cursor,
+        "hasMore": has_more,
+    }
+
+
+@app.get("/self-service/resources/{requestId}")
+def get_self_service_resource(
+    requestId: UUID,
+    principal: Principal = ReadAccess,
+) -> dict[str, Any]:
+    with database.transaction() as session:
+        record = session.resource_request(requestId)
+    if not record:
+        raise HTTPException(status_code=404, detail={"code": "RESOURCE_NOT_FOUND", "message": f"Resource request '{requestId}' not found"})
+    return resource_request_json(record)
+
+
+class ResourceApproveRequest(StrictBody):
+    approvedBy: str | None = None
+
+
+@app.post("/self-service/resources/{requestId}/approve")
+def approve_self_service_resource(
+    requestId: UUID,
+    payload: ResourceApproveRequest | None = None,
+    principal: Principal = ReviewerAccess,
+) -> dict[str, Any]:
+    approver = payload.approvedBy if (payload and payload.approvedBy) else principal.subject
+    sod = separation_of_duties_enabled(principal) or bool(payload and payload.approvedBy)
+    with database.transaction() as session:
+        mgr = SelfServiceResourceManager(session)
+        try:
+            record = mgr.approve_resource(requestId, approved_by=approver, enforce_sod=sod)
+        except ResourceRequestError as exc:
+            msg = str(exc)
+            if "separation of duties" in msg.lower():
+                raise HTTPException(status_code=403, detail={"code": "SEPARATION_OF_DUTIES", "message": msg}) from exc
+            if "not found" in msg.lower():
+                raise HTTPException(status_code=404, detail={"code": "RESOURCE_NOT_FOUND", "message": msg}) from exc
+            raise HTTPException(status_code=400, detail={"code": "RESOURCE_APPROVE_ERROR", "message": msg}) from exc
+    return resource_request_json(record)
+
+
+@app.post("/self-service/resources/{requestId}/deprovision")
+def deprovision_self_service_resource(
+    requestId: UUID,
+    principal: Principal = DeveloperAccess,
+) -> dict[str, Any]:
+    with database.transaction() as session:
+        mgr = SelfServiceResourceManager(session)
+        try:
+            record = mgr.deprovision_resource(requestId)
+        except ResourceRequestError as exc:
+            raise HTTPException(status_code=404, detail={"code": "RESOURCE_NOT_FOUND", "message": str(exc)}) from exc
+    return resource_request_json(record)
+
 

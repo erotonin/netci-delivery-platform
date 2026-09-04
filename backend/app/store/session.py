@@ -28,12 +28,17 @@ from ..domain.models import (
 from ..persistence import AuditRecord, IdempotencyRow, UnitOfWork
 from .records import (
     BreakGlassRecord,
+    CatalogServiceRecord,
+    CatalogTemplateRecord,
     DeploymentLease,
     ModuleRow,
     PolicyDecisionRecord,
+    PreviewEnvironmentRecord,
     RequestRow,
     ResourceQuotaRecord,
+    ResourceRequestRecord,
     SecurityExceptionRecord,
+    ServiceDependencyRecord,
     SystemRow,
     VersionRow,
 )
@@ -361,4 +366,77 @@ class PlatformSession(Protocol):
     def get_resource_quota(self, scope: str, scope_id: str) -> ResourceQuotaRecord | None: ...
 
     def set_resource_quota(self, record: ResourceQuotaRecord) -> None: ...
+
+    # ----------------------------------------------- catalog & self-service
+
+    def insert_catalog_service(self, service: CatalogServiceRecord) -> None: ...
+
+    def update_catalog_service(self, service: CatalogServiceRecord) -> None: ...
+
+    def catalog_service(self, service_id: str) -> CatalogServiceRecord | None: ...
+
+    def list_catalog_services(
+        self,
+        owning_team: str | None = None,
+        tier: str | None = None,
+        lifecycle: str | None = None,
+        limit: int = 50,
+        cursor: str | None = None,
+    ) -> tuple[tuple[CatalogServiceRecord, ...], str | None, bool]: ...
+
+    def insert_service_dependency(self, dep: ServiceDependencyRecord) -> None: ...
+
+    def delete_service_dependency(self, source_service_id: str, target_service_id: str) -> bool: ...
+
+    def service_dependencies(self, service_id: str) -> tuple[ServiceDependencyRecord, ...]: ...
+
+    def insert_catalog_template(self, template: CatalogTemplateRecord) -> None: ...
+
+    def catalog_template(
+        self, template_id: str, version: str | None = None
+    ) -> CatalogTemplateRecord | None: ...
+
+    def list_catalog_templates(
+        self, category: str | None = None, include_deprecated: bool = False
+    ) -> tuple[CatalogTemplateRecord, ...]: ...
+
+    def insert_preview_environment(self, preview: PreviewEnvironmentRecord) -> None: ...
+
+    def update_preview_environment_status(
+        self, preview_id: str, status: str, destroyed_at: datetime | None = None
+    ) -> PreviewEnvironmentRecord | None: ...
+
+    def preview_environment(self, preview_id: str) -> PreviewEnvironmentRecord | None: ...
+
+    def list_preview_environments(
+        self, application_id: UUID | None = None, status: str | None = None
+    ) -> tuple[PreviewEnvironmentRecord, ...]: ...
+
+    def expired_preview_environments(self, now: datetime) -> tuple[PreviewEnvironmentRecord, ...]: ...
+
+    def insert_resource_request(self, request: ResourceRequestRecord) -> None: ...
+
+    def update_resource_request(
+        self,
+        request_id: UUID,
+        *,
+        status: str,
+        status_reason: str | None = None,
+        provider: str | None = None,
+        outputs: dict[str, Any] | None = None,
+        approved_by: str | None = None,
+    ) -> ResourceRequestRecord | None: ...
+
+    def resource_request(self, request_id: UUID) -> ResourceRequestRecord | None: ...
+
+    def list_resource_requests(
+        self,
+        application_id: UUID | None = None,
+        team_id: str | None = None,
+        environment: str | None = None,
+        status: str | None = None,
+        limit: int = 50,
+        cursor: str | None = None,
+    ) -> tuple[tuple[ResourceRequestRecord, ...], str | None, bool]: ...
+
 

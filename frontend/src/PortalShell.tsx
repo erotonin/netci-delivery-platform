@@ -1,7 +1,7 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import {
   Activity, Bell, Box, CheckCircle2, ChevronDown, ChevronRight, Clock3,
-  Gauge, Grid2X2, Layers3, LogOut, Menu, Search, Server, Settings,
+  Compass, Gauge, Grid2X2, Layers3, LogOut, Menu, Search, Server, Settings,
   ShieldAlert, X,
 } from 'lucide-react'
 import { listSystems } from './api/netciClient'
@@ -102,6 +102,7 @@ function Sidebar({ page, systemId, moduleId, moduleLinks, navigationSystems, ses
         <span className="nav-label">General</span>
         <button aria-current={page === 'dashboard' ? 'page' : undefined} className={page === 'dashboard' ? 'nav-item active' : 'nav-item'} onClick={() => navigate('dashboard')}><Grid2X2 size={17} />Dashboard</button>
         <button aria-current={page === 'systems' ? 'page' : undefined} className={page === 'systems' ? 'nav-item active' : 'nav-item'} onClick={() => navigate('systems')}><Layers3 size={17} />Systems</button>
+        <button aria-current={page === 'catalog' ? 'page' : undefined} className={page === 'catalog' ? 'nav-item active' : 'nav-item'} onClick={() => navigate('catalog')}><Compass size={17} />Service Catalog</button>
         <button aria-current={page === 'servers' ? 'page' : undefined} className={page === 'servers' ? 'nav-item active' : 'nav-item'} onClick={() => navigate('servers')}><Server size={17} />Servers</button>
         <span className="nav-label nav-label-spaced">Systems</span>
         {navigationSystems.map((system) => <button key={system.id} className="nav-item system-link" onClick={() => navigate('system', { systemId: system.id })}><i className={`system-health health-${systemTone[system.status] ?? 'gray'}`} />{system.id}</button>)}
@@ -129,10 +130,12 @@ function TopBar({ page, systemId, moduleId, moduleLinks, navigationSystems, sess
   const [query, setQuery] = useState('')
   const [searchOpen, setSearchOpen] = useState(false)
   const moduleName = moduleLinks.find((item) => item.id === moduleId)?.name ?? navigationSystems.flatMap((system) => system.modules).find((item) => item.id === moduleId)?.name
-  const labels: Partial<Record<PageId, string>> = { dashboard: 'Dashboard', systems: 'All Systems', servers: 'Servers', system: 'Overview', requests: 'Production Requests', module: moduleName, 'new-module': 'New Module' }
+  const labels: Partial<Record<PageId, string>> = { dashboard: 'Dashboard', systems: 'All Systems', servers: 'Servers', catalog: 'Service Catalog', system: 'Overview', requests: 'Production Requests', module: moduleName, 'new-module': 'New Module' }
   const crumbs = ['system', 'requests', 'module', 'new-module'].includes(page) ? ['Systems', systemId, labels[page]] : [labels[page]]
   const searchItems = [
     { key: 'dashboard', label: 'Dashboard', detail: 'General', action: () => navigate('dashboard') },
+    { key: 'systems', label: 'Systems', detail: 'General', action: () => navigate('systems') },
+    { key: 'catalog', label: 'Service Catalog', detail: 'Catalog & Golden Paths', action: () => navigate('catalog') },
     { key: 'servers', label: 'Servers', detail: 'Infrastructure', action: () => navigate('servers') },
     ...navigationSystems.flatMap((system) => [
       { key: `system-${system.id}`, label: system.id, detail: 'System', action: () => navigate('system', { systemId: system.id }) },

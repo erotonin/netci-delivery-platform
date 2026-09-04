@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { RefreshCw, WifiOff } from 'lucide-react'
 import { createModule, getPortalDashboard, setAuthToken, setUnauthenticatedHandler, type Runtime } from './api/netciClient'
 import { DashboardPage, ServersPage, SystemPage, SystemsPage } from './GeneralPages'
+import { CatalogPage } from './CatalogPage'
 import { ErrorBoundary } from './AsyncState'
 import { LoginPage, type AuthSession } from './LoginPage'
 import { ModulePage } from './ModulePage'
@@ -48,12 +49,14 @@ function readRoute(): RouteState {
   if (parts[0] === 'systems' && parts[1] && parts[2] === 'new-module') return { page: 'new-module', systemId: parts[1], moduleId: '', settingsOpen: false }
   if (parts[0] === 'systems' && parts[1]) return { page: 'system', systemId: parts[1], moduleId: '', settingsOpen: false }
   if (parts[0] === 'systems') return { page: 'systems', systemId: '', moduleId: '', settingsOpen: false }
+  if (parts[0] === 'catalog') return { page: 'catalog', systemId: '', moduleId: '', settingsOpen: false }
   if (parts[0] === 'servers') return { page: 'servers', systemId: '', moduleId: '', settingsOpen: false }
   return { page: 'dashboard', systemId: '', moduleId: '', settingsOpen: false }
 }
 
 function routePath(route: RouteState): string {
   if (route.page === 'systems') return '/systems'
+  if (route.page === 'catalog') return '/catalog'
   if (route.page === 'servers') return '/servers'
   if (route.page === 'system') return `/systems/${route.systemId}`
   if (route.page === 'requests') return `/systems/${route.systemId}/requests`
@@ -102,6 +105,7 @@ function PortalApp({ session, onLogout }: { session: AuthSession; onLogout: () =
     {settingsOpen ? <ModuleSettings systemId={systemId} moduleId={moduleId} onClose={() => moveTo({ ...route, settingsOpen: false })} onDeleted={() => navigate('system', { systemId })} /> : <>
       {page === 'dashboard' && <DashboardPage navigate={navigate} />}
       {page === 'systems' && <SystemsPage navigate={navigate} />}
+      {page === 'catalog' && <CatalogPage session={session} navigate={navigate} />}
       {page === 'servers' && <ServersPage />}
       {page === 'system' && <SystemPage systemId={systemId} navigate={navigate} />}
       {page === 'requests' && <ProductionRequestsPage systemId={systemId} />}

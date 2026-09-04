@@ -47,12 +47,17 @@ from ..persistence import (
 )
 from .records import (
     BreakGlassRecord,
+    CatalogServiceRecord,
+    CatalogTemplateRecord,
     DeploymentLease,
     ModuleRow,
     PolicyDecisionRecord,
+    PreviewEnvironmentRecord,
     RequestRow,
     ResourceQuotaRecord,
+    ResourceRequestRecord,
     SecurityExceptionRecord,
+    ServiceDependencyRecord,
     SystemRow,
     VersionRow,
 )
@@ -87,6 +92,11 @@ class _State:
     security_exceptions: dict[UUID, SecurityExceptionRecord] = field(default_factory=dict)
     break_glass_requests: dict[UUID, BreakGlassRecord] = field(default_factory=dict)
     resource_quotas: dict[tuple[str, str], ResourceQuotaRecord] = field(default_factory=dict)
+    catalog_services: dict[str, CatalogServiceRecord] = field(default_factory=dict)
+    service_dependencies: dict[UUID, ServiceDependencyRecord] = field(default_factory=dict)
+    catalog_templates: dict[tuple[str, str], CatalogTemplateRecord] = field(default_factory=dict)
+    preview_environments: dict[str, PreviewEnvironmentRecord] = field(default_factory=dict)
+    resource_requests: dict[UUID, ResourceRequestRecord] = field(default_factory=dict)
 
     def copy(self) -> "_State":
         return _State(
@@ -117,6 +127,11 @@ class _State:
             security_exceptions=dict(self.security_exceptions),
             break_glass_requests=dict(self.break_glass_requests),
             resource_quotas=dict(self.resource_quotas),
+            catalog_services=dict(self.catalog_services),
+            service_dependencies=dict(self.service_dependencies),
+            catalog_templates=dict(self.catalog_templates),
+            preview_environments=dict(self.preview_environments),
+            resource_requests=dict(self.resource_requests),
         )
 
 
@@ -953,6 +968,183 @@ class InMemorySession:
 
     def set_resource_quota(self, record: ResourceQuotaRecord) -> None:
         self._state.resource_quotas[(record.scope, record.scope_id)] = record
+
+    # ----------------------------------------------- catalog & self-service
+
+    def insert_catalog_service(self, service: CatalogServiceRecord) -> None:
+        self._state.catalog_services[service.id] = service
+
+    def update_catalog_service(self, service: CatalogServiceRecord) -> None:
+        self._state.catalog_services[service.id] = service
+
+    def catalog_service(self, service_id: str) -> CatalogServiceRecord | None:
+        return self._state.catalog_services.get(service_id)
+
+    def list_catalog_services(
+        self,
+        owning_team: str | None = None,
+        tier: str | None = None,
+        lifecycle: str | None = None,
+        limit: int = 50,
+        cursor: str | None = None,
+    ) -> tuple[tuple[CatalogServiceRecord, ...], str | None, bool]:
+        records = list(self._state.catalog_services.values())
+        if owning_team:
+            records = [r for r in records if r.owning_team == owning_team]
+        if tier:
+            records = [r for r in records if r.tier == tier]
+        if lifecycle:
+            records = [r for r in records if r.lifecycle == lifecycle]
+        records.sort(key=lambda r: (r.created_at, r.id), reverse=True)
+        return self._paginate(records, limit, cursor, lambda r: (r.created_at, r.id))
+
+    def insert_service_dependency(self, dep: ServiceDependencyRecord) -> None:
+        for existing_id, existing in list(self._state.service_dependencies.items()):
+            if (
+                existing.source_service_id == dep.source_service_id
+                and existing.target_service_id == dep.target_service_id
+            ):
+                del self._state.service_dependencies[existing_id]
+        self._state.service_dependencies[dep.id] = dep
+
+    def delete_service_dependency(self, source_service_id: str, target_service_id: str) -> bool:
+        found = False
+        for existing_id, existing in list(self._state.service_dependencies.items()):
+            if (
+                existing.source_service_id == source_service_id
+                and existing.target_service_id == target_service_id
+            ):
+                del self._state.service_dependencies[existing_id]
+                found = True
+        return found
+
+    def service_dependencies(self, service_id: str) -> tuple[ServiceDependencyRecord, ...]:
+        matched = [
+            d
+            for d in self._state.service_dependencies.values()
+            if d.source_service_id == service_id or d.target_service_id == service_id
+        ]
+        matched.sort(key=lambda d: d.created_at)
+        return tuple(matched)
+
+    def insert_catalog_template(self, template: CatalogTemplateRecord) -> None:
+        self._state.catalog_templates[(template.id, template.version)] = template
+
+    def catalog_template(
+        self, template_id: str, version: str | None = None
+    ) -> CatalogTemplateRecord | None:
+        if version:
+            return self._state.catalog_templates.get((template_id, version))
+        matching = [
+            t for (tid, _), t in self._state.catalog_templates.items() if tid == template_id
+        ]
+        if not matching:
+            return None
+        matching.sort(key=lambda t: t.created_at, reverse=True)
+        return matching[0]
+
+    def list_catalog_templates(
+        self, category: str | None = None, include_deprecated: bool = False
+    ) -> tuple[CatalogTemplateRecord, ...]:
+        templates = list(self._state.catalog_templates.values())
+        if category:
+            templates = [t for t in templates if t.category == category]
+        if not include_deprecated:
+            templates = [t for t in templates if not t.is_deprecated]
+        templates.sort(key=lambda t: (t.id, t.created_at), reverse=True)
+        return tuple(templates)
+
+    def insert_preview_environment(self, preview: PreviewEnvironmentRecord) -> None:
+        self._state.preview_environments[preview.id] = preview
+
+    def update_preview_environment_status(
+        self, preview_id: str, status: str, destroyed_at: datetime | None = None
+    ) -> PreviewEnvironmentRecord | None:
+        current = self._state.preview_environments.get(preview_id)
+        if not current:
+            return None
+        updated = replace(
+            current,
+            status=status,
+            destroyed_at=destroyed_at if destroyed_at is not None else current.destroyed_at,
+        )
+        self._state.preview_environments[preview_id] = updated
+        return updated
+
+    def preview_environment(self, preview_id: str) -> PreviewEnvironmentRecord | None:
+        return self._state.preview_environments.get(preview_id)
+
+    def list_preview_environments(
+        self, application_id: UUID | None = None, status: str | None = None
+    ) -> tuple[PreviewEnvironmentRecord, ...]:
+        previews = list(self._state.preview_environments.values())
+        if application_id:
+            previews = [p for p in previews if p.application_id == application_id]
+        if status:
+            previews = [p for p in previews if p.status == status]
+        previews.sort(key=lambda p: p.created_at, reverse=True)
+        return tuple(previews)
+
+    def expired_preview_environments(self, now: datetime) -> tuple[PreviewEnvironmentRecord, ...]:
+        expired = [
+            p
+            for p in self._state.preview_environments.values()
+            if p.status == "active" and p.expires_at <= now
+        ]
+        return tuple(expired)
+
+    def insert_resource_request(self, request: ResourceRequestRecord) -> None:
+        self._state.resource_requests[request.id] = request
+
+    def update_resource_request(
+        self,
+        request_id: UUID,
+        *,
+        status: str,
+        status_reason: str | None = None,
+        provider: str | None = None,
+        outputs: dict[str, Any] | None = None,
+        approved_by: str | None = None,
+    ) -> ResourceRequestRecord | None:
+        current = self._state.resource_requests.get(request_id)
+        if not current:
+            return None
+        updated = replace(
+            current,
+            status=status,
+            status_reason=status_reason if status_reason is not None else current.status_reason,
+            provider=provider if provider is not None else current.provider,
+            outputs=outputs if outputs is not None else current.outputs,
+            approved_by=approved_by if approved_by is not None else current.approved_by,
+            updated_at=datetime.now(timezone.utc),
+        )
+        self._state.resource_requests[request_id] = updated
+        return updated
+
+    def resource_request(self, request_id: UUID) -> ResourceRequestRecord | None:
+        return self._state.resource_requests.get(request_id)
+
+    def list_resource_requests(
+        self,
+        application_id: UUID | None = None,
+        team_id: str | None = None,
+        environment: str | None = None,
+        status: str | None = None,
+        limit: int = 50,
+        cursor: str | None = None,
+    ) -> tuple[tuple[ResourceRequestRecord, ...], str | None, bool]:
+        records = list(self._state.resource_requests.values())
+        if application_id:
+            records = [r for r in records if r.application_id == application_id]
+        if team_id:
+            records = [r for r in records if r.team_id == team_id]
+        if environment:
+            records = [r for r in records if r.environment == environment]
+        if status:
+            records = [r for r in records if r.status == status]
+        records.sort(key=lambda r: (r.created_at, r.id), reverse=True)
+        return self._paginate(records, limit, cursor, lambda r: (r.created_at, r.id))
+
 
 
 class InMemoryDatabase:

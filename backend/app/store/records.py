@@ -165,3 +165,83 @@ class ResourceQuotaRecord:
     max_production_requests_per_day: int = 20
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+@dataclass(frozen=True)
+class CatalogServiceRecord:
+    id: str
+    name: str
+    description: str
+    owning_team: str
+    tier: str = "tier-2"
+    lifecycle: str = "active"
+    repo_url: str = ""
+    docs_url: str = ""
+    metadata: dict[str, Any] = field(default_factory=dict)
+    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+@dataclass(frozen=True)
+class ServiceDependencyRecord:
+    id: UUID
+    source_service_id: str
+    target_service_id: str
+    dependency_type: str = "sync"
+    description: str = ""
+    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+@dataclass(frozen=True)
+class CatalogTemplateRecord:
+    id: str
+    version: str
+    name: str
+    description: str
+    category: str = "backend"
+    parameters_schema: dict[str, Any] = field(default_factory=dict)
+    pipeline_definition: dict[str, Any] = field(default_factory=dict)
+    is_deprecated: bool = False
+    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+@dataclass(frozen=True)
+class PreviewEnvironmentRecord:
+    id: str
+    application_id: UUID
+    pull_request_id: str
+    commit_sha: str
+    namespace: str
+    url: str
+    status: str = "pending"
+    ttl_seconds: int = 86400
+    expires_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    created_by: str = "system"
+    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    destroyed_at: datetime | None = None
+
+    def is_active(self, now: datetime) -> bool:
+        return self.status == "active" and self.expires_at > now and self.destroyed_at is None
+
+    def is_expired(self, now: datetime) -> bool:
+        return self.status == "active" and self.expires_at <= now
+
+
+@dataclass(frozen=True)
+class ResourceRequestRecord:
+    id: UUID
+    application_id: UUID
+    team_id: str
+    environment: str = "preview"
+    resource_type: str = "postgres_database"
+    spec: dict[str, Any] = field(default_factory=dict)
+    status: str = "pending_approval"
+    status_reason: str = ""
+    provider: str = "unconfigured"
+    outputs: dict[str, Any] = field(default_factory=dict)
+    requested_by: str = "developer"
+    approved_by: str | None = None
+    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+

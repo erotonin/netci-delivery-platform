@@ -917,3 +917,338 @@ export function setResourceQuota(
     body: JSON.stringify(payload),
   })
 }
+
+// ------------------------------------------------------------- Phase 12: Catalog & Self-Service
+
+export type CatalogService = {
+  serviceId: string
+  name: string
+  description: string
+  owningTeam: string
+  tier: string
+  lifecycle: string
+  repoUrl: string
+  docsUrl: string
+  metadata: Record<string, unknown>
+  createdAt: string
+  updatedAt: string
+}
+
+export type CatalogServiceCreate = {
+  serviceId: string
+  name: string
+  description?: string
+  owningTeam: string
+  tier?: string
+  lifecycle?: string
+  repoUrl?: string
+  docsUrl?: string
+  metadata?: Record<string, unknown>
+}
+
+export type CatalogServiceUpdate = {
+  name?: string | null
+  description?: string | null
+  owningTeam?: string | null
+  tier?: string | null
+  lifecycle?: string | null
+  repoUrl?: string | null
+  docsUrl?: string | null
+  metadata?: Record<string, unknown> | null
+}
+
+export type ServiceDependency = {
+  dependencyId: string
+  sourceServiceId: string
+  targetServiceId: string
+  dependencyType: string
+  description: string
+  createdAt: string
+}
+
+export type ServiceDependencyCreate = {
+  targetServiceId: string
+  dependencyType?: string
+  description?: string
+}
+
+export type ServiceDependencyGraph = {
+  serviceId: string
+  nodes: CatalogService[]
+  edges: {
+    source: string
+    target: string
+    dependencyType: string
+    description?: string
+  }[]
+  upstream: string[]
+  downstream: string[]
+  hasCycle: boolean
+  cycles: string[][]
+}
+
+export type CatalogTemplate = {
+  templateId: string
+  version: string
+  name: string
+  description: string
+  category: string
+  parametersSchema: Record<string, unknown>
+  pipelineDefinition: Record<string, unknown>
+  isDeprecated: boolean
+  createdAt: string
+  updatedAt: string
+}
+
+export type CatalogTemplateCreate = {
+  templateId: string
+  version: string
+  name: string
+  description?: string
+  category?: string
+  parametersSchema?: Record<string, unknown>
+  pipelineDefinition?: Record<string, unknown>
+  isDeprecated?: boolean
+}
+
+export type TemplateInstantiateRequest = {
+  version?: string | null
+  applicationName: string
+  owningTeam: string
+  parameters?: Record<string, unknown>
+}
+
+export type TemplateInstantiatedPlan = {
+  templateId: string
+  version: string
+  applicationName: string
+  owningTeam: string
+  runtime: string
+  stages: string[]
+  pipelineConfig: Record<string, unknown>
+  deploymentConfig: Record<string, unknown>
+}
+
+export type PreviewEnvironment = {
+  previewId: string
+  applicationId: string
+  pullRequestId: string
+  commitSha: string
+  namespace: string
+  url: string
+  status: string
+  ttlSeconds: number
+  expiresAt: string
+  createdBy: string
+  createdAt: string
+  destroyedAt?: string | null
+}
+
+export type PreviewEnvironmentCreate = {
+  applicationId: string
+  pullRequestId: string
+  commitSha: string
+  ttlSeconds?: number
+  createdBy?: string | null
+}
+
+export type ResourceRequest = {
+  requestId: string
+  applicationId: string
+  teamId: string
+  environment: string
+  resourceType: string
+  spec: Record<string, unknown>
+  status: string
+  statusReason: string
+  provider: string
+  outputs: Record<string, unknown>
+  requestedBy: string
+  approvedBy?: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+export type ResourceRequestCreate = {
+  applicationId: string
+  teamId: string
+  environment?: string
+  resourceType: string
+  spec?: Record<string, unknown>
+  requestedBy?: string | null
+}
+
+export function listCatalogServices(
+  team?: string,
+  tier?: string,
+  lifecycle?: string,
+  cursor?: string
+): Promise<{ items: CatalogService[]; nextCursor: string | null }> {
+  const q = new URLSearchParams()
+  if (team) q.set('team', team)
+  if (tier) q.set('tier', tier)
+  if (lifecycle) q.set('lifecycle', lifecycle)
+  if (cursor) q.set('cursor', cursor)
+  const qs = q.toString() ? `?${q.toString()}` : ''
+  return request<{ items: CatalogService[]; nextCursor: string | null }>(`/catalog/services${qs}`)
+}
+
+export function getCatalogService(serviceId: string): Promise<CatalogService> {
+  return request<CatalogService>(`/catalog/services/${encodeURIComponent(serviceId)}`)
+}
+
+export function registerCatalogService(payload: CatalogServiceCreate): Promise<CatalogService> {
+  return request<CatalogService>('/catalog/services', {
+    method: 'POST',
+    headers: { 'X-Correlation-Id': requestId() },
+    body: JSON.stringify(payload),
+  })
+}
+
+export function updateCatalogService(serviceId: string, payload: CatalogServiceUpdate): Promise<CatalogService> {
+  return request<CatalogService>(`/catalog/services/${encodeURIComponent(serviceId)}`, {
+    method: 'PATCH',
+    headers: { 'X-Correlation-Id': requestId() },
+    body: JSON.stringify(payload),
+  })
+}
+
+export function deleteCatalogService(serviceId: string): Promise<{ status: string; serviceId: string }> {
+  return request<{ status: string; serviceId: string }>(`/catalog/services/${encodeURIComponent(serviceId)}`, {
+    method: 'DELETE',
+    headers: { 'X-Correlation-Id': requestId() },
+  })
+}
+
+export function getServiceDependencies(serviceId: string): Promise<ServiceDependencyGraph> {
+  return request<ServiceDependencyGraph>(`/catalog/services/${encodeURIComponent(serviceId)}/dependencies`)
+}
+
+export function addServiceDependency(
+  serviceId: string,
+  payload: ServiceDependencyCreate
+): Promise<ServiceDependency> {
+  return request<ServiceDependency>(`/catalog/services/${encodeURIComponent(serviceId)}/dependencies`, {
+    method: 'POST',
+    headers: { 'X-Correlation-Id': requestId() },
+    body: JSON.stringify(payload),
+  })
+}
+
+export function removeServiceDependency(serviceId: string, targetServiceId: string): Promise<void> {
+  return request<void>(`/catalog/services/${encodeURIComponent(serviceId)}/dependencies/${encodeURIComponent(targetServiceId)}`, {
+    method: 'DELETE',
+    headers: { 'X-Correlation-Id': requestId() },
+  })
+}
+
+export function listCatalogTemplates(
+  category?: string,
+  includeDeprecated: boolean = false
+): Promise<{ items: CatalogTemplate[] }> {
+  const q = new URLSearchParams()
+  if (category) q.set('category', category)
+  if (includeDeprecated) q.set('includeDeprecated', 'true')
+  const qs = q.toString() ? `?${q.toString()}` : ''
+  return request<{ items: CatalogTemplate[] }>(`/catalog/templates${qs}`)
+}
+
+export function getCatalogTemplate(templateId: string, version?: string): Promise<CatalogTemplate> {
+  const q = version ? `?version=${encodeURIComponent(version)}` : ''
+  return request<CatalogTemplate>(`/catalog/templates/${encodeURIComponent(templateId)}${q}`)
+}
+
+export function registerCatalogTemplate(payload: CatalogTemplateCreate): Promise<CatalogTemplate> {
+  return request<CatalogTemplate>('/catalog/templates', {
+    method: 'POST',
+    headers: { 'X-Correlation-Id': requestId() },
+    body: JSON.stringify(payload),
+  })
+}
+
+export function instantiateCatalogTemplate(
+  templateId: string,
+  payload: TemplateInstantiateRequest
+): Promise<TemplateInstantiatedPlan> {
+  return request<TemplateInstantiatedPlan>(`/catalog/templates/${encodeURIComponent(templateId)}/instantiate`, {
+    method: 'POST',
+    headers: { 'X-Correlation-Id': requestId() },
+    body: JSON.stringify(payload),
+  })
+}
+
+export function listPreviewEnvironments(
+  applicationId?: string,
+  status?: string
+): Promise<{ items: PreviewEnvironment[]; count: number }> {
+  const q = new URLSearchParams()
+  if (applicationId) q.set('applicationId', applicationId)
+  if (status) q.set('status', status)
+  const qs = q.toString() ? `?${q.toString()}` : ''
+  return request<{ items: PreviewEnvironment[]; count: number }>(`/preview-environments${qs}`)
+}
+
+export function getPreviewEnvironment(previewId: string): Promise<PreviewEnvironment> {
+  return request<PreviewEnvironment>(`/preview-environments/${encodeURIComponent(previewId)}`)
+}
+
+export function createPreviewEnvironment(payload: PreviewEnvironmentCreate): Promise<PreviewEnvironment> {
+  return request<PreviewEnvironment>('/preview-environments', {
+    method: 'POST',
+    headers: { 'X-Correlation-Id': requestId() },
+    body: JSON.stringify(payload),
+  })
+}
+
+export function teardownPreviewEnvironment(previewId: string): Promise<PreviewEnvironment> {
+  return request<PreviewEnvironment>(`/preview-environments/${encodeURIComponent(previewId)}/teardown`, {
+    method: 'POST',
+    headers: { 'X-Correlation-Id': requestId() },
+  })
+}
+
+export function listSelfServiceResources(
+  applicationId?: string,
+  teamId?: string,
+  environment?: string,
+  status?: string
+): Promise<{ items: ResourceRequest[]; count: number }> {
+  const q = new URLSearchParams()
+  if (applicationId) q.set('applicationId', applicationId)
+  if (teamId) q.set('teamId', teamId)
+  if (environment) q.set('environment', environment)
+  if (status) q.set('status', status)
+  const qs = q.toString() ? `?${q.toString()}` : ''
+  return request<{ items: ResourceRequest[]; count: number }>(`/self-service/resources${qs}`)
+}
+
+export function getResourceRequest(requestIdParam: string): Promise<ResourceRequest> {
+  return request<ResourceRequest>(`/self-service/resources/${encodeURIComponent(requestIdParam)}`)
+}
+
+export function requestSelfServiceResource(payload: ResourceRequestCreate): Promise<ResourceRequest> {
+  return request<ResourceRequest>('/self-service/resources', {
+    method: 'POST',
+    headers: { 'X-Correlation-Id': requestId() },
+    body: JSON.stringify(payload),
+  })
+}
+
+export function approveSelfServiceResource(
+  requestIdParam: string,
+  payload?: { approvedBy?: string }
+): Promise<ResourceRequest> {
+  return request<ResourceRequest>(`/self-service/resources/${encodeURIComponent(requestIdParam)}/approve`, {
+    method: 'POST',
+    headers: { 'X-Correlation-Id': requestId() },
+    body: payload ? JSON.stringify(payload) : undefined,
+  })
+}
+
+export function deprovisionSelfServiceResource(requestIdParam: string): Promise<ResourceRequest> {
+  return request<ResourceRequest>(`/self-service/resources/${encodeURIComponent(requestIdParam)}/deprovision`, {
+    method: 'POST',
+    headers: { 'X-Correlation-Id': requestId() },
+  })
+}
+

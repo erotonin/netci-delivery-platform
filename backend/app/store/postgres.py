@@ -50,13 +50,18 @@ from ..persistence import (
 )
 from .records import (
     BreakGlassRecord,
+    CatalogServiceRecord,
+    CatalogTemplateRecord,
     DeploymentLease,
     ModuleRow,
     PolicyDecisionRecord,
+    PreviewEnvironmentRecord,
     RequestModuleRow,
     RequestRow,
     ResourceQuotaRecord,
+    ResourceRequestRecord,
     SecurityExceptionRecord,
+    ServiceDependencyRecord,
     SystemRow,
     VersionRow,
 )
@@ -136,6 +141,21 @@ BREAK_GLASS_COLUMNS = (
 )
 RESOURCE_QUOTA_COLUMNS = (
     "id, scope, scope_id, max_concurrent_pipelines, max_concurrent_deployments, max_production_requests_per_day, created_at, updated_at"
+)
+CATALOG_SERVICE_COLUMNS = (
+    "id, name, description, owning_team, tier, lifecycle, repo_url, docs_url, metadata, created_at, updated_at"
+)
+SERVICE_DEPENDENCY_COLUMNS = (
+    "id, source_service_id, target_service_id, dependency_type, description, created_at"
+)
+CATALOG_TEMPLATE_COLUMNS = (
+    "id, version, name, description, category, parameters_schema, pipeline_definition, is_deprecated, created_at, updated_at"
+)
+PREVIEW_ENVIRONMENT_COLUMNS = (
+    "id, application_id, pull_request_id, commit_sha, namespace, url, status, ttl_seconds, expires_at, created_by, created_at, destroyed_at"
+)
+RESOURCE_REQUEST_COLUMNS = (
+    "id, application_id, team_id, environment, resource_type, spec, status, status_reason, provider, outputs, requested_by, approved_by, created_at, updated_at"
 )
 
 
@@ -234,6 +254,85 @@ def _resource_quota(row: dict[str, Any]) -> ResourceQuotaRecord:
         created_at=row["created_at"],
         updated_at=row["updated_at"],
     )
+
+
+def _catalog_service(row: dict[str, Any]) -> CatalogServiceRecord:
+    return CatalogServiceRecord(
+        id=row["id"],
+        name=row["name"],
+        description=row["description"] or "",
+        owning_team=row["owning_team"],
+        tier=row["tier"],
+        lifecycle=row["lifecycle"],
+        repo_url=row["repo_url"] or "",
+        docs_url=row["docs_url"] or "",
+        metadata=dict(row["metadata"] or {}),
+        created_at=row["created_at"],
+        updated_at=row["updated_at"],
+    )
+
+
+def _service_dependency(row: dict[str, Any]) -> ServiceDependencyRecord:
+    return ServiceDependencyRecord(
+        id=row["id"],
+        source_service_id=row["source_service_id"],
+        target_service_id=row["target_service_id"],
+        dependency_type=row["dependency_type"],
+        description=row["description"] or "",
+        created_at=row["created_at"],
+    )
+
+
+def _catalog_template(row: dict[str, Any]) -> CatalogTemplateRecord:
+    return CatalogTemplateRecord(
+        id=row["id"],
+        version=row["version"],
+        name=row["name"],
+        description=row["description"] or "",
+        category=row["category"],
+        parameters_schema=dict(row["parameters_schema"] or {}),
+        pipeline_definition=dict(row["pipeline_definition"] or {}),
+        is_deprecated=bool(row["is_deprecated"]),
+        created_at=row["created_at"],
+        updated_at=row["updated_at"],
+    )
+
+
+def _preview_environment(row: dict[str, Any]) -> PreviewEnvironmentRecord:
+    return PreviewEnvironmentRecord(
+        id=row["id"],
+        application_id=row["application_id"],
+        pull_request_id=row["pull_request_id"],
+        commit_sha=row["commit_sha"],
+        namespace=row["namespace"],
+        url=row["url"],
+        status=row["status"],
+        ttl_seconds=int(row["ttl_seconds"]),
+        expires_at=row["expires_at"],
+        created_by=row["created_by"],
+        created_at=row["created_at"],
+        destroyed_at=row["destroyed_at"],
+    )
+
+
+def _resource_request(row: dict[str, Any]) -> ResourceRequestRecord:
+    return ResourceRequestRecord(
+        id=row["id"],
+        application_id=row["application_id"],
+        team_id=row["team_id"],
+        environment=row["environment"],
+        resource_type=row["resource_type"],
+        spec=dict(row["spec"] or {}),
+        status=row["status"],
+        status_reason=row["status_reason"] or "",
+        provider=row["provider"],
+        outputs=dict(row["outputs"] or {}),
+        requested_by=row["requested_by"],
+        approved_by=row["approved_by"],
+        created_at=row["created_at"],
+        updated_at=row["updated_at"],
+    )
+
 
 
 
@@ -2132,6 +2231,404 @@ class PostgresSession:
                 record.updated_at,
             ),
         )
+
+    # ----------------------------------------------- catalog & self-service
+
+    def insert_catalog_service(self, service: CatalogServiceRecord) -> None:
+        self._cursor.execute(
+            """
+            INSERT INTO catalog_services (
+                id, name, description, owning_team, tier, lifecycle, repo_url, docs_url, metadata, created_at, updated_at
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s)
+            """,
+            (
+                service.id,
+                service.name,
+                service.description,
+                service.owning_team,
+                service.tier,
+                service.lifecycle,
+                service.repo_url,
+                service.docs_url,
+                json.dumps(service.metadata, default=str),
+                service.created_at,
+                service.updated_at,
+            ),
+        )
+
+    def update_catalog_service(self, service: CatalogServiceRecord) -> None:
+        self._cursor.execute(
+            """
+            UPDATE catalog_services
+               SET name = %s, description = %s, owning_team = %s, tier = %s, lifecycle = %s,
+                   repo_url = %s, docs_url = %s, metadata = %s::jsonb, updated_at = %s
+             WHERE id = %s
+            """,
+            (
+                service.name,
+                service.description,
+                service.owning_team,
+                service.tier,
+                service.lifecycle,
+                service.repo_url,
+                service.docs_url,
+                json.dumps(service.metadata, default=str),
+                service.updated_at,
+                service.id,
+            ),
+        )
+
+    def catalog_service(self, service_id: str) -> CatalogServiceRecord | None:
+        self._cursor.execute(
+            f"SELECT {CATALOG_SERVICE_COLUMNS} FROM catalog_services WHERE id = %s",
+            (service_id,),
+        )
+        row = self._cursor.fetchone()
+        return _catalog_service(row) if row else None
+
+    def list_catalog_services(
+        self,
+        owning_team: str | None = None,
+        tier: str | None = None,
+        lifecycle: str | None = None,
+        limit: int = 50,
+        cursor: str | None = None,
+    ) -> tuple[tuple[CatalogServiceRecord, ...], str | None, bool]:
+        limit = max(1, min(limit, 200))
+        where_clauses: list[str] = []
+        params: list[Any] = []
+
+        if owning_team:
+            where_clauses.append("owning_team = %s")
+            params.append(owning_team)
+        if tier:
+            where_clauses.append("tier = %s")
+            params.append(tier)
+        if lifecycle:
+            where_clauses.append("lifecycle = %s")
+            params.append(lifecycle)
+
+        decoded = decode_cursor(cursor)
+        if decoded:
+            c_ts, c_id = decoded
+            where_clauses.append("(created_at, id) < (%s, %s)")
+            params.extend([c_ts, c_id])
+
+        where_sql = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
+        query = f"""
+            SELECT {CATALOG_SERVICE_COLUMNS}
+              FROM catalog_services
+             {where_sql}
+             ORDER BY created_at DESC, id DESC
+             LIMIT %s
+        """
+        params.append(limit + 1)
+        self._cursor.execute(query, tuple(params))
+        rows = self._cursor.fetchall()
+        has_more = len(rows) > limit
+        selected_rows = rows[:limit]
+        items = tuple(_catalog_service(r) for r in selected_rows)
+        next_cursor = None
+        if has_more and selected_rows:
+            last = selected_rows[-1]
+            next_cursor = encode_cursor(last["created_at"], last["id"])
+        return items, next_cursor, has_more
+
+    def insert_service_dependency(self, dep: ServiceDependencyRecord) -> None:
+        self._cursor.execute(
+            """
+            INSERT INTO catalog_service_dependencies (
+                id, source_service_id, target_service_id, dependency_type, description, created_at
+            ) VALUES (%s, %s, %s, %s, %s, %s)
+            ON CONFLICT (source_service_id, target_service_id) DO UPDATE SET
+                dependency_type = EXCLUDED.dependency_type,
+                description = EXCLUDED.description
+            """,
+            (
+                dep.id,
+                dep.source_service_id,
+                dep.target_service_id,
+                dep.dependency_type,
+                dep.description,
+                dep.created_at,
+            ),
+        )
+
+    def delete_service_dependency(self, source_service_id: str, target_service_id: str) -> bool:
+        self._cursor.execute(
+            "DELETE FROM catalog_service_dependencies WHERE source_service_id = %s AND target_service_id = %s",
+            (source_service_id, target_service_id),
+        )
+        return self._cursor.rowcount > 0
+
+    def service_dependencies(self, service_id: str) -> tuple[ServiceDependencyRecord, ...]:
+        self._cursor.execute(
+            f"SELECT {SERVICE_DEPENDENCY_COLUMNS} FROM catalog_service_dependencies WHERE source_service_id = %s OR target_service_id = %s ORDER BY created_at",
+            (service_id, service_id),
+        )
+        return tuple(_service_dependency(row) for row in self._cursor.fetchall())
+
+    def insert_catalog_template(self, template: CatalogTemplateRecord) -> None:
+        self._cursor.execute(
+            """
+            INSERT INTO catalog_templates (
+                id, version, name, description, category, parameters_schema, pipeline_definition,
+                is_deprecated, created_at, updated_at
+            ) VALUES (%s, %s, %s, %s, %s, %s::jsonb, %s::jsonb, %s, %s, %s)
+            ON CONFLICT (id, version) DO UPDATE SET
+                name = EXCLUDED.name,
+                description = EXCLUDED.description,
+                category = EXCLUDED.category,
+                parameters_schema = EXCLUDED.parameters_schema,
+                pipeline_definition = EXCLUDED.pipeline_definition,
+                is_deprecated = EXCLUDED.is_deprecated,
+                updated_at = EXCLUDED.updated_at
+            """,
+            (
+                template.id,
+                template.version,
+                template.name,
+                template.description,
+                template.category,
+                json.dumps(template.parameters_schema, default=str),
+                json.dumps(template.pipeline_definition, default=str),
+                template.is_deprecated,
+                template.created_at,
+                template.updated_at,
+            ),
+        )
+
+    def catalog_template(
+        self, template_id: str, version: str | None = None
+    ) -> CatalogTemplateRecord | None:
+        if version:
+            self._cursor.execute(
+                f"SELECT {CATALOG_TEMPLATE_COLUMNS} FROM catalog_templates WHERE id = %s AND version = %s",
+                (template_id, version),
+            )
+        else:
+            self._cursor.execute(
+                f"SELECT {CATALOG_TEMPLATE_COLUMNS} FROM catalog_templates WHERE id = %s ORDER BY created_at DESC LIMIT 1",
+                (template_id,),
+            )
+        row = self._cursor.fetchone()
+        return _catalog_template(row) if row else None
+
+    def list_catalog_templates(
+        self, category: str | None = None, include_deprecated: bool = False
+    ) -> tuple[CatalogTemplateRecord, ...]:
+        where_clauses: list[str] = []
+        params: list[Any] = []
+        if category:
+            where_clauses.append("category = %s")
+            params.append(category)
+        if not include_deprecated:
+            where_clauses.append("is_deprecated = FALSE")
+
+        where_sql = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
+        self._cursor.execute(
+            f"SELECT {CATALOG_TEMPLATE_COLUMNS} FROM catalog_templates {where_sql} ORDER BY id, created_at DESC",
+            tuple(params),
+        )
+        return tuple(_catalog_template(row) for row in self._cursor.fetchall())
+
+    def insert_preview_environment(self, preview: PreviewEnvironmentRecord) -> None:
+        self._cursor.execute(
+            """
+            INSERT INTO preview_environments (
+                id, application_id, pull_request_id, commit_sha, namespace, url, status,
+                ttl_seconds, expires_at, created_by, created_at, destroyed_at
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """,
+            (
+                preview.id,
+                preview.application_id,
+                preview.pull_request_id,
+                preview.commit_sha,
+                preview.namespace,
+                preview.url,
+                preview.status,
+                preview.ttl_seconds,
+                preview.expires_at,
+                preview.created_by,
+                preview.created_at,
+                preview.destroyed_at,
+            ),
+        )
+
+    def update_preview_environment_status(
+        self, preview_id: str, status: str, destroyed_at: datetime | None = None
+    ) -> PreviewEnvironmentRecord | None:
+        self._cursor.execute(
+            f"""
+            UPDATE preview_environments
+               SET status = %s, destroyed_at = COALESCE(%s, destroyed_at)
+             WHERE id = %s
+            RETURNING {PREVIEW_ENVIRONMENT_COLUMNS}
+            """,
+            (status, destroyed_at, preview_id),
+        )
+        row = self._cursor.fetchone()
+        return _preview_environment(row) if row else None
+
+    def preview_environment(self, preview_id: str) -> PreviewEnvironmentRecord | None:
+        self._cursor.execute(
+            f"SELECT {PREVIEW_ENVIRONMENT_COLUMNS} FROM preview_environments WHERE id = %s",
+            (preview_id,),
+        )
+        row = self._cursor.fetchone()
+        return _preview_environment(row) if row else None
+
+    def list_preview_environments(
+        self, application_id: UUID | None = None, status: str | None = None
+    ) -> tuple[PreviewEnvironmentRecord, ...]:
+        where_clauses: list[str] = []
+        params: list[Any] = []
+        if application_id:
+            where_clauses.append("application_id = %s")
+            params.append(application_id)
+        if status:
+            where_clauses.append("status = %s")
+            params.append(status)
+
+        where_sql = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
+        self._cursor.execute(
+            f"SELECT {PREVIEW_ENVIRONMENT_COLUMNS} FROM preview_environments {where_sql} ORDER BY created_at DESC",
+            tuple(params),
+        )
+        return tuple(_preview_environment(row) for row in self._cursor.fetchall())
+
+    def expired_preview_environments(self, now: datetime) -> tuple[PreviewEnvironmentRecord, ...]:
+        self._cursor.execute(
+            f"SELECT {PREVIEW_ENVIRONMENT_COLUMNS} FROM preview_environments WHERE status = 'active' AND expires_at <= %s",
+            (now,),
+        )
+        return tuple(_preview_environment(row) for row in self._cursor.fetchall())
+
+    def insert_resource_request(self, request: ResourceRequestRecord) -> None:
+        self._cursor.execute(
+            """
+            INSERT INTO resource_requests (
+                id, application_id, team_id, environment, resource_type, spec, status,
+                status_reason, provider, outputs, requested_by, approved_by, created_at, updated_at
+            ) VALUES (%s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s::jsonb, %s, %s, %s, %s)
+            """,
+            (
+                request.id,
+                request.application_id,
+                request.team_id,
+                request.environment,
+                request.resource_type,
+                json.dumps(request.spec, default=str),
+                request.status,
+                request.status_reason,
+                request.provider,
+                json.dumps(request.outputs, default=str),
+                request.requested_by,
+                request.approved_by,
+                request.created_at,
+                request.updated_at,
+            ),
+        )
+
+    def update_resource_request(
+        self,
+        request_id: UUID,
+        *,
+        status: str,
+        status_reason: str | None = None,
+        provider: str | None = None,
+        outputs: dict[str, Any] | None = None,
+        approved_by: str | None = None,
+    ) -> ResourceRequestRecord | None:
+        updates = ["status = %s", "updated_at = NOW()"]
+        params: list[Any] = [status]
+        if status_reason is not None:
+            updates.append("status_reason = %s")
+            params.append(status_reason)
+        if provider is not None:
+            updates.append("provider = %s")
+            params.append(provider)
+        if outputs is not None:
+            updates.append("outputs = %s::jsonb")
+            params.append(json.dumps(outputs, default=str))
+        if approved_by is not None:
+            updates.append("approved_by = %s")
+            params.append(approved_by)
+        params.append(request_id)
+
+        self._cursor.execute(
+            f"""
+            UPDATE resource_requests
+               SET {', '.join(updates)}
+             WHERE id = %s
+            RETURNING {RESOURCE_REQUEST_COLUMNS}
+            """,
+            tuple(params),
+        )
+        row = self._cursor.fetchone()
+        return _resource_request(row) if row else None
+
+    def resource_request(self, request_id: UUID) -> ResourceRequestRecord | None:
+        self._cursor.execute(
+            f"SELECT {RESOURCE_REQUEST_COLUMNS} FROM resource_requests WHERE id = %s",
+            (request_id,),
+        )
+        row = self._cursor.fetchone()
+        return _resource_request(row) if row else None
+
+    def list_resource_requests(
+        self,
+        application_id: UUID | None = None,
+        team_id: str | None = None,
+        environment: str | None = None,
+        status: str | None = None,
+        limit: int = 50,
+        cursor: str | None = None,
+    ) -> tuple[tuple[ResourceRequestRecord, ...], str | None, bool]:
+        limit = max(1, min(limit, 200))
+        where_clauses: list[str] = []
+        params: list[Any] = []
+
+        if application_id:
+            where_clauses.append("application_id = %s")
+            params.append(application_id)
+        if team_id:
+            where_clauses.append("team_id = %s")
+            params.append(team_id)
+        if environment:
+            where_clauses.append("environment = %s")
+            params.append(environment)
+        if status:
+            where_clauses.append("status = %s")
+            params.append(status)
+
+        decoded = decode_cursor(cursor)
+        if decoded:
+            c_ts, c_id = decoded
+            where_clauses.append("(created_at, id) < (%s, %s)")
+            params.extend([c_ts, c_id])
+
+        where_sql = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
+        query = f"""
+            SELECT {RESOURCE_REQUEST_COLUMNS}
+              FROM resource_requests
+             {where_sql}
+             ORDER BY created_at DESC, id DESC
+             LIMIT %s
+        """
+        params.append(limit + 1)
+        self._cursor.execute(query, tuple(params))
+        rows = self._cursor.fetchall()
+        has_more = len(rows) > limit
+        selected_rows = rows[:limit]
+        items = tuple(_resource_request(r) for r in selected_rows)
+        next_cursor = None
+        if has_more and selected_rows:
+            last = selected_rows[-1]
+            next_cursor = encode_cursor(last["created_at"], last["id"])
+        return items, next_cursor, has_more
+
 
 
 class PostgresConnectionPool:

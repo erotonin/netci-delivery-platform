@@ -5,6 +5,32 @@ Changelog and releases use Semantic Versioning once the project reaches 1.0.0.
 
 ## [Unreleased]
 
+### Added - Phase 12 (P2.3): Service Catalog, Golden Path Templates, Ephemeral Preview Environments & Self-Service Developer Workflows
+- **Canonical PostgreSQL Schema Migration 0018 (`backend/migrations/0018_service_catalog_and_self_service.sql`)**:
+  - `catalog_services`: Authoritative software entities with tier (`tier-1`, `tier-2`, `tier-3`), lifecycle state (`active`, `deprecated`, `decommissioned`), owning team, repo/docs URLs, and metadata.
+  - `catalog_service_dependencies`: Directional upstream/downstream dependency declarations with synchronous, asynchronous, and database dependency types.
+  - `catalog_templates`: Versioned Golden Path pipeline templates with category, parameters schema, and pipeline definitions.
+  - `preview_environments`: Isolated ephemeral pull-request environments with namespace synthesis, URL generation, TTL boundaries (1h to 72h), and status tracking (`active`, `expired`, `destroyed`).
+  - `resource_requests`: Self-service cloud infrastructure requests with dual-control governance, environment boundaries, and fail-closed provider integration.
+- **Service Catalog & Dependency Graph (`backend/app/catalog/services.py`)**:
+  - `CatalogServiceManager`: Tier and lifecycle validation, ownership enforcement, and Depth-First Search (DFS) cycle detection to prevent circular dependency deadlocks.
+- **Golden Path Pipeline Template Engine (`backend/app/catalog/templates.py`)**:
+  - `PipelineTemplateEngine`: Semver compliance validation, JSON schema parameter checking, parameter interpolation into pipeline commands (`${parameters.KEY}`), and pre-seeded production templates (`fastapi-service`, `go-microservice`, `react-spa`).
+- **Ephemeral Preview Environment Manager (`backend/app/catalog/previews.py`)**:
+  - `PreviewEnvironmentManager`: RFC 1123 compliant namespace generation, preview ingress URLs, TTL lease validation, and automated reconciliation.
+- **Governed Self-Service Infrastructure Manager (`backend/app/catalog/resources.py`)**:
+  - `SelfServiceResourceManager`: Fail-closed provider contract (`provider_not_configured` when external provider driver is not registered), credential redaction in outputs, and strict separation-of-duties dual control (`approved_by != requested_by` on staging/production).
+- **REST Endpoints & Contract Parity (`backend/app/main.py`, `api/openapi.yaml`)**:
+  - 21 new endpoints spanning catalog CRUD, dependency graph inspection, template instantiation, preview lifecycle, and self-service resources.
+  - 100% OpenAPI 3.1.0 contract parity verified in `tests/contract/test_openapi.py`.
+- **Frontend Portal Integration (`frontend/src/CatalogPage.tsx`, `frontend/src/api/netciClient.ts`)**:
+  - Interactive multi-tab developer portal view for Services, Golden Path Templates, Ephemeral Previews, and Self-Service Resources.
+  - 1-click template instantiation modal generating complete pipeline and deployment configuration plans.
+  - Preview environment list with real-time TTL expiration counters, namespace links, and teardown actions.
+  - Resource request dashboard with status badges, status reasons, and dual-control approval enforcement.
+  - Full Vitest test suite and TypeScript production build pass.
+- See ADR-025.
+
 ### Added - Phase 11 (P2.2): Enterprise Governance, Policy Engine, Security Exceptions, Break-Glass Dual Control, Quotas & Kubernetes Admission Control
 - **Database Schema Migration 0017 (`backend/migrations/0017_policy_engine_governance_and_admission.sql`)**:
   - `policy_decisions`: Durable records of all evaluated rules, checks, risk scores, and reasons with target/cursor indexing.

@@ -454,7 +454,7 @@ def restore(arguments: argparse.Namespace) -> int:
     if not arguments.yes:
         confirmation = input(f"This overwrites {parts['database']} at {parts['host']}. Type the database name to continue: ")
         if confirmation != parts["database"]:
-            fail(f"confirmation mismatch ({confirmation!r} != {parts['database']!r}); aborting")
+            fail(f"confirmation mismatch ({confirmation!r} != {parts['database']!r}); aborting; nothing was changed")
 
     print(f"restoring {folder} into {parts['database']} at {parts['host']}:{parts['port']}")
     pg_restore_into(target, payload, clean=True)

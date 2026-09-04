@@ -1157,9 +1157,12 @@ Có thể ý định là để reconciler đóng các run bị kẹt. Nếu vậ
 
 3. **Policy engine** (Phase 11): OPA/Rego hay engine khác.
 
-4. **Self-service resource provider** (Phase 12): Terraform, Crossplane, hay API nội bộ.
-   Nếu chưa quyết → theo yêu cầu, phải implement contract + state `provider_not_configured`
-   **fail closed**, tuyệt đối không giả thành công.
+4. **Self-service resource provider & Service Catalog** (Phase 12 - Đã hoàn thành):
+   - Đã áp dụng Migration 0018 và domain logic trong `backend/app/catalog/`.
+   - Contract provider fail-closed vào trạng thái `provider_not_configured` khi chưa có driver bên ngoài, tuyệt đối không giả thành công.
+   - Dual-control governance bắt buộc trên staging/production (`approved_by != requested_by`).
+   - Service Catalog phát hiện chu trình (DFS cycle detection) và Golden Path templates hỗ trợ 1-click instantiation.
+   - Preview environments tự động tính toán TTL và đối soát hết hạn.
 
 ### 10.3. Nguyên tắc khi làm tiếp
 
