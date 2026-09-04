@@ -41,6 +41,7 @@ from .policy.rules import (
 )
 from .demo_data import seed_demo_data
 from .portal import PortalError, PortalService
+from .readiness import probe_readiness
 from .store import build_database
 from . import workload_identity
 from .workload_identity import (
@@ -143,7 +144,7 @@ async def correlation_id_middleware(request: Request, call_next):
     # a whole office look like a single client and throttle everyone because one person
     # looped. The token is hashed, never stored: the limiter's map would otherwise be a
     # list of live credentials sitting in memory.
-    if rate_limiter.enabled and request.url.path != "/healthz":
+    if rate_limiter.enabled and request.url.path not in ("/healthz", "/livez", "/readyz"):
         authorization = request.headers.get("Authorization", "")
         if authorization:
             caller = "credential:" + hashlib.sha256(authorization.encode()).hexdigest()[:32]
@@ -904,6 +905,35 @@ async def delivery_exception_handler(request: Request, exc: DeliveryError) -> JS
 @app.exception_handler(PortalError)
 async def portal_exception_handler(request: Request, exc: PortalError) -> JSONResponse:
     return error(exc.code, exc.message, request.state.correlation_id, exc.status_code)
+
+
+@app.get("/livez")
+def livez() -> dict[str, object]:
+    """Report basic process liveness."""
+    return {"status": "ok", "timestamp": datetime.now(timezone.utc).isoformat()}
+
+
+@app.get("/readyz")
+def readyz(response: Response) -> dict[str, object]:
+    """Report whether the platform is ready to accept and execute work."""
+    ready, details = probe_readiness(platform, portal, authenticator)
+    if not ready:
+        response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+    return details
+
+
+@app.get("/operator/health")
+def operator_health(response: Response, _: Principal = AdminAccess) -> dict[str, object]:
+    """Detailed operator health report with full diagnostics and redacted secrets."""
+    ready, details = probe_readiness(platform, portal, authenticator)
+    if not ready:
+        response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+    return {
+        **details,
+        "operatorView": True,
+        "version": "0.1.0",
+        "environment": os.getenv("NETCI_ENVIRONMENT", "local"),
+    }
 
 
 @app.get("/healthz")

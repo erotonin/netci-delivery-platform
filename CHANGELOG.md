@@ -14,6 +14,11 @@ Changelog and releases use Semantic Versioning once the project reaches 1.0.0.
 
 ### Changed
 
+- **Truthful readiness probing and production acceptance harness.**
+  Added distinct liveness (`/livez`), readiness (`/readyz`), and authenticated operator
+  diagnostics (`/operator/health`) with circuit breaking, timeout protections, and safe secret
+  redaction. Added `scripts/production_acceptance_harness.py` evaluating 9 critical production
+  gates against live endpoints, generating immutable evidence JSON and JUnit XML reports. See ADR-018.
 - **Release version immutability and append-only CI quality reports.**
   Release versions are strictly immutable and cannot overwrite artifact digests or
   provenance (`409 VersionConflict`). Quality/CI reports are stored separately in an

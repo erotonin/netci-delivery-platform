@@ -7,6 +7,65 @@ servers:
   - url: http://localhost:8000
 
 paths:
+  /livez:
+    get:
+      summary: Basic process liveness probe
+      operationId: livez
+      responses:
+        '200':
+          description: Process is running
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status, timestamp]
+                properties:
+                  status:
+                    type: string
+                    example: ok
+                  timestamp:
+                    type: string
+                    format: date-time
+  /readyz:
+    get:
+      summary: Truthful readiness probe for accepting work
+      operationId: readyz
+      responses:
+        '200':
+          description: Service is ready to accept and execute work
+          content:
+            application/json:
+              schema:
+                type: object
+        '503':
+          description: Required dependency is unavailable
+          content:
+            application/json:
+              schema:
+                type: object
+  /operator/health:
+    get:
+      summary: Detailed authenticated operator health probe
+      operationId: operatorHealth
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Detailed diagnostic health report with redacted secrets
+          content:
+            application/json:
+              schema:
+                type: object
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '503':
+          description: Required dependency is unavailable
+          content:
+            application/json:
+              schema:
+                type: object
   /healthz:
     get:
       operationId: healthCheck
