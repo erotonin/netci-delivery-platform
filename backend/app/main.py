@@ -4,14 +4,15 @@ import hashlib
 import os
 import secrets
 from datetime import datetime, timezone
-from typing import Literal
+from contextlib import asynccontextmanager
+from typing import Any, Literal
 from urllib.parse import urlsplit
 from uuid import UUID, uuid4
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response as PlainResponse
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl, model_validator
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
@@ -27,6 +28,8 @@ from .domain.models import (
     DeliveryEvent,
     Deployment,
     Environment,
+    NotificationRecord,
+    NotificationStatus,
     PipelineRun,
     PipelineStage,
     PipelineStatus,
@@ -38,6 +41,9 @@ from .domain.models import (
 )
 from .adapters.scm import MAX_WEBHOOK_PAYLOAD_BYTES, get_scm_provider
 from .delivery import CiResult, DeliveryError, DeliveryPlatform
+from .logging import current_correlation_id
+from .metrics import PrometheusMetricsMiddleware, metrics
+from .notifications import NotificationOutboxWorker
 from .policy.rules import (
     PolicyViolation,
     Role,
@@ -49,6 +55,7 @@ from .demo_data import seed_demo_data
 from .portal import PortalError, PortalService
 from .readiness import probe_readiness
 from .reconciler import Reconciler
+from .retention import RetentionManager
 from .store import build_database
 from . import workload_identity
 from .workload_identity import (
@@ -100,27 +107,11 @@ def configured_cors_origins() -> list[str]:
 # Re-exported: tests and operators reason about which callers count as local.
 __all__ = ["app", "LOOPBACK_HOSTS", "resolve_client"]
 
-app = FastAPI(title="netCI Delivery API", version="0.1.0")
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=configured_cors_origins(),
-    allow_credentials=True,
-    allow_methods=["GET", "POST", "DELETE", "PUT", "PATCH", "OPTIONS"],
-    allow_headers=["Authorization", "Content-Type", "Idempotency-Key", "X-Correlation-Id"],
-    expose_headers=["X-Correlation-Id"],
-)
-
 # Composition root: the engines and the store are chosen here from configuration, never
 # inside the domain. NETCI_CI_MODE / NETCI_CD_MODE may be "none" only in local mode; outside
 # local their factories fail at startup instead of running a control plane that cannot
 # execute the work it accepts. `build_database` refuses an in-memory store outside local
 # mode for the same reason.
-#
-# Nothing is read here. Both services answer every request from the database, so a second
-# replica is correct the moment it starts rather than serving a snapshot of its own boot.
-# Refuses to start outside local mode without a way to tell one workload from another.
-# A control plane that accepts "some build says this deployment is healthy" from anyone
-# holding a shared secret is not one an operator can reason about.
 workload_identity.require_configured_workload_identity()
 database = build_database()
 platform = DeliveryPlatform(build_ci_launcher(), build_cd_orchestrator(), database=database)
@@ -129,6 +120,29 @@ reconciler = Reconciler(platform, platform.ci_launcher, platform.cd_orchestrator
 seed_demo_data(platform, portal)
 authenticator = build_authenticator()
 rate_limiter = build_rate_limiter()
+
+
+@asynccontextmanager
+async def lifespan(application: FastAPI):
+    outbox_worker = NotificationOutboxWorker(database)
+    if os.getenv("NETCI_DISABLE_OUTBOX_WORKER", "0") != "1":
+        outbox_worker.start()
+    yield
+    outbox_worker.stop()
+    if hasattr(database, "close"):
+        database.close()
+
+
+app = FastAPI(title="netCI Delivery API", version="0.1.0", lifespan=lifespan)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=configured_cors_origins(),
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "DELETE", "PUT", "PATCH", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "Idempotency-Key", "X-Correlation-Id"],
+    expose_headers=["X-Correlation-Id"],
+)
+app.add_middleware(PrometheusMetricsMiddleware)
 
 
 @app.middleware("http")
@@ -148,36 +162,38 @@ async def correlation_id_middleware(request: Request, call_next):
         return response
     request.state.correlation_id = correlation_id
 
-    # Identify the caller by credential where there is one, so a shared NAT does not make
-    # a whole office look like a single client and throttle everyone because one person
-    # looped. The token is hashed, never stored: the limiter's map would otherwise be a
-    # list of live credentials sitting in memory.
-    if rate_limiter.enabled and request.url.path not in ("/healthz", "/livez", "/readyz"):
-        authorization = request.headers.get("Authorization", "")
-        if authorization:
-            caller = "credential:" + hashlib.sha256(authorization.encode()).hexdigest()[:32]
-        else:
-            # The forwarded client where a proxy chain is configured, so one noisy caller
-            # behind the proxy does not throttle everyone sharing the proxy's address.
-            caller = "address:" + (resolve_client(request.headers, request.client.host if request.client else "").address or "unknown")
-        verdict = rate_limiter.check(caller)
-        if not verdict.allowed:
-            throttled = error(
-                "RATE_LIMITED",
-                f"more than {verdict.limit} requests in {int(rate_limiter.window_seconds)}s; "
-                "slow down or raise NETCI_RATE_LIMIT",
-                correlation_id,
-                429,
-                {"Retry-After": str(verdict.retry_after)},
-            )
-            throttled.headers["X-Correlation-Id"] = correlation_id
-            throttled.headers["X-RateLimit-Limit"] = str(verdict.limit)
-            throttled.headers["X-RateLimit-Remaining"] = "0"
-            return throttled
+    token = current_correlation_id.set(correlation_id)
+    try:
+        # Identify the caller by credential where there is one, so a shared NAT does not make
+        # a whole office look like a single client and throttle everyone because one person
+        # looped. The token is hashed, never stored: the limiter's map would otherwise be a
+        # list of live credentials sitting in memory.
+        if rate_limiter.enabled and request.url.path not in ("/healthz", "/livez", "/readyz", "/metrics"):
+            authorization = request.headers.get("Authorization", "")
+            if authorization:
+                caller = "credential:" + hashlib.sha256(authorization.encode()).hexdigest()[:32]
+            else:
+                caller = "address:" + (resolve_client(request.headers, request.client.host if request.client else "").address or "unknown")
+            verdict = rate_limiter.check(caller)
+            if not verdict.allowed:
+                throttled = error(
+                    "RATE_LIMITED",
+                    f"more than {verdict.limit} requests in {int(rate_limiter.window_seconds)}s; "
+                    "slow down or raise NETCI_RATE_LIMIT",
+                    correlation_id,
+                    429,
+                    {"Retry-After": str(verdict.retry_after)},
+                )
+                throttled.headers["X-Correlation-Id"] = correlation_id
+                throttled.headers["X-RateLimit-Limit"] = str(verdict.limit)
+                throttled.headers["X-RateLimit-Remaining"] = "0"
+                return throttled
 
-    response = await call_next(request)
-    response.headers["X-Correlation-Id"] = correlation_id
-    return response
+        response = await call_next(request)
+        response.headers["X-Correlation-Id"] = correlation_id
+        return response
+    finally:
+        current_correlation_id.reset(token)
 
 def error(
     code: str,
@@ -1098,6 +1114,19 @@ def healthz(response: Response) -> dict[str, object]:
     }
 
 
+@app.get("/metrics", include_in_schema=False)
+def metrics_endpoint() -> PlainResponse:
+    """Expose Prometheus formatted metrics."""
+    if hasattr(database, "pool_stats"):
+        stats = database.pool_stats()
+        metrics.gauge_set("netci_database_pool_connections", {"state": "active"}, float(stats.get("active", 0)))
+        metrics.gauge_set("netci_database_pool_connections", {"state": "idle"}, float(stats.get("idle", 0)))
+    return PlainResponse(
+        content=metrics.generate_prometheus_text(),
+        media_type="text/plain; version=0.0.4; charset=utf-8",
+    )
+
+
 @app.get("/me")
 def whoami(principal: Principal = Depends(current_principal)) -> dict[str, object]:
     """Who the presented credential belongs to, and what it may do.
@@ -1655,7 +1684,37 @@ def list_servers(principal: Principal = ReadAccess) -> list[dict[str, object]]:
 
 
 @app.get("/audit-events")
-def list_audit_events(systemId: str | None = None, moduleId: str | None = None, principal: Principal = ReadAccess) -> list[dict[str, object]]:
+def list_audit_events(
+    systemId: str | None = None,
+    moduleId: str | None = None,
+    limit: int | None = None,
+    cursor: str | None = None,
+    principal: Principal = ReadAccess,
+) -> Any:
+    if cursor is not None or limit is not None:
+        bounded_limit = max(1, min(limit or 50, 100))
+        with database.transaction() as session:
+            records, next_cursor, has_more = session.audit_records_paginated(
+                limit=bounded_limit, cursor=cursor
+            )
+        return {
+            "items": [
+                {
+                    "id": str(r.id),
+                    "eventType": r.event_type,
+                    "applicationId": str(r.application_id) if r.application_id else None,
+                    "pipelineRunId": str(r.pipeline_run_id) if r.pipeline_run_id else None,
+                    "deploymentId": str(r.deployment_id) if r.deployment_id else None,
+                    "actor": r.actor,
+                    "correlationId": r.correlation_id,
+                    "payload": r.payload,
+                    "occurredAt": r.occurred_at.isoformat(),
+                }
+                for r in records
+            ],
+            "nextCursor": next_cursor,
+            "hasMore": has_more,
+        }
     try:
         return portal.audit_events(
             system_id=systemId,
@@ -1667,6 +1726,132 @@ def list_audit_events(systemId: str | None = None, moduleId: str | None = None, 
             status_code=404,
             detail={"code": "AUDIT_SCOPE_NOT_FOUND", "message": str(exc)},
         ) from exc
+
+
+# ------------------------------------------------------------- notifications & outbox
+
+@app.get("/notifications")
+def list_notifications(
+    status: str | None = None,
+    limit: int = 50,
+    cursor: str | None = None,
+    principal: Principal = ReadAccess,
+) -> dict[str, Any]:
+    stat_enum = None
+    if status:
+        try:
+            stat_enum = NotificationStatus(status)
+        except ValueError:
+            raise HTTPException(
+                status_code=422,
+                detail={"code": "INVALID_NOTIFICATION_STATUS", "message": f"invalid notification status: {status}"},
+            )
+    bounded_limit = max(1, min(limit, 100))
+    with database.transaction() as session:
+        items, next_cursor, has_more = session.notifications_paginated(
+            status=stat_enum, limit=bounded_limit, cursor=cursor
+        )
+    return {
+        "items": [
+            {
+                "id": str(n.id),
+                "eventType": n.event_type,
+                "aggregateType": n.aggregate_type,
+                "aggregateId": n.aggregate_id,
+                "payload": n.payload,
+                "recipient": n.recipient,
+                "status": n.status.value,
+                "attempt": n.attempt,
+                "maxAttempts": n.max_attempts,
+                "lastAttemptAt": n.last_attempt_at.isoformat() if n.last_attempt_at else None,
+                "nextAttemptAt": n.next_attempt_at.isoformat() if n.next_attempt_at else None,
+                "lastError": n.last_error,
+                "createdAt": n.created_at.isoformat(),
+                "deliveredAt": n.delivered_at.isoformat() if n.delivered_at else None,
+            }
+            for n in items
+        ],
+        "nextCursor": next_cursor,
+        "hasMore": has_more,
+    }
+
+
+@app.post("/notifications/{notificationId}/retry")
+def retry_notification(
+    notificationId: UUID,
+    principal: Principal = AdminAccess,
+) -> dict[str, Any]:
+    with database.transaction() as session:
+        n = session.notification(notificationId)
+        if not n:
+            raise HTTPException(
+                status_code=404,
+                detail={"code": "NOTIFICATION_NOT_FOUND", "message": "notification not found"},
+            )
+        updated = session.update_notification_status(
+            notificationId,
+            status=NotificationStatus.PENDING,
+            attempt=0,
+            next_attempt_at=datetime.now(timezone.utc),
+            last_error=None,
+        )
+    assert updated is not None
+    return {
+        "id": str(updated.id),
+        "status": updated.status.value,
+        "nextAttemptAt": updated.next_attempt_at.isoformat(),
+    }
+
+
+# ------------------------------------------------------------- cursor pagination lists
+
+@app.get("/pipeline-runs")
+def list_pipeline_runs(
+    applicationId: UUID | None = None,
+    limit: int = 50,
+    cursor: str | None = None,
+    principal: Principal = ReadAccess,
+) -> dict[str, Any]:
+    bounded_limit = max(1, min(limit, 100))
+    with database.transaction() as session:
+        runs, next_cursor, has_more = session.pipeline_runs_paginated(
+            application_id=applicationId, limit=bounded_limit, cursor=cursor
+        )
+    return {
+        "items": [pipeline_json(r) for r in runs],
+        "nextCursor": next_cursor,
+        "hasMore": has_more,
+    }
+
+
+@app.get("/deployments")
+def list_deployments(
+    applicationId: UUID | None = None,
+    limit: int = 50,
+    cursor: str | None = None,
+    principal: Principal = ReadAccess,
+) -> dict[str, Any]:
+    bounded_limit = max(1, min(limit, 100))
+    with database.transaction() as session:
+        deps, next_cursor, has_more = session.deployments_paginated(
+            application_id=applicationId, limit=bounded_limit, cursor=cursor
+        )
+    return {
+        "items": [deployment_json(d) for d in deps],
+        "nextCursor": next_cursor,
+        "hasMore": has_more,
+    }
+
+
+# ------------------------------------------------------------- retention
+
+@app.post("/admin/retention/purge")
+def trigger_retention_purge(
+    principal: Principal = AdminAccess,
+) -> dict[str, Any]:
+    manager = RetentionManager(database=database)
+    return manager.purge_all()
+
 
 
 @app.post("/applications", status_code=status.HTTP_201_CREATED, response_model=None)

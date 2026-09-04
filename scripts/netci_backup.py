@@ -74,6 +74,7 @@ CRITICAL_TABLES: tuple[str, ...] = (
     "pipeline_stages",
     "module_config_revisions",
     "server_health_records",
+    "notifications",
 )
 
 
@@ -204,12 +205,56 @@ def check_referential_integrity(url: str) -> list[str]:
     return violations
 
 
+def get_encryption_key(explicit: str | None = None) -> str | None:
+    return explicit or os.getenv("NETCI_BACKUP_ENCRYPTION_KEY")
+
+
+def derive_key(passphrase: str, salt: bytes) -> bytes:
+    return hashlib.pbkdf2_hmac("sha256", passphrase.encode("utf-8"), salt, 100_000, dklen=32)
+
+
+def encrypt_payload(data: bytes, key_str: str) -> bytes:
+    try:
+        from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+    except ImportError:
+        fail("cryptography package is required for encrypted backups")
+    salt = os.urandom(16)
+    key = derive_key(key_str, salt)
+    aesgcm = AESGCM(key)
+    nonce = os.urandom(12)
+    ciphertext = aesgcm.encrypt(nonce, data, None)
+    return b"NETCI_ENC_V1" + salt + nonce + ciphertext
+
+
+def decrypt_payload(data: bytes, key_str: str) -> bytes:
+    if not data.startswith(b"NETCI_ENC_V1"):
+        fail("invalid encrypted backup payload header")
+    try:
+        from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+    except ImportError:
+        fail("cryptography package is required for decrypting backups")
+    salt = data[12:28]
+    nonce = data[28:40]
+    ciphertext = data[40:]
+    key = derive_key(key_str, salt)
+    aesgcm = AESGCM(key)
+    try:
+        return aesgcm.decrypt(nonce, ciphertext, None)
+    except Exception as exc:
+        fail(f"failed to decrypt backup: incorrect key or corrupted ciphertext ({exc})")
+
+
 def create(arguments: argparse.Namespace) -> int:
     url = database_url(arguments.database_url)
     parts = split(url)
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     target = Path(arguments.output) / f"netci-{stamp}"
     target.mkdir(parents=True, exist_ok=False)
+
+    enc_key = get_encryption_key(getattr(arguments, "encryption_key", None))
+    should_encrypt = bool(getattr(arguments, "encrypt", False) or enc_key)
+    if getattr(arguments, "encrypt", False) and not enc_key:
+        fail("--encrypt specified but no key provided via --encryption-key or NETCI_BACKUP_ENCRYPTION_KEY")
 
     print(f"backing up {parts['database']} at {parts['host']}:{parts['port']}")
     tables = discover_tables(url)
@@ -225,9 +270,14 @@ def create(arguments: argparse.Namespace) -> int:
     if result.returncode != 0:
         fail(f"pg_dump failed: {result.stderr.decode(errors='replace').strip()[-400:]}")
 
+    raw_bytes = result.stdout
+    dump_bytes = raw_bytes
+    if should_encrypt and enc_key:
+        dump_bytes = encrypt_payload(raw_bytes, enc_key)
+
     dump = target / DUMP_NAME
-    dump.write_bytes(result.stdout)
-    digest = hashlib.sha256(result.stdout).hexdigest()
+    dump.write_bytes(dump_bytes)
+    digest = hashlib.sha256(dump_bytes).hexdigest()
 
     manifest = {
         "createdAt": datetime.now(timezone.utc).isoformat(),
@@ -236,7 +286,9 @@ def create(arguments: argparse.Namespace) -> int:
         "postgresImage": POSTGRES_IMAGE,
         "dumpFile": DUMP_NAME,
         "dumpSha256": digest,
-        "dumpBytes": len(result.stdout),
+        "dumpBytes": len(dump_bytes),
+        "encrypted": should_encrypt,
+        "encryptionAlgorithm": "AES-256-GCM" if should_encrypt else None,
         "criticalTables": list(CRITICAL_TABLES),
         "discoveredTables": tables,
         "tableCounts": counts,
@@ -251,7 +303,8 @@ def create(arguments: argparse.Namespace) -> int:
     }
     (target / MANIFEST_NAME).write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
 
-    print(f"  wrote {dump} ({len(result.stdout):,} bytes)")
+    enc_msg = " [AES-256-GCM encrypted]" if should_encrypt else ""
+    print(f"  wrote {dump} ({len(dump_bytes):,} bytes){enc_msg}")
     print(f"  sha256 {digest}")
     print(f"  discovered {len(tables)} tables ({len(CRITICAL_TABLES)} critical)")
     for table in sorted(tables):
@@ -270,7 +323,7 @@ def load_manifest(folder: Path) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def check_integrity(folder: Path, manifest: dict) -> bytes:
+def check_integrity(folder: Path, manifest: dict, enc_key: str | None = None) -> bytes:
     dump = folder / str(manifest["dumpFile"])
     if not dump.is_file():
         fail(f"missing dump file {dump}")
@@ -281,6 +334,11 @@ def check_integrity(folder: Path, manifest: dict) -> bytes:
             f"dump does not match its manifest checksum: expected {manifest['dumpSha256']}, "
             f"got {digest}. The file has been altered or truncated since it was written."
         )
+    if manifest.get("encrypted"):
+        key = get_encryption_key(enc_key)
+        if not key:
+            fail("backup is encrypted; supply --encryption-key or NETCI_BACKUP_ENCRYPTION_KEY")
+        payload = decrypt_payload(payload, key)
     return payload
 
 
@@ -301,7 +359,7 @@ def verify(arguments: argparse.Namespace) -> int:
     """Restore into a clean throwaway database and comprehensively verify."""
     folder = Path(arguments.input)
     manifest = load_manifest(folder)
-    payload = check_integrity(folder, manifest)
+    payload = check_integrity(folder, manifest, getattr(arguments, "encryption_key", None))
     print(f"checksum matches manifest ({manifest['dumpSha256'][:16]}…)")
 
     admin_url = database_url(getattr(arguments, "database_url", None))
@@ -389,24 +447,23 @@ def verify(arguments: argparse.Namespace) -> int:
 def restore(arguments: argparse.Namespace) -> int:
     folder = Path(arguments.input)
     manifest = load_manifest(folder)
-    payload = check_integrity(folder, manifest)
+    payload = check_integrity(folder, manifest, getattr(arguments, "encryption_key", None))
     target = arguments.into or database_url(getattr(arguments, "database_url", None))
     parts = split(target)
 
     if not arguments.yes:
         confirmation = input(f"This overwrites {parts['database']} at {parts['host']}. Type the database name to continue: ")
-        if confirmation.strip() != parts["database"]:
-            fail("confirmation did not match; nothing was changed")
+        if confirmation != parts["database"]:
+            fail(f"confirmation mismatch ({confirmation!r} != {parts['database']!r}); aborting")
 
-    print(f"restoring {manifest['dumpBytes']:,} bytes into {parts['database']}")
+    print(f"restoring {folder} into {parts['database']} at {parts['host']}:{parts['port']}")
     pg_restore_into(target, payload, clean=True)
+    print("restore complete; verifying critical tables in destination")
     tables = discover_tables(target)
-    counts = table_counts(target, tables)
-    for table, count in counts.items():
-        print(f"    {table:<28} {'absent' if count < 0 else count}")
-    print("\nrestore complete. Remember what the dump does not contain:")
-    for item in manifest.get("notCovered", []):
-        print(f"  - {item}")
+    missing = [t for t in CRITICAL_TABLES if t not in tables]
+    if missing:
+        fail(f"critical tables missing after restore: {', '.join(missing)}")
+    print(f"verified: all {len(CRITICAL_TABLES)} critical tables present in {parts['database']}")
     return 0
 
 
@@ -472,22 +529,27 @@ def drill(arguments: argparse.Namespace) -> int:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--database-url", help="source database (default: $DATABASE_URL)")
+    parser.add_argument("--encryption-key", help="AES-256-GCM encryption key or passphrase (default: $NETCI_BACKUP_ENCRYPTION_KEY)")
     commands = parser.add_subparsers(dest="command", required=True)
 
     create_parser = commands.add_parser("create", help="dump the database and record what was in it")
     create_parser.add_argument("--output", default="backups", help="directory to write the backup into")
+    create_parser.add_argument("--encrypt", action="store_true", help="encrypt backup using AES-256-GCM")
+    create_parser.add_argument("--encryption-key", help="passphrase to encrypt with (default: $NETCI_BACKUP_ENCRYPTION_KEY)")
     create_parser.set_defaults(handler=create)
 
     verify_parser = commands.add_parser("verify", help="restore into a throwaway database and compare")
     verify_parser.add_argument("--input", required=True)
     verify_parser.add_argument("--scratch-database", help="name for the throwaway database")
     verify_parser.add_argument("--keep", action="store_true", help="leave the throwaway database for inspection")
+    verify_parser.add_argument("--encryption-key", help="passphrase to decrypt with if backup is encrypted")
     verify_parser.set_defaults(handler=verify)
 
     restore_parser = commands.add_parser("restore", help="restore into a real database (destructive)")
     restore_parser.add_argument("--input", required=True)
     restore_parser.add_argument("--into", help="target database URL (default: --database-url)")
     restore_parser.add_argument("--yes", action="store_true", help="skip the confirmation prompt")
+    restore_parser.add_argument("--encryption-key", help="passphrase to decrypt with if backup is encrypted")
     restore_parser.set_defaults(handler=restore)
 
     drill_parser = commands.add_parser("drill", help="run automated backup, clean-DB restore verify, and failure-injection check")

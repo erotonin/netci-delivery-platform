@@ -5,6 +5,32 @@ Changelog and releases use Semantic Versioning once the project reaches 1.0.0.
 
 ## [Unreleased]
 
+### Added - Phase 9 (P1.4): Observability, Transactional Outbox, Connection Pooling & Disaster Recovery
+- **Thread-Safe PostgreSQL Connection Pooling (`backend/app/store/postgres.py`)**:
+  - `PostgresConnectionPool` with bounded concurrency (`NETCI_DB_POOL_MIN`, `NETCI_DB_POOL_MAX`), timeout on pool exhaustion (`TimeoutError`), connection liveness validation (`SELECT 1`), and graceful cleanup.
+  - Transactions acquire and return connections seamlessly, preventing socket starvation.
+- **Structured JSON Logging & Credential Redaction (`backend/app/logging.py`)**:
+  - Standardized JSON formatter emitting ISO8601 timestamps, log levels, correlation IDs, and service metadata.
+  - Automatic redaction of sensitive credentials (Bearer tokens, passwords, private keys, SCM secrets).
+  - ContextVar propagation via `correlation_id_middleware` and HTTP `X-Correlation-ID` header.
+- **Prometheus Metrics Exposition (`backend/app/metrics.py`)**:
+  - Real-time tracking of HTTP request rates, response latency histograms, connection pool gauges, and notification outbox depth.
+  - Standard Prometheus exposition format exposed at `GET /metrics`.
+- **Transactional Outbox & Notification Worker (`backend/app/notifications.py`, migration `0015`)**:
+  - Added `notifications` table and `UnitOfWork.notifications` queue for atomic transactional notification emission.
+  - Background `NotificationOutboxWorker` with exponential backoff (2s, 4s, 8s, 16s, 32s) and dead-letter queue routing (`status='dead_letter'`).
+  - Notification management APIs: `GET /notifications` and `POST /notifications/{id}/retry`.
+- **Cursor-Based Monotonic Pagination**:
+  - High-performance cursor pagination for `/notifications`, `/pipeline-runs`, `/deployments`, and `/audit-events`.
+  - Added composite indexes (`(created_at, id)`) in migration `0015`.
+- **Retention Management & Purge Policies (`backend/app/retention.py`, `scripts/netci_retention_purge.py`)**:
+  - Automated purging of expired callback tokens, delivered outbox notifications, and stale webhook events.
+  - Operational endpoint `POST /admin/retention/purge` and standalone CLI tool.
+- **AES-256-GCM Encrypted Backups & Disaster Recovery Drill (`scripts/netci_backup.py`, `scripts/netci_dr_drill.py`)**:
+  - Encrypted backup creation and decryption with PBKDF2 key derivation.
+  - Automated DR drill script verifying live backup, scratch database restoration, table existence, row counts, row checksums, foreign-key integrity, and migration parity with evidence artifacts.
+- See ADR-022.
+
 ### Added - Phase 8 (P1.3): Versioned Environment Configuration & DCIM Lifecycle
 - **Immutable Configuration Revisions (`module_config_revisions`)**:
   - `module_config_revisions` table (migration `0014_versioned_config_revisions_and_dcim.sql`) tracking pipeline config, deployment config, change summary, status, author, approver, and rejection reasons.

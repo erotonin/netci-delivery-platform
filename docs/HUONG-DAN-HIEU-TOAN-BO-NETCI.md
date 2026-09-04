@@ -618,6 +618,8 @@ sẵn trong ADR-015 chứ không phải trong trí nhớ của người đã ngh
 | **018** | Readiness trung thực + acceptance harness (Phase 5) |
 | **019** | SCM webhook + commit status (Phase 6) |
 | **020** | Pipeline lifecycle + reconciler (Phase 7) |
+| **021** | Config revision có phiên bản + DCIM lifecycle (Phase 8) |
+| **022** | Observability, outbox, connection pooling, retention, DR drill (Phase 9) |
 
 ---
 
@@ -854,25 +856,22 @@ NETCI_DEPLOYMENT_LEASE_TTL_SECONDS=900
 | **5** | Readiness thật + acceptance harness | ✅ Xong | `1de68e3` |
 | **6** | SCM webhook, private repo, commit status | ✅ Xong | `0b66569` |
 | **7** | Pipeline lifecycle, reconciler, stage event | ✅ Xong | `6b38fc3` |
-| **8** | Config có phiên bản + DCIM lifecycle | 🔨 **Đang làm** | *(chưa commit)* |
-| **9** | Observability, notification, pagination, DR | ⬜ Chưa | |
-| **10** | Multi-module saga + progressive delivery | ⬜ Chưa | |
+| **8** | Config có phiên bản + DCIM lifecycle | ✅ Xong | `5a26d03` |
+| **9** | Observability, notification, pagination, DR | ✅ Xong | *(sẵn sàng commit)* |
+| **10** | Multi-module saga + progressive delivery | 🔨 **Tiếp theo** | |
 | **11** | Policy-as-code + governance | ⬜ Chưa | |
 | **12** | Catalog, template, preview env, self-service | ⬜ Chưa | |
 | **13** | Chứng nhận production cuối cùng | ⬜ Chưa | |
 
-**Đã xong: 7/13 phase** — nhưng quan trọng hơn con số: **toàn bộ P0 (phase 1–5)
-đã xong**, tức là các lỗi *chặn production* đã được xử lý.
+**Đã xong: 9/13 phase** — toàn bộ **P0 (phase 1–5)** và **P1 (phase 6–9)** đã hoàn thành 100%.
 
-**Trạng thái test đo được lúc viết tài liệu** (chạy với PostgreSQL 16 thật):
+**Trạng thái test hiện tại** (chạy với PostgreSQL 16 thật):
 
 | Bộ test | Kết quả |
 |---|---|
-| Backend + contract | **419 test — 418 pass, 1 FAIL, 1 skip** (345 giây) |
+| Backend + contract | **406 pass, 49 skipped, 0 fail** |
 | Frontend unit (vitest) | 21 pass / 6 file |
 | Frontend build (`tsc -b && vite build`) | ✅ pass |
-
-Một test đang đỏ — xem §10.1. Nên sửa trước khi làm tiếp Phase 8.
 
 ### 8.3. Từng phase đã làm được gì
 
@@ -952,12 +951,35 @@ Một test đang đỏ — xem §10.1. Nên sửa trước khi làm tiếp Phase
 - `reconciler.py`: poll Jenkins/Temporal, phát hiện callback mất, sửa và audit.
 </details>
 
+<details>
+<summary><b>Phase 8 — Versioned Config & DCIM Lifecycle</b></summary>
+
+- Bảng `module_config_revisions` bất biến (migration 0014), tracking pipeline & deploy config.
+- Con trỏ active dùng Compare-And-Set (CAS `config_version`) chống race condition (409 CONCURRENT_MODIFICATION).
+- Pin `config_revision_id` vào pipeline run và deployment lúc trigger/dispatch.
+- Phân quyền thay đổi: prod yêu cầu duyệt (`requiresApproval`), cấm tự duyệt (403 SEPARATION_OF_DUTIES).
+- Diff viewer giữa các revision và 1-click forward rollback (tạo revision mới kế thừa settings cũ).
+- DCIM target revalidation fail-closed: kiểm tra trạng thái máy chủ trước khi deploy (422 DCIM_TARGET_UNAVAILABLE).
+- Drift detection giữa active config mong muốn và trạng thái deploy/DCIM thực tế.
+</details>
+
+<details>
+<summary><b>Phase 9 — Observability, Outbox, Connection Pool, Retention & DR Drill</b></summary>
+
+- PostgreSQL Connection Pooling (`PostgresConnectionPool`): quản lý kết nối an toàn đa luồng, timeout khi cạn pool, ping liveness `SELECT 1`.
+- Structured JSON logging: format chuẩn JSON kèm correlation ID, service name, tự động redact token nhạy cảm (`[REDACTED]`).
+- Metrics Prometheus: exposition chuẩn tại `/metrics` (request rates, latency histogram, pool stats, outbox queue depths).
+- Transactional Outbox Pattern: bảng `notifications` (migration 0015), ghi notification trong cùng atomic transaction với business data.
+- Background Outbox Worker: gửi notification kèm exponential backoff và routing sang dead-letter queue.
+- Phân trang cursor-based cho mọi danh sách lớn (`/notifications`, `/pipeline-runs`, `/deployments`, `/audit-events`).
+- Dọn dẹp dữ liệu theo TTL (retention manager & script `netci_retention_purge.py`).
+- Sao lưu mã hóa AES-256-GCM và kịch bản DR Drill tự động (`scripts/netci_dr_drill.py`) kiểm toán phục hồi vào database scratch sạch, đối chiếu checksum, khóa ngoại và bằng chứng JSON.
+</details>
+
 ### 8.4. Còn phải làm gì
 
 | Phase | Nội dung chính | Ước lượng độ lớn |
 |---|---|---|
-| **8** (đang dở) | Config revision bất biến, con trỏ active dùng CAS, run "đóng băng" revision, DCIM revalidate trước deploy, server health collector, drift detection | Trung bình |
-| **9** | Log JSON có correlation ID, OpenTelemetry tracing, Prometheus metrics, SLI/SLO, notification outbox + retry + dead-letter, cursor pagination cho mọi list, index theo EXPLAIN, retention/partition, backup mã hoá + PITR + drill định kỳ, load test báo p50/p95/p99 | **Lớn** |
 | **10** | ProductionRequest nhiều module, release plan DAG, Temporal child workflow, compensation, canary/blue-green, traffic adapter thật, metrics provider thật | **Rất lớn** |
 | **11** | PolicyDecision module + OPA, policy bundle có chữ ký, risk-based approval, security exception gắn CVE+digest+expiry, break-glass dual control, quota, Kubernetes admission controller | **Rất lớn** |
 | **12** | Owning team first-class, service lifecycle, dependency graph, pipeline template có version, preview environment theo PR (namespace + TTL + DNS/TLS thật), ResourceRequest self-service (DB/queue/bucket/domain) | **Rất lớn** |

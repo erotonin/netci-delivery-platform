@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<testsuite name="production_acceptance" tests="9" failures="0" skipped="5" timestamp="2026-09-04T04:25:09.546452+00:00">
-  <testcase name="persistence_across_api_restart" classname="acceptance" time="0.119">
+<testsuite name="production_acceptance" tests="9" failures="0" skipped="5" timestamp="2026-09-04T10:10:00.211759+00:00">
+  <testcase name="persistence_across_api_restart" classname="acceptance" time="0.169">
   </testcase>
   <testcase name="oidc_role_and_team" classname="acceptance" time="0.000">
     <skipped message="OIDC is not configured (NETCI_AUTH_MODE != 'oidc' or NETCI_OIDC_ISSUER missing)"/>
@@ -21,6 +21,6 @@
   </testcase>
   <testcase name="deployment_failure_and_rollback" classname="acceptance" time="0.000">
   </testcase>
-  <testcase name="backup_and_restore_verification" classname="acceptance" time="44.950">
+  <testcase name="backup_and_restore_verification" classname="acceptance" time="64.459">
   </testcase>
 </testsuite>

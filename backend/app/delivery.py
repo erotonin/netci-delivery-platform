@@ -51,6 +51,8 @@ from .domain.models import (
     Deployment,
     DeploymentStatus,
     Environment,
+    NotificationRecord,
+    NotificationStatus,
     PipelineRun,
     PipelineStage,
     PipelineStatus,
@@ -801,6 +803,22 @@ class DeliveryPlatform:
             correlation_id=correlation_id,
             unit=unit,
         )
+        unit.notifications.append(
+            NotificationRecord(
+                id=uuid4(),
+                event_type="pipeline.started",
+                aggregate_type="pipeline_run",
+                aggregate_id=str(run.id),
+                payload={
+                    "application_id": str(application_id),
+                    "commit_sha": commit_sha,
+                    "branch": branch,
+                    "environment": environment.value,
+                    "status": "queued",
+                },
+                recipient="events@netci.local",
+            )
+        )
         if idempotency_key is not None:
             unit.idempotency.append(
                 IdempotencyRow(
@@ -1519,6 +1537,20 @@ class DeliveryPlatform:
                 correlation_id=run.correlation_id,
                 unit=unit,
             )
+            unit.notifications.append(
+                NotificationRecord(
+                    id=uuid4(),
+                    event_type="pipeline.completed",
+                    aggregate_type="pipeline_run",
+                    aggregate_id=str(run.id),
+                    payload={
+                        "application_id": str(run.application_id),
+                        "status": "failed",
+                        "commit_sha": run.commit_sha,
+                    },
+                    recipient="events@netci.local",
+                )
+            )
             self._apply(transaction, unit)
             return _CiOutcome(CiResult(updated))
 
@@ -1613,6 +1645,21 @@ class DeliveryPlatform:
             target_url=run.console_url,
             correlation_id=run.correlation_id,
             unit=unit,
+        )
+        unit.notifications.append(
+            NotificationRecord(
+                id=uuid4(),
+                event_type="deployment.started" if deployment.status == DeploymentStatus.DEPLOYING else "deployment.pending_approval",
+                aggregate_type="deployment",
+                aggregate_id=str(deployment.id),
+                payload={
+                    "application_id": str(run.application_id),
+                    "environment": run.environment.value,
+                    "status": deployment.status.value,
+                    "artifact_digest": artifact_digest,
+                },
+                recipient="events@netci.local",
+            )
         )
         self._apply(transaction, unit)
 
@@ -2015,6 +2062,36 @@ class DeliveryPlatform:
         self._record_delivery_outcome(
             transaction, unit, updated, run, healthy=healthy, occurred_at=now
         )
+        unit.notifications.append(
+            NotificationRecord(
+                id=uuid4(),
+                event_type="deployment.completed",
+                aggregate_type="deployment",
+                aggregate_id=str(deployment.id),
+                payload={
+                    "application_id": str(deployment.application_id),
+                    "environment": deployment.environment.value,
+                    "status": target_status.value,
+                    "artifact_digest": deployment.artifact_digest,
+                },
+                recipient="events@netci.local",
+            )
+        )
+        if run is not None:
+            unit.notifications.append(
+                NotificationRecord(
+                    id=uuid4(),
+                    event_type="pipeline.completed",
+                    aggregate_type="pipeline_run",
+                    aggregate_id=str(run.id),
+                    payload={
+                        "application_id": str(run.application_id),
+                        "status": pipeline_status.value,
+                        "artifact_digest": run.artifact_digest,
+                    },
+                    recipient="events@netci.local",
+                )
+            )
         # Terminal either way: hand the target back rather than making the next
         # deployment wait out the lease expiry.
         self._release_lease(transaction, unit, updated, reason=target_status.value)

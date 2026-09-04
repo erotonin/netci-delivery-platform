@@ -244,3 +244,49 @@ class PlatformSession(Protocol):
 
     def record_server_health(self, record: ServerHealthRecord) -> None: ...
 
+    # ----------------------------------------------- notifications & outbox
+
+    def record_notification(self, notification: NotificationRecord) -> NotificationRecord: ...
+
+    def notification(self, notification_id: UUID) -> NotificationRecord | None: ...
+
+    def pending_notifications(
+        self, limit: int = 100, now: datetime | None = None
+    ) -> tuple[NotificationRecord, ...]: ...
+
+    def update_notification_status(
+        self,
+        notification_id: UUID,
+        status: NotificationStatus,
+        attempt: int,
+        next_attempt_at: datetime,
+        last_error: str | None = None,
+        delivered_at: datetime | None = None,
+    ) -> NotificationRecord | None: ...
+
+    def notifications_paginated(
+        self, status: NotificationStatus | None = None, limit: int = 50, cursor: str | None = None
+    ) -> tuple[tuple[NotificationRecord, ...], str | None, bool]: ...
+
+    # --------------------------------------------------- cursor pagination
+
+    def pipeline_runs_paginated(
+        self, application_id: UUID | None = None, limit: int = 50, cursor: str | None = None
+    ) -> tuple[tuple[PipelineRun, ...], str | None, bool]: ...
+
+    def deployments_paginated(
+        self, application_id: UUID | None = None, limit: int = 50, cursor: str | None = None
+    ) -> tuple[tuple[Deployment, ...], str | None, bool]: ...
+
+    def audit_records_paginated(
+        self, application_id: UUID | None = None, limit: int = 50, cursor: str | None = None
+    ) -> tuple[tuple[AuditRecord, ...], str | None, bool]: ...
+
+    # ----------------------------------------------------------- retention
+
+    def purge_expired_callback_tokens(self, now: datetime) -> int: ...
+
+    def purge_completed_notifications(self, cutoff: datetime) -> int: ...
+
+    def purge_old_delivery_events(self, cutoff: datetime) -> int: ...
+

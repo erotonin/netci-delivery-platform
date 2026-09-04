@@ -281,3 +281,29 @@ DEPLOYMENT_TRANSITIONS: dict[DeploymentStatus, frozenset[DeploymentStatus]] = {
 
 def can_transition_deployment(current: DeploymentStatus, target: DeploymentStatus) -> bool:
     return target in DEPLOYMENT_TRANSITIONS[current]
+
+
+class NotificationStatus(str, Enum):
+    PENDING = "pending"
+    DELIVERED = "delivered"
+    FAILED = "failed"
+    DEAD_LETTER = "dead_letter"
+
+
+@dataclass(frozen=True)
+class NotificationRecord:
+    id: UUID
+    event_type: str
+    aggregate_type: str
+    aggregate_id: str
+    payload: dict[str, Any]
+    recipient: str
+    status: NotificationStatus = NotificationStatus.PENDING
+    attempt: int = 0
+    max_attempts: int = 5
+    last_attempt_at: datetime | None = None
+    next_attempt_at: datetime = field(default_factory=utc_now)
+    last_error: str | None = None
+    created_at: datetime = field(default_factory=utc_now)
+    delivered_at: datetime | None = None
+

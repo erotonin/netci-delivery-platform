@@ -12,11 +12,12 @@ adapter honest about isolation instead of interleaving partial writes.
 
 from __future__ import annotations
 
+import base64
 import copy
 import threading
 from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -26,6 +27,8 @@ from ..domain.models import (
     DeliveryEvent,
     Deployment,
     ModuleConfigRevision,
+    NotificationRecord,
+    NotificationStatus,
     PipelineRun,
     PipelineStage,
     ScmCommitStatus,
@@ -69,6 +72,7 @@ class _State:
     stages: dict[tuple[UUID, str, int], PipelineStage] = field(default_factory=dict)
     config_revisions: dict[UUID, ModuleConfigRevision] = field(default_factory=dict)
     server_health: dict[str, ServerHealthRecord] = field(default_factory=dict)
+    notifications: dict[UUID, NotificationRecord] = field(default_factory=dict)
 
     def copy(self) -> "_State":
         return _State(
@@ -94,6 +98,7 @@ class _State:
             stages=dict(self.stages),
             config_revisions=dict(self.config_revisions),
             server_health=dict(self.server_health),
+            notifications=dict(self.notifications),
         )
 
 
@@ -303,6 +308,8 @@ class InMemorySession:
         state.audit.extend(unit.audit)
         for pipeline_run_id, _, _, evidence in unit.security_evidence:
             state.evidence[pipeline_run_id] = dict(evidence)
+        for notification in unit.notifications:
+            self.record_notification(notification)
         for row in unit.idempotency:
             key = (row.scope, row.idempotency_key)
             if key in state.idempotency:
@@ -655,6 +662,134 @@ class InMemorySession:
 
     def record_server_health(self, record: ServerHealthRecord) -> None:
         self._state.server_health[record.server_name] = record
+
+    # ----------------------------------------------- notifications & outbox
+
+    def record_notification(self, notification: NotificationRecord) -> NotificationRecord:
+        self._state.notifications[notification.id] = notification
+        return notification
+
+    def notification(self, notification_id: UUID) -> NotificationRecord | None:
+        return self._state.notifications.get(notification_id)
+
+    def pending_notifications(
+        self, limit: int = 100, now: datetime | None = None
+    ) -> tuple[NotificationRecord, ...]:
+        ts = now or datetime.now(timezone.utc)
+        records = [
+            n for n in self._state.notifications.values()
+            if n.status in (NotificationStatus.PENDING, NotificationStatus.FAILED)
+            and n.next_attempt_at <= ts
+        ]
+        records.sort(key=lambda n: (n.next_attempt_at, n.id))
+        return tuple(records[:limit])
+
+    def update_notification_status(
+        self,
+        notification_id: UUID,
+        status: NotificationStatus,
+        attempt: int,
+        next_attempt_at: datetime,
+        last_error: str | None = None,
+        delivered_at: datetime | None = None,
+    ) -> NotificationRecord | None:
+        rec = self._state.notifications.get(notification_id)
+        if not rec:
+            return None
+        updated = replace(
+            rec,
+            status=status,
+            attempt=attempt,
+            next_attempt_at=next_attempt_at,
+            last_attempt_at=datetime.now(timezone.utc),
+            last_error=last_error,
+            delivered_at=delivered_at or rec.delivered_at,
+        )
+        self._state.notifications[notification_id] = updated
+        return updated
+
+    def notifications_paginated(
+        self, status: NotificationStatus | None = None, limit: int = 50, cursor: str | None = None
+    ) -> tuple[tuple[NotificationRecord, ...], str | None, bool]:
+        records = list(self._state.notifications.values())
+        if status is not None:
+            records = [r for r in records if r.status == status]
+        records.sort(key=lambda r: (r.created_at, r.id), reverse=True)
+        return self._paginate(records, limit, cursor, lambda r: (r.created_at, r.id))
+
+    # --------------------------------------------------- cursor pagination
+
+    def _paginate(self, items: list[Any], limit: int, cursor: str | None, key_fn: Any) -> tuple[tuple[Any, ...], str | None, bool]:
+        if cursor:
+            try:
+                raw = base64.urlsafe_b64decode(cursor.encode("ascii")).decode("utf-8")
+                ts_str, id_str = raw.split("|", 1)
+                cursor_ts = datetime.fromisoformat(ts_str)
+                filtered: list[Any] = []
+                for it in items:
+                    it_ts, it_id = key_fn(it)
+                    if (it_ts, str(it_id)) < (cursor_ts, id_str):
+                        filtered.append(it)
+                items = filtered
+            except Exception:
+                pass
+        has_more = len(items) > limit
+        result = items[:limit]
+        next_cursor = None
+        if has_more and result:
+            last_ts, last_id = key_fn(result[-1])
+            payload = f"{last_ts.isoformat()}|{last_id}"
+            next_cursor = base64.urlsafe_b64encode(payload.encode("utf-8")).decode("ascii")
+        return tuple(result), next_cursor, has_more
+
+    def pipeline_runs_paginated(
+        self, application_id: UUID | None = None, limit: int = 50, cursor: str | None = None
+    ) -> tuple[tuple[PipelineRun, ...], str | None, bool]:
+        runs = list(self._state.runs.values())
+        if application_id is not None:
+            runs = [r for r in runs if r.application_id == application_id]
+        runs.sort(key=lambda r: (r.created_at, r.id), reverse=True)
+        return self._paginate(runs, limit, cursor, lambda r: (r.created_at, r.id))
+
+    def deployments_paginated(
+        self, application_id: UUID | None = None, limit: int = 50, cursor: str | None = None
+    ) -> tuple[tuple[Deployment, ...], str | None, bool]:
+        deps = list(self._state.deployments.values())
+        if application_id is not None:
+            deps = [d for d in deps if d.application_id == application_id]
+        deps.sort(key=lambda d: (d.created_at, d.id), reverse=True)
+        return self._paginate(deps, limit, cursor, lambda d: (d.created_at, d.id))
+
+    def audit_records_paginated(
+        self, application_id: UUID | None = None, limit: int = 50, cursor: str | None = None
+    ) -> tuple[tuple[AuditRecord, ...], str | None, bool]:
+        records = list(self._state.audit)
+        if application_id is not None:
+            records = [a for a in records if a.application_id == application_id]
+        records.sort(key=lambda a: (a.occurred_at, a.id), reverse=True)
+        return self._paginate(records, limit, cursor, lambda a: (a.occurred_at, a.id))
+
+    # ----------------------------------------------------------- retention
+
+    def purge_expired_callback_tokens(self, now: datetime) -> int:
+        to_del = [k for k, v in self._state.callback_tokens.items() if hasattr(v[2], "timestamp") and v[2] < now]
+        for k in to_del:
+            del self._state.callback_tokens[k]
+        return len(to_del)
+
+    def purge_completed_notifications(self, cutoff: datetime) -> int:
+        to_del = [
+            k for k, v in self._state.notifications.items()
+            if v.status == NotificationStatus.DELIVERED and v.delivered_at and v.delivered_at < cutoff
+        ]
+        for k in to_del:
+            del self._state.notifications[k]
+        return len(to_del)
+
+    def purge_old_delivery_events(self, cutoff: datetime) -> int:
+        orig_len = len(self._state.events)
+        self._state.events = [e for e in self._state.events if e.occurred_at >= cutoff]
+        return orig_len - len(self._state.events)
 
 
 class InMemoryDatabase:

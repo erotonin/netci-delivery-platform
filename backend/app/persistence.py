@@ -80,6 +80,7 @@ class UnitOfWork:
     logs: list[tuple[UUID, list[str]]] = field(default_factory=list)
     security_evidence: list[tuple[UUID, UUID, str, dict[str, Any]]] = field(default_factory=list)
     idempotency: list[IdempotencyRow] = field(default_factory=list)
+    notifications: list[Any] = field(default_factory=list)
 
     def is_empty(self) -> bool:
         return not any(
@@ -92,6 +93,7 @@ class UnitOfWork:
                 self.logs,
                 self.security_evidence,
                 self.idempotency,
+                self.notifications,
             )
         )
 

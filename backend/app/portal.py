@@ -34,7 +34,7 @@ from .persistence import (
     VersionConflict,
 )
 from .projections.dora import DoraEvent, project_dora
-from .domain.models import ConfigRevisionStatus, DeploymentStatus, ModuleConfigRevision
+from .domain.models import ConfigRevisionStatus, DeploymentStatus, ModuleConfigRevision, NotificationRecord, NotificationStatus
 from .store import (
     ModuleRow,
     PlatformDatabase,
@@ -523,6 +523,20 @@ class PortalService:
                 approved_at=datetime.now(timezone.utc),
             )
             self._activate(transaction, module, revision, actor, approved_by=actor)
+            transaction.record_notification(
+                NotificationRecord(
+                    id=uuid4(),
+                    event_type="config.approved",
+                    aggregate_type="config_revision",
+                    aggregate_id=str(revision_id),
+                    payload={
+                        "module_id": module_id,
+                        "revision_number": revision.revision_number,
+                        "approved_by": actor,
+                    },
+                    recipient="events@netci.local",
+                )
+            )
             updated = transaction.config_revision(revision_id)
             assert updated is not None
             return self._revision_json(updated, updated.id)
@@ -540,6 +554,21 @@ class PortalService:
                 )
             transaction.update_config_revision_status(
                 revision_id, ConfigRevisionStatus.REJECTED, rejection_reason=reason
+            )
+            transaction.record_notification(
+                NotificationRecord(
+                    id=uuid4(),
+                    event_type="config.rejected",
+                    aggregate_type="config_revision",
+                    aggregate_id=str(revision_id),
+                    payload={
+                        "module_id": module_id,
+                        "revision_number": revision.revision_number,
+                        "rejected_by": actor,
+                        "reason": reason,
+                    },
+                    recipient="events@netci.local",
+                )
             )
             updated = transaction.config_revision(revision_id)
             assert updated is not None

@@ -8,10 +8,14 @@ a second replica would answer from a snapshot of the moment it booted.
 
 from __future__ import annotations
 
+import base64
 import json
 import logging
+import os
+import queue
+import threading
 from contextlib import contextmanager
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any
 from uuid import UUID
 
@@ -24,6 +28,8 @@ from ..domain.models import (
     DeploymentStatus,
     Environment,
     ModuleConfigRevision,
+    NotificationRecord,
+    NotificationStatus,
     PipelineRun,
     PipelineStage,
     PipelineStatus,
@@ -109,6 +115,46 @@ CONFIG_REVISION_COLUMNS = (
 SERVER_HEALTH_COLUMNS = (
     "server_name, status, source, freshness_seconds, details, observed_at"
 )
+NOTIFICATION_COLUMNS = (
+    "id, event_type, aggregate_type, aggregate_id, payload, recipient, status, "
+    "attempt, max_attempts, last_attempt_at, next_attempt_at, last_error, created_at, delivered_at"
+)
+
+
+def encode_cursor(timestamp: datetime, record_id: UUID | str) -> str:
+    payload = f"{timestamp.isoformat()}|{record_id}"
+    return base64.urlsafe_b64encode(payload.encode("utf-8")).decode("ascii")
+
+
+def decode_cursor(cursor_str: str | None) -> tuple[datetime, str] | None:
+    if not cursor_str:
+        return None
+    try:
+        raw = base64.urlsafe_b64decode(cursor_str.encode("ascii")).decode("utf-8")
+        ts_str, id_str = raw.split("|", 1)
+        return datetime.fromisoformat(ts_str), id_str
+    except Exception:
+        return None
+
+
+def _notification(row: dict[str, Any]) -> NotificationRecord:
+    return NotificationRecord(
+        id=row["id"],
+        event_type=row["event_type"],
+        aggregate_type=row["aggregate_type"],
+        aggregate_id=row["aggregate_id"],
+        payload=dict(row["payload"] or {}),
+        recipient=row["recipient"],
+        status=NotificationStatus(row["status"]),
+        attempt=int(row["attempt"] or 0),
+        max_attempts=int(row["max_attempts"] or 5),
+        last_attempt_at=row["last_attempt_at"],
+        next_attempt_at=row["next_attempt_at"],
+        last_error=row["last_error"],
+        created_at=row["created_at"],
+        delivered_at=row["delivered_at"],
+    )
+
 
 
 def _application(row: dict[str, Any]) -> Application:
@@ -729,6 +775,8 @@ class PostgresSession:
                     evidence["reason"],
                 ),
             )
+        for notification in unit.notifications:
+            self.record_notification(notification)
         for row in unit.idempotency:
             cursor.execute(
                 """
@@ -1487,13 +1535,306 @@ class PostgresSession:
             ),
         )
 
+    # ----------------------------------------------- notifications & outbox
+
+    def record_notification(self, notification: NotificationRecord) -> NotificationRecord:
+        self._cursor.execute(
+            f"""
+            INSERT INTO notifications (
+                id, event_type, aggregate_type, aggregate_id, payload, recipient, status,
+                attempt, max_attempts, last_attempt_at, next_attempt_at, last_error, created_at, delivered_at
+            ) VALUES (%s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            RETURNING {NOTIFICATION_COLUMNS}
+            """,
+            (
+                notification.id,
+                notification.event_type,
+                notification.aggregate_type,
+                notification.aggregate_id,
+                json.dumps(notification.payload, default=str),
+                notification.recipient,
+                notification.status.value,
+                notification.attempt,
+                notification.max_attempts,
+                notification.last_attempt_at,
+                notification.next_attempt_at,
+                notification.last_error,
+                notification.created_at,
+                notification.delivered_at,
+            ),
+        )
+        return _notification(self._cursor.fetchone())
+
+    def notification(self, notification_id: UUID) -> NotificationRecord | None:
+        self._cursor.execute(
+            f"SELECT {NOTIFICATION_COLUMNS} FROM notifications WHERE id = %s", (notification_id,)
+        )
+        row = self._cursor.fetchone()
+        return _notification(row) if row else None
+
+    def pending_notifications(
+        self, limit: int = 100, now: datetime | None = None
+    ) -> tuple[NotificationRecord, ...]:
+        ts = now or datetime.now(timezone.utc)
+        self._cursor.execute(
+            f"""
+            SELECT {NOTIFICATION_COLUMNS} FROM notifications
+            WHERE status IN ('pending', 'failed') AND next_attempt_at <= %s
+            ORDER BY next_attempt_at, id
+            LIMIT %s
+            """,
+            (ts, limit),
+        )
+        return tuple(_notification(row) for row in self._cursor.fetchall())
+
+    def update_notification_status(
+        self,
+        notification_id: UUID,
+        status: NotificationStatus,
+        attempt: int,
+        next_attempt_at: datetime,
+        last_error: str | None = None,
+        delivered_at: datetime | None = None,
+    ) -> NotificationRecord | None:
+        self._cursor.execute(
+            f"""
+            UPDATE notifications
+            SET status = %s,
+                attempt = %s,
+                next_attempt_at = %s,
+                last_attempt_at = %s,
+                last_error = %s,
+                delivered_at = COALESCE(%s, delivered_at)
+            WHERE id = %s
+            RETURNING {NOTIFICATION_COLUMNS}
+            """,
+            (
+                status.value,
+                attempt,
+                next_attempt_at,
+                datetime.now(timezone.utc),
+                last_error,
+                delivered_at,
+                notification_id,
+            ),
+        )
+        row = self._cursor.fetchone()
+        return _notification(row) if row else None
+
+    def notifications_paginated(
+        self, status: NotificationStatus | None = None, limit: int = 50, cursor: str | None = None
+    ) -> tuple[tuple[NotificationRecord, ...], str | None, bool]:
+        clauses: list[str] = []
+        arguments: list[Any] = []
+        if status is not None:
+            clauses.append("status = %s")
+            arguments.append(status.value)
+        decoded = decode_cursor(cursor)
+        if decoded is not None:
+            ts, record_id = decoded
+            clauses.append("(created_at, id) < (%s, %s)")
+            arguments.extend([ts, record_id])
+        where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+        query = f"SELECT {NOTIFICATION_COLUMNS} FROM notifications{where} ORDER BY created_at DESC, id DESC LIMIT %s"
+        arguments.append(limit + 1)
+        self._cursor.execute(query, tuple(arguments))
+        rows = self._cursor.fetchall()
+        has_more = len(rows) > limit
+        result_rows = rows[:limit]
+        items = tuple(_notification(row) for row in result_rows)
+        next_cursor = encode_cursor(items[-1].created_at, items[-1].id) if (has_more and items) else None
+        return items, next_cursor, has_more
+
+    # --------------------------------------------------- cursor pagination
+
+    def pipeline_runs_paginated(
+        self, application_id: UUID | None = None, limit: int = 50, cursor: str | None = None
+    ) -> tuple[tuple[PipelineRun, ...], str | None, bool]:
+        clauses: list[str] = []
+        arguments: list[Any] = []
+        if application_id is not None:
+            clauses.append("application_id = %s")
+            arguments.append(application_id)
+        decoded = decode_cursor(cursor)
+        if decoded is not None:
+            ts, record_id = decoded
+            clauses.append("(created_at, id) < (%s, %s)")
+            arguments.extend([ts, record_id])
+        where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+        query = f"SELECT {RUN_COLUMNS} FROM pipeline_runs{where} ORDER BY created_at DESC, id DESC LIMIT %s"
+        arguments.append(limit + 1)
+        self._cursor.execute(query, tuple(arguments))
+        rows = self._cursor.fetchall()
+        has_more = len(rows) > limit
+        result_rows = rows[:limit]
+        items = tuple(_run(row) for row in result_rows)
+        next_cursor = encode_cursor(items[-1].created_at, items[-1].id) if (has_more and items) else None
+        return items, next_cursor, has_more
+
+    def deployments_paginated(
+        self, application_id: UUID | None = None, limit: int = 50, cursor: str | None = None
+    ) -> tuple[tuple[Deployment, ...], str | None, bool]:
+        clauses: list[str] = []
+        arguments: list[Any] = []
+        if application_id is not None:
+            clauses.append("application_id = %s")
+            arguments.append(application_id)
+        decoded = decode_cursor(cursor)
+        if decoded is not None:
+            ts, record_id = decoded
+            clauses.append("(created_at, id) < (%s, %s)")
+            arguments.extend([ts, record_id])
+        where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+        query = f"SELECT {DEPLOYMENT_COLUMNS} FROM deployments{where} ORDER BY created_at DESC, id DESC LIMIT %s"
+        arguments.append(limit + 1)
+        self._cursor.execute(query, tuple(arguments))
+        rows = self._cursor.fetchall()
+        has_more = len(rows) > limit
+        result_rows = rows[:limit]
+        items = tuple(_deployment(row) for row in result_rows)
+        next_cursor = encode_cursor(items[-1].created_at, items[-1].id) if (has_more and items) else None
+        return items, next_cursor, has_more
+
+    def audit_records_paginated(
+        self, application_id: UUID | None = None, limit: int = 50, cursor: str | None = None
+    ) -> tuple[tuple[AuditRecord, ...], str | None, bool]:
+        clauses: list[str] = []
+        arguments: list[Any] = []
+        if application_id is not None:
+            clauses.append("application_id = %s")
+            arguments.append(application_id)
+        decoded = decode_cursor(cursor)
+        if decoded is not None:
+            ts, record_id = decoded
+            clauses.append("(occurred_at, id) < (%s, %s)")
+            arguments.extend([ts, record_id])
+        where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+        query = f"SELECT {AUDIT_COLUMNS} FROM audit_events{where} ORDER BY occurred_at DESC, id DESC LIMIT %s"
+        arguments.append(limit + 1)
+        self._cursor.execute(query, tuple(arguments))
+        rows = self._cursor.fetchall()
+        has_more = len(rows) > limit
+        result_rows = rows[:limit]
+        items = tuple(_audit(row) for row in result_rows)
+        next_cursor = encode_cursor(items[-1].occurred_at, items[-1].id) if (has_more and items) else None
+        return items, next_cursor, has_more
+
+    # ----------------------------------------------------------- retention
+
+    def purge_expired_callback_tokens(self, now: datetime) -> int:
+        self._cursor.execute(
+            "DELETE FROM callback_token_uses WHERE expires_at < %s", (now,)
+        )
+        return self._cursor.rowcount
+
+    def purge_completed_notifications(self, cutoff: datetime) -> int:
+        self._cursor.execute(
+            "DELETE FROM notifications WHERE status = 'delivered' AND delivered_at < %s", (cutoff,)
+        )
+        return self._cursor.rowcount
+
+    def purge_old_delivery_events(self, cutoff: datetime) -> int:
+        self._cursor.execute(
+            "DELETE FROM delivery_events WHERE occurred_at < %s", (cutoff,)
+        )
+        return self._cursor.rowcount
+
+
+class PostgresConnectionPool:
+    """Thread-safe connection pool with checkout timeout, liveness checks, and clean shutdown."""
+
+    def __init__(self, url: str, min_size: int = 2, max_size: int = 20, timeout: float = 10.0) -> None:
+        self.url = url
+        self.min_size = min_size
+        self.max_size = max_size
+        self.timeout = timeout
+        self._pool: queue.Queue[tuple[psycopg.Connection, float]] = queue.Queue(maxsize=max_size)
+        self._created_count = 0
+        self._lock = threading.Lock()
+        self._closed = False
+
+    def get(self) -> psycopg.Connection:
+        if self._closed:
+            raise RuntimeError("PostgresConnectionPool is closed")
+
+        with self._lock:
+            if self._created_count < self.max_size and self._pool.empty():
+                conn = psycopg.connect(self.url, row_factory=dict_row)
+                self._created_count += 1
+                return conn
+
+        try:
+            conn, checkout_time = self._pool.get(timeout=self.timeout)
+        except queue.Empty:
+            with self._lock:
+                if self._created_count < self.max_size:
+                    conn = psycopg.connect(self.url, row_factory=dict_row)
+                    self._created_count += 1
+                    return conn
+            raise TimeoutError(f"Database connection pool exhausted (max={self.max_size})")
+
+        try:
+            if conn.closed:
+                conn = psycopg.connect(self.url, row_factory=dict_row)
+            elif datetime.now(timezone.utc).timestamp() - checkout_time > 30.0:
+                with conn.cursor() as cur:
+                    cur.execute("SELECT 1")
+        except Exception:
+            try:
+                conn.close()
+            except Exception:
+                pass
+            conn = psycopg.connect(self.url, row_factory=dict_row)
+
+        return conn
+
+    def put(self, conn: psycopg.Connection) -> None:
+        if self._closed or conn.closed:
+            try:
+                conn.close()
+            except Exception:
+                pass
+            with self._lock:
+                self._created_count = max(0, self._created_count - 1)
+            return
+
+        try:
+            if not conn.closed:
+                conn.rollback()
+            self._pool.put_nowait((conn, datetime.now(timezone.utc).timestamp()))
+        except queue.Full:
+            try:
+                conn.close()
+            except Exception:
+                pass
+            with self._lock:
+                self._created_count = max(0, self._created_count - 1)
+
+    def stats(self) -> dict[str, int]:
+        idle = self._pool.qsize()
+        with self._lock:
+            total = self._created_count
+        return {"idle": idle, "active": max(0, total - idle), "total": total, "max": self.max_size}
+
+    def close(self) -> None:
+        self._closed = True
+        while not self._pool.empty():
+            try:
+                conn, _ = self._pool.get_nowait()
+                conn.close()
+            except Exception:
+                pass
+        with self._lock:
+            self._created_count = 0
+
 
 class PostgresDatabase:
-    """Opens one transaction per request; holds no state between them."""
+    """Connection-pooled PostgreSQL database with transactional sessions."""
 
-    def __init__(self, url: str) -> None:
+    def __init__(self, url: str, max_pool_size: int = 15) -> None:
         self.url = url
         self.last_error: str | None = None
+        self._pool = PostgresConnectionPool(url, max_size=max_pool_size) if psycopg else None
 
     def describe(self) -> str:
         return "postgresql"
@@ -1502,6 +1843,15 @@ class PostgresDatabase:
         if psycopg is None:
             raise RuntimeError("psycopg is required when DATABASE_URL is configured")
         return psycopg.connect(self.url, row_factory=dict_row)
+
+    def pool_stats(self) -> dict[str, int]:
+        if self._pool:
+            return self._pool.stats()
+        return {"idle": 0, "active": 0, "total": 0, "max": 0}
+
+    def close(self) -> None:
+        if self._pool:
+            self._pool.close()
 
     @contextmanager
     def transaction(self):
@@ -1512,8 +1862,7 @@ class PostgresDatabase:
         transaction inserted the same key between this one's check and its write -- and
         the caller owes the client a 409, not a 503 pointing at the database.
         """
-
-        connection = self._connect()
+        connection = self._pool.get() if self._pool else self._connect()
         try:
             with connection.cursor() as cursor:
                 try:
@@ -1534,15 +1883,27 @@ class PostgresDatabase:
                         f"a competing transaction already wrote this record: {exc.diag.constraint_name}"
                     ) from exc
         finally:
-            connection.close()
+            if self._pool:
+                self._pool.put(connection)
+            else:
+                connection.close()
 
     def health(self) -> str:
         try:
-            with self._connect() as connection:
-                with connection.cursor() as cursor:
-                    cursor.execute("SELECT 1")
+            if self._pool:
+                conn = self._pool.get()
+                try:
+                    with conn.cursor() as cursor:
+                        cursor.execute("SELECT 1")
+                finally:
+                    self._pool.put(conn)
+            else:
+                with self._connect() as connection:
+                    with connection.cursor() as cursor:
+                        cursor.execute("SELECT 1")
             self.last_error = None
             return "ok"
         except Exception as exc:
             self.last_error = str(exc)
             return f"unavailable: {exc}"
+

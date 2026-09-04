@@ -1177,6 +1177,162 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ReconcileResponse'
+  /notifications:
+    get:
+      operationId: listNotifications
+      summary: List notifications from transactional outbox with status filter and cursor pagination
+      parameters:
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [pending, delivered, failed, dead_letter]
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 50
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Paginated notifications
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                  nextCursor:
+                    type: string
+                    nullable: true
+                  hasMore:
+                    type: boolean
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /notifications/{notificationId}/retry:
+    post:
+      operationId: retryNotification
+      summary: Re-enqueue a dead-letter or failed notification for delivery
+      parameters:
+        - name: notificationId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Re-enqueued notification
+          content:
+            application/json:
+              schema:
+                type: object
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /pipeline-runs:
+    get:
+      operationId: listPipelineRuns
+      summary: List all pipeline runs across applications with cursor pagination
+      parameters:
+        - name: applicationId
+          in: query
+          required: false
+          schema:
+            type: string
+            format: uuid
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 50
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Paginated pipeline runs
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/PipelineRun'
+                  nextCursor:
+                    type: string
+                    nullable: true
+                  hasMore:
+                    type: boolean
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /deployments:
+    get:
+      operationId: listDeployments
+      summary: List all deployments across applications with cursor pagination
+      parameters:
+        - name: applicationId
+          in: query
+          required: false
+          schema:
+            type: string
+            format: uuid
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 50
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Paginated deployments
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Deployment'
+                  nextCursor:
+                    type: string
+                    nullable: true
+                  hasMore:
+                    type: boolean
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /admin/retention/purge:
+    post:
+      operationId: triggerRetentionPurge
+      summary: Trigger data retention purge of expired callback tokens and aged records
+      responses:
+        '200':
+          description: Retention purge summary
+          content:
+            application/json:
+              schema:
+                type: object
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
