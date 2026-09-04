@@ -107,3 +107,7 @@ class StillReferenced(RuntimeError):
     "the database is down" sends an operator to the wrong place when the truth is "a
     production request still names this module".
     """
+
+
+class VersionConflict(RuntimeError):
+    """Raised when an immutable release version already exists."""

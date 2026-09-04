@@ -8,7 +8,7 @@ vi.mock('./api/netciClient', async (importOriginal) => {
     ...original,
     getModule: vi.fn().mockResolvedValue({
       id: 'notification-worker', systemId: 'netChat', name: 'Notification Worker', type: 'Worker', description: 'Notifications', runtime: 'docker', applicationId: 'app-1', versions: [], deploymentEnvironments: [], environments: [], pipelineRuns: [], dora: [],
-      pipelineConfig: { runner: 'on-prem', strategy: 'Trunk-based', pipelines: { CI: { branch: 'main', coverageReportPath: 'coverage/lcov.info', stages: ['checkout', 'unit-test'] }, 'CD Prod': { branch: 'release/*', coverageReportPath: 'coverage/lcov.info', stages: ['checkout', 'deploy', 'health-check'] } } },
+      pipelineConfig: { runner: 'Jenkins', strategy: 'Trunk-based', pipelines: { CI: { branch: 'main', coverageReportPath: 'coverage/lcov.info', stages: ['checkout', 'unit-test'] }, 'CD Prod': { branch: 'release/*', coverageReportPath: 'coverage/lcov.info', stages: ['checkout', 'deploy', 'health-check'] } } },
     }),
     listModulePipelineRuns: vi.fn().mockResolvedValue({ moduleId: 'notification-worker', items: [] }),
     getDora: vi.fn(),

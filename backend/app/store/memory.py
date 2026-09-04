@@ -27,6 +27,7 @@ from ..persistence import (
     IdempotencyRow,
     StillReferenced,
     UnitOfWork,
+    VersionConflict,
 )
 from .records import DeploymentLease, ModuleRow, RequestRow, SystemRow, VersionRow
 
@@ -49,6 +50,7 @@ class _State:
     leases: dict[UUID, DeploymentLease] = field(default_factory=dict)
     fencing_counters: dict[tuple[UUID, str, str], int] = field(default_factory=dict)
     log_sequences: dict[UUID, int] = field(default_factory=dict)
+    ci_reports: dict[tuple[str, str], list[dict[str, Any]]] = field(default_factory=dict)
 
     def copy(self) -> "_State":
         return _State(
@@ -68,6 +70,7 @@ class _State:
             leases=dict(self.leases),
             fencing_counters=dict(self.fencing_counters),
             log_sequences=dict(self.log_sequences),
+            ci_reports={key: list(value) for key, value in self.ci_reports.items()},
         )
 
 
@@ -310,13 +313,28 @@ class InMemorySession:
         )
 
     def portal_versions(self, module_id: str) -> tuple[VersionRow, ...]:
-        return tuple(self._state.versions.get(module_id, ()))
+        rows = self._state.versions.get(module_id, ())
+        result: list[VersionRow] = []
+        for item in rows:
+            meta = dict(item.metadata)
+            reports = self._state.ci_reports.get((module_id, item.version))
+            if reports:
+                meta["ciReport"] = reports[-1]
+            result.append(VersionRow(item.module_id, item.version, meta))
+        return tuple(result)
 
     def portal_version(self, module_id: str, version: str) -> VersionRow | None:
-        return next(
-            (item for item in self._state.versions.get(module_id, ()) if item.version == version),
+        item = next(
+            (r for r in self._state.versions.get(module_id, ()) if r.version == version),
             None,
         )
+        if item is None:
+            return None
+        meta = dict(item.metadata)
+        reports = self._state.ci_reports.get((module_id, version))
+        if reports:
+            meta["ciReport"] = reports[-1]
+        return VersionRow(item.module_id, item.version, meta)
 
     def portal_requests(self) -> tuple[RequestRow, ...]:
         return tuple(self._state.requests.values())
@@ -386,13 +404,28 @@ class InMemorySession:
             )
         self._state.modules.pop(module_id, None)
 
-    def upsert_portal_version(self, row: VersionRow) -> None:
+    def insert_portal_version(self, row: VersionRow) -> None:
         existing = self._state.versions.setdefault(row.module_id, [])
-        for index, item in enumerate(existing):
+        for item in existing:
             if item.version == row.version:
-                existing[index] = row
-                return
+                if item.metadata == row.metadata:
+                    return
+                raise VersionConflict(
+                    f"release version '{row.version}' already exists for module '{row.module_id}'"
+                )
         existing.insert(0, row)
+
+    def upsert_portal_version(self, row: VersionRow) -> None:
+        self.insert_portal_version(row)
+
+    def insert_version_ci_report(
+        self, module_id: str, version: str, report: dict[str, Any], recorded_by: str = "netCI Pipeline"
+    ) -> None:
+        self._state.ci_reports.setdefault((module_id, version), []).append(dict(report))
+
+    def latest_version_ci_report(self, module_id: str, version: str) -> dict[str, Any] | None:
+        reports = self._state.ci_reports.get((module_id, version))
+        return reports[-1] if reports else None
 
     def insert_portal_request(self, row: RequestRow) -> None:
         if row.idempotency_key and any(

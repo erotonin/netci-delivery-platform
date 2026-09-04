@@ -24,7 +24,13 @@ from .demo_data import seed_demo_data
 from .errors import ApiError
 from .delivery import DeliveryPlatform
 from .domain.models import DeliveryEvent, Environment, PipelineStatus, Runtime
-from .persistence import ConcurrentModification, StillReferenced
+from .persistence import (
+    AuditRecord,
+    ConcurrentModification,
+    StillReferenced,
+    UnitOfWork,
+    VersionConflict,
+)
 from .projections.dora import DoraEvent, project_dora
 from .store import (
     ModuleRow,
@@ -541,8 +547,17 @@ class PortalService:
             module = transaction.portal_module(module_id)
             if module is None:
                 raise KeyError("module not found")
-            if transaction.portal_version(module_id, tag) is not None:
-                raise ValueError("version already exists")
+            existing = transaction.portal_version(module_id, tag)
+            if existing is not None:
+                existing_meta = existing.metadata
+                existing_digest = existing_meta.get("artifactDigest")
+                existing_run = existing_meta.get("pipelineRunId")
+                req_run = str(pipeline_run_id) if pipeline_run_id else None
+                if existing_digest == artifact_digest and existing_run == req_run:
+                    return {"moduleId": module_id, "version": tag, **existing_meta}
+                raise ValueError(
+                    f"release version '{tag}' already exists with different digest or provenance"
+                )
             run = None
             evidence: dict[str, object] = {}
             if pipeline_run_id is not None or artifact_digest is not None:
@@ -575,26 +590,64 @@ class PortalService:
                 "createdAt": datetime.now(timezone.utc).isoformat(),
                 "ciReport": None,
             }
-            transaction.upsert_portal_version(VersionRow(module_id, tag, record))
+            try:
+                transaction.insert_portal_version(VersionRow(module_id, tag, record))
+            except VersionConflict:
+                rechecked = transaction.portal_version(module_id, tag)
+                if rechecked is not None:
+                    re_meta = rechecked.metadata
+                    if re_meta.get("artifactDigest") == artifact_digest and re_meta.get("pipelineRunId") == (str(run.id) if run else None):
+                        return {"moduleId": module_id, "version": tag, **re_meta}
+                raise ValueError(
+                    f"release version '{tag}' already exists with different digest or provenance"
+                )
+
+            audit_unit = UnitOfWork(
+                audit=[
+                    AuditRecord(
+                        event_type="release_version.created",
+                        application_id=module.application_id,
+                        pipeline_run_id=run.id if run else None,
+                        actor=created_by,
+                        payload={
+                            "moduleId": module_id,
+                            "version": tag,
+                            "artifactDigest": artifact_digest,
+                            "createdBy": created_by,
+                            "sourceRunId": str(run.id) if run else None,
+                        },
+                    )
+                ]
+            )
+            transaction.apply(audit_unit)
             return {"moduleId": module_id, "version": tag, **record}
 
     def record_ci_report(self, module_id: str, tag: str, report: dict[str, object]) -> dict[str, object]:
         with self._session() as transaction:
-            if transaction.portal_module(module_id) is None:
+            module = transaction.portal_module(module_id)
+            if module is None:
                 raise KeyError("module not found")
             existing = transaction.portal_version(module_id, tag)
-            record = dict(
-                existing.metadata
-                if existing is not None
-                else {
+            if existing is None:
+                stub = {
                     "gitTagUrl": None,
                     "artifactUrl": None,
                     "createdBy": "netCI Pipeline",
                     "createdAt": datetime.now(timezone.utc).isoformat(),
                 }
+                transaction.insert_portal_version(VersionRow(module_id, tag, stub))
+            transaction.insert_version_ci_report(module_id, tag, report)
+            audit_unit = UnitOfWork(
+                audit=[
+                    AuditRecord(
+                        event_type="release_version.ci_report_recorded",
+                        application_id=module.application_id,
+                        actor="netCI Pipeline",
+                        payload={"moduleId": module_id, "version": tag, "report": report},
+                    )
+                ]
             )
-            record["ciReport"] = dict(report)
-            transaction.upsert_portal_version(VersionRow(module_id, tag, record))
+            transaction.apply(audit_unit)
             return {"moduleId": module_id, "version": tag, **dict(report)}
 
     def dora(self, scope_id: str) -> dict[str, object]:

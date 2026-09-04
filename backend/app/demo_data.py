@@ -98,9 +98,10 @@ def seed_demo_data(platform, portal) -> bool:
                 session=transaction,
             )
             for tag in DEMO_VERSIONS:
-                transaction.upsert_portal_version(
-                    _version_row(module_id, tag)
-                )
+                if transaction.portal_version(module_id, tag) is None:
+                    transaction.insert_portal_version(
+                        _version_row(module_id, tag)
+                    )
             written = True
     if written:
         logger.warning(

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import {
   Activity, ArrowRight, Box, CheckCircle2, ChevronLeft, ChevronRight, CircleAlert,
-  CloudDownload, Layers3, MoreHorizontal, Plus, Search, Server,
+  CloudDownload, Layers3, MoreHorizontal, Plus, Search, Server, Trash2,
 } from 'lucide-react'
 import { createSystem, deleteSystem, getDora, getPortalDashboard, getSystem, listServerInventory, listSystems, searchDcimServices, type DcimService, type PortalDashboard, type ServerInventoryItem } from './api/netciClient'
 import { usePortalFeedback } from './PortalFeedback'

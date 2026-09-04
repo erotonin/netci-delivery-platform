@@ -129,7 +129,7 @@ export function ProductionRequestsPage({ systemId }: { systemId: string }) {
       listSystems()
         .then((systems) => {
           if (!active) return
-          const allMods = systems.flatMap((s) => s.modules.map((m) => ({ id: m.id, name: m.name, type: m.type, description: m.description, versions: m.versions, runtime: m.runtime })))
+          const allMods = systems.flatMap((s) => s.modules.map((m) => ({ id: m.id, name: m.name, type: m.type, description: m.description, versions: m.versions, runtime: m.runtime, environments: m.environments })))
           if (allMods.length > 0) setAvailableModules(allMods)
         })
         .catch(() => undefined)

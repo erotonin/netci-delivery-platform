@@ -705,7 +705,7 @@ def test_manual_version_registration_is_visible_to_the_portal():
 
 
 def test_version_registration_fails_closed_without_leaving_a_ghost_version(monkeypatch):
-    monkeypatch.setattr(main.portal, 'database', failing_on('upsert_portal_version'))
+    monkeypatch.setattr(main.portal, 'database', failing_on('insert_portal_version'))
 
     response = client.post('/modules/hello-container/versions', json={
         'tag': 'v9.9.9',
@@ -725,7 +725,7 @@ def test_ci_report_fails_closed_without_mutating_the_projection(monkeypatch):
         'artifactUrl': 'https://github.com/example/hello-container/releases/v1.0.0',
     })
     monkeypatch.setenv('NETCI_PIPELINE_API_KEY', 'test-pipeline-key')
-    monkeypatch.setattr(main.portal, 'database', failing_on('upsert_portal_version'))
+    monkeypatch.setattr(main.portal, 'database', failing_on('insert_version_ci_report'))
 
     response = client.post(
         '/modules/hello-container/versions/v1.0.0/ci-report',

@@ -32,6 +32,7 @@ from ..persistence import (
     IdempotencyRow,
     StillReferenced,
     UnitOfWork,
+    VersionConflict,
 )
 from .records import (
     DeploymentLease,
@@ -790,25 +791,50 @@ class PostgresSession:
 
     def portal_versions(self, module_id: str) -> tuple[VersionRow, ...]:
         self._cursor.execute(
-            "SELECT module_id, version, metadata FROM release_versions WHERE module_id = %s"
-            " ORDER BY created_at DESC, version DESC",
+            """
+            SELECT rv.module_id, rv.version, rv.metadata, r.report
+            FROM release_versions rv
+            LEFT JOIN LATERAL (
+                SELECT report FROM version_ci_reports vcr
+                WHERE vcr.module_id = rv.module_id AND vcr.version = rv.version
+                ORDER BY vcr.recorded_at DESC, vcr.id DESC
+                LIMIT 1
+            ) r ON true
+            WHERE rv.module_id = %s
+            ORDER BY rv.created_at DESC, rv.version DESC
+            """,
             (module_id,),
         )
-        return tuple(
-            VersionRow(str(row["module_id"]), str(row["version"]), dict(row["metadata"] or {}))
-            for row in self._cursor.fetchall()
-        )
+        results: list[VersionRow] = []
+        for row in self._cursor.fetchall():
+            meta = dict(row["metadata"] or {})
+            if row["report"] is not None:
+                meta["ciReport"] = row["report"]
+            results.append(VersionRow(str(row["module_id"]), str(row["version"]), meta))
+        return tuple(results)
 
     def portal_version(self, module_id: str, version: str) -> VersionRow | None:
         self._cursor.execute(
-            "SELECT module_id, version, metadata FROM release_versions"
-            " WHERE module_id = %s AND version = %s",
+            """
+            SELECT rv.module_id, rv.version, rv.metadata, r.report
+            FROM release_versions rv
+            LEFT JOIN LATERAL (
+                SELECT report FROM version_ci_reports vcr
+                WHERE vcr.module_id = rv.module_id AND vcr.version = rv.version
+                ORDER BY vcr.recorded_at DESC, vcr.id DESC
+                LIMIT 1
+            ) r ON true
+            WHERE rv.module_id = %s AND rv.version = %s
+            """,
             (module_id, version),
         )
         row = self._cursor.fetchone()
         if row is None:
             return None
-        return VersionRow(str(row["module_id"]), str(row["version"]), dict(row["metadata"] or {}))
+        meta = dict(row["metadata"] or {})
+        if row["report"] is not None:
+            meta["ciReport"] = row["report"]
+        return VersionRow(str(row["module_id"]), str(row["version"]), meta)
 
     def _requests_where(self, clause: str, arguments: tuple[Any, ...]) -> tuple[RequestRow, ...]:
         self._cursor.execute(
@@ -933,15 +959,56 @@ class PostgresSession:
                 f"module {module_id} is still referenced by a production request"
             ) from exc
 
+    def insert_portal_version(self, row: VersionRow) -> None:
+        try:
+            self._cursor.execute(
+                """
+                INSERT INTO release_versions (module_id, version, artifact_digest, metadata)
+                VALUES (%s, %s, %s, %s::jsonb)
+                ON CONFLICT (module_id, version) DO NOTHING
+                RETURNING id
+                """,
+                (row.module_id, row.version, row.metadata.get("artifactDigest"), json.dumps(row.metadata, default=str)),
+            )
+            inserted = self._cursor.fetchone()
+            if not inserted:
+                existing = self.portal_version(row.module_id, row.version)
+                if existing and existing.metadata == row.metadata:
+                    return
+                raise VersionConflict(
+                    f"release version '{row.version}' already exists for module '{row.module_id}'"
+                )
+        except psycopg.errors.UniqueViolation as exc:
+            raise VersionConflict(
+                f"release version '{row.version}' already exists for module '{row.module_id}'"
+            ) from exc
+
     def upsert_portal_version(self, row: VersionRow) -> None:
+        self.insert_portal_version(row)
+
+    def insert_version_ci_report(
+        self, module_id: str, version: str, report: dict[str, Any], recorded_by: str = "netCI Pipeline"
+    ) -> None:
         self._cursor.execute(
             """
-            INSERT INTO release_versions (module_id, version, metadata)
-            VALUES (%s, %s, %s::jsonb)
-            ON CONFLICT (module_id, version) DO UPDATE SET metadata = EXCLUDED.metadata
+            INSERT INTO version_ci_reports (module_id, version, report, recorded_by)
+            VALUES (%s, %s, %s::jsonb, %s)
             """,
-            (row.module_id, row.version, json.dumps(row.metadata, default=str)),
+            (module_id, version, json.dumps(report, default=str), recorded_by),
         )
+
+    def latest_version_ci_report(self, module_id: str, version: str) -> dict[str, Any] | None:
+        self._cursor.execute(
+            """
+            SELECT report FROM version_ci_reports
+            WHERE module_id = %s AND version = %s
+            ORDER BY recorded_at DESC, id DESC
+            LIMIT 1
+            """,
+            (module_id, version),
+        )
+        row = self._cursor.fetchone()
+        return dict(row["report"]) if row and row["report"] else None
 
     def insert_portal_request(self, row: RequestRow) -> None:
         primary = row.modules[0]

@@ -146,15 +146,14 @@ function TopBar({ page, systemId, moduleId, moduleLinks, navigationSystems, sess
     <div className="breadcrumbs">{crumbs.filter(Boolean).map((crumb, index) => <span key={`${crumb}-${index}`}>{index > 0 && <i>/</i>}{crumb}</span>)}</div>
     <div className="global-search-wrap"><label className="global-search"><Search size={16} /><input aria-label="Tìm kiếm toàn cục" placeholder="Search systems, modules…" value={query} onFocus={() => setSearchOpen(true)} onChange={(event) => { setQuery(event.target.value); setSearchOpen(true) }} onKeyDown={(event) => { if (event.key === 'Escape') setSearchOpen(false); if (event.key === 'Enter' && results[0]) selectResult(results[0].action) }} /></label>{searchOpen && <section className="global-search-results" aria-label="Search results">{results.map((item) => <button key={item.key} onMouseDown={(event) => event.preventDefault()} onClick={() => selectResult(item.action)}><Search size={14} /><span><strong>{item.label}</strong><small>{item.detail}</small></span></button>)}{!results.length && <div><strong>No matching destination</strong><small>Try a system or module name.</small></div>}</section>}</div>
     <div className="topbar-actions">
-      <button className="icon-button notification-button" aria-label="Thông báo" aria-expanded={notifications} onClick={() => setNotifications(!notifications)}><Bell size={18} />{!notificationsRead && <i />}</button>
+      <button className="icon-button notification-button" aria-label="Thông báo" aria-expanded={notifications} onClick={() => setNotifications(!notifications)}><Bell size={18} /></button>
       <button className="icon-button" aria-label="Cài đặt" onClick={onSettings}><Settings size={18} /></button>
       <span className="avatar" title={`${session.identity.principal.displayName} · ${roleLabel(session)}`}>{session.identity.principal.displayName.slice(0, 2).toUpperCase()}</span>
       {session.identity.authMode !== 'none' && <button className="logout-button" aria-label="Đăng xuất" onClick={onLogout}><LogOut size={17} /></button>}
     </div>
     {notifications && <section className="notification-panel">
-      <div className="notification-title"><strong>Notifications</strong><button disabled={notificationsRead} onClick={() => setNotificationsRead(true)}>{notificationsRead ? 'All read' : 'Mark all as read'}</button></div>
-      <div className={`notification-row ${notificationsRead ? '' : 'unread'}`}><span className="notice-icon success"><CheckCircle2 size={16} /></span><div><strong>Deployment successful</strong><p>Backend API v2.4.1 deployed to Production.</p><small>12 minutes ago</small></div></div>
-      <div className="notification-row"><span className="notice-icon warning"><ShieldAlert size={16} /></span><div><strong>Approval required</strong><p>PR-2025-0033 is waiting for GNOC checks.</p><small>42 minutes ago</small></div></div>
+      <div className="notification-title"><strong>Notifications</strong></div>
+      <div className="empty-notifications" style={{ padding: '1.5rem', textAlign: 'center', color: 'var(--text-muted)' }}><small>No notifications. Real events appear when an outbox event or notification service is configured.</small></div>
       <button className="notification-footer" onClick={() => { setNotifications(false); navigate('requests', { systemId }) }}>View approval requests</button>
     </section>}
   </header>
@@ -162,11 +161,10 @@ function TopBar({ page, systemId, moduleId, moduleLinks, navigationSystems, sess
 
 export function PortalShell({ children, page, systemId, moduleId, session, navigate, onSettings, onLogout }: { children: ReactNode; page: PageId; systemId: string; moduleId: string; session: AuthSession; navigate: Navigate; onSettings: () => void; onLogout: () => void }) {
   const [menuOpen, setMenuOpen] = useState(false)
-  const [moduleLinks, setModuleLinks] = useState<NavigationModule[]>(systems.find((item) => item.id === systemId)?.modules ?? [])
+  const [moduleLinks, setModuleLinks] = useState<NavigationModule[]>([])
   const [navigationSystems, setNavigationSystems] = useState<NavigationSystem[]>(initialNavigationSystems)
   useEffect(() => {
     let active = true
-    setModuleLinks(systems.find((item) => item.id === systemId)?.modules ?? [])
     listSystems().then((items) => {
       if (!active) return
       const next = items.map((system) => ({ id: system.id, status: system.status, modules: system.modules.map((module) => ({ id: module.id, name: module.name })) }))

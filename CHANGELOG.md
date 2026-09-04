@@ -14,6 +14,13 @@ Changelog and releases use Semantic Versioning once the project reaches 1.0.0.
 
 ### Changed
 
+- **Release version immutability and append-only CI quality reports.**
+  Release versions are strictly immutable and cannot overwrite artifact digests or
+  provenance (`409 VersionConflict`). Quality/CI reports are stored separately in an
+  append-only `version_ci_reports` table and dynamically projected. Automated backup
+  and restore verification covers all 19 application tables with checksums, foreign-key
+  integrity checks, and automated drills. Hardcoded mock notifications and fake unread
+  badges were removed from PortalShell. See ADR-017.
 - **Deployment leases, monotonic fencing tokens and safe log sequences.**
   Mutually exclusive deployments per (application, environment, target) are enforced
   directly in PostgreSQL via partial unique index. Fencing tokens prevent stale/superseded

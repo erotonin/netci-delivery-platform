@@ -32,6 +32,7 @@ from .records import (
     VersionRow,
 )
 from .session import PlatformSession
+from ..persistence import VersionConflict
 
 __all__ = [
     "DeploymentLease",
@@ -44,6 +45,7 @@ __all__ = [
     "RequestModuleRow",
     "RequestRow",
     "SystemRow",
+    "VersionConflict",
     "VersionRow",
     "build_database",
 ]
