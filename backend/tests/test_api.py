@@ -390,3 +390,115 @@ def test_adding_owner_team_did_not_rehash_existing_idempotency_keys():
     )
     assert conflicting.status_code == 409
     assert conflicting.json()['code'] == 'IDEMPOTENCY_KEY_REUSED'
+
+
+# --------------------------------------------------- atomic module onboarding
+
+
+def module_payload(name: str) -> dict:
+    return {
+        'name': name,
+        'displayName': name,
+        'repositoryUrl': f'https://github.com/example/{name}',
+        'pipelineTemplate': 'container-ci-cd-v1',
+        'runtime': 'docker',
+        'moduleType': 'Backend',
+        'description': 'onboarding probe',
+        'deploymentEnvironments': [
+            {
+                'displayName': 'Development',
+                'environment': 'dev',
+                'runtime': 'docker',
+                'servers': ['localhost'],
+            }
+        ],
+    }
+
+
+def test_onboarding_a_module_creates_the_application_and_the_module_together():
+    client.post('/systems', json={'id': 'atomic-sys', 'unit': 'Platform', 'description': 'atomic'})
+
+    created = client.post('/systems/atomic-sys/modules', json=module_payload('atomic-mod'))
+
+    assert created.status_code == 201
+    assert created.json()['applicationId']
+    applications = client.get('/applications').json()
+    assert [item['name'] for item in applications if item['name'] == 'atomic-mod'] == ['atomic-mod']
+
+
+def test_retrying_onboarding_with_the_same_key_returns_the_original_module():
+    """A client whose first request timed out must get its module back, not a 409.
+
+    Before onboarding was one transaction the retry hit MODULE_EXISTS, which told the
+    client the name was taken while the application it had already created sat orphaned.
+    """
+
+    client.post('/systems', json={'id': 'retry-sys', 'unit': 'Platform', 'description': 'retry'})
+    headers = {'Idempotency-Key': 'onboard-retry-1'}
+
+    first = client.post('/systems/retry-sys/modules', json=module_payload('retry-mod'), headers=headers)
+    replay = client.post('/systems/retry-sys/modules', json=module_payload('retry-mod'), headers=headers)
+
+    assert first.status_code == 201
+    assert replay.status_code == 201
+    assert replay.json()['id'] == first.json()['id']
+    assert replay.json()['applicationId'] == first.json()['applicationId']
+    assert len(client.get('/systems/retry-sys').json()['modules']) == 1
+
+
+def test_reusing_an_onboarding_key_with_a_different_module_is_a_conflict():
+    client.post('/systems', json={'id': 'conflict-sys', 'unit': 'Platform', 'description': 'conflict'})
+    headers = {'Idempotency-Key': 'onboard-conflict-1'}
+    client.post('/systems/conflict-sys/modules', json=module_payload('conflict-a'), headers=headers)
+
+    response = client.post(
+        '/systems/conflict-sys/modules', json=module_payload('conflict-b'), headers=headers
+    )
+
+    assert response.status_code == 409
+    assert response.json()['code'] == 'IDEMPOTENCY_KEY_REUSED'
+    assert len(client.get('/systems/conflict-sys').json()['modules']) == 1
+
+
+def test_onboarding_into_an_unknown_system_leaves_no_orphan_application():
+    """The application insert must roll back with the module that could not be attached."""
+
+    before = {item['name'] for item in client.get('/applications').json()}
+
+    response = client.post('/systems/no-such-system/modules', json=module_payload('orphan-probe'))
+
+    assert response.status_code == 404
+    assert {item['name'] for item in client.get('/applications').json()} == before
+
+
+def test_onboarding_a_duplicate_module_leaves_no_orphan_application():
+    client.post('/systems', json={'id': 'dup-sys', 'unit': 'Platform', 'description': 'dup'})
+    client.post('/systems/dup-sys/modules', json=module_payload('dup-mod'))
+    before = [item['name'] for item in client.get('/applications').json()]
+
+    response = client.post('/systems/dup-sys/modules', json=module_payload('dup-mod'))
+
+    assert response.status_code == 409
+    assert [item['name'] for item in client.get('/applications').json()] == before
+
+
+def test_onboarding_fails_closed_when_the_store_is_unreachable(monkeypatch):
+    """A composed operation must keep the fail-closed behaviour its parts have alone."""
+
+    from contextlib import contextmanager
+
+    from app.delivery import DeliveryError
+
+    client.post('/systems', json={'id': 'closed-sys', 'unit': 'Platform', 'description': 'closed'})
+
+    @contextmanager
+    def unreachable():
+        raise DeliveryError('PERSISTENCE_UNAVAILABLE', 'cannot reach delivery state', 503)
+        yield  # pragma: no cover - never reached
+
+    monkeypatch.setattr(platform, 'transaction', unreachable)
+
+    response = client.post('/systems/closed-sys/modules', json=module_payload('closed-mod'))
+
+    assert response.status_code == 503
+    assert response.json()['code'] == 'PERSISTENCE_UNAVAILABLE'

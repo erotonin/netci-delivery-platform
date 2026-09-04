@@ -1,0 +1,827 @@
+"""PostgreSQL implementation of the platform store.
+
+Everything a request reads is fetched with a filter, inside the request's own
+transaction. There is no `load()` that pulls the database into dictionaries, because
+a dictionary filled at startup is a second source of truth that nothing invalidates:
+a second replica would answer from a snapshot of the moment it booted.
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+from contextlib import contextmanager
+from typing import Any
+from uuid import UUID
+
+from ..domain.models import (
+    Application,
+    DeliveryEvent,
+    DeliveryEventType,
+    Deployment,
+    DeploymentStatus,
+    Environment,
+    PipelineRun,
+    PipelineStatus,
+    Runtime,
+)
+from ..persistence import (
+    AuditRecord,
+    ConcurrentModification,
+    IdempotencyRow,
+    StillReferenced,
+    UnitOfWork,
+)
+from .records import ModuleRow, RequestModuleRow, RequestRow, SystemRow, VersionRow
+
+try:
+    import psycopg
+    from psycopg.rows import dict_row
+except ImportError:  # pragma: no cover - optional dependency for source-only tests
+    psycopg = None
+    dict_row = None
+
+
+logger = logging.getLogger(__name__)
+
+APPLICATION_COLUMNS = (
+    "id, name, repository_url, pipeline_template, runtime, default_environment,"
+    " stages, owner_team, created_at"
+)
+RUN_COLUMNS = (
+    "id, application_id, status, commit_sha, branch, environment, parameters, correlation_id,"
+    " jenkins_run_id, workflow_id, artifact_digest, started_by, version, created_at, updated_at"
+)
+DEPLOYMENT_COLUMNS = (
+    "id, application_id, pipeline_run_id, runtime, environment, status, artifact_digest,"
+    " previous_artifact_digest, approved_by, version, created_at, updated_at"
+)
+EVENT_COLUMNS = (
+    "id, event_type, application_id, pipeline_run_id, deployment_id, commit_sha, environment,"
+    " successful, requires_intervention, occurred_at"
+)
+AUDIT_COLUMNS = (
+    "id, event_type, application_id, pipeline_run_id, deployment_id, actor, correlation_id,"
+    " payload, occurred_at"
+)
+MODULE_COLUMNS = (
+    "id, system_id, application_id, runtime, name, module_type, description,"
+    " deployment_config, pipeline_config"
+)
+REQUEST_COLUMNS = (
+    "id, module_id, version, requested_by, scheduled_for, rollback_strategy,"
+    " run_automation_tests, status, deployment_id, comment, idempotency_key, request_hash"
+)
+
+
+def _application(row: dict[str, Any]) -> Application:
+    return Application(
+        name=row["name"],
+        repository_url=row["repository_url"],
+        pipeline_template=row["pipeline_template"],
+        runtime=Runtime(row["runtime"]),
+        default_environment=Environment(row["default_environment"]),
+        stages=tuple(row["stages"] or []),
+        owner_team=row["owner_team"],
+        id=row["id"],
+        created_at=row["created_at"],
+    )
+
+
+def _run(row: dict[str, Any]) -> PipelineRun:
+    return PipelineRun(
+        id=row["id"],
+        application_id=row["application_id"],
+        status=PipelineStatus(row["status"]),
+        commit_sha=row["commit_sha"],
+        branch=row["branch"],
+        environment=Environment(row["environment"]),
+        parameters=dict(row["parameters"] or {}),
+        correlation_id=row["correlation_id"] or "",
+        jenkins_run_id=row["jenkins_run_id"],
+        workflow_id=row["workflow_id"],
+        artifact_digest=row["artifact_digest"],
+        started_by=row["started_by"],
+        version=int(row["version"] or 1),
+        created_at=row["created_at"],
+        updated_at=row["updated_at"],
+    )
+
+
+def _deployment(row: dict[str, Any]) -> Deployment:
+    return Deployment(
+        id=row["id"],
+        application_id=row["application_id"],
+        pipeline_run_id=row["pipeline_run_id"],
+        runtime=Runtime(row["runtime"]),
+        environment=Environment(row["environment"]),
+        status=DeploymentStatus(row["status"]),
+        artifact_digest=row["artifact_digest"],
+        previous_artifact_digest=row["previous_artifact_digest"],
+        approved_by=row["approved_by"],
+        version=int(row["version"] or 1),
+        created_at=row["created_at"],
+        updated_at=row["updated_at"],
+    )
+
+
+def _event(row: dict[str, Any]) -> DeliveryEvent:
+    return DeliveryEvent(
+        id=row["id"],
+        event_type=DeliveryEventType(row["event_type"]),
+        application_id=row["application_id"],
+        pipeline_run_id=row["pipeline_run_id"],
+        deployment_id=row["deployment_id"],
+        commit_sha=row["commit_sha"],
+        environment=Environment(row["environment"]) if row["environment"] else None,
+        successful=row["successful"],
+        requires_intervention=bool(row["requires_intervention"]),
+        occurred_at=row["occurred_at"],
+    )
+
+
+def _audit(row: dict[str, Any]) -> AuditRecord:
+    return AuditRecord(
+        id=row["id"],
+        event_type=row["event_type"],
+        application_id=row["application_id"],
+        pipeline_run_id=row["pipeline_run_id"],
+        deployment_id=row["deployment_id"],
+        actor=row["actor"],
+        correlation_id=row["correlation_id"],
+        payload=dict(row["payload"] or {}),
+        occurred_at=row["occurred_at"],
+    )
+
+
+def _module(row: dict[str, Any]) -> ModuleRow:
+    application_id = row["application_id"]
+    if application_id is not None and not isinstance(application_id, UUID):
+        application_id = UUID(str(application_id))
+    return ModuleRow(
+        id=str(row["id"]),
+        system_id=str(row["system_id"]),
+        name=str(row["name"]),
+        module_type=str(row["module_type"]),
+        description=str(row["description"] or ""),
+        runtime=str(row["runtime"] or "docker"),
+        application_id=application_id,
+        deployment_config=list(row["deployment_config"] or []),
+        pipeline_config=dict(row["pipeline_config"] or {}),
+    )
+
+
+class PostgresSession:
+    """One transaction. Reads are filtered queries; writes enforce the read version."""
+
+    def __init__(self, cursor) -> None:
+        self._cursor = cursor
+
+    # ------------------------------------------------------------- delivery reads
+
+    def application(self, application_id: UUID) -> Application | None:
+        self._cursor.execute(
+            f"SELECT {APPLICATION_COLUMNS} FROM applications WHERE id = %s", (application_id,)
+        )
+        row = self._cursor.fetchone()
+        return _application(row) if row else None
+
+    def application_by_name(self, name: str) -> Application | None:
+        self._cursor.execute(
+            f"SELECT {APPLICATION_COLUMNS} FROM applications WHERE name = %s", (name,)
+        )
+        row = self._cursor.fetchone()
+        return _application(row) if row else None
+
+    def applications(self) -> tuple[Application, ...]:
+        self._cursor.execute(f"SELECT {APPLICATION_COLUMNS} FROM applications ORDER BY created_at, id")
+        return tuple(_application(row) for row in self._cursor.fetchall())
+
+    def pipeline_run(self, pipeline_run_id: UUID) -> PipelineRun | None:
+        self._cursor.execute(
+            f"SELECT {RUN_COLUMNS} FROM pipeline_runs WHERE id = %s", (pipeline_run_id,)
+        )
+        row = self._cursor.fetchone()
+        return _run(row) if row else None
+
+    def pipeline_runs(self, application_id: UUID | None = None) -> tuple[PipelineRun, ...]:
+        if application_id is None:
+            self._cursor.execute(f"SELECT {RUN_COLUMNS} FROM pipeline_runs ORDER BY created_at, id")
+        else:
+            self._cursor.execute(
+                f"SELECT {RUN_COLUMNS} FROM pipeline_runs WHERE application_id = %s ORDER BY created_at, id",
+                (application_id,),
+            )
+        return tuple(_run(row) for row in self._cursor.fetchall())
+
+    def deployment(self, deployment_id: UUID) -> Deployment | None:
+        self._cursor.execute(
+            f"SELECT {DEPLOYMENT_COLUMNS} FROM deployments WHERE id = %s", (deployment_id,)
+        )
+        row = self._cursor.fetchone()
+        return _deployment(row) if row else None
+
+    def deployments(
+        self,
+        application_id: UUID | None = None,
+        pipeline_run_id: UUID | None = None,
+    ) -> tuple[Deployment, ...]:
+        clauses: list[str] = []
+        arguments: list[Any] = []
+        if application_id is not None:
+            clauses.append("application_id = %s")
+            arguments.append(application_id)
+        if pipeline_run_id is not None:
+            clauses.append("pipeline_run_id = %s")
+            arguments.append(pipeline_run_id)
+        where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+        self._cursor.execute(
+            f"SELECT {DEPLOYMENT_COLUMNS} FROM deployments{where} ORDER BY created_at, id",
+            tuple(arguments),
+        )
+        return tuple(_deployment(row) for row in self._cursor.fetchall())
+
+    def pipeline_logs(self, pipeline_run_id: UUID) -> tuple[str, ...]:
+        self._cursor.execute(
+            "SELECT line FROM pipeline_logs WHERE pipeline_run_id = %s ORDER BY sequence",
+            (pipeline_run_id,),
+        )
+        return tuple(row["line"] for row in self._cursor.fetchall())
+
+    def delivery_events(self, application_id: UUID | None = None) -> tuple[DeliveryEvent, ...]:
+        if application_id is None:
+            self._cursor.execute(
+                f"SELECT {EVENT_COLUMNS} FROM delivery_events ORDER BY occurred_at, id"
+            )
+        else:
+            self._cursor.execute(
+                f"SELECT {EVENT_COLUMNS} FROM delivery_events WHERE application_id = %s"
+                " ORDER BY occurred_at, id",
+                (application_id,),
+            )
+        return tuple(_event(row) for row in self._cursor.fetchall())
+
+    def security_evidence(self, pipeline_run_id: UUID) -> dict[str, Any] | None:
+        self._cursor.execute(
+            "SELECT evidence FROM security_evidence WHERE pipeline_run_id = %s", (pipeline_run_id,)
+        )
+        row = self._cursor.fetchone()
+        return dict(row["evidence"] or {}) if row else None
+
+    def audit_records(self, application_ids: set[UUID] | None = None) -> tuple[AuditRecord, ...]:
+        if application_ids is None:
+            self._cursor.execute(
+                f"SELECT {AUDIT_COLUMNS} FROM audit_events ORDER BY occurred_at DESC, id DESC"
+            )
+        elif not application_ids:
+            return ()
+        else:
+            self._cursor.execute(
+                f"SELECT {AUDIT_COLUMNS} FROM audit_events WHERE application_id = ANY(%s)"
+                " ORDER BY occurred_at DESC, id DESC",
+                (list(application_ids),),
+            )
+        return tuple(_audit(row) for row in self._cursor.fetchall())
+
+    def idempotency(self, scope: str, idempotency_key: str) -> IdempotencyRow | None:
+        self._cursor.execute(
+            "SELECT scope, idempotency_key, request_hash, resource_type, resource_id, response_status"
+            " FROM idempotency_records WHERE scope = %s AND idempotency_key = %s",
+            (scope, idempotency_key),
+        )
+        row = self._cursor.fetchone()
+        if row is None:
+            return None
+        return IdempotencyRow(
+            scope=row["scope"],
+            idempotency_key=row["idempotency_key"],
+            request_hash=row["request_hash"],
+            resource_type=row["resource_type"],
+            resource_id=row["resource_id"],
+            response_status=int(row["response_status"]),
+        )
+
+    # ------------------------------------------------------------ delivery writes
+
+    def apply(self, unit: UnitOfWork) -> None:
+        if unit.is_empty():
+            return
+        cursor = self._cursor
+        for application in unit.applications:
+            cursor.execute(
+                """
+                INSERT INTO applications (id, name, repository_url, pipeline_template, runtime,
+                                          default_environment, stages, owner_team, created_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s)
+                ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, stages = EXCLUDED.stages,
+                                               owner_team = EXCLUDED.owner_team
+                """,
+                (
+                    application.id,
+                    application.name,
+                    application.repository_url,
+                    application.pipeline_template,
+                    application.runtime.value,
+                    application.default_environment.value,
+                    json.dumps(list(application.stages)),
+                    application.owner_team,
+                    application.created_at,
+                ),
+            )
+        for run, expected_version in unit.runs:
+            self._write_run(cursor, run, expected_version)
+        for deployment, expected_version in unit.deployments:
+            self._write_deployment(cursor, deployment, expected_version)
+        for run_id, lines in unit.logs:
+            for line in lines:
+                cursor.execute(
+                    "INSERT INTO pipeline_logs (pipeline_run_id, sequence, line)"
+                    " VALUES (%s, (SELECT coalesce(max(sequence), 0) + 1 FROM pipeline_logs"
+                    "              WHERE pipeline_run_id = %s), %s)",
+                    (run_id, run_id, line[:8000]),
+                )
+        for event in unit.events:
+            cursor.execute(
+                f"""
+                INSERT INTO delivery_events ({EVENT_COLUMNS})
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (id) DO NOTHING
+                """,
+                (
+                    event.id,
+                    event.event_type.value,
+                    event.application_id,
+                    event.pipeline_run_id,
+                    event.deployment_id,
+                    event.commit_sha,
+                    event.environment.value if event.environment else None,
+                    event.successful,
+                    event.requires_intervention,
+                    event.occurred_at,
+                ),
+            )
+        for record in unit.audit:
+            cursor.execute(
+                f"INSERT INTO audit_events ({AUDIT_COLUMNS})"
+                " VALUES (%s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s) ON CONFLICT (id) DO NOTHING",
+                (
+                    record.id,
+                    record.event_type,
+                    record.application_id,
+                    record.pipeline_run_id,
+                    record.deployment_id,
+                    record.actor,
+                    record.correlation_id,
+                    json.dumps(record.payload, default=str),
+                    record.occurred_at,
+                ),
+            )
+        for pipeline_run_id, application_id, artifact_digest, evidence in unit.security_evidence:
+            cursor.execute(
+                """
+                INSERT INTO security_evidence (
+                    pipeline_run_id, application_id, artifact_digest, evidence, decision, reason
+                ) VALUES (%s, %s, %s, %s::jsonb, %s, %s)
+                ON CONFLICT (pipeline_run_id) DO UPDATE
+                   SET artifact_digest = EXCLUDED.artifact_digest,
+                       evidence = EXCLUDED.evidence,
+                       decision = EXCLUDED.decision,
+                       reason = EXCLUDED.reason,
+                       updated_at = now()
+                """,
+                (
+                    pipeline_run_id,
+                    application_id,
+                    artifact_digest,
+                    json.dumps(evidence, default=str),
+                    evidence["decision"],
+                    evidence["reason"],
+                ),
+            )
+        for row in unit.idempotency:
+            cursor.execute(
+                """
+                INSERT INTO idempotency_records (scope, idempotency_key, request_hash, resource_type,
+                                                 resource_id, response_status, response_body)
+                VALUES (%s, %s, %s, %s, %s, %s, %s::jsonb)
+                ON CONFLICT (scope, idempotency_key) DO NOTHING
+                RETURNING resource_id
+                """,
+                (
+                    row.scope,
+                    row.idempotency_key,
+                    row.request_hash,
+                    row.resource_type,
+                    row.resource_id,
+                    row.response_status,
+                    json.dumps({"resourceId": str(row.resource_id)}),
+                ),
+            )
+            if cursor.fetchone() is None:
+                # A competing transaction claimed this key between our read and this
+                # insert. Raising rolls back every resource written above, so the retry
+                # replays the winner's resource instead of creating a duplicate.
+                raise ConcurrentModification(
+                    f"idempotency key {row.scope}/{row.idempotency_key} was committed concurrently"
+                )
+
+    @staticmethod
+    def _write_run(cursor, run: PipelineRun, expected_version: int | None) -> None:
+        if expected_version is None:
+            cursor.execute(
+                """
+                INSERT INTO pipeline_runs (id, application_id, commit_sha, branch, environment,
+                                           parameters, status, jenkins_run_id, workflow_id,
+                                           artifact_digest, correlation_id, started_by,
+                                           version, created_at, updated_at)
+                VALUES (%s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    run.id,
+                    run.application_id,
+                    run.commit_sha,
+                    run.branch,
+                    run.environment.value,
+                    json.dumps(run.parameters, default=str),
+                    run.status.value,
+                    run.jenkins_run_id,
+                    run.workflow_id,
+                    run.artifact_digest,
+                    run.correlation_id,
+                    run.started_by,
+                    run.version,
+                    run.created_at,
+                    run.updated_at,
+                ),
+            )
+            return
+        cursor.execute(
+            """
+            UPDATE pipeline_runs
+               SET status = %s, parameters = %s::jsonb, jenkins_run_id = %s, workflow_id = %s,
+                   artifact_digest = %s, version = %s, updated_at = %s
+             WHERE id = %s AND version = %s
+            """,
+            (
+                run.status.value,
+                json.dumps(run.parameters, default=str),
+                run.jenkins_run_id,
+                run.workflow_id,
+                run.artifact_digest,
+                run.version,
+                run.updated_at,
+                run.id,
+                expected_version,
+            ),
+        )
+        if cursor.rowcount != 1:
+            raise ConcurrentModification(f"pipeline run {run.id} changed since it was read")
+
+    @staticmethod
+    def _write_deployment(cursor, deployment: Deployment, expected_version: int | None) -> None:
+        if expected_version is None:
+            cursor.execute(
+                """
+                INSERT INTO deployments (id, application_id, pipeline_run_id, runtime, environment,
+                                         status, artifact_digest, previous_artifact_digest,
+                                         approved_by, version, created_at, updated_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    deployment.id,
+                    deployment.application_id,
+                    deployment.pipeline_run_id,
+                    deployment.runtime.value,
+                    deployment.environment.value,
+                    deployment.status.value,
+                    deployment.artifact_digest,
+                    deployment.previous_artifact_digest,
+                    deployment.approved_by,
+                    deployment.version,
+                    deployment.created_at,
+                    deployment.updated_at,
+                ),
+            )
+            return
+        cursor.execute(
+            """
+            UPDATE deployments
+               SET status = %s, artifact_digest = %s, previous_artifact_digest = %s,
+                   approved_by = %s, version = %s, updated_at = %s
+             WHERE id = %s AND version = %s
+            """,
+            (
+                deployment.status.value,
+                deployment.artifact_digest,
+                deployment.previous_artifact_digest,
+                deployment.approved_by,
+                deployment.version,
+                deployment.updated_at,
+                deployment.id,
+                expected_version,
+            ),
+        )
+        if cursor.rowcount != 1:
+            raise ConcurrentModification(f"deployment {deployment.id} changed since it was read")
+
+    # --------------------------------------------------------------- portal reads
+
+    def portal_system(self, system_id: str) -> SystemRow | None:
+        self._cursor.execute(
+            "SELECT id, unit, description, owner, status FROM systems WHERE id = %s", (system_id,)
+        )
+        row = self._cursor.fetchone()
+        if row is None:
+            return None
+        return SystemRow(str(row["id"]), str(row["unit"]), str(row["description"]),
+                         str(row["owner"]), str(row["status"]))
+
+    def portal_systems(self) -> tuple[SystemRow, ...]:
+        self._cursor.execute(
+            "SELECT id, unit, description, owner, status FROM systems ORDER BY created_at, id"
+        )
+        return tuple(
+            SystemRow(str(row["id"]), str(row["unit"]), str(row["description"]),
+                      str(row["owner"]), str(row["status"]))
+            for row in self._cursor.fetchall()
+        )
+
+    def portal_module(self, module_id: str) -> ModuleRow | None:
+        self._cursor.execute(f"SELECT {MODULE_COLUMNS} FROM modules WHERE id = %s", (module_id,))
+        row = self._cursor.fetchone()
+        return _module(row) if row else None
+
+    def portal_modules(self, system_id: str | None = None) -> tuple[ModuleRow, ...]:
+        if system_id is None:
+            self._cursor.execute(f"SELECT {MODULE_COLUMNS} FROM modules ORDER BY created_at, id")
+        else:
+            self._cursor.execute(
+                f"SELECT {MODULE_COLUMNS} FROM modules WHERE system_id = %s ORDER BY created_at, id",
+                (system_id,),
+            )
+        return tuple(_module(row) for row in self._cursor.fetchall())
+
+    def portal_module_for_application(self, application_id: UUID) -> ModuleRow | None:
+        self._cursor.execute(
+            f"SELECT {MODULE_COLUMNS} FROM modules WHERE application_id = %s", (application_id,)
+        )
+        row = self._cursor.fetchone()
+        return _module(row) if row else None
+
+    def portal_versions(self, module_id: str) -> tuple[VersionRow, ...]:
+        self._cursor.execute(
+            "SELECT module_id, version, metadata FROM release_versions WHERE module_id = %s"
+            " ORDER BY created_at DESC, version DESC",
+            (module_id,),
+        )
+        return tuple(
+            VersionRow(str(row["module_id"]), str(row["version"]), dict(row["metadata"] or {}))
+            for row in self._cursor.fetchall()
+        )
+
+    def portal_version(self, module_id: str, version: str) -> VersionRow | None:
+        self._cursor.execute(
+            "SELECT module_id, version, metadata FROM release_versions"
+            " WHERE module_id = %s AND version = %s",
+            (module_id, version),
+        )
+        row = self._cursor.fetchone()
+        if row is None:
+            return None
+        return VersionRow(str(row["module_id"]), str(row["version"]), dict(row["metadata"] or {}))
+
+    def _requests_where(self, clause: str, arguments: tuple[Any, ...]) -> tuple[RequestRow, ...]:
+        self._cursor.execute(
+            f"SELECT {REQUEST_COLUMNS} FROM production_requests{clause} ORDER BY created_at, id",
+            arguments,
+        )
+        rows = self._cursor.fetchall()
+        if not rows:
+            return ()
+        identifiers = [row["id"] for row in rows]
+        self._cursor.execute(
+            "SELECT request_id, module_id, version, deployment_order FROM production_request_modules"
+            " WHERE request_id = ANY(%s) ORDER BY request_id, deployment_order, module_id",
+            (identifiers,),
+        )
+        members: dict[str, list[RequestModuleRow]] = {}
+        for item in self._cursor.fetchall():
+            members.setdefault(str(item["request_id"]), []).append(
+                RequestModuleRow(str(item["module_id"]), str(item["version"]),
+                                 int(item["deployment_order"]))
+            )
+        output: list[RequestRow] = []
+        for row in rows:
+            request_id = str(row["id"])
+            modules = members.get(request_id) or [
+                # Requests written before multi-module support carry their single module
+                # on the parent row; reading it keeps those rows addressable after upgrade.
+                RequestModuleRow(str(row["module_id"]), str(row["version"] or "v0.0.0"))
+            ]
+            output.append(
+                RequestRow(
+                    id=request_id,
+                    modules=tuple(modules),
+                    requested_by=str(row["requested_by"]),
+                    scheduled_for=row["scheduled_for"],
+                    rollback_strategy=str(row["rollback_strategy"]),
+                    run_automation_tests=bool(row["run_automation_tests"]),
+                    status=str(row["status"]),
+                    deployment_id=row["deployment_id"],
+                    comment=row["comment"],
+                    idempotency_key=row["idempotency_key"],
+                    request_hash=row["request_hash"],
+                )
+            )
+        return tuple(output)
+
+    def portal_requests(self) -> tuple[RequestRow, ...]:
+        return self._requests_where("", ())
+
+    def portal_request(self, request_id: str) -> RequestRow | None:
+        try:
+            identifier = UUID(str(request_id))
+        except ValueError:
+            return None
+        found = self._requests_where(" WHERE id = %s", (identifier,))
+        return found[0] if found else None
+
+    def portal_request_by_idempotency_key(self, idempotency_key: str) -> RequestRow | None:
+        found = self._requests_where(" WHERE idempotency_key = %s", (idempotency_key,))
+        return found[0] if found else None
+
+    def portal_request_for_deployment(self, deployment_id: UUID) -> RequestRow | None:
+        found = self._requests_where(" WHERE deployment_id = %s", (deployment_id,))
+        return found[0] if found else None
+
+    def portal_modules_referenced_by_requests(self) -> set[str]:
+        self._cursor.execute("SELECT DISTINCT module_id FROM production_request_modules")
+        return {str(row["module_id"]) for row in self._cursor.fetchall()}
+
+    # -------------------------------------------------------------- portal writes
+
+    def insert_portal_system(self, row: SystemRow) -> None:
+        self._cursor.execute(
+            "INSERT INTO systems (id, unit, description, owner, status)"
+            " VALUES (%s, %s, %s, %s, %s)",
+            (row.id, row.unit, row.description, row.owner, row.status),
+        )
+
+    def delete_portal_system(self, system_id: str) -> None:
+        try:
+            self._cursor.execute("DELETE FROM modules WHERE system_id = %s", (system_id,))
+            self._cursor.execute("DELETE FROM systems WHERE id = %s", (system_id,))
+        except psycopg.errors.ForeignKeyViolation as exc:
+            raise StillReferenced(
+                f"system {system_id} has a module that a production request still references"
+            ) from exc
+
+    def insert_portal_module(self, row: ModuleRow) -> None:
+        self._cursor.execute(
+            f"""
+            INSERT INTO modules ({MODULE_COLUMNS})
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb)
+            """,
+            (
+                row.id,
+                row.system_id,
+                row.application_id,
+                row.runtime,
+                row.name,
+                row.module_type,
+                row.description,
+                json.dumps(row.deployment_config, default=str),
+                json.dumps(row.pipeline_config, default=str),
+            ),
+        )
+
+    def update_portal_module(
+        self, module_id: str, *, name: str, module_type: str, description: str
+    ) -> None:
+        self._cursor.execute(
+            "UPDATE modules SET name = %s, module_type = %s, description = %s WHERE id = %s",
+            (name, module_type, description, module_id),
+        )
+        if self._cursor.rowcount != 1:
+            raise KeyError("module not found")
+
+    def delete_portal_module(self, module_id: str) -> None:
+        try:
+            self._cursor.execute("DELETE FROM modules WHERE id = %s", (module_id,))
+        except psycopg.errors.ForeignKeyViolation as exc:
+            raise StillReferenced(
+                f"module {module_id} is still referenced by a production request"
+            ) from exc
+
+    def upsert_portal_version(self, row: VersionRow) -> None:
+        self._cursor.execute(
+            """
+            INSERT INTO release_versions (module_id, version, metadata)
+            VALUES (%s, %s, %s::jsonb)
+            ON CONFLICT (module_id, version) DO UPDATE SET metadata = EXCLUDED.metadata
+            """,
+            (row.module_id, row.version, json.dumps(row.metadata, default=str)),
+        )
+
+    def insert_portal_request(self, row: RequestRow) -> None:
+        primary = row.modules[0]
+        self._cursor.execute(
+            """
+            INSERT INTO production_requests (
+                id, module_id, version, requested_by, scheduled_for,
+                rollback_strategy, run_automation_tests, status, idempotency_key, request_hash
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """,
+            (
+                UUID(str(row.id)),
+                primary.module_id,
+                primary.version,
+                row.requested_by,
+                row.scheduled_for,
+                row.rollback_strategy,
+                row.run_automation_tests,
+                row.status,
+                row.idempotency_key,
+                row.request_hash,
+            ),
+        )
+        for member in row.modules:
+            self._cursor.execute(
+                "INSERT INTO production_request_modules (request_id, module_id, version, deployment_order)"
+                " VALUES (%s, %s, %s, %s)",
+                (UUID(str(row.id)), member.module_id, member.version, member.deployment_order),
+            )
+
+    def update_portal_request(
+        self,
+        request_id: str,
+        *,
+        status: str,
+        comment: str | None,
+        deployment_id: UUID | None = None,
+    ) -> None:
+        self._cursor.execute(
+            "UPDATE production_requests SET status = %s, comment = %s,"
+            " deployment_id = COALESCE(%s, deployment_id) WHERE id = %s",
+            (status, comment, deployment_id, UUID(str(request_id))),
+        )
+
+
+class PostgresDatabase:
+    """Opens one transaction per request; holds no state between them."""
+
+    def __init__(self, url: str) -> None:
+        self.url = url
+        self.last_error: str | None = None
+
+    def describe(self) -> str:
+        return "postgresql"
+
+    def _connect(self):
+        if psycopg is None:
+            raise RuntimeError("psycopg is required when DATABASE_URL is configured")
+        return psycopg.connect(self.url, row_factory=dict_row)
+
+    @contextmanager
+    def transaction(self):
+        """Yield one transaction: commit on a clean exit, roll back on any exception.
+
+        A unique-constraint violation is reported as `ConcurrentModification` rather than
+        as a storage failure. On these tables it means exactly one thing -- another
+        transaction inserted the same key between this one's check and its write -- and
+        the caller owes the client a 409, not a 503 pointing at the database.
+        """
+
+        connection = self._connect()
+        try:
+            with connection.cursor() as cursor:
+                try:
+                    yield PostgresSession(cursor)
+                except psycopg.errors.UniqueViolation as exc:
+                    connection.rollback()
+                    raise ConcurrentModification(
+                        f"a competing transaction already wrote this record: {exc.diag.constraint_name}"
+                    ) from exc
+                except BaseException:
+                    connection.rollback()
+                    raise
+                try:
+                    connection.commit()
+                except psycopg.errors.UniqueViolation as exc:
+                    connection.rollback()
+                    raise ConcurrentModification(
+                        f"a competing transaction already wrote this record: {exc.diag.constraint_name}"
+                    ) from exc
+        finally:
+            connection.close()
+
+    def health(self) -> str:
+        try:
+            with self._connect() as connection:
+                with connection.cursor() as cursor:
+                    cursor.execute("SELECT 1")
+            self.last_error = None
+            return "ok"
+        except Exception as exc:
+            self.last_error = str(exc)
+            return f"unavailable: {exc}"

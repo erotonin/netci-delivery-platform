@@ -89,12 +89,34 @@ For a separately hosted browser client, `NETCI_ALLOWED_ORIGINS` is a comma-separ
 
 ## Persistence
 
-When `DATABASE_URL` is absent in `NETCI_ENVIRONMENT=local`, the API uses deterministic in-memory state, which keeps unit tests fast and a portable preview usable. Outside local mode, missing `DATABASE_URL`/`DATABASE_URL_FILE` is a startup error. With PostgreSQL configured:
+PostgreSQL is canonical at request time. Every command reads the rows it is about to change inside its own transaction and writes them back with the version it read; every query reads the database with a filter. Nothing is cached between requests and nothing is loaded at start-up, which is what makes multiple API replicas and multiple workers correct: they share state because they share the database, not because they were started together. See [ADR-014](decisions/ADR-014-postgresql-canonical-state.md).
 
-- state is written before the in-memory projection is updated, so a storage failure returns `503 PERSISTENCE_UNAVAILABLE` instead of reporting a state the database does not hold;
-- idempotency records are persisted, so a restart cannot double-create a resource a client already got a response for;
-- pipeline logs and audit events survive a restart.
+When `DATABASE_URL` is absent in `NETCI_ENVIRONMENT=local`, the API uses an in-memory store, which keeps unit tests fast and a portable preview usable. It is a test adapter, not a fallback: outside local mode a missing `DATABASE_URL`/`DATABASE_URL_FILE` is a startup error rather than a degraded mode. With PostgreSQL configured:
+
+- an unreachable database returns `503 PERSISTENCE_UNAVAILABLE` on reads as well as writes, instead of answering from a snapshot that may be stale;
+- a run or deployment update that loses a race returns `409 CONCURRENT_MODIFICATION`. The losing replica is correct again on its next request, because it re-reads;
+- a duplicate-key race also returns `409 CONCURRENT_MODIFICATION` rather than a `503` that would send an operator to look at the database for a name clash;
+- idempotency records are written in the same transaction as the resource they describe, so a retry after a network timeout returns the original resource on any replica and after any restart;
+- pipeline logs, delivery events and audit events survive a restart.
+
+### Failure modes
+
+| Situation | Answer | Why |
+| --- | --- | --- |
+| Database unreachable | `503 PERSISTENCE_UNAVAILABLE`, `/healthz` `503 degraded` | Answering a read from memory would be answering from a snapshot |
+| Two replicas race the same transition | one `2xx`, one `409 CONCURRENT_MODIFICATION` | Compare-and-set on the `version` column |
+| Two replicas insert the same key | one `2xx`, one `409 CONCURRENT_MODIFICATION` | The unique index decides; the refusal is translated, not leaked |
+| Onboarding retried with the same `Idempotency-Key` and body | `201` with the original module | The idempotency row and the resources share one transaction |
+| Same key, different body | `409 IDEMPOTENCY_KEY_REUSED` | The stored request hash does not match |
+| Crash mid-onboarding | nothing is written | Application, module, audit and idempotency row commit together |
+
+### Runbook
+
+- **`/healthz` reports `degraded` with `portalPersistence.status = degraded`.** The API cannot reach PostgreSQL. Check `DATABASE_URL`/`DATABASE_URL_FILE`, the database's own health, and connection limits — every request now takes a connection, so exhaustion presents the same way. The health response never contains the connection string.
+- **Clients report sporadic `409 CONCURRENT_MODIFICATION`.** Two writers are touching one aggregate. This is the control working; the client should re-read and retry. Persistent conflicts on one run usually mean a duplicated callback — check for two CI controllers or a retrying webhook.
+- **A client says onboarding returned `MODULE_EXISTS` after a timeout.** It retried without an `Idempotency-Key`. With the header the retry returns the original module; without it the server cannot tell a retry from a second request.
+- **Adding a replica.** Point it at the same `DATABASE_URL` and start it. No warm-up, no cache priming, and no restart of the existing replicas is required.
 
 Apply schema changes with `python scripts/migrate.py`. Each file in `backend/migrations` runs once, in filename order, in its own transaction, and is recorded in `schema_migrations` with its checksum; editing an already-applied migration is refused rather than skipped. `backend/schema.sql` is generated from those files (`--emit-schema`) for the compose initdb mount, and `--check-schema` fails if the two have drifted.
 
-`backend/tests/test_persistence_postgres.py` asserts restart recovery, event durability, idempotency replay across a restart, and that two processes racing the same transition do not both win. It skips unless `NETCI_TEST_DATABASE_URL` points at a migrated database.
+`backend/tests/test_persistence_postgres.py` asserts restart recovery, event durability, idempotency replay across a restart, that two replicas racing the same transition do not both win, that a second replica sees the first one's writes without restarting, and that a fault injected between the application insert and the module insert rolls both back. It skips unless `NETCI_TEST_DATABASE_URL` points at a migrated database.

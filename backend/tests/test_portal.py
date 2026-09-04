@@ -1,3 +1,5 @@
+from contextlib import contextmanager
+
 from fastapi.testclient import TestClient
 
 import app.main as main
@@ -6,6 +8,51 @@ from app.main import app
 
 client = TestClient(app)
 MACHINE_HEADERS = {'Authorization': 'Bearer netci-local-pipeline-key'}
+
+
+def failing_on(method_name):
+    """A database whose transactions fail on one write, and roll back everything else.
+
+    Injecting the failure at the store seam -- rather than stubbing a service method --
+    is what makes the assertion meaningful: the endpoint must answer 503 and the record
+    must be absent afterwards, which is only true if the transaction really rolled back.
+    """
+
+    real = main.portal.database
+
+    class FailingSession:
+        def __init__(self, inner):
+            self._inner = inner
+
+        def __getattr__(self, name):
+            if name == method_name:
+                def fail(*_args, **_kwargs):
+                    raise RuntimeError('database offline')
+                return fail
+            return getattr(self._inner, name)
+
+    class FailingDatabase:
+        describe = real.describe
+        health = real.health
+
+        @contextmanager
+        def transaction(self):
+            with real.transaction() as inner:
+                yield FailingSession(inner)
+
+    return FailingDatabase()
+
+
+class UnreachableDatabase:
+    """A configured PostgreSQL that cannot be reached."""
+
+    @staticmethod
+    def describe():
+        return 'postgresql'
+
+    @staticmethod
+    def health():
+        return 'unavailable: connection refused'
 
 
 def setup_function():
@@ -455,11 +502,7 @@ def test_production_request_creation_is_idempotent_for_the_same_key():
 
 
 def test_portal_write_fails_closed_when_configured_persistence_is_unavailable(monkeypatch):
-    class FailingPortalStore:
-        def insert_system(self, record):
-            raise OSError('database connection refused')
-
-    monkeypatch.setattr(main.portal, 'store', FailingPortalStore())
+    monkeypatch.setattr(main.portal, 'database', failing_on('insert_portal_system'))
 
     response = client.post('/systems', json={
         'id': 'persistence-check',
@@ -472,15 +515,10 @@ def test_portal_write_fails_closed_when_configured_persistence_is_unavailable(mo
     assert client.get('/systems/persistence-check').status_code == 404
 
 
-def test_portal_persistence_bootstrap_failure_is_visible_in_health(monkeypatch):
-    class FailingPortalStore:
-        last_error = 'database connection refused'
+def test_portal_persistence_failure_is_visible_in_health(monkeypatch):
+    """An unreachable store must show as degraded, not as a green screen over a dead API."""
 
-        def bootstrap(self):
-            return False
-
-    monkeypatch.setattr(main.portal, 'store', FailingPortalStore())
-    main.portal.reset()
+    monkeypatch.setattr(main.portal, 'database', UnreachableDatabase())
 
     health = client.get('/healthz')
 
@@ -489,7 +527,7 @@ def test_portal_persistence_bootstrap_failure_is_visible_in_health(monkeypatch):
     assert health.json()['dependencies']['portalPersistence'] == {
         'mode': 'postgresql',
         'status': 'degraded',
-        'message': 'database connection refused',
+        'message': 'unavailable: connection refused',
     }
 
 
@@ -606,11 +644,7 @@ def test_manual_version_registration_is_visible_to_the_portal():
 
 
 def test_version_registration_fails_closed_without_leaving_a_ghost_version(monkeypatch):
-    class FailingPortalStore:
-        def upsert_version(self, *_args):
-            raise RuntimeError('database offline')
-
-    monkeypatch.setattr(main.portal, 'store', FailingPortalStore())
+    monkeypatch.setattr(main.portal, 'database', failing_on('upsert_portal_version'))
 
     response = client.post('/modules/hello-container/versions', json={
         'tag': 'v9.9.9',
@@ -629,12 +663,8 @@ def test_ci_report_fails_closed_without_mutating_the_projection(monkeypatch):
         'gitTagUrl': 'https://github.com/example/hello-container/tags/v1.0.0',
         'artifactUrl': 'https://github.com/example/hello-container/releases/v1.0.0',
     })
-    class FailingPortalStore:
-        def upsert_version(self, *_args):
-            raise RuntimeError('database offline')
-
     monkeypatch.setenv('NETCI_PIPELINE_API_KEY', 'test-pipeline-key')
-    monkeypatch.setattr(main.portal, 'store', FailingPortalStore())
+    monkeypatch.setattr(main.portal, 'database', failing_on('upsert_portal_version'))
 
     response = client.post(
         '/modules/hello-container/versions/v1.0.0/ci-report',

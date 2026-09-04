@@ -143,8 +143,17 @@ paths:
         - $ref: '#/components/parameters/SystemId'
       responses:
         '200': { description: Modules in system }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
     post:
       operationId: createModule
+      description: >-
+        Register a module and provision its delivery application. Both are written in one
+        PostgreSQL transaction, so a failure or a client timeout leaves neither behind.
+
+        Supplying `Idempotency-Key` makes the call safely retryable: a retry with the same
+        key and the same body returns `201` with the module the first attempt created,
+        rather than `409 MODULE_EXISTS`. The same key with a different body is
+        `409 IDEMPOTENCY_KEY_REUSED`.
       parameters:
         - $ref: '#/components/parameters/SystemId'
         - $ref: '#/components/parameters/IdempotencyKey'
@@ -155,9 +164,10 @@ paths:
           application/json:
             schema: { $ref: '#/components/schemas/ModuleCreate' }
       responses:
-        '201': { description: Module created }
+        '201': { description: Module created, or replayed for a retried idempotency key }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
   /systems/{systemId}/dora:
     get:
       operationId: getSystemDora
@@ -732,6 +742,16 @@ components:
             $ref: '#/components/schemas/ErrorResponse'
     UnprocessableEntity:
       description: Request validation or domain validation failed
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    ServiceUnavailable:
+      description: >-
+        The canonical PostgreSQL store could not be reached (`PERSISTENCE_UNAVAILABLE`).
+        Reads as well as writes answer this: netCI reads state from the database on every
+        request rather than from a cached copy, so it reports the outage instead of
+        answering from a snapshot that may be stale.
       content:
         application/json:
           schema:

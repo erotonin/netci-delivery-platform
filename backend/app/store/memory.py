@@ -1,0 +1,328 @@
+"""In-memory platform store for unit tests and explicit local mode.
+
+This is a test adapter, not a fallback. `build_database` selects it only when
+`DATABASE_URL` is absent *and* `NETCI_ENVIRONMENT=local`; any other runtime refuses to
+start rather than accept approvals it will lose on the next restart.
+
+It stages every write and discards the staged state if the transaction raises, so a test
+that injects a fault between two writes observes the same all-or-nothing outcome a real
+PostgreSQL transaction gives it. A single lock serializes transactions, which makes the
+adapter honest about isolation instead of interleaving partial writes.
+"""
+
+from __future__ import annotations
+
+import copy
+import threading
+from contextlib import contextmanager
+from dataclasses import dataclass, field, replace
+from typing import Any
+from uuid import UUID
+
+from ..domain.models import Application, DeliveryEvent, Deployment, PipelineRun
+from ..persistence import (
+    AuditRecord,
+    ConcurrentModification,
+    IdempotencyRow,
+    StillReferenced,
+    UnitOfWork,
+)
+from .records import ModuleRow, RequestRow, SystemRow, VersionRow
+
+
+@dataclass
+class _State:
+    applications: dict[UUID, Application] = field(default_factory=dict)
+    runs: dict[UUID, PipelineRun] = field(default_factory=dict)
+    deployments: dict[UUID, Deployment] = field(default_factory=dict)
+    logs: dict[UUID, list[str]] = field(default_factory=dict)
+    events: list[DeliveryEvent] = field(default_factory=list)
+    audit: list[AuditRecord] = field(default_factory=list)
+    evidence: dict[UUID, dict[str, Any]] = field(default_factory=dict)
+    idempotency: dict[tuple[str, str], IdempotencyRow] = field(default_factory=dict)
+    systems: dict[str, SystemRow] = field(default_factory=dict)
+    modules: dict[str, ModuleRow] = field(default_factory=dict)
+    versions: dict[str, list[VersionRow]] = field(default_factory=dict)
+    requests: dict[str, RequestRow] = field(default_factory=dict)
+
+    def copy(self) -> "_State":
+        return _State(
+            applications=dict(self.applications),
+            runs=dict(self.runs),
+            deployments=dict(self.deployments),
+            logs={key: list(value) for key, value in self.logs.items()},
+            events=list(self.events),
+            audit=list(self.audit),
+            evidence={key: copy.deepcopy(value) for key, value in self.evidence.items()},
+            idempotency=dict(self.idempotency),
+            systems=dict(self.systems),
+            modules=dict(self.modules),
+            versions={key: list(value) for key, value in self.versions.items()},
+            requests=dict(self.requests),
+        )
+
+
+class InMemorySession:
+    def __init__(self, state: _State) -> None:
+        self._state = state
+
+    # ------------------------------------------------------------- delivery reads
+
+    def application(self, application_id: UUID) -> Application | None:
+        return self._state.applications.get(application_id)
+
+    def application_by_name(self, name: str) -> Application | None:
+        return next((item for item in self._state.applications.values() if item.name == name), None)
+
+    def applications(self) -> tuple[Application, ...]:
+        return tuple(self._state.applications.values())
+
+    def pipeline_run(self, pipeline_run_id: UUID) -> PipelineRun | None:
+        return self._state.runs.get(pipeline_run_id)
+
+    def pipeline_runs(self, application_id: UUID | None = None) -> tuple[PipelineRun, ...]:
+        runs = tuple(self._state.runs.values())
+        if application_id is None:
+            return runs
+        return tuple(run for run in runs if run.application_id == application_id)
+
+    def deployment(self, deployment_id: UUID) -> Deployment | None:
+        return self._state.deployments.get(deployment_id)
+
+    def deployments(
+        self,
+        application_id: UUID | None = None,
+        pipeline_run_id: UUID | None = None,
+    ) -> tuple[Deployment, ...]:
+        return tuple(
+            item
+            for item in self._state.deployments.values()
+            if (application_id is None or item.application_id == application_id)
+            and (pipeline_run_id is None or item.pipeline_run_id == pipeline_run_id)
+        )
+
+    def pipeline_logs(self, pipeline_run_id: UUID) -> tuple[str, ...]:
+        return tuple(self._state.logs.get(pipeline_run_id, ()))
+
+    def delivery_events(self, application_id: UUID | None = None) -> tuple[DeliveryEvent, ...]:
+        if application_id is None:
+            return tuple(self._state.events)
+        return tuple(item for item in self._state.events if item.application_id == application_id)
+
+    def security_evidence(self, pipeline_run_id: UUID) -> dict[str, Any] | None:
+        found = self._state.evidence.get(pipeline_run_id)
+        return dict(found) if found is not None else None
+
+    def audit_records(self, application_ids: set[UUID] | None = None) -> tuple[AuditRecord, ...]:
+        records = self._state.audit
+        if application_ids is not None:
+            records = [item for item in records if item.application_id in application_ids]
+        return tuple(
+            sorted(records, key=lambda item: (item.occurred_at, str(item.id)), reverse=True)
+        )
+
+    def idempotency(self, scope: str, idempotency_key: str) -> IdempotencyRow | None:
+        return self._state.idempotency.get((scope, idempotency_key))
+
+    # ------------------------------------------------------------ delivery writes
+
+    def apply(self, unit: UnitOfWork) -> None:
+        if unit.is_empty():
+            return
+        state = self._state
+        for application in unit.applications:
+            state.applications[application.id] = application
+        for run, expected_version in unit.runs:
+            current = state.runs.get(run.id)
+            if expected_version is None:
+                if current is not None:
+                    raise ConcurrentModification(f"pipeline run {run.id} already exists")
+            elif current is None or current.version != expected_version:
+                raise ConcurrentModification(f"pipeline run {run.id} changed since it was read")
+            state.runs[run.id] = run
+            state.logs.setdefault(run.id, [])
+        for deployment, expected_version in unit.deployments:
+            current_deployment = state.deployments.get(deployment.id)
+            if expected_version is None:
+                if current_deployment is not None:
+                    raise ConcurrentModification(f"deployment {deployment.id} already exists")
+            elif current_deployment is None or current_deployment.version != expected_version:
+                raise ConcurrentModification(f"deployment {deployment.id} changed since it was read")
+            state.deployments[deployment.id] = deployment
+        for run_id, lines in unit.logs:
+            state.logs.setdefault(run_id, []).extend(line[:8000] for line in lines)
+        state.events.extend(unit.events)
+        state.audit.extend(unit.audit)
+        for pipeline_run_id, _, _, evidence in unit.security_evidence:
+            state.evidence[pipeline_run_id] = dict(evidence)
+        for row in unit.idempotency:
+            key = (row.scope, row.idempotency_key)
+            if key in state.idempotency:
+                raise ConcurrentModification(
+                    f"idempotency key {row.scope}/{row.idempotency_key} was committed concurrently"
+                )
+            state.idempotency[key] = row
+
+    # --------------------------------------------------------------- portal reads
+
+    def portal_system(self, system_id: str) -> SystemRow | None:
+        return self._state.systems.get(system_id)
+
+    def portal_systems(self) -> tuple[SystemRow, ...]:
+        return tuple(self._state.systems.values())
+
+    def portal_module(self, module_id: str) -> ModuleRow | None:
+        return self._state.modules.get(module_id)
+
+    def portal_modules(self, system_id: str | None = None) -> tuple[ModuleRow, ...]:
+        return tuple(
+            item
+            for item in self._state.modules.values()
+            if system_id is None or item.system_id == system_id
+        )
+
+    def portal_module_for_application(self, application_id: UUID) -> ModuleRow | None:
+        return next(
+            (item for item in self._state.modules.values() if item.application_id == application_id),
+            None,
+        )
+
+    def portal_versions(self, module_id: str) -> tuple[VersionRow, ...]:
+        return tuple(self._state.versions.get(module_id, ()))
+
+    def portal_version(self, module_id: str, version: str) -> VersionRow | None:
+        return next(
+            (item for item in self._state.versions.get(module_id, ()) if item.version == version),
+            None,
+        )
+
+    def portal_requests(self) -> tuple[RequestRow, ...]:
+        return tuple(self._state.requests.values())
+
+    def portal_request(self, request_id: str) -> RequestRow | None:
+        return self._state.requests.get(str(request_id))
+
+    def portal_request_by_idempotency_key(self, idempotency_key: str) -> RequestRow | None:
+        return next(
+            (
+                item
+                for item in self._state.requests.values()
+                if item.idempotency_key == idempotency_key
+            ),
+            None,
+        )
+
+    def portal_request_for_deployment(self, deployment_id: UUID) -> RequestRow | None:
+        return next(
+            (item for item in self._state.requests.values() if item.deployment_id == deployment_id),
+            None,
+        )
+
+    def portal_modules_referenced_by_requests(self) -> set[str]:
+        return {
+            member.module_id
+            for request in self._state.requests.values()
+            for member in request.modules
+        }
+
+    # -------------------------------------------------------------- portal writes
+
+    def insert_portal_system(self, row: SystemRow) -> None:
+        if row.id in self._state.systems:
+            raise ConcurrentModification(f"system {row.id} already exists")
+        self._state.systems[row.id] = row
+
+    def delete_portal_system(self, system_id: str) -> None:
+        referenced = self.portal_modules_referenced_by_requests()
+        for module in self.portal_modules(system_id):
+            if module.id in referenced:
+                raise StillReferenced(
+                    f"system {system_id} has a module that a production request still references"
+                )
+            self._state.modules.pop(module.id, None)
+        self._state.systems.pop(system_id, None)
+
+    def insert_portal_module(self, row: ModuleRow) -> None:
+        if row.id in self._state.modules:
+            raise ConcurrentModification(f"module {row.id} already exists")
+        self._state.modules[row.id] = row
+
+    def update_portal_module(
+        self, module_id: str, *, name: str, module_type: str, description: str
+    ) -> None:
+        current = self._state.modules.get(module_id)
+        if current is None:
+            raise KeyError("module not found")
+        self._state.modules[module_id] = replace(
+            current, name=name, module_type=module_type, description=description
+        )
+
+    def delete_portal_module(self, module_id: str) -> None:
+        if module_id in self.portal_modules_referenced_by_requests():
+            raise StillReferenced(
+                f"module {module_id} is still referenced by a production request"
+            )
+        self._state.modules.pop(module_id, None)
+
+    def upsert_portal_version(self, row: VersionRow) -> None:
+        existing = self._state.versions.setdefault(row.module_id, [])
+        for index, item in enumerate(existing):
+            if item.version == row.version:
+                existing[index] = row
+                return
+        existing.insert(0, row)
+
+    def insert_portal_request(self, row: RequestRow) -> None:
+        if row.idempotency_key and any(
+            item.idempotency_key == row.idempotency_key for item in self._state.requests.values()
+        ):
+            raise ConcurrentModification(
+                f"production request idempotency key {row.idempotency_key} was committed concurrently"
+            )
+        self._state.requests[row.id] = row
+
+    def update_portal_request(
+        self,
+        request_id: str,
+        *,
+        status: str,
+        comment: str | None,
+        deployment_id: UUID | None = None,
+    ) -> None:
+        current = self._state.requests.get(str(request_id))
+        if current is None:
+            return
+        self._state.requests[str(request_id)] = replace(
+            current,
+            status=status,
+            comment=comment,
+            deployment_id=deployment_id if deployment_id is not None else current.deployment_id,
+        )
+
+
+class InMemoryDatabase:
+    def __init__(self) -> None:
+        self._state = _State()
+        self._lock = threading.RLock()
+
+    def describe(self) -> str:
+        return "memory"
+
+    def health(self) -> str:
+        return "ok"
+
+    @contextmanager
+    def transaction(self):
+        with self._lock:
+            staged = self._state.copy()
+            yield InMemorySession(staged)
+            # Reached only when the block returned normally; an exception propagates
+            # out of the `with` and leaves `self._state` untouched, which is the
+            # rollback a caller injecting a fault mid-operation must be able to observe.
+            self._state = staged
+
+    def clear(self) -> None:
+        """Drop every record. Local reset and test setup only."""
+
+        with self._lock:
+            self._state = _State()

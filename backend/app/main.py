@@ -38,7 +38,9 @@ from .policy.rules import (
     require_separation_of_duties,
     require_team_access,
 )
-from .portal import PortalError, PortalReadModel
+from .demo_data import seed_demo_data
+from .portal import PortalError, PortalService
+from .store import build_database
 
 
 def configured_cors_origins() -> list[str]:
@@ -92,12 +94,18 @@ app.add_middleware(
     expose_headers=["X-Correlation-Id"],
 )
 
-# Composition root: the engines are chosen here from configuration, never inside
-# the domain. NETCI_CI_MODE / NETCI_CD_MODE may be "none" only in local mode; outside
+# Composition root: the engines and the store are chosen here from configuration, never
+# inside the domain. NETCI_CI_MODE / NETCI_CD_MODE may be "none" only in local mode; outside
 # local their factories fail at startup instead of running a control plane that cannot
-# execute the work it accepts.
-platform = DeliveryPlatform(build_ci_launcher(), build_cd_orchestrator())
-portal = PortalReadModel(platform)
+# execute the work it accepts. `build_database` refuses an in-memory store outside local
+# mode for the same reason.
+#
+# Nothing is read here. Both services answer every request from the database, so a second
+# replica is correct the moment it starts rather than serving a snapshot of its own boot.
+database = build_database()
+platform = DeliveryPlatform(build_ci_launcher(), build_cd_orchestrator(), database=database)
+portal = PortalService(platform, database=database)
+seed_demo_data(platform, portal)
 authenticator = build_authenticator()
 rate_limiter = build_rate_limiter()
 
@@ -883,32 +891,46 @@ def create_module(
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key", min_length=1, max_length=128),
     principal: Principal = DeveloperAccess,
 ) -> dict[str, object]:
+    owner_team = _application_owner_for_create(payload.ownerTeam, principal)
     try:
-        # Validate the Portal aggregate before provisioning its delivery application;
-        # otherwise an invalid system could leave an orphan application behind.
-        portal.validate_module_slot(systemId, payload.name)
-        owner_team = _application_owner_for_create(payload.ownerTeam, principal)
-        application = platform.create_application(
-            name=payload.name,
-            repository_url=str(payload.repositoryUrl),
-            pipeline_template=payload.pipelineTemplate,
-            runtime=payload.runtime,
-            default_environment=payload.defaultEnvironment,
-            stages=payload.stages,
-            idempotency_key=idempotency_key,
-            owner_team=owner_team,
-        )
-        return portal.attach_module(
-            system_id=systemId,
-            module_id=payload.name,
-            name=payload.displayName or payload.name,
-            module_type=payload.moduleType,
-            description=payload.description,
-            runtime=payload.runtime,
-            application_id=application.id,
-            deployment_environments=[item.model_dump(mode="json") for item in payload.deploymentEnvironments],
-            pipeline_config=payload.pipelineConfig.model_dump(mode="json") if payload.pipelineConfig else {},
-        )
+        # One transaction for the whole aggregate. The delivery application, the Portal
+        # module and the idempotency record commit together or not at all, so a failure
+        # here -- or a client that times out and retries -- can never leave an application
+        # that no module points at.
+        with platform.transaction() as transaction:
+            application = platform.create_application(
+                name=payload.name,
+                repository_url=str(payload.repositoryUrl),
+                pipeline_template=payload.pipelineTemplate,
+                runtime=payload.runtime,
+                default_environment=payload.defaultEnvironment,
+                stages=payload.stages,
+                idempotency_key=idempotency_key,
+                owner_team=owner_team,
+                session=transaction,
+            )
+            existing = transaction.portal_module_for_application(application.id)
+            if existing is not None:
+                # The idempotency record replayed the application this key created, and
+                # the module written in that same transaction is still there. This is the
+                # retry-after-timeout case: answer with the resource, not MODULE_EXISTS.
+                return portal.module(existing.id, session=transaction)
+            return portal.attach_module(
+                system_id=systemId,
+                module_id=payload.name,
+                name=payload.displayName or payload.name,
+                module_type=payload.moduleType,
+                description=payload.description,
+                runtime=payload.runtime,
+                application_id=application.id,
+                deployment_environments=[
+                    item.model_dump(mode="json") for item in payload.deploymentEnvironments
+                ],
+                pipeline_config=payload.pipelineConfig.model_dump(mode="json")
+                if payload.pipelineConfig
+                else {},
+                session=transaction,
+            )
     except KeyError as exc:
         raise HTTPException(status_code=404, detail={"code": "SYSTEM_NOT_FOUND", "message": str(exc)}) from exc
     except ValueError as exc:

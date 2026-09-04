@@ -3,12 +3,14 @@
 The domain owns state transitions, invariants, idempotency and the source events the
 DORA projection reads.  Everything that touches the outside world sits behind a seam:
 
-* `CiLauncher`        -- who actually runs CI (nothing, or a real Jenkins controller)
-* `CdOrchestrator`    -- who actually runs the long CD process (nothing, or Temporal)
-* `PostgresDeliveryStore` -- where state, events, audit and logs are durably written
+* `CiLauncher`   -- who actually runs CI (nothing, or a real Jenkins controller)
+* `CdOrchestrator` -- who actually runs the long CD process (nothing, or Temporal)
+* `PlatformDatabase` -- where state, events, audit and logs are durably written
 
-That is why the same rules hold whether the platform is driven by unit tests, by the
-Portal against in-memory state, or by a full Ubuntu stack.
+Every command reads the rows it is about to change inside its own transaction and writes
+them back with the version it read, so two replicas racing the same aggregate produce one
+winner and one `409`, and a replica that loses the race is correct again on its next
+request rather than at its next restart. No state is cached between requests.
 """
 
 from __future__ import annotations
@@ -18,6 +20,7 @@ import json
 import logging
 import os
 import re
+from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from uuid import UUID
@@ -29,13 +32,14 @@ from .adapters.cd_orchestrator import (
     NullCdOrchestrator,
 )
 from .adapters.ci_launcher import CiLaunchError, CiLaunchRequest, CiLauncher, NullCiLauncher
+from .errors import ApiError
 from .persistence import (
     AuditRecord,
     ConcurrentModification,
     IdempotencyRow,
-    PostgresDeliveryStore,
     UnitOfWork,
 )
+from .store import PlatformDatabase, PlatformSession, build_database, join
 from .runtime_environment import is_local_runtime
 from .policy.rules import PolicyDecision, evaluate_artifact_evidence
 from .domain.models import (
@@ -90,12 +94,8 @@ TEMPLATES: dict[str, TemplateDefinition] = {
 }
 
 
-class DeliveryError(Exception):
-    def __init__(self, code: str, message: str, status_code: int) -> None:
-        super().__init__(message)
-        self.code = code
-        self.message = message
-        self.status_code = status_code
+class DeliveryError(ApiError):
+    """A delivery-domain refusal: the client gets this code and status."""
 
 
 @dataclass(frozen=True)
@@ -105,9 +105,22 @@ class CiResult:
 
 
 @dataclass(frozen=True)
-class IdempotencyRecord:
-    request_hash: str
-    result: Application | PipelineRun
+class _CiOutcome:
+    """What a CI result produced, and whether a workflow still has to be started.
+
+    Splitting the two lets the whole state change commit inside one transaction while the
+    Temporal call that follows happens outside it -- holding a database connection open
+    across a network call to another system is how a slow orchestrator becomes a
+    connection-pool outage.
+    """
+
+    result: CiResult
+    pending_cd: tuple[Application, PipelineRun, Deployment] | None = None
+    # A policy denial has to be recorded *and* rejected. Raising inside the transaction
+    # would roll back the failed run and the denial audit record along with it, leaving
+    # the run stuck at "running" with no explanation -- so the error is carried out of
+    # the transaction and raised once the evidence of it is durable.
+    deferred_error: "DeliveryError | None" = None
 
 
 def _now() -> datetime:
@@ -121,6 +134,7 @@ class DeliveryPlatform:
         self,
         ci_launcher: CiLauncher | None = None,
         cd_orchestrator: CdOrchestrator | None = None,
+        database: PlatformDatabase | None = None,
     ) -> None:
         if not is_local_runtime() and not self.security_evidence_required():
             raise RuntimeError(
@@ -128,123 +142,84 @@ class DeliveryPlatform:
             )
         self.ci_launcher: CiLauncher = ci_launcher or NullCiLauncher()
         self.cd_orchestrator: CdOrchestrator = cd_orchestrator or NullCdOrchestrator()
-        self._applications: dict[UUID, Application] = {}
-        self._pipeline_runs: dict[UUID, PipelineRun] = {}
-        self._deployments: dict[UUID, Deployment] = {}
-        self._pipeline_logs: dict[UUID, list[str]] = {}
-        self._delivery_events: list[DeliveryEvent] = []
-        self._audit_records: list[AuditRecord] = []
-        self._security_evidence: dict[UUID, dict[str, object]] = {}
-        self._idempotency_records: dict[tuple[object, ...], IdempotencyRecord] = {}
-        self._store = PostgresDeliveryStore.from_env()
-        self._load_persistent_state()
+        # Composition builds the seam and stops. Reading state here is what made a second
+        # replica answer from a snapshot of its own start-up.
+        self.database: PlatformDatabase = database if database is not None else build_database()
 
     # ------------------------------------------------------------- persistence
 
-    def _load_persistent_state(self) -> None:
-        if self._store is None:
-            return
-        data = self._store.load()
-        if not data:
-            return
-        self._applications = {item.id: item for item in data["applications"]}
-        self._pipeline_runs = {item.id: item for item in data["runs"]}
-        self._deployments = {item.id: item for item in data["deployments"]}
-        self._delivery_events = list(data.get("events", []))
-        self._audit_records = list(data.get("audit", []))
-        self._security_evidence = {
-            run_id: dict(evidence) for run_id, evidence in (data.get("security_evidence") or {}).items()
-        }
-        logs = data.get("logs") or {}
-        self._pipeline_logs = {item.id: list(logs.get(item.id, [])) for item in data["runs"]}
-        self._rehydrate_idempotency(data.get("idempotency") or [])
+    def transaction(self):
+        """One transaction a caller can compose several commands into.
 
-    def _rehydrate_idempotency(self, rows: list[IdempotencyRow]) -> None:
-        """Rebuild replay records so a restart cannot double-create a resource."""
-
-        for row in rows:
-            if row.resource_type == "application":
-                result: Application | PipelineRun | None = self._applications.get(row.resource_id)
-                scope: tuple[object, ...] = ("application.create", row.idempotency_key)
-            elif row.resource_type == "pipeline_run":
-                result = self._pipeline_runs.get(row.resource_id)
-                if result is None:
-                    continue
-                if row.scope == "production.promotion":
-                    scope = ("production.promotion", row.idempotency_key)
-                else:
-                    scope = ("pipeline.start", result.application_id, row.idempotency_key)
-            else:
-                continue
-            if result is not None:
-                self._idempotency_records[scope] = IdempotencyRecord(row.request_hash, result)
-
-    def _commit(self, unit: UnitOfWork) -> None:
-        """Persist a unit of work, then apply it to the in-memory projection.
-
-        Persisting first means a storage failure never leaves the API reporting a
-        state the database does not hold (fail-closed).
+        Used by module onboarding, which has to write a delivery application and a Portal
+        module together. Storage failures arrive as `DeliveryError`, so composing commands
+        does not lose the fail-closed behaviour each of them has on its own.
         """
 
-        if self._store is not None:
-            try:
-                self._store.commit(unit)
-            except ConcurrentModification as exc:
-                raise DeliveryError(
-                    "CONCURRENT_MODIFICATION",
-                    f"record changed while this request was in flight: {exc}",
-                    409,
-                ) from exc
-            except Exception as exc:
-                raise DeliveryError("PERSISTENCE_UNAVAILABLE", f"cannot persist delivery state: {exc}", 503) from exc
+        return self._transaction()
 
-        for application in unit.applications:
-            self._applications[application.id] = application
-        for run, expected_version in unit.runs:
-            if expected_version is not None:
-                current = self._pipeline_runs.get(run.id)
-                if current is not None and current.version != expected_version:
-                    raise DeliveryError(
-                        "CONCURRENT_MODIFICATION",
-                        f"pipeline run {run.id} changed while this request was in flight",
-                        409,
-                    )
-            self._pipeline_runs[run.id] = run
-            self._pipeline_logs.setdefault(run.id, [])
-        for deployment, expected_version in unit.deployments:
-            if expected_version is not None:
-                current_deployment = self._deployments.get(deployment.id)
-                if current_deployment is not None and current_deployment.version != expected_version:
-                    raise DeliveryError(
-                        "CONCURRENT_MODIFICATION",
-                        f"deployment {deployment.id} changed while this request was in flight",
-                        409,
-                    )
-            self._deployments[deployment.id] = deployment
-        for run_id, lines in unit.logs:
-            self._pipeline_logs.setdefault(run_id, []).extend(lines)
-        self._delivery_events.extend(unit.events)
-        self._audit_records.extend(unit.audit)
-        for pipeline_run_id, _, _, evidence in unit.security_evidence:
-            self._security_evidence[pipeline_run_id] = dict(evidence)
+    @contextmanager
+    def _transaction(self, session: PlatformSession | None = None):
+        """Open a transaction and turn a storage failure into an answer, not a stack trace.
+
+        Reads go through here too. Now that the database is canonical at request time, an
+        unreachable database has to surface on a GET as 503 -- the alternative is a 500
+        that tells an operator nothing, or worse, an answer served from a stale snapshot.
+        """
+
+        try:
+            with join(self.database, session) as transaction:
+                yield transaction
+        except ConcurrentModification as exc:
+            raise DeliveryError(
+                "CONCURRENT_MODIFICATION",
+                f"record changed while this request was in flight: {exc}",
+                409,
+            ) from exc
+        except (ApiError, KeyError, ValueError):
+            # Already a decided answer -- a domain refusal, or one raised by another
+            # command composed into this transaction. Reporting it as a storage failure
+            # would tell an operator the database is down when a system id was wrong.
+            raise
+        except Exception as exc:
+            raise DeliveryError(
+                "PERSISTENCE_UNAVAILABLE", f"cannot reach delivery state: {exc}", 503
+            ) from exc
+
+    def _apply(self, session: PlatformSession, unit: UnitOfWork) -> None:
+        """Write one unit of work, translating storage failures into API answers."""
+
+        try:
+            session.apply(unit)
+        except ConcurrentModification as exc:
+            raise DeliveryError(
+                "CONCURRENT_MODIFICATION",
+                f"record changed while this request was in flight: {exc}",
+                409,
+            ) from exc
+        except DeliveryError:
+            raise
+        except Exception as exc:
+            raise DeliveryError(
+                "PERSISTENCE_UNAVAILABLE", f"cannot persist delivery state: {exc}", 503
+            ) from exc
+
+    def _commit(self, unit: UnitOfWork, session: PlatformSession | None = None) -> None:
+        """Apply a unit of work in its own transaction, or in the caller's."""
+
+        with self._transaction(session) as transaction:
+            self._apply(transaction, unit)
 
     def persistence_health(self) -> str:
-        if self._store is None:
-            return "in-memory"
-        return self._store.health()
+        return self.database.health()
 
     def reset(self) -> None:
-        """Clear the local adapter; intended for tests and explicit local reset."""
+        """Clear the local in-memory store; local reset and test setup only."""
 
-        self._applications.clear()
-        self._pipeline_runs.clear()
-        self._deployments.clear()
-        self._pipeline_logs.clear()
-        self._delivery_events.clear()
-        self._audit_records.clear()
-        self._security_evidence.clear()
-        self._idempotency_records.clear()
-        self._load_persistent_state()
+        clear = getattr(self.database, "clear", None)
+        if clear is None:
+            raise RuntimeError("reset() is only available for the in-memory store")
+        clear()
 
     # --------------------------------------------------------------- catalogue
 
@@ -273,7 +248,15 @@ class DeliveryPlatform:
         stages: list[str],
         idempotency_key: str | None,
         owner_team: str | None = None,
+        session: PlatformSession | None = None,
     ) -> Application:
+        """Register an application.
+
+        `session` lets a larger operation -- module onboarding -- create the application
+        and its Portal module in one transaction, so a failure after this returns cannot
+        leave an application no module points at.
+        """
+
         request_payload = {
             "name": name,
             "repositoryUrl": repository_url,
@@ -289,29 +272,68 @@ class DeliveryPlatform:
         # application created before ownership existed sent.
         if owner_team is not None:
             request_payload["ownerTeam"] = owner_team
-        scope = ("application.create", idempotency_key)
-        replay = self._idempotent_replay(scope, idempotency_key, request_payload)
-        if replay is not None:
-            if not isinstance(replay, Application):
-                raise AssertionError("application idempotency scope returned another result type")
-            return replay
+        with self._transaction(session) as transaction:
+            replay = self._idempotent_replay(
+                transaction, "application.create", idempotency_key, request_payload
+            )
+            if replay is not None:
+                if not isinstance(replay, Application):
+                    raise AssertionError("application idempotency scope returned another result type")
+                if replay.name != name:
+                    # The key is unique per scope across the whole installation, so a
+                    # collision between two applications must be reported rather than
+                    # silently answered with someone else's resource.
+                    raise DeliveryError(
+                        "IDEMPOTENCY_KEY_REUSED", "same key was used with a different request", 409
+                    )
+                return replay
 
-        template = TEMPLATES.get(pipeline_template)
-        if template is None:
-            raise DeliveryError("TEMPLATE_NOT_FOUND", "pipeline template does not exist", 422)
-        if template.runtime != runtime:
-            raise DeliveryError("RUNTIME_TEMPLATE_MISMATCH", "runtime does not match pipeline template", 422)
-        selected_stages = self._validate_stages(template, stages)
-        if any(item.name == name for item in self._applications.values()):
-            raise DeliveryError("APPLICATION_EXISTS", "application name already exists", 409)
+            template = TEMPLATES.get(pipeline_template)
+            if template is None:
+                raise DeliveryError("TEMPLATE_NOT_FOUND", "pipeline template does not exist", 422)
+            if template.runtime != runtime:
+                raise DeliveryError(
+                    "RUNTIME_TEMPLATE_MISMATCH", "runtime does not match pipeline template", 422
+                )
+            selected_stages = self._validate_stages(template, stages)
+            if transaction.application_by_name(name) is not None:
+                raise DeliveryError("APPLICATION_EXISTS", "application name already exists", 409)
 
+            application = self._write_application(
+                transaction,
+                name=name,
+                repository_url=repository_url,
+                pipeline_template=pipeline_template,
+                runtime=runtime,
+                default_environment=default_environment,
+                stages=selected_stages,
+                owner_team=owner_team,
+                idempotency_key=idempotency_key,
+                request_payload=request_payload,
+            )
+        return application
+
+    def _write_application(
+        self,
+        transaction: PlatformSession,
+        *,
+        name: str,
+        repository_url: str,
+        pipeline_template: str,
+        runtime: Runtime,
+        default_environment: Environment,
+        stages: tuple[str, ...],
+        owner_team: str | None,
+        idempotency_key: str | None,
+        request_payload: dict[str, object],
+    ) -> Application:
         application = Application(
             name=name,
             repository_url=repository_url,
             pipeline_template=pipeline_template,
             runtime=runtime,
             default_environment=default_environment,
-            stages=selected_stages,
+            stages=stages,
             owner_team=owner_team,
         )
         unit = UnitOfWork(applications=[application])
@@ -327,15 +349,18 @@ class DeliveryPlatform:
                     response_status=201,
                 )
             )
-        self._commit(unit)
-        self._remember(scope, idempotency_key, request_payload, application)
+        self._apply(transaction, unit)
         return application
 
-    def list_applications(self) -> tuple[Application, ...]:
-        return tuple(self._applications.values())
+    def list_applications(self, session: PlatformSession | None = None) -> tuple[Application, ...]:
+        with self._transaction(session) as transaction:
+            return transaction.applications()
 
-    def get_application(self, application_id: UUID) -> Application:
-        application = self._applications.get(application_id)
+    def get_application(
+        self, application_id: UUID, session: PlatformSession | None = None
+    ) -> Application:
+        with self._transaction(session) as transaction:
+            application = transaction.application(application_id)
         if application is None:
             raise DeliveryError("APPLICATION_NOT_FOUND", "application not found", 404)
         return application
@@ -354,22 +379,57 @@ class DeliveryPlatform:
         idempotency_key: str | None,
         started_by: str | None = None,
     ) -> PipelineRun:
-        application = self._applications.get(application_id)
-        if application is None:
-            raise DeliveryError("APPLICATION_NOT_FOUND", "application not found", 404)
         request_payload = {
             "commitSha": commit_sha,
             "branch": branch,
             "environment": environment.value,
             "parameters": parameters,
         }
-        scope = ("pipeline.start", application_id, idempotency_key)
-        replay = self._idempotent_replay(scope, idempotency_key, request_payload)
-        if replay is not None:
-            if not isinstance(replay, PipelineRun):
-                raise AssertionError("pipeline idempotency scope returned another result type")
-            return replay
+        # The CI dispatch below is a network call, so it must happen after this
+        # transaction commits rather than while it holds a connection open.
+        with self._transaction() as transaction:
+            application = transaction.application(application_id)
+            if application is None:
+                raise DeliveryError("APPLICATION_NOT_FOUND", "application not found", 404)
+            replay = self._idempotent_replay(
+                transaction, "pipeline.start", idempotency_key, request_payload
+            )
+            if replay is not None:
+                if not isinstance(replay, PipelineRun):
+                    raise AssertionError("pipeline idempotency scope returned another result type")
+                if replay.application_id != application_id:
+                    raise DeliveryError(
+                        "IDEMPOTENCY_KEY_REUSED", "same key was used with a different request", 409
+                    )
+                return replay
+            run = self._write_queued_run(
+                transaction,
+                application_id=application_id,
+                commit_sha=commit_sha,
+                branch=branch,
+                environment=environment,
+                parameters=parameters,
+                correlation_id=correlation_id,
+                idempotency_key=idempotency_key,
+                started_by=started_by,
+                request_payload=request_payload,
+            )
+        return self._launch_ci(application, run)
 
+    def _write_queued_run(
+        self,
+        transaction: PlatformSession,
+        *,
+        application_id: UUID,
+        commit_sha: str,
+        branch: str,
+        environment: Environment,
+        parameters: dict[str, object],
+        correlation_id: str,
+        idempotency_key: str | None,
+        started_by: str | None,
+        request_payload: dict[str, object],
+    ) -> PipelineRun:
         run = PipelineRun(
             application_id=application_id,
             commit_sha=commit_sha,
@@ -421,9 +481,8 @@ class DeliveryPlatform:
                     response_status=202,
                 )
             )
-        self._commit(unit)
-        self._remember(scope, idempotency_key, request_payload, run)
-        return self._launch_ci(application, run)
+        self._apply(transaction, unit)
+        return run
 
     def _launch_ci(self, application: Application, run: PipelineRun) -> PipelineRun:
         """Hand the queued run to the configured CI engine and record its identity."""
@@ -490,37 +549,47 @@ class DeliveryPlatform:
         self._commit(unit)
         return updated
 
-    def list_pipeline_runs(self, application_id: UUID | None = None) -> tuple[PipelineRun, ...]:
-        runs = tuple(self._pipeline_runs.values())
-        if application_id is None:
-            return runs
-        return tuple(run for run in runs if run.application_id == application_id)
+    def list_pipeline_runs(
+        self, application_id: UUID | None = None, session: PlatformSession | None = None
+    ) -> tuple[PipelineRun, ...]:
+        with self._transaction(session) as transaction:
+            return transaction.pipeline_runs(application_id)
 
-    def list_deployments(self, application_id: UUID | None = None) -> tuple[Deployment, ...]:
-        deployments = tuple(self._deployments.values())
-        if application_id is None:
-            return deployments
-        return tuple(item for item in deployments if item.application_id == application_id)
+    def list_deployments(
+        self, application_id: UUID | None = None, session: PlatformSession | None = None
+    ) -> tuple[Deployment, ...]:
+        with self._transaction(session) as transaction:
+            return transaction.deployments(application_id)
 
-    def delivery_events(self, application_id: UUID | None = None) -> tuple[DeliveryEvent, ...]:
+    def delivery_events(
+        self, application_id: UUID | None = None, session: PlatformSession | None = None
+    ) -> tuple[DeliveryEvent, ...]:
         """The only source the DORA projection is allowed to read."""
 
-        if application_id is None:
-            return tuple(self._delivery_events)
-        return tuple(item for item in self._delivery_events if item.application_id == application_id)
+        with self._transaction(session) as transaction:
+            return transaction.delivery_events(application_id)
 
-    def get_pipeline(self, pipeline_run_id: UUID) -> PipelineRun:
-        run = self._pipeline_runs.get(pipeline_run_id)
+    def get_pipeline(
+        self, pipeline_run_id: UUID, session: PlatformSession | None = None
+    ) -> PipelineRun:
+        with self._transaction(session) as transaction:
+            run = transaction.pipeline_run(pipeline_run_id)
         if run is None:
             raise DeliveryError("PIPELINE_NOT_FOUND", "pipeline run not found", 404)
         return run
 
     def get_pipeline_logs(self, pipeline_run_id: UUID) -> tuple[PipelineRun, tuple[str, ...]]:
-        run = self.get_pipeline(pipeline_run_id)
-        return run, tuple(self._pipeline_logs.get(pipeline_run_id, ()))
+        with self._transaction() as transaction:
+            run = transaction.pipeline_run(pipeline_run_id)
+            if run is None:
+                raise DeliveryError("PIPELINE_NOT_FOUND", "pipeline run not found", 404)
+            return run, transaction.pipeline_logs(pipeline_run_id)
 
-    def get_deployment(self, deployment_id: UUID) -> Deployment:
-        deployment = self._deployments.get(deployment_id)
+    def get_deployment(
+        self, deployment_id: UUID, session: PlatformSession | None = None
+    ) -> Deployment:
+        with self._transaction(session) as transaction:
+            deployment = transaction.deployment(deployment_id)
         if deployment is None:
             raise DeliveryError("DEPLOYMENT_NOT_FOUND", "deployment not found", 404)
         return deployment
@@ -557,33 +626,34 @@ class DeliveryPlatform:
             return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
         return fallback
 
+    @staticmethod
     def _idempotent_replay(
-        self,
-        scope: tuple[object, ...],
+        transaction: PlatformSession,
+        scope: str,
         idempotency_key: str | None,
         request_payload: object,
     ) -> Application | PipelineRun | None:
+        """Answer a retry from the durable record, not from a process-local memory.
+
+        Reading the record in the caller's transaction is what makes a retry after a
+        network timeout return the original resource on any replica and after any
+        restart: the row was written in the same transaction as the resource itself,
+        so one exists if and only if the other does.
+        """
+
         if idempotency_key is None:
             return None
-        record = self._idempotency_records.get(scope)
+        record = transaction.idempotency(scope, idempotency_key)
         if record is None:
             return None
-        if record.request_hash != self._payload_hash(request_payload):
+        if record.request_hash != DeliveryPlatform._payload_hash(request_payload):
             raise DeliveryError("IDEMPOTENCY_KEY_REUSED", "same key was used with a different request", 409)
-        if isinstance(record.result, PipelineRun):
-            # Return the current state of the run, not the snapshot taken at first use.
-            return self._pipeline_runs.get(record.result.id, record.result)
-        return record.result
-
-    def _remember(
-        self,
-        scope: tuple[object, ...],
-        idempotency_key: str | None,
-        request_payload: object,
-        result: Application | PipelineRun,
-    ) -> None:
-        if idempotency_key is not None:
-            self._idempotency_records[scope] = IdempotencyRecord(self._payload_hash(request_payload), result)
+        if record.resource_type == "application":
+            return transaction.application(record.resource_id)
+        if record.resource_type == "pipeline_run":
+            # The current state of the run, not a snapshot taken at first use.
+            return transaction.pipeline_run(record.resource_id)
+        return None
 
     @staticmethod
     def _payload_hash(payload: object) -> str:
@@ -606,38 +676,52 @@ class DeliveryPlatform:
     def record_security_evidence(self, pipeline_run_id: UUID, evidence: dict[str, object]) -> PolicyDecision:
         """Store the CI supply-chain evidence for a run and return the policy verdict."""
 
-        run = self.get_pipeline(pipeline_run_id)
         digest = evidence.get("artifactDigest")
         if not isinstance(digest, str) or not IMMUTABLE_DIGEST.fullmatch(digest):
             raise DeliveryError(
                 "IMMUTABLE_ARTIFACT_REQUIRED", "security evidence requires a sha256 artifact digest", 422
             )
-        stored = {**evidence, "pipelineRunId": str(run.id), "applicationId": str(run.application_id)}
-        decision = evaluate_artifact_evidence(stored, expected_digest=digest, require_evidence=True)
-        stored["decision"] = "allow" if decision.allowed else "deny"
-        stored["reason"] = decision.reason
-        unit = UnitOfWork()
-        unit.security_evidence.append((run.id, run.application_id, digest, stored))
-        unit.logs.append((run.id, [f"security-evidence decision={stored['decision']} reason={decision.reason}"]))
-        unit.audit.append(
-            AuditRecord(
-                "artifact.evidence_recorded",
-                application_id=run.application_id,
-                pipeline_run_id=run.id,
-                correlation_id=run.correlation_id,
-                payload=decision.as_json(),
+        with self._transaction() as transaction:
+            run = transaction.pipeline_run(pipeline_run_id)
+            if run is None:
+                raise DeliveryError("PIPELINE_NOT_FOUND", "pipeline run not found", 404)
+            stored = {
+                **evidence,
+                "pipelineRunId": str(run.id),
+                "applicationId": str(run.application_id),
+            }
+            decision = evaluate_artifact_evidence(stored, expected_digest=digest, require_evidence=True)
+            stored["decision"] = "allow" if decision.allowed else "deny"
+            stored["reason"] = decision.reason
+            unit = UnitOfWork()
+            unit.security_evidence.append((run.id, run.application_id, digest, stored))
+            unit.logs.append(
+                (run.id, [f"security-evidence decision={stored['decision']} reason={decision.reason}"])
             )
-        )
-        self._commit(unit)
+            unit.audit.append(
+                AuditRecord(
+                    "artifact.evidence_recorded",
+                    application_id=run.application_id,
+                    pipeline_run_id=run.id,
+                    correlation_id=run.correlation_id,
+                    payload=decision.as_json(),
+                )
+            )
+            self._apply(transaction, unit)
         return decision
 
-    def security_evidence(self, pipeline_run_id: UUID) -> dict[str, object]:
-        evidence = self._security_evidence.get(pipeline_run_id)
+    def security_evidence(
+        self, pipeline_run_id: UUID, session: PlatformSession | None = None
+    ) -> dict[str, object]:
+        with self._transaction(session) as transaction:
+            evidence = transaction.security_evidence(pipeline_run_id)
         if evidence is None:
             raise DeliveryError("EVIDENCE_NOT_FOUND", "no security evidence for this pipeline run", 404)
         return dict(evidence)
 
-    def audit_records(self, application_ids: set[UUID] | None = None) -> tuple[AuditRecord, ...]:
+    def audit_records(
+        self, application_ids: set[UUID] | None = None, session: PlatformSession | None = None
+    ) -> tuple[AuditRecord, ...]:
         """Return the immutable audit ledger, optionally scoped to applications.
 
         Portal code consumes this interface instead of reconstructing audit facts from
@@ -645,16 +729,16 @@ class DeliveryPlatform:
         written at decision time.
         """
 
-        records = self._audit_records
-        if application_ids is not None:
-            records = [record for record in records if record.application_id in application_ids]
-        return tuple(sorted(records, key=lambda record: (record.occurred_at, str(record.id)), reverse=True))
+        with self._transaction(session) as transaction:
+            return transaction.audit_records(application_ids)
 
-    def _enforce_artifact_policy(self, run: PipelineRun, artifact_digest: str) -> PolicyDecision:
+    def _enforce_artifact_policy(
+        self, transaction: PlatformSession, run: PipelineRun, artifact_digest: str
+    ) -> PolicyDecision:
         """Refuse to move an artifact that cannot prove where it came from."""
 
         decision = evaluate_artifact_evidence(
-            self._security_evidence.get(run.id),
+            transaction.security_evidence(run.id),
             expected_digest=artifact_digest,
             require_evidence=self.security_evidence_required(),
         )
@@ -669,7 +753,7 @@ class DeliveryPlatform:
             )
         )
         unit.logs.append((run.id, [f"policy={'allow' if decision.allowed else 'deny'} {decision.reason}"]))
-        self._commit(unit)
+        self._apply(transaction, unit)
         return decision
 
     # ------------------------------------------------------------- CI results
@@ -681,7 +765,28 @@ class DeliveryPlatform:
         artifact_digest: str | None,
         log_lines: list[str],
     ) -> CiResult:
-        run = self._pipeline_runs.get(pipeline_run_id)
+        with self._transaction() as transaction:
+            outcome = self._record_ci_result(transaction, pipeline_run_id, result_status,
+                                             artifact_digest, log_lines)
+        if outcome.deferred_error is not None:
+            raise outcome.deferred_error
+        if outcome.pending_cd is None:
+            return outcome.result
+        # Starting the CD workflow is a network call to Temporal and must not run while
+        # the transaction above holds a connection open.
+        application, run, deployment = outcome.pending_cd
+        started = self._start_cd(application, run, deployment)
+        return CiResult(self.get_pipeline(run.id), started)
+
+    def _record_ci_result(
+        self,
+        transaction: PlatformSession,
+        pipeline_run_id: UUID,
+        result_status: str,
+        artifact_digest: str | None,
+        log_lines: list[str],
+    ) -> "_CiOutcome":
+        run = transaction.pipeline_run(pipeline_run_id)
         if run is None:
             raise DeliveryError("PIPELINE_NOT_FOUND", "pipeline run not found", 404)
 
@@ -694,8 +799,8 @@ class DeliveryPlatform:
             unit = UnitOfWork(runs=[(updated, run.version)])
             if log_lines:
                 unit.logs.append((run.id, list(log_lines)))
-            self._commit(unit)
-            return CiResult(updated)
+            self._apply(transaction, unit)
+            return _CiOutcome(CiResult(updated))
 
         if result_status not in {PipelineStatus.SUCCEEDED.value, PipelineStatus.FAILED.value}:
             raise DeliveryError("INVALID_CI_RESULT", "CI result status is not supported", 422)
@@ -717,15 +822,15 @@ class DeliveryPlatform:
                     correlation_id=run.correlation_id,
                 )
             )
-            self._commit(unit)
-            return CiResult(updated)
+            self._apply(transaction, unit)
+            return _CiOutcome(CiResult(updated))
 
         if not artifact_digest or not IMMUTABLE_DIGEST.fullmatch(artifact_digest):
             raise DeliveryError(
                 "IMMUTABLE_ARTIFACT_REQUIRED", "successful CI requires a sha256 artifact digest", 422
             )
 
-        decision = self._enforce_artifact_policy(run, artifact_digest)
+        decision = self._enforce_artifact_policy(transaction, run, artifact_digest)
         if not decision.allowed:
             failed = replace(
                 run, status=PipelineStatus.FAILED, artifact_digest=artifact_digest,
@@ -743,10 +848,15 @@ class DeliveryPlatform:
                     payload=decision.as_json(),
                 )
             )
-            self._commit(unit)
-            raise DeliveryError("ARTIFACT_POLICY_DENIED", decision.reason, 422)
+            self._apply(transaction, unit)
+            return _CiOutcome(
+                CiResult(failed),
+                deferred_error=DeliveryError("ARTIFACT_POLICY_DENIED", decision.reason, 422),
+            )
 
-        application = self._applications[run.application_id]
+        application = transaction.application(run.application_id)
+        if application is None:
+            raise DeliveryError("APPLICATION_NOT_FOUND", "application not found", 404)
         requires_approval = run.environment == Environment.PROD
         deployment = Deployment(
             application_id=run.application_id,
@@ -776,12 +886,13 @@ class DeliveryPlatform:
                 payload={"artifactDigest": artifact_digest},
             )
         )
-        self._commit(unit)
+        self._apply(transaction, unit)
 
         # A production deployment starts its durable workflow only after approval;
-        # anything else can begin immediately.
-        started = self._start_cd(application, updated, deployment)
-        return CiResult(self._pipeline_runs[updated.id], started)
+        # anything else can begin immediately, once this transaction has committed.
+        if deployment.status != DeploymentStatus.DEPLOYING:
+            return _CiOutcome(CiResult(updated, deployment))
+        return _CiOutcome(CiResult(updated, deployment), pending_cd=(application, updated, deployment))
 
     def _start_cd(self, application: Application, run: PipelineRun, deployment: Deployment) -> Deployment:
         """Start the durable CD workflow for a deployment that is ready to move."""
@@ -789,7 +900,8 @@ class DeliveryPlatform:
         if deployment.status != DeploymentStatus.DEPLOYING:
             return deployment
         parameters = dict(run.parameters)
-        evidence = self._security_evidence.get(run.id) or {}
+        with self._transaction() as transaction:
+            evidence = transaction.security_evidence(run.id) or {}
         artifact_ref = str(evidence.get("artifactRef") or "").strip()
         if artifact_ref:
             parameters["artifact_ref"] = artifact_ref
@@ -870,39 +982,73 @@ class DeliveryPlatform:
             "runAutomationTests": run_automation_tests,
             "deploymentParameters": dict(deployment_parameters or {}),
         }
-        scope = ("production.promotion", production_request_id)
-        replay = self._idempotent_replay(scope, production_request_id, request_payload)
-        if replay is not None:
-            if not isinstance(replay, PipelineRun):
-                raise AssertionError("production promotion idempotency returned another result type")
-            existing = next(
-                (item for item in self._deployments.values() if item.pipeline_run_id == replay.id),
-                None,
+        with self._transaction() as transaction:
+            replay = self._idempotent_replay(
+                transaction, "production.promotion", production_request_id, request_payload
             )
-            if existing is None:
-                raise DeliveryError(
-                    "INCONSISTENT_PRODUCTION_PROMOTION",
-                    "the production run exists without its deployment",
-                    500,
-                )
-            return existing
+            if replay is not None:
+                if not isinstance(replay, PipelineRun):
+                    raise AssertionError("production promotion idempotency returned another result type")
+                existing = transaction.deployments(pipeline_run_id=replay.id)
+                if not existing:
+                    raise DeliveryError(
+                        "INCONSISTENT_PRODUCTION_PROMOTION",
+                        "the production run exists without its deployment",
+                        500,
+                    )
+                return existing[0]
 
-        source = self.get_pipeline(source_pipeline_run_id)
-        if source.status != PipelineStatus.SUCCEEDED or not source.artifact_digest:
-            raise DeliveryError(
-                "VERSION_NOT_PROMOTABLE",
-                "source pipeline must have completed successfully with an immutable artifact",
-                409,
+            source = transaction.pipeline_run(source_pipeline_run_id)
+            if source is None:
+                raise DeliveryError("PIPELINE_NOT_FOUND", "pipeline run not found", 404)
+            if source.status != PipelineStatus.SUCCEEDED or not source.artifact_digest:
+                raise DeliveryError(
+                    "VERSION_NOT_PROMOTABLE",
+                    "source pipeline must have completed successfully with an immutable artifact",
+                    409,
+                )
+            evidence = transaction.security_evidence(source.id)
+            decision = evaluate_artifact_evidence(
+                evidence,
+                expected_digest=source.artifact_digest,
+                require_evidence=True,
             )
-        evidence = self._security_evidence.get(source.id)
-        decision = evaluate_artifact_evidence(
-            evidence,
-            expected_digest=source.artifact_digest,
-            require_evidence=True,
-        )
-        if not decision.allowed:
-            raise DeliveryError("ARTIFACT_POLICY_DENIED", decision.reason, 422)
-        application = self.get_application(source.application_id)
+            if not decision.allowed:
+                raise DeliveryError("ARTIFACT_POLICY_DENIED", decision.reason, 422)
+            application = transaction.application(source.application_id)
+            if application is None:
+                raise DeliveryError("APPLICATION_NOT_FOUND", "application not found", 404)
+            return self._write_production_promotion(
+                transaction,
+                source=source,
+                application=application,
+                evidence=evidence,
+                requested_by=requested_by,
+                correlation_id=correlation_id,
+                production_request_id=production_request_id,
+                scheduled_for=scheduled_for,
+                rollback_strategy=rollback_strategy,
+                run_automation_tests=run_automation_tests,
+                deployment_parameters=deployment_parameters,
+                request_payload=request_payload,
+            )
+
+    def _write_production_promotion(
+        self,
+        transaction: PlatformSession,
+        *,
+        source: PipelineRun,
+        application: Application,
+        evidence: dict[str, object] | None,
+        requested_by: str,
+        correlation_id: str,
+        production_request_id: str,
+        scheduled_for: datetime,
+        rollback_strategy: str,
+        run_automation_tests: bool,
+        deployment_parameters: dict[str, object] | None,
+        request_payload: dict[str, object],
+    ) -> Deployment:
         now = _now()
         run = PipelineRun(
             application_id=source.application_id,
@@ -971,8 +1117,7 @@ class DeliveryPlatform:
                 },
             )
         )
-        self._commit(unit)
-        self._remember(scope, production_request_id, request_payload, run)
+        self._apply(transaction, unit)
         return deployment
 
     # -------------------------------------------------------------- approvals
@@ -986,14 +1131,27 @@ class DeliveryPlatform:
         that existed before the upgrade.
         """
 
-        deployment = self._deployments.get(deployment_id)
-        if deployment is None or deployment.pipeline_run_id is None:
-            return ""
-        run = self._pipeline_runs.get(deployment.pipeline_run_id)
+        with self._transaction() as transaction:
+            deployment = transaction.deployment(deployment_id)
+            if deployment is None or deployment.pipeline_run_id is None:
+                return ""
+            run = transaction.pipeline_run(deployment.pipeline_run_id)
         return (run.started_by or "") if run else ""
 
     def approve_deployment(self, deployment_id: UUID, actor: str) -> Deployment:
-        deployment = self._deployments.get(deployment_id)
+        with self._transaction() as transaction:
+            updated, resumed_run, application = self._write_approval(transaction, deployment_id, actor)
+        # Signalling or starting the workflow reaches Temporal, so it happens after the
+        # approval is durable. A crash here leaves an approved deployment whose workflow
+        # has not started -- recoverable -- rather than a started workflow nobody approved.
+        if resumed_run is not None and application is not None:
+            self._resume_cd_after_approval(resumed_run, updated, application, actor)
+        return updated
+
+    def _write_approval(
+        self, transaction: PlatformSession, deployment_id: UUID, actor: str
+    ) -> tuple[Deployment, PipelineRun | None, Application | None]:
+        deployment = transaction.deployment(deployment_id)
         if deployment is None:
             raise DeliveryError("DEPLOYMENT_NOT_FOUND", "deployment not found", 404)
         if deployment.status != DeploymentStatus.PENDING_APPROVAL:
@@ -1017,19 +1175,22 @@ class DeliveryPlatform:
                 actor=actor,
             )
         )
-        run: PipelineRun | None = None
+        resumed: PipelineRun | None = None
+        application: Application | None = None
         if deployment.pipeline_run_id is not None:
-            run = self._pipeline_runs[deployment.pipeline_run_id]
+            run = transaction.pipeline_run(deployment.pipeline_run_id)
+            if run is None:
+                raise DeliveryError("PIPELINE_NOT_FOUND", "pipeline run not found", 404)
             resumed = replace(run, status=PipelineStatus.RUNNING, version=run.version + 1, updated_at=now)
             unit.runs.append((resumed, run.version))
             unit.logs.append((run.id, [f"approved by={actor}"]))
-        self._commit(unit)
+            application = transaction.application(deployment.application_id)
+        self._apply(transaction, unit)
+        return updated, resumed, application
 
-        if run is not None:
-            self._resume_cd_after_approval(self._pipeline_runs[run.id], updated, actor)
-        return self._deployments[updated.id]
-
-    def _resume_cd_after_approval(self, run: PipelineRun, deployment: Deployment, actor: str) -> None:
+    def _resume_cd_after_approval(
+        self, run: PipelineRun, deployment: Deployment, application: Application, actor: str
+    ) -> None:
         """Signal the waiting workflow, or start one if approval came before it existed."""
 
         if run.workflow_id:
@@ -1038,7 +1199,6 @@ class DeliveryPlatform:
             except CdStartError as exc:
                 raise DeliveryError("CD_SIGNAL_FAILED", str(exc), 502) from exc
             return
-        application = self._applications[deployment.application_id]
         self._start_cd(application, run, deployment)
 
     # ------------------------------------------------------ deployment results
@@ -1049,7 +1209,17 @@ class DeliveryPlatform:
         result_status: str,
         message: str | None,
     ) -> Deployment:
-        deployment = self._deployments.get(deployment_id)
+        with self._transaction() as transaction:
+            return self._write_deployment_result(transaction, deployment_id, result_status, message)
+
+    def _write_deployment_result(
+        self,
+        transaction: PlatformSession,
+        deployment_id: UUID,
+        result_status: str,
+        message: str | None,
+    ) -> Deployment:
+        deployment = transaction.deployment(deployment_id)
         if deployment is None:
             raise DeliveryError("DEPLOYMENT_NOT_FOUND", "deployment not found", 404)
         if deployment.status.value == result_status and deployment.status in {
@@ -1069,7 +1239,11 @@ class DeliveryPlatform:
             deployment, status=target_status, version=deployment.version + 1, updated_at=now
         )
         unit = UnitOfWork(deployments=[(updated, deployment.version)])
-        run = self._pipeline_runs.get(deployment.pipeline_run_id) if deployment.pipeline_run_id else None
+        run = (
+            transaction.pipeline_run(deployment.pipeline_run_id)
+            if deployment.pipeline_run_id
+            else None
+        )
         if run is not None:
             pipeline_status = PipelineStatus.SUCCEEDED if healthy else PipelineStatus.FAILED
             unit.runs.append(
@@ -1086,12 +1260,20 @@ class DeliveryPlatform:
             )
             if message:
                 unit.logs.append((run.id, [f"deployment={target_status.value} {message}"]))
-        self._record_delivery_outcome(unit, updated, run, healthy=healthy, occurred_at=now)
-        self._commit(unit)
+        self._record_delivery_outcome(
+            transaction, unit, updated, run, healthy=healthy, occurred_at=now
+        )
+        self._apply(transaction, unit)
         return updated
 
     def rollback_deployment(self, deployment_id: UUID, target_artifact_digest: str) -> Deployment:
-        deployment = self._deployments.get(deployment_id)
+        with self._transaction() as transaction:
+            return self._write_rollback(transaction, deployment_id, target_artifact_digest)
+
+    def _write_rollback(
+        self, transaction: PlatformSession, deployment_id: UUID, target_artifact_digest: str
+    ) -> Deployment:
+        deployment = transaction.deployment(deployment_id)
         if deployment is None:
             raise DeliveryError("DEPLOYMENT_NOT_FOUND", "deployment not found", 404)
         if deployment.status not in {DeploymentStatus.HEALTHY, DeploymentStatus.FAILED}:
@@ -1121,7 +1303,11 @@ class DeliveryPlatform:
                 payload={"targetArtifactDigest": target_artifact_digest},
             )
         )
-        run = self._pipeline_runs.get(deployment.pipeline_run_id) if deployment.pipeline_run_id else None
+        run = (
+            transaction.pipeline_run(deployment.pipeline_run_id)
+            if deployment.pipeline_run_id
+            else None
+        )
         if run is not None:
             unit.runs.append(
                 (
@@ -1161,11 +1347,12 @@ class DeliveryPlatform:
                         occurred_at=now,
                     )
                 )
-        self._commit(unit)
+        self._apply(transaction, unit)
         return updated
 
     def _record_delivery_outcome(
         self,
+        transaction: PlatformSession,
         unit: UnitOfWork,
         deployment: Deployment,
         run: PipelineRun | None,
@@ -1196,7 +1383,9 @@ class DeliveryPlatform:
         )
         if not healthy:
             return
-        for failure in self._unrecovered_failures(deployment.application_id, deployment.environment):
+        for failure in self._unrecovered_failures(
+            transaction, deployment.application_id, deployment.environment
+        ):
             unit.events.append(
                 DeliveryEvent(
                     event_type=DeliveryEventType.RECOVERY,
@@ -1210,17 +1399,20 @@ class DeliveryPlatform:
                 )
             )
 
-    def _unrecovered_failures(self, application_id: UUID, environment: Environment) -> list[DeliveryEvent]:
+    def _unrecovered_failures(
+        self, transaction: PlatformSession, application_id: UUID, environment: Environment
+    ) -> list[DeliveryEvent]:
+        history = transaction.delivery_events(application_id)
         recovered = {
             event.deployment_id
-            for event in self._delivery_events
+            for event in history
             if event.event_type == DeliveryEventType.RECOVERY
             and event.application_id == application_id
             and event.environment == environment
         }
         return [
             event
-            for event in self._delivery_events
+            for event in history
             if event.event_type == DeliveryEventType.DEPLOYMENT
             and event.application_id == application_id
             and event.environment == environment

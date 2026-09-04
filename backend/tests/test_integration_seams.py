@@ -24,6 +24,7 @@ from app.adapters.ci_launcher import (
 from app.adapters.interfaces import JenkinsRun
 from app.adapters.jenkins_router import ControllerState, JenkinsController, JenkinsRouter
 from app.delivery import DeliveryError, DeliveryPlatform
+from app.persistence import UnitOfWork
 from app.domain.models import DeliveryEventType, DeploymentStatus, Environment, PipelineStatus, Runtime
 
 DIGEST = "sha256:" + "a" * 64
@@ -156,7 +157,13 @@ def test_retrying_the_same_production_request_reuses_its_run_and_deployment():
     source = start_run(platform, application, Environment.STAGING)
     platform.record_ci_result(source.id, PipelineStatus.RUNNING.value, None, [])
     record_allowed_evidence(platform, source)
-    platform.record_ci_result(source.id, PipelineStatus.SUCCEEDED.value, DIGEST, ["built"])
+    source_deployment = platform.record_ci_result(
+        source.id, PipelineStatus.SUCCEEDED.value, DIGEST, ["built"]
+    ).deployment
+    assert source_deployment is not None
+    # A run is only promotable once its deployment is healthy: CI succeeding is not the
+    # same fact as the release being live.
+    platform.record_deployment_result(source_deployment.id, DeploymentStatus.HEALTHY.value, "ok")
     scheduled_for = datetime.now(timezone.utc) + timedelta(hours=2)
     arguments = {
         "requested_by": "developer-1",
@@ -179,7 +186,11 @@ def test_reusing_a_production_request_id_with_different_inputs_is_rejected():
     source = start_run(platform, application, Environment.STAGING)
     platform.record_ci_result(source.id, PipelineStatus.RUNNING.value, None, [])
     record_allowed_evidence(platform, source)
-    platform.record_ci_result(source.id, PipelineStatus.SUCCEEDED.value, DIGEST, ["built"])
+    source_deployment = platform.record_ci_result(
+        source.id, PipelineStatus.SUCCEEDED.value, DIGEST, ["built"]
+    ).deployment
+    assert source_deployment is not None
+    platform.record_deployment_result(source_deployment.id, DeploymentStatus.HEALTHY.value, "ok")
     scheduled_for = datetime.now(timezone.utc) + timedelta(hours=2)
 
     platform.create_production_promotion(
@@ -291,9 +302,22 @@ def test_approval_signals_a_workflow_that_is_already_waiting():
     run = start_run(platform, application, Environment.PROD)
     deployment = drive_to_deployment(platform, run)
     # Simulate a workflow that was started ahead of the approval.
-    platform._pipeline_runs[run.id] = replace(  # noqa: SLF001 - arranging domain state
-        platform.get_pipeline(run.id), workflow_id="netci-deploy-existing"
-    )
+    with platform.database.transaction() as transaction:
+        current = transaction.pipeline_run(run.id)
+        transaction.apply(
+            UnitOfWork(
+                runs=[
+                    (
+                        replace(
+                            current,
+                            workflow_id="netci-deploy-existing",
+                            version=current.version + 1,
+                        ),
+                        current.version,
+                    )
+                ]
+            )
+        )
 
     platform.approve_deployment(deployment.id, "reviewer-2")
 
@@ -585,10 +609,10 @@ def test_when_no_controller_accepts_the_build_the_launcher_says_which_it_tried()
 
 
 def test_the_portal_projects_dora_only_from_recorded_events():
-    from app.portal import PortalReadModel
+    from app.portal import PortalService
 
     platform = build_platform()
-    portal = PortalReadModel(platform)
+    portal = PortalService(platform)
     application = create_application(platform, name="dora-app")
 
     empty = portal.dora_projection([application.id])
@@ -608,10 +632,10 @@ def test_the_portal_projects_dora_only_from_recorded_events():
 
 
 def test_events_older_than_the_reporting_window_are_excluded():
-    from app.portal import DORA_WINDOW_DAYS, PortalReadModel
+    from app.portal import DORA_WINDOW_DAYS, PortalService
 
     platform = build_platform()
-    portal = PortalReadModel(platform)
+    portal = PortalService(platform)
     application = create_application(platform, name="window-app")
     run = start_run(platform, application, Environment.PROD)
     deployment = drive_to_deployment(platform, run)
@@ -619,8 +643,11 @@ def test_events_older_than_the_reporting_window_are_excluded():
     platform.record_deployment_result(deployment.id, DeploymentStatus.HEALTHY.value, "ok")
 
     aged = datetime.now(timezone.utc) - timedelta(days=DORA_WINDOW_DAYS + 1)
-    platform._delivery_events = [  # noqa: SLF001 - ageing recorded events for the assertion
-        replace(event, occurred_at=aged) for event in platform.delivery_events()
-    ]
+    with platform.database.transaction() as transaction:
+        # Age the recorded events in place. Backdating them through the store rather than
+        # a process attribute is the point: the projection must read what was written.
+        transaction._state.events = [  # noqa: SLF001 - ageing recorded events for the assertion
+            replace(event, occurred_at=aged) for event in transaction._state.events
+        ]
 
     assert portal.dora_projection([application.id])["sourceEventCount"] == 0
