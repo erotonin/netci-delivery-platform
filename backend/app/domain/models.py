@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
+from typing import Any
 from uuid import UUID, uuid4
 
 
@@ -84,9 +85,44 @@ class PipelineRun:
     artifact_digest: str | None = None
     console_url: str | None = None
     retry_of: UUID | None = None
+    config_revision_id: UUID | None = None
     version: int = 1
     created_at: datetime = field(default_factory=utc_now)
     updated_at: datetime = field(default_factory=utc_now)
+
+
+class ConfigRevisionStatus(str, Enum):
+    DRAFT = "draft"
+    PENDING_APPROVAL = "pending_approval"
+    ACTIVE = "active"
+    SUPERSEDED = "superseded"
+    REJECTED = "rejected"
+
+
+@dataclass(frozen=True)
+class ModuleConfigRevision:
+    module_id: str
+    revision_number: int
+    created_by: str
+    pipeline_config: dict[str, Any] = field(default_factory=dict)
+    deployment_config: list[dict[str, Any]] = field(default_factory=list)
+    change_summary: str = ""
+    status: ConfigRevisionStatus = ConfigRevisionStatus.ACTIVE
+    approved_by: str | None = None
+    approved_at: datetime | None = None
+    rejection_reason: str | None = None
+    id: UUID = field(default_factory=uuid4)
+    created_at: datetime = field(default_factory=utc_now)
+
+
+@dataclass(frozen=True)
+class ServerHealthRecord:
+    server_name: str
+    status: str
+    source: str
+    freshness_seconds: int = 0
+    details: dict[str, Any] = field(default_factory=dict)
+    observed_at: datetime = field(default_factory=utc_now)
 
 
 class ScmProviderType(str, Enum):
@@ -143,6 +179,7 @@ class Deployment:
     # token comes from a workflow that has since been superseded, and applying it would
     # let an older result overwrite a newer one.
     fencing_token: int | None = None
+    config_revision_id: UUID | None = None
     version: int = 1
     created_at: datetime = field(default_factory=utc_now)
     updated_at: datetime = field(default_factory=utc_now)
@@ -194,8 +231,18 @@ class PipelineStage:
     updated_at: datetime = field(default_factory=utc_now)
 
 
+#: Which pipeline transitions are legal. This table is enforced -- `DeliveryPlatform`
+#: consults it before every write -- so it cannot drift away from the code the way a
+#: table nothing reads inevitably does.
+#:
+#: `QUEUED` deliberately does NOT reach `SUCCEEDED`. A queued run has not started, so
+#: there is no build whose success could be reported; claiming one would be a green
+#: light for work that never happened. A queued run that must be closed goes to `FAILED`
+#: or `CANCELLED`. When an external engine reports success for a run netCI still thinks
+#: is queued, the honest repair is to record the `RUNNING` transition that was lost and
+#: then apply the result -- reconstructing what actually happened rather than skipping it.
 PIPELINE_TRANSITIONS: dict[PipelineStatus, frozenset[PipelineStatus]] = {
-    PipelineStatus.QUEUED: frozenset({PipelineStatus.RUNNING, PipelineStatus.SUCCEEDED, PipelineStatus.FAILED, PipelineStatus.CANCELLED}),
+    PipelineStatus.QUEUED: frozenset({PipelineStatus.RUNNING, PipelineStatus.FAILED, PipelineStatus.CANCELLED}),
     PipelineStatus.RUNNING: frozenset({PipelineStatus.WAITING_APPROVAL, PipelineStatus.SUCCEEDED, PipelineStatus.FAILED, PipelineStatus.CANCELLED}),
     PipelineStatus.WAITING_APPROVAL: frozenset({PipelineStatus.RUNNING, PipelineStatus.SUCCEEDED, PipelineStatus.FAILED, PipelineStatus.CANCELLED}),
     PipelineStatus.FAILED: frozenset({PipelineStatus.QUEUED, PipelineStatus.ROLLED_BACK}),

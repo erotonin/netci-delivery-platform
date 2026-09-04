@@ -44,6 +44,8 @@ from .runtime_environment import is_local_runtime
 from .policy.rules import PolicyDecision, evaluate_artifact_evidence
 from .domain.models import (
     Application,
+    can_transition_deployment,
+    can_transition_pipeline,
     DeliveryEvent,
     DeliveryEventType,
     Deployment,
@@ -187,6 +189,41 @@ class DeliveryPlatform:
             raise DeliveryError(
                 "PERSISTENCE_UNAVAILABLE", f"cannot reach delivery state: {exc}", 503
             ) from exc
+
+    @staticmethod
+    def _require_pipeline_transition(run: PipelineRun, target: PipelineStatus) -> None:
+        """Refuse a transition the state machine does not allow.
+
+        `PIPELINE_TRANSITIONS` used to be a table nothing consulted, so the rules lived
+        twice -- once in the table and once as scattered `if` statements -- and the two
+        drifted: `QUEUED -> SUCCEEDED` was added to the table, which would let a run that
+        never started report a successful build. Reading the table here is what makes it
+        load-bearing, so a future edit to it changes behaviour instead of documentation.
+        """
+
+        if run.status == target:
+            return
+        if not can_transition_pipeline(run.status, target):
+            raise DeliveryError(
+                "INVALID_PIPELINE_STATE",
+                f"a pipeline run cannot go from {run.status.value} to {target.value}",
+                409,
+            )
+
+    @staticmethod
+    def _require_deployment_transition(
+        deployment: Deployment, target: DeploymentStatus
+    ) -> None:
+        """The same guard for deployments, read from `DEPLOYMENT_TRANSITIONS`."""
+
+        if deployment.status == target:
+            return
+        if not can_transition_deployment(deployment.status, target):
+            raise DeliveryError(
+                "INVALID_DEPLOYMENT_STATE",
+                f"a deployment cannot go from {deployment.status.value} to {target.value}",
+                409,
+            )
 
     def _audit_refusal(self, records: list[AuditRecord]) -> None:
         """Record why a request was refused, in a transaction of its own.
@@ -1444,8 +1481,11 @@ class DeliveryPlatform:
 
         if result_status not in {PipelineStatus.SUCCEEDED.value, PipelineStatus.FAILED.value}:
             raise DeliveryError("INVALID_CI_RESULT", "CI result status is not supported", 422)
-        if run.status not in {PipelineStatus.QUEUED, PipelineStatus.RUNNING}:
-            raise DeliveryError("INVALID_PIPELINE_STATE", f"cannot report completion for pipeline run with status {run.status.value}", 409)
+        # The table decides. A queued run may be closed as failed or cancelled, but not
+        # reported successful: nothing ran, so there is no success to report. A caller
+        # holding a genuine success for a queued run has lost the `running` callback and
+        # must record that first -- see `Reconciler._repair_lost_running_transition`.
+        self._require_pipeline_transition(run, PipelineStatus(result_status))
 
         if result_status == PipelineStatus.FAILED.value:
             updated = replace(

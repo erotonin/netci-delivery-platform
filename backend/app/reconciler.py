@@ -9,10 +9,8 @@ from __future__ import annotations
 
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from dataclasses import replace
 from datetime import datetime, timezone
 from typing import Any
-from uuid import UUID
 
 from .adapters.cd_orchestrator import CdOrchestrator
 from .adapters.ci_launcher import CiLauncher
@@ -65,9 +63,16 @@ class Reconciler:
     ) -> list[dict[str, Any]]:
         with self.platform._transaction() as transaction:
             all_runs = transaction.pipeline_runs()
+        # A run stays `running` while its deployment executes, so "status is running" is
+        # not the same as "CI has not reported". A run that already carries an artifact
+        # digest has received its CI result; re-reporting it would create a second
+        # deployment for the same build -- and, once leases exist, that second deployment
+        # is refused with DEPLOYMENT_TARGET_BUSY, turning a healthy release into a
+        # reconciler-generated error. The digest is what says CI is done.
         active = [
             r for r in all_runs
             if r.status in {PipelineStatus.QUEUED, PipelineStatus.RUNNING}
+            and not r.artifact_digest
         ][:limit]
 
         if not active:
@@ -86,6 +91,25 @@ class Reconciler:
                     logger.warning("reconciler: error reconciling run: %s", exc)
         return results
 
+    def _repair_lost_running_transition(self, run: PipelineRun) -> None:
+        """Move a still-queued run to `running` before applying a terminal result.
+
+        `queued -> succeeded` is not a legal transition, and deliberately so: a queued run
+        has not started, so there is no build whose success could be reported. When the
+        engine says otherwise, the truth is that the `running` callback was lost, not that
+        the run skipped execution. Recording it keeps the repaired history honest and
+        keeps the state machine as the single description of what may happen.
+        """
+
+        if run.status != PipelineStatus.QUEUED:
+            return
+        self.platform.record_ci_result(
+            run.id,
+            result_status="running",
+            artifact_digest=None,
+            log_lines=["reconciled: the run had started in the CI engine; its start callback was lost"],
+        )
+
     def _reconcile_one_run(self, run: PipelineRun, timeout_seconds: int) -> dict[str, Any] | None:
         now = _utc_now()
         age = (now - run.created_at).total_seconds()
@@ -100,11 +124,46 @@ class Reconciler:
         if ext_status is not None:
             ext_status_str = ext_status.lower() if isinstance(ext_status, str) else str(ext_status).lower()
             if ext_status_str in {"succeeded", "success"}:
+                # A success netCI cannot name is not a success it may record.
+                #
+                # This used to substitute `sha256:000...0` when the run carried no digest.
+                # That digest passes the immutability regex, so the run would be marked
+                # successful and a deployment created for an artifact that does not exist.
+                # Inventing an artifact identity to close a run is the exact false-green
+                # this platform exists to prevent, so the run is failed with a reason a
+                # human can act on instead.
+                if not run.artifact_digest:
+                    logger.warning(
+                        "reconciler: run %s succeeded in Jenkins but netCI never received "
+                        "its artifact digest; failing the run rather than inventing one",
+                        run.id,
+                    )
+                    self.platform.record_ci_result(
+                        run.id,
+                        result_status="failed",
+                        artifact_digest=None,
+                        log_lines=[
+                            "reconciled: the CI engine reports this build succeeded, but its "
+                            "artifact digest never reached netCI. The build output cannot be "
+                            "identified, so it cannot be deployed. Re-run the pipeline."
+                        ],
+                    )
+                    self._audit_run_reconciled(run, "jenkins_success_without_digest", ext_status_str)
+                    return {
+                        "pipelineRunId": str(run.id),
+                        "action": "reconciled_success_without_digest",
+                        "externalStatus": ext_status_str,
+                    }
+
                 logger.info("reconciler: run %s succeeded in Jenkins, repairing", run.id)
+                # A queued run never received its `running` callback. Record that lost
+                # transition first, so the repaired history says what actually happened
+                # rather than skipping a state the run really passed through.
+                self._repair_lost_running_transition(run)
                 self.platform.record_ci_result(
                     run.id,
                     result_status="succeeded",
-                    artifact_digest=run.artifact_digest or f"sha256:{'0'*64}",
+                    artifact_digest=run.artifact_digest,
                     log_lines=["reconciled: build completed successfully in Jenkins (callback lost)"],
                 )
                 self._audit_run_reconciled(run, "jenkins_success_callback_lost", ext_status_str)
