@@ -25,6 +25,7 @@ from ..domain.models import (
     DeliveryEvent,
     Deployment,
     PipelineRun,
+    PipelineStage,
     ScmCommitStatus,
     ScmIntegration,
     ScmProviderType,
@@ -62,6 +63,7 @@ class _State:
     ci_reports: dict[tuple[str, str], list[dict[str, Any]]] = field(default_factory=dict)
     scm_integrations: dict[UUID, ScmIntegration] = field(default_factory=dict)
     scm_deliveries: dict[str, ScmWebhookDelivery] = field(default_factory=dict)
+    stages: dict[tuple[UUID, str, int], PipelineStage] = field(default_factory=dict)
 
     def copy(self) -> "_State":
         return _State(
@@ -84,6 +86,7 @@ class _State:
             ci_reports={key: list(value) for key, value in self.ci_reports.items()},
             scm_integrations=dict(self.scm_integrations),
             scm_deliveries=dict(self.scm_deliveries),
+            stages=dict(self.stages),
         )
 
 
@@ -516,6 +519,37 @@ class InMemorySession:
 
     def scm_webhook_delivery(self, delivery_id: str) -> ScmWebhookDelivery | None:
         return self._state.scm_deliveries.get(delivery_id)
+
+    # ------------------------------------------------------------- pipeline stages
+
+    def record_pipeline_stage(self, stage: PipelineStage) -> PipelineStage:
+        key = (stage.pipeline_run_id, stage.stage_id, stage.attempt)
+        existing = self._state.stages.get(key)
+        if existing:
+            saved = replace(
+                stage,
+                id=existing.id,
+                queued_at=stage.queued_at or existing.queued_at,
+                started_at=stage.started_at or existing.started_at,
+                completed_at=stage.completed_at or existing.completed_at,
+                duration_ms=stage.duration_ms if stage.duration_ms is not None else existing.duration_ms,
+                error_message=stage.error_message or existing.error_message,
+                log_snippet=stage.log_snippet or existing.log_snippet,
+                created_at=existing.created_at,
+            )
+        else:
+            saved = stage
+        self._state.stages[key] = saved
+        return saved
+
+    def pipeline_stages(self, pipeline_run_id: UUID) -> tuple[PipelineStage, ...]:
+        matching = [
+            stage
+            for (run_id, _, _), stage in self._state.stages.items()
+            if run_id == pipeline_run_id
+        ]
+        matching.sort(key=lambda s: (s.created_at, s.attempt, s.stage_id))
+        return tuple(matching)
 
 
 class InMemoryDatabase:

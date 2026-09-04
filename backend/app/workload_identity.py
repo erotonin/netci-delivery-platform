@@ -82,11 +82,12 @@ class Scope:
     CI_LOGS = "ci:logs"
     CI_EVIDENCE = "ci:evidence"
     CI_REPORT = "ci:report"
+    CI_STAGE = "ci:stage"
     DEPLOYMENT_RESULT = "deployment:result"
     DEPLOYMENT_READ = "deployment:read"
 
     ALL = frozenset(
-        {CI_RESULT, CI_LOGS, CI_EVIDENCE, CI_REPORT, DEPLOYMENT_RESULT, DEPLOYMENT_READ}
+        {CI_RESULT, CI_LOGS, CI_EVIDENCE, CI_REPORT, CI_STAGE, DEPLOYMENT_RESULT, DEPLOYMENT_READ}
     )
 
 
@@ -95,7 +96,7 @@ class Scope:
 #: cannot be minted into one.
 WORKLOAD_SCOPES: dict[str, frozenset[str]] = {
     Workload.JENKINS: frozenset(
-        {Scope.CI_RESULT, Scope.CI_LOGS, Scope.CI_EVIDENCE, Scope.CI_REPORT}
+        {Scope.CI_RESULT, Scope.CI_LOGS, Scope.CI_EVIDENCE, Scope.CI_REPORT, Scope.CI_STAGE}
     ),
     Workload.TEMPORAL: frozenset(
         {Scope.DEPLOYMENT_RESULT, Scope.DEPLOYMENT_READ, Scope.CI_EVIDENCE}

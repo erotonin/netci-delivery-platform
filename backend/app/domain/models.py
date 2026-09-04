@@ -83,6 +83,7 @@ class PipelineRun:
     workflow_id: str | None = None
     artifact_digest: str | None = None
     console_url: str | None = None
+    retry_of: UUID | None = None
     version: int = 1
     created_at: datetime = field(default_factory=utc_now)
     updated_at: datetime = field(default_factory=utc_now)
@@ -175,8 +176,26 @@ class DeliveryEvent:
     id: UUID = field(default_factory=uuid4)
 
 
+@dataclass(frozen=True)
+class PipelineStage:
+    pipeline_run_id: UUID
+    stage_id: str
+    stage_name: str
+    status: str
+    attempt: int = 1
+    queued_at: datetime | None = None
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+    duration_ms: int | None = None
+    error_message: str | None = None
+    log_snippet: str | None = None
+    id: UUID = field(default_factory=uuid4)
+    created_at: datetime = field(default_factory=utc_now)
+    updated_at: datetime = field(default_factory=utc_now)
+
+
 PIPELINE_TRANSITIONS: dict[PipelineStatus, frozenset[PipelineStatus]] = {
-    PipelineStatus.QUEUED: frozenset({PipelineStatus.RUNNING, PipelineStatus.CANCELLED}),
+    PipelineStatus.QUEUED: frozenset({PipelineStatus.RUNNING, PipelineStatus.SUCCEEDED, PipelineStatus.FAILED, PipelineStatus.CANCELLED}),
     PipelineStatus.RUNNING: frozenset({PipelineStatus.WAITING_APPROVAL, PipelineStatus.SUCCEEDED, PipelineStatus.FAILED, PipelineStatus.CANCELLED}),
     PipelineStatus.WAITING_APPROVAL: frozenset({PipelineStatus.RUNNING, PipelineStatus.SUCCEEDED, PipelineStatus.FAILED, PipelineStatus.CANCELLED}),
     PipelineStatus.FAILED: frozenset({PipelineStatus.QUEUED, PipelineStatus.ROLLED_BACK}),

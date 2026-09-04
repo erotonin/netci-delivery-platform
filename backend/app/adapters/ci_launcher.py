@@ -57,6 +57,8 @@ class LaunchedCi:
 
 class CiLauncher(Protocol):
     def launch(self, request: CiLaunchRequest) -> LaunchedCi | None: ...
+    def abort(self, jenkins_run_id: str) -> None: ...
+    def get_status(self, jenkins_run_id: str) -> str | None: ...
 
 
 class NullCiLauncher:
@@ -68,6 +70,12 @@ class NullCiLauncher:
     mode = "none"
 
     def launch(self, request: CiLaunchRequest) -> LaunchedCi | None:
+        return None
+
+    def abort(self, jenkins_run_id: str) -> None:
+        return None
+
+    def get_status(self, jenkins_run_id: str) -> str | None:
         return None
 
 
@@ -131,6 +139,27 @@ class JenkinsCiLauncher:
                 external_run_id=run.run_id,
                 console_url=run.console_url,
             )
+
+    def abort(self, jenkins_run_id: str) -> None:
+        controller_id, _, external_run_id = jenkins_run_id.partition(":")
+        adapter = self.adapters.get(controller_id)
+        if adapter is not None and external_run_id:
+            try:
+                adapter.abort(external_run_id)
+            except Exception as exc:
+                logger.warning("failed to abort Jenkins run %s on %s: %s", external_run_id, controller_id, exc)
+
+    def get_status(self, jenkins_run_id: str) -> str | None:
+        controller_id, _, external_run_id = jenkins_run_id.partition(":")
+        adapter = self.adapters.get(controller_id)
+        if adapter is not None and external_run_id:
+            try:
+                run = adapter.get_status(external_run_id)
+                return run.status
+            except Exception as exc:
+                logger.debug("failed to get status for Jenkins run %s on %s: %s", external_run_id, controller_id, exc)
+                return None
+        return None
 
 
 def build_ci_launcher() -> CiLauncher:

@@ -65,9 +65,42 @@ export type PipelineRun = {
   workflowId: string | null
   artifactDigest: string | null
   consoleUrl: string | null
+  retryOf: string | null
   startedBy: string | null
   createdAt: string
   updatedAt: string
+}
+
+export type PipelineStage = {
+  id: string
+  pipelineRunId: string
+  stageId: string
+  stageName: string
+  attempt: number
+  status: string
+  queuedAt: string | null
+  startedAt: string | null
+  completedAt: string | null
+  durationMs: number | null
+  errorMessage: string | null
+  logSnippet: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+export type Deployment = {
+  id: string
+  applicationId: string
+  pipelineRunId?: string | null
+  runtime: Runtime
+  environment: Environment
+  status: string
+  artifactDigest?: string
+  previousArtifactDigest?: string | null
+  approvedBy?: string | null
+  fencingToken?: number | null
+  createdAt?: string
+  updatedAt?: string
 }
 
 type ErrorResponse = {
@@ -437,6 +470,33 @@ export function startModulePipeline(moduleId: string, payload: PipelineRunCreate
     method: 'POST',
     headers: { 'Idempotency-Key': requestId(), 'X-Correlation-Id': requestId() },
     body: JSON.stringify(payload),
+  })
+}
+
+export function cancelPipelineRun(pipelineRunId: string, reason = ''): Promise<PipelineRun> {
+  return request<PipelineRun>(`/pipeline-runs/${encodeURIComponent(pipelineRunId)}/cancel`, {
+    method: 'POST',
+    headers: { 'X-Correlation-Id': requestId() },
+    body: JSON.stringify({ reason }),
+  })
+}
+
+export function retryPipelineRun(pipelineRunId: string): Promise<PipelineRun> {
+  return request<PipelineRun>(`/pipeline-runs/${encodeURIComponent(pipelineRunId)}/retry`, {
+    method: 'POST',
+    headers: { 'Idempotency-Key': requestId(), 'X-Correlation-Id': requestId() },
+  })
+}
+
+export function getPipelineStages(pipelineRunId: string): Promise<{ pipelineRunId: string; items: PipelineStage[] }> {
+  return request<{ pipelineRunId: string; items: PipelineStage[] }>(`/pipeline-runs/${encodeURIComponent(pipelineRunId)}/stages`)
+}
+
+export function cancelDeployment(deploymentId: string, reason = ''): Promise<Deployment> {
+  return request<Deployment>(`/deployments/${encodeURIComponent(deploymentId)}/cancel`, {
+    method: 'POST',
+    headers: { 'X-Correlation-Id': requestId() },
+    body: JSON.stringify({ reason }),
   })
 }
 

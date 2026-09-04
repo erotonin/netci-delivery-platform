@@ -16,6 +16,7 @@ from ..domain.models import (
     DeliveryEvent,
     Deployment,
     PipelineRun,
+    PipelineStage,
     ScmCommitStatus,
     ScmIntegration,
     ScmProviderType,
@@ -187,3 +188,9 @@ class PlatformSession(Protocol):
         ...
 
     def scm_webhook_delivery(self, delivery_id: str) -> ScmWebhookDelivery | None: ...
+
+    # ------------------------------------------------------------- pipeline stages
+
+    def record_pipeline_stage(self, stage: PipelineStage) -> PipelineStage: ...
+
+    def pipeline_stages(self, pipeline_run_id: UUID) -> tuple[PipelineStage, ...]: ...

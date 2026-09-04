@@ -669,6 +669,139 @@ paths:
           $ref: '#/components/responses/NotFound'
         '422':
           $ref: '#/components/responses/UnprocessableEntity'
+  /pipeline-runs/{pipelineRunId}/cancel:
+    post:
+      operationId: cancelPipelineRun
+      summary: Cancel a queued or running pipeline
+      parameters:
+        - $ref: '#/components/parameters/PipelineRunId'
+        - $ref: '#/components/parameters/CorrelationId'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CancelRequest'
+      responses:
+        '200':
+          description: Pipeline run cancelled
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PipelineRun'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+  /pipeline-runs/{pipelineRunId}/retry:
+    post:
+      operationId: retryPipelineRun
+      summary: Retry a completed or cancelled pipeline creating a new run record with lineage
+      parameters:
+        - $ref: '#/components/parameters/PipelineRunId'
+        - $ref: '#/components/parameters/CorrelationId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '201':
+          description: Pipeline retry queued
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PipelineRun'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+  /pipeline-runs/{pipelineRunId}/stages:
+    get:
+      operationId: getPipelineStages
+      summary: List granular stage execution events for a pipeline run
+      parameters:
+        - $ref: '#/components/parameters/PipelineRunId'
+        - $ref: '#/components/parameters/CorrelationId'
+      responses:
+        '200':
+          description: Granular stage events
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [pipelineRunId, items]
+                properties:
+                  pipelineRunId: { type: string, format: uuid }
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/PipelineStage'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    post:
+      operationId: recordPipelineStageResult
+      summary: Record stage execution event callback
+      security:
+        - PipelineBearer: []
+      parameters:
+        - $ref: '#/components/parameters/PipelineRunId'
+        - $ref: '#/components/parameters/CorrelationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StageResultRequest'
+      responses:
+        '202':
+          description: Stage event recorded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PipelineStage'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+  /pipeline-runs/{pipelineRunId}/stages/{stageId}:
+    post:
+      operationId: recordPipelineStageResultById
+      summary: Record stage execution event callback with explicit stageId in path
+      security:
+        - PipelineBearer: []
+      parameters:
+        - $ref: '#/components/parameters/PipelineRunId'
+        - name: stageId
+          in: path
+          required: true
+          schema: { type: string }
+        - $ref: '#/components/parameters/CorrelationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StageResultRequest'
+      responses:
+        '202':
+          description: Stage event recorded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PipelineStage'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
   /pipeline-runs/{pipelineRunId}/ci-result:
     post:
       operationId: recordCiResult
@@ -901,6 +1034,53 @@ paths:
           $ref: '#/components/responses/Conflict'
         '422':
           $ref: '#/components/responses/UnprocessableEntity'
+  /deployments/{deploymentId}/cancel:
+    post:
+      operationId: cancelDeployment
+      summary: Cancel an in-flight deployment and release locks
+      parameters:
+        - $ref: '#/components/parameters/DeploymentId'
+        - $ref: '#/components/parameters/CorrelationId'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CancelRequest'
+      responses:
+        '200':
+          description: Deployment cancelled
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Deployment'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+  /reconciler/reconcile:
+    post:
+      operationId: triggerReconciliation
+      summary: Trigger background watchdog reconciliation across active pipelines and deployments
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReconcileRequest'
+      responses:
+        '200':
+          description: Reconciliation outcome
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReconcileResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
 
 components:
   securitySchemes:
@@ -1312,9 +1492,64 @@ components:
         workflowId: { type: string, nullable: true }
         artifactDigest: { type: string, nullable: true }
         consoleUrl: { type: string, nullable: true }
+        retryOf: { type: string, format: uuid, nullable: true }
         startedBy: { type: string, nullable: true }
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
+    CancelRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        reason: { type: string, maxLength: 256 }
+    PipelineStage:
+      type: object
+      required: [id, pipelineRunId, stageId, stageName, attempt, status, createdAt, updatedAt]
+      properties:
+        id: { type: string, format: uuid }
+        pipelineRunId: { type: string, format: uuid }
+        stageId: { type: string }
+        stageName: { type: string }
+        attempt: { type: integer, minimum: 1 }
+        status: { type: string, enum: [queued, running, succeeded, failed, cancelled, skipped] }
+        queuedAt: { type: string, format: date-time, nullable: true }
+        startedAt: { type: string, format: date-time, nullable: true }
+        completedAt: { type: string, format: date-time, nullable: true }
+        durationMs: { type: integer, minimum: 0, nullable: true }
+        errorMessage: { type: string, nullable: true }
+        logSnippet: { type: string, nullable: true }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    StageResultRequest:
+      type: object
+      required: [stageName, status]
+      additionalProperties: false
+      properties:
+        stageId: { type: string, minLength: 1, maxLength: 64 }
+        stageName: { type: string, minLength: 1, maxLength: 128 }
+        status: { type: string, enum: [queued, running, succeeded, failed, cancelled, skipped] }
+        attempt: { type: integer, minimum: 1, default: 1 }
+        queuedAt: { type: string, format: date-time, nullable: true }
+        startedAt: { type: string, format: date-time, nullable: true }
+        completedAt: { type: string, format: date-time, nullable: true }
+        durationMs: { type: integer, minimum: 0, nullable: true }
+        errorMessage: { type: string, nullable: true }
+        logSnippet: { type: string, nullable: true }
+    ReconcileRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        limit: { type: integer, minimum: 1, maximum: 500, default: 50 }
+        timeoutSeconds: { type: integer, minimum: 1, nullable: true }
+    ReconcileResponse:
+      type: object
+      required: [reconciledRuns, reconciledDeployments]
+      properties:
+        reconciledRuns:
+          type: array
+          items: { type: object, additionalProperties: true }
+        reconciledDeployments:
+          type: array
+          items: { type: object, additionalProperties: true }
     CiResultRequest:
       type: object
       required: [status]

@@ -5,6 +5,34 @@ Changelog and releases use Semantic Versioning once the project reaches 1.0.0.
 
 ## [Unreleased]
 
+### Added - Phase 7 (P1.2): Pipeline Lifecycle, Reconciliation Watchdog & Stage Events
+- **Pipeline & Deployment Cancellation (`POST /pipeline-runs/{id}/cancel`, `POST /deployments/{id}/cancel`)**:
+  - Direct abort of Jenkins builds (`CiLauncher.abort`) and Temporal workflows (`CdOrchestrator.cancel`).
+  - Releases active environment deployment lease immediately upon cancellation.
+  - SCM commit status updated to `CANCELLED`.
+  - Immutable audit trail (`pipeline.cancelled`, `deployment.cancelled`).
+- **Pipeline Retry with Lineage (`POST /pipeline-runs/{id}/retry`)**:
+  - Guaranteed immutability of original run records.
+  - Generates new run record preserving commit SHA, branch, environment, and parameters, tracking parent run via `retry_of`.
+  - Prevents retry of currently active runs (`409 RUN_STILL_ACTIVE`).
+  - Audited with `pipeline.retried` linking parent and child run IDs.
+- **Granular Stage Events & Scoped Callbacks (`pipeline_stages` table)**:
+  - Added `pipeline_stages` table (migration `0013_pipeline_lifecycle_and_stage_events.sql`) and added to backup manifest.
+  - Scoped endpoints: `POST /pipeline-runs/{id}/stages` and `POST /pipeline-runs/{id}/stages/{stageId}`.
+  - Scoped workload identity tokens requiring `ci:stage` or `ci:result`.
+  - Idempotent upsert on `(pipeline_run_id, stage_id, attempt)`.
+  - `GET /pipeline-runs/{id}/stages` for chronological stage progress and duration observation.
+- **Reconciliation Watchdog Service (`backend/app/reconciler.py`)**:
+  - `Reconciler` service running bounded concurrent polling (`ThreadPoolExecutor`) across active runs and deployments.
+  - Auto-detection and recovery of lost Jenkins and Temporal callbacks or hung operations.
+  - Automatic atomic state repair and audit logging (`pipeline.reconciled`, `deployment.reconciled`).
+  - Operational endpoint `POST /reconciler/reconcile`.
+- **Portal UI & Client (`netciClient.ts`, `ModulePage.tsx`)**:
+  - Stage execution graph displays real-time stage status, duration, and error snippets.
+  - Interactive Cancel button for running pipelines.
+  - Safe Retry button with lineage display (`(retry of #...)`).
+- See ADR-020.
+
 ### Added - Phase 6 (P1.1): SCM Webhook Integration, Private Repository Checkout & Commit Status
 - **SCM Provider Port & Adapters (`backend/app/adapters/scm.py`)**:
   - `ScmProvider` interface with production adapters for GitHub (`GitHubScmProvider`) and GitLab (`GitLabScmProvider`), plus `MockScmProvider` for testing.

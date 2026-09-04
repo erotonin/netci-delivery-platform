@@ -47,6 +47,10 @@ class CdOrchestrator(Protocol):
 
     def signal_approval(self, workflow_id: str, actor: str, comment: str) -> None: ...
 
+    def cancel(self, workflow_id: str) -> None: ...
+
+    def get_status(self, workflow_id: str) -> str | None: ...
+
 
 class NullCdOrchestrator:
     """Default: netCI tracks deployment state and waits for an external result callback."""
@@ -57,6 +61,12 @@ class NullCdOrchestrator:
         return None
 
     def signal_approval(self, workflow_id: str, actor: str, comment: str) -> None:
+        return None
+
+    def cancel(self, workflow_id: str) -> None:
+        return None
+
+    def get_status(self, workflow_id: str) -> str | None:
         return None
 
 
@@ -138,6 +148,30 @@ class TemporalCdOrchestrator:
             self._run(signal())
         except Exception as exc:
             raise CdStartError(f"cannot signal approval to workflow {workflow_id}: {exc}") from exc
+
+    def cancel(self, workflow_id: str) -> None:
+        async def cancel_workflow() -> None:
+            client = await self._client()
+            handle = client.get_workflow_handle(workflow_id)
+            await handle.cancel()
+
+        try:
+            self._run(cancel_workflow())
+        except Exception as exc:
+            logger.warning("cannot cancel workflow %s: %s", workflow_id, exc)
+            raise CdStartError(f"cannot cancel workflow {workflow_id}: {exc}") from exc
+
+    def get_status(self, workflow_id: str) -> str | None:
+        async def describe_workflow() -> str | None:
+            client = await self._client()
+            handle = client.get_workflow_handle(workflow_id)
+            desc = await handle.describe()
+            return desc.status.name.lower() if desc and desc.status else None
+
+        try:
+            return self._run(describe_workflow())
+        except Exception:
+            return None
 
 
 def build_cd_orchestrator() -> CdOrchestrator:

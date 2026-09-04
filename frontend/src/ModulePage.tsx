@@ -2,9 +2,15 @@ import { useEffect, useState } from 'react'
 import {
   ArrowLeft, Box, CheckCircle2, Code2, Copy, ExternalLink, GitBranch,
   History, MoreHorizontal, Play, Plus, RotateCcw, Settings, TerminalSquare,
-  ZoomIn, ZoomOut,
+  XCircle, ZoomIn, ZoomOut,
 } from 'lucide-react'
-import { createModuleVersion, getDora, getModule, getModuleOverview, getPipelineLogs, listModulePipelineRuns, listModuleVersions, startModulePipeline, type Environment, type ModuleOverview, type ModulePipelineConfig, type ModuleVersion, type PipelineRun, type Runtime } from './api/netciClient'
+import {
+  cancelPipelineRun, createModuleVersion, getDora, getModule, getModuleOverview,
+  getPipelineLogs, getPipelineStages, listModulePipelineRuns, listModuleVersions,
+  retryPipelineRun, startModulePipeline, type Environment, type ModuleOverview,
+  type ModulePipelineConfig, type ModuleVersion, type PipelineRun, type PipelineStage,
+  type Runtime,
+} from './api/netciClient'
 import { usePortalFeedback } from './PortalFeedback'
 import { DoraCards, Modal, StatusPill } from './PortalShell'
 import type { DoraCardMetric, ModuleTab } from './portalTypes'
@@ -56,18 +62,46 @@ function stageCategory(stage: string): string {
   return 'source'
 }
 
-function PipelineRunView({ pipeline, liveRun, onBack, onRetry, retrying }: { pipeline: PipelineDefinition; liveRun: PipelineRun | null; onBack: () => void; onRetry: () => void; retrying: boolean }) {
+function PipelineRunView({
+  pipeline,
+  liveRun,
+  onBack,
+  onRunUpdated,
+}: {
+  pipeline: PipelineDefinition
+  liveRun: PipelineRun | null
+  onBack: () => void
+  onRunUpdated: (updated: PipelineRun) => void
+}) {
   const { notify } = usePortalFeedback()
   const [stage, setStage] = useState(pipeline.stages[0] ?? 'Checkout')
   const [zoom, setZoom] = useState(1)
   const selectedStageLabel = stageLabels[stage] ?? stage
   const [log, setLog] = useState('No log lines have been reported for this run.')
+  const [stages, setStages] = useState<PipelineStage[]>([])
+  const [cancelling, setCancelling] = useState(false)
+  const [retrying, setRetrying] = useState(false)
+
   useEffect(() => {
-    if (!liveRun) { setLog('No pipeline run selected.'); return }
+    if (!liveRun) {
+      setLog('No pipeline run selected.')
+      setStages([])
+      return
+    }
     getPipelineLogs(liveRun.id)
       .then((result) => setLog(result.lines.length ? result.lines.join('\n') : 'No log lines have been reported for this run.'))
       .catch((error) => setLog(error instanceof Error ? error.message : 'Unable to load pipeline logs.'))
-  }, [liveRun?.id])
+
+    getPipelineStages(liveRun.id)
+      .then((res) => setStages(res.items))
+      .catch(() => setStages([]))
+  }, [liveRun?.id, liveRun?.status])
+
+  const stageObjMap = new Map<string, PipelineStage>()
+  for (const s of stages) {
+    stageObjMap.set(s.stageId.toLowerCase(), s)
+  }
+
   const copyLog = async () => {
     try {
       await navigator.clipboard.writeText(log)
@@ -76,11 +110,101 @@ function PipelineRunView({ pipeline, liveRun, onBack, onRetry, retrying }: { pip
       notify('Trình duyệt không cho phép truy cập clipboard.', 'error')
     }
   }
+
+  const handleCancel = async () => {
+    if (!liveRun) return
+    setCancelling(true)
+    try {
+      const updated = await cancelPipelineRun(liveRun.id, 'Cancelled via portal')
+      onRunUpdated(updated)
+      notify('Pipeline run đã được hủy thành công.')
+    } catch (error) {
+      notify(error instanceof Error ? error.message : 'Không thể hủy pipeline run.', 'error')
+    } finally {
+      setCancelling(false)
+    }
+  }
+
+  const handleRetry = async () => {
+    if (!liveRun) return
+    setRetrying(true)
+    try {
+      const newRun = await retryPipelineRun(liveRun.id)
+      onRunUpdated(newRun)
+      notify(`Pipeline retry đã được tạo (#${newRun.id.slice(0, 8)}).`)
+    } catch (error) {
+      notify(error instanceof Error ? error.message : 'Không thể retry pipeline run.', 'error')
+    } finally {
+      setRetrying(false)
+    }
+  }
+
+  const canCancel = !!liveRun && (liveRun.status === 'queued' || liveRun.status === 'running' || liveRun.status === 'waiting_approval')
+  const canRetry = !!liveRun && (liveRun.status === 'failed' || liveRun.status === 'cancelled' || liveRun.status === 'rolled_back' || liveRun.status === 'succeeded')
+
   return <section className="run-view">
     <button className="back-button" onClick={onBack}><ArrowLeft size={16} />Back to build history</button>
-    <div className="run-heading"><div><div className="title-status"><h2>{pipeline.name} {liveRun ? `#${liveRun.jenkinsRunId ?? liveRun.id.slice(0, 8)}` : ''}</h2><StatusPill status={liveRun?.status.replace('_', ' ') ?? 'Not started'} /></div><p>{liveRun ? `${liveRun.branch} · ${liveRun.commitSha} · triggered by ${liveRun.startedBy ?? 'unknown actor'}` : 'No pipeline run selected.'}</p></div><div className="run-actions"><button className="secondary-button" disabled={retrying || !liveRun} onClick={onRetry}><RotateCcw size={15} />{retrying ? 'Queuing…' : 'Retry'}</button><button className="secondary-button" disabled={!liveRun?.consoleUrl} title={liveRun?.consoleUrl ? 'Open Jenkins console' : 'Jenkins run URL is not part of the current API response'} onClick={() => { if (liveRun?.consoleUrl) window.open(liveRun.consoleUrl, '_blank', 'noopener,noreferrer') }}><ExternalLink size={15} />Open Jenkins</button></div></div>
-    <section className="pipeline-canvas panel"><div className="canvas-toolbar"><span><strong>Configured pipeline stages</strong><small>{pipeline.stages.length} stages · per-stage results not reported · {Math.round(zoom * 100)}%</small></span><div><button aria-label="Thu nhỏ" disabled={zoom <= .75} onClick={() => setZoom((value) => Math.max(.75, value - .25))}><ZoomOut size={16} /></button><button aria-label="Phóng to" disabled={zoom >= 1.5} onClick={() => setZoom((value) => Math.min(1.5, value + .25))}><ZoomIn size={16} /></button><button aria-label="Khôi phục" disabled={zoom === 1} onClick={() => setZoom(1)}><RotateCcw size={15} /></button></div></div><div className="stage-graph" style={{ transform: `scale(${zoom})`, transformOrigin: 'left top' }}>{pipeline.stages.map((stageId, index) => { const name = stageLabels[stageId] ?? stageId; return <button className={`stage-node category-${stageCategory(stageId)} ${stage === stageId ? 'selected' : ''}`} onClick={() => setStage(stageId)} key={`${stageId}-${index}`}><span>{index + 1}</span><strong>{name}</strong><small>Status unavailable</small></button> })}</div></section>
-    <section className="log-panel"><div><span><TerminalSquare size={16} />{selectedStageLabel}</span><button aria-label="Sao chép log" onClick={copyLog}><Copy size={15} /></button></div><pre>{log}</pre></section>
+    <div className="run-heading">
+      <div>
+        <div className="title-status">
+          <h2>{pipeline.name} {liveRun ? `#${liveRun.jenkinsRunId ?? liveRun.id.slice(0, 8)}` : ''}</h2>
+          <StatusPill status={liveRun?.status.replace('_', ' ') ?? 'Not started'} />
+          {liveRun?.retryOf && <span className="mono" style={{ marginLeft: 8, fontSize: '0.85em', opacity: 0.8 }}>(retry of #{liveRun.retryOf.slice(0, 8)})</span>}
+        </div>
+        <p>{liveRun ? `${liveRun.branch} · ${liveRun.commitSha} · triggered by ${liveRun.startedBy ?? 'unknown actor'}` : 'No pipeline run selected.'}</p>
+      </div>
+      <div className="run-actions">
+        {canCancel && (
+          <button className="secondary-button" disabled={cancelling} onClick={handleCancel}>
+            <XCircle size={15} />{cancelling ? 'Cancelling…' : 'Cancel'}
+          </button>
+        )}
+        <button className="secondary-button" disabled={retrying || !canRetry} onClick={handleRetry}>
+          <RotateCcw size={15} />{retrying ? 'Retrying…' : 'Retry'}
+        </button>
+        <button className="secondary-button" disabled={!liveRun?.consoleUrl} title={liveRun?.consoleUrl ? 'Open Jenkins console' : 'Jenkins run URL is not part of the current API response'} onClick={() => { if (liveRun?.consoleUrl) window.open(liveRun.consoleUrl, '_blank', 'noopener,noreferrer') }}>
+          <ExternalLink size={15} />Open Jenkins
+        </button>
+      </div>
+    </div>
+    <section className="pipeline-canvas panel">
+      <div className="canvas-toolbar">
+        <span>
+          <strong>Configured pipeline stages</strong>
+          <small>{pipeline.stages.length} stages · {stages.length ? `${stages.length} reported` : 'per-stage results pending'} · {Math.round(zoom * 100)}%</small>
+        </span>
+        <div>
+          <button aria-label="Thu nhỏ" disabled={zoom <= .75} onClick={() => setZoom((value) => Math.max(.75, value - .25))}><ZoomOut size={16} /></button>
+          <button aria-label="Phóng to" disabled={zoom >= 1.5} onClick={() => setZoom((value) => Math.min(1.5, value + .25))}><ZoomIn size={16} /></button>
+          <button aria-label="Khôi phục" disabled={zoom === 1} onClick={() => setZoom(1)}><RotateCcw size={15} /></button>
+        </div>
+      </div>
+      <div className="stage-graph" style={{ transform: `scale(${zoom})`, transformOrigin: 'left top' }}>
+        {pipeline.stages.map((stageId, index) => {
+          const name = stageLabels[stageId] ?? stageId
+          const observed = stageObjMap.get(stageId.toLowerCase()) || stageObjMap.get(name.toLowerCase().replace(/\s+/g, '-'))
+          const statusText = observed ? `${observed.status}${observed.durationMs != null ? ` (${(observed.durationMs / 1000).toFixed(1)}s)` : ''}` : 'Pending'
+          return (
+            <button
+              className={`stage-node category-${stageCategory(stageId)} ${stage === stageId ? 'selected' : ''}`}
+              onClick={() => setStage(stageId)}
+              key={`${stageId}-${index}`}
+            >
+              <span>{index + 1}</span>
+              <strong>{name}</strong>
+              <small>{statusText}</small>
+            </button>
+          )
+        })}
+      </div>
+    </section>
+    <section className="log-panel">
+      <div>
+        <span><TerminalSquare size={16} />{selectedStageLabel}</span>
+        <button aria-label="Sao chép log" onClick={copyLog}><Copy size={15} /></button>
+      </div>
+      <pre>{log}</pre>
+    </section>
   </section>
 }
 
@@ -131,7 +255,19 @@ function PipelineTab({ moduleId, pipelineConfig }: { moduleId: string; pipelineC
     }
   }
   const runsForPipeline = (pipeline: PipelineDefinition) => liveRuns.filter((item) => item.parameters?.portalPipeline === pipeline.id || (!item.parameters?.portalPipeline && pipeline.id === 'ci' && item.environment === 'dev'))
-  if (run) return <PipelineRunView pipeline={run.pipeline} liveRun={run.liveRun} onBack={() => setRun(null)} onRetry={() => trigger(run.pipeline, run.liveRun?.commitSha ?? '')} retrying={busyPipeline === run.pipeline.id} />
+  if (run) {
+    return (
+      <PipelineRunView
+        pipeline={run.pipeline}
+        liveRun={run.liveRun}
+        onBack={() => setRun(null)}
+        onRunUpdated={(updated) => {
+          setRun({ pipeline: run.pipeline, liveRun: updated })
+          setLiveRuns((current) => [updated, ...current.filter((item) => item.id !== updated.id)])
+        }}
+      />
+    )
+  }
   if (historyPipeline) { const historyRuns = runsForPipeline(historyPipeline); return <section className="history-view"><button className="back-button" onClick={() => setHistoryPipeline(null)}><ArrowLeft size={16} />All pipelines</button><div className="run-heading"><div><h2>{historyPipeline.name} · Build history</h2><p>Recent pipeline runs from netCI API and Jenkins callbacks.</p></div><button className="primary-button" disabled={busyPipeline === historyPipeline.id || !/^[0-9a-f]{7,64}$/i.test(sourceRevision.trim())} onClick={() => trigger(historyPipeline)}><Play size={15} />{busyPipeline === historyPipeline.id ? 'Queuing…' : 'Run pipeline'}</button></div><section className="panel table-panel"><div className="data-table history-table"><div className="table-row table-head"><span>Build</span><span>Commit</span><span>Branch</span><span>Triggered by</span><span>Started</span><span>Status</span><span /></div>{historyRuns.map((item) => <button className="table-row table-button" onClick={() => setRun({ pipeline: historyPipeline, liveRun: item })} key={item.id}><span className="request-id">#{item.jenkinsRunId ?? item.id.slice(0, 8)}</span><span className="mono">{item.commitSha}</span><span>{item.branch}</span><span>{item.startedBy ?? 'unknown'}</span><span>{new Date(item.createdAt).toLocaleString('vi-VN')}</span><StatusPill status={item.status.replace('_', ' ')} /><ExternalLink size={15} /></button>)}</div>{!historyRuns.length && <div className="empty-table"><History size={22} /><strong>No runs for this pipeline</strong><span>Enter a source commit and trigger the first API-backed run.</span></div>}</section>{triggered && <div className="toast success-toast"><CheckCircle2 size={17} />{triggered} was queued successfully.</div>}</section> }
   return <><section className="panel form-grid"><label className="field full"><span>Source Git commit SHA</span><input className="mono" value={sourceRevision} onChange={(event) => setSourceRevision(event.target.value)} placeholder="7–64 hexadecimal characters" /><small>netCI records and sends this exact immutable revision to the configured CI engine.</small></label></section><div className="pipeline-card-grid">{definitions.map((pipeline) => {
     const live = runsForPipeline(pipeline)[0]

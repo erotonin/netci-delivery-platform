@@ -23,7 +23,7 @@ import re
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from .adapters.cd_orchestrator import (
     CdOrchestrator,
@@ -50,6 +50,7 @@ from .domain.models import (
     DeploymentStatus,
     Environment,
     PipelineRun,
+    PipelineStage,
     PipelineStatus,
     Runtime,
     ScmCommitStatus,
@@ -946,6 +947,284 @@ class DeliveryPlatform:
             raise DeliveryError("DEPLOYMENT_NOT_FOUND", "deployment not found", 404)
         return deployment
 
+    def cancel_pipeline(self, pipeline_run_id: UUID, actor: str, reason: str = "") -> PipelineRun:
+        with self._transaction() as transaction:
+            run = transaction.pipeline_run(pipeline_run_id)
+            if run is None:
+                raise DeliveryError("PIPELINE_NOT_FOUND", "pipeline run not found", 404)
+            if run.status == PipelineStatus.CANCELLED:
+                return run
+            if run.status in {PipelineStatus.SUCCEEDED, PipelineStatus.FAILED, PipelineStatus.ROLLED_BACK}:
+                raise DeliveryError("INVALID_PIPELINE_STATE", f"cannot cancel a pipeline run with status {run.status.value}", 409)
+
+            now = _now()
+            updated_run = replace(run, status=PipelineStatus.CANCELLED, version=run.version + 1, updated_at=now)
+            unit = UnitOfWork(runs=[(updated_run, run.version)])
+            unit.logs.append((run.id, [f"run cancelled by {actor}: {reason}".strip()]))
+            unit.audit.append(
+                AuditRecord(
+                    "pipeline.cancelled",
+                    application_id=run.application_id,
+                    pipeline_run_id=run.id,
+                    actor=actor,
+                    correlation_id=run.correlation_id,
+                    payload={"reason": reason},
+                )
+            )
+            self._notify_scm_status(
+                transaction,
+                run.application_id,
+                run.commit_sha,
+                ScmCommitStatus.CANCELLED,
+                pipeline_run_id=run.id,
+                correlation_id=run.correlation_id,
+                unit=unit,
+            )
+            # Also cancel active deployments for this run
+            deployments_to_cancel = [
+                d for d in transaction.deployments(pipeline_run_id=run.id)
+                if d.status in {DeploymentStatus.PENDING_APPROVAL, DeploymentStatus.DEPLOYING}
+            ]
+            for dep in deployments_to_cancel:
+                cancelled_dep = replace(dep, status=DeploymentStatus.CANCELLED, version=dep.version + 1, updated_at=now)
+                unit.deployments.append((cancelled_dep, dep.version))
+                self._release_lease(transaction, unit, cancelled_dep, reason="cancelled")
+                unit.audit.append(
+                    AuditRecord(
+                        "deployment.cancelled",
+                        application_id=dep.application_id,
+                        pipeline_run_id=run.id,
+                        deployment_id=dep.id,
+                        actor=actor,
+                        payload={"reason": reason},
+                    )
+                )
+            self._apply(transaction, unit)
+
+        target_ci_id = run.jenkins_run_id or str(run.id)
+        if target_ci_id:
+            try:
+                self.ci_launcher.abort(target_ci_id)
+            except Exception as exc:
+                logger.warning("failed to abort Jenkins run %s: %s", target_ci_id, exc)
+
+        if run.workflow_id:
+            try:
+                self.cd_orchestrator.cancel(run.workflow_id)
+            except Exception as exc:
+                logger.warning("failed to cancel CD workflow %s: %s", run.workflow_id, exc)
+
+        return updated_run
+
+    def cancel_deployment(self, deployment_id: UUID, actor: str, reason: str = "") -> Deployment:
+        with self._transaction() as transaction:
+            dep = transaction.deployment(deployment_id)
+            if dep is None:
+                raise DeliveryError("DEPLOYMENT_NOT_FOUND", "deployment not found", 404)
+            if dep.status == DeploymentStatus.CANCELLED:
+                return dep
+            if dep.status in {
+                DeploymentStatus.HEALTHY,
+                DeploymentStatus.FAILED,
+                DeploymentStatus.ROLLED_BACK,
+                DeploymentStatus.ROLLBACK_FAILED,
+            }:
+                raise DeliveryError("INVALID_DEPLOYMENT_STATE", f"cannot cancel a deployment with status {dep.status.value}", 409)
+
+            now = _now()
+            updated_dep = replace(dep, status=DeploymentStatus.CANCELLED, version=dep.version + 1, updated_at=now)
+            unit = UnitOfWork(deployments=[(updated_dep, dep.version)])
+            self._release_lease(transaction, unit, updated_dep, reason="cancelled")
+            unit.audit.append(
+                AuditRecord(
+                    "deployment.cancelled",
+                    application_id=dep.application_id,
+                    pipeline_run_id=dep.pipeline_run_id,
+                    deployment_id=dep.id,
+                    actor=actor,
+                    payload={"reason": reason},
+                )
+            )
+            run = transaction.pipeline_run(dep.pipeline_run_id) if dep.pipeline_run_id else None
+            if run and run.status in {PipelineStatus.RUNNING, PipelineStatus.WAITING_APPROVAL}:
+                updated_run = replace(run, status=PipelineStatus.CANCELLED, version=run.version + 1, updated_at=now)
+                unit.runs.append((updated_run, run.version))
+                unit.logs.append((run.id, [f"deployment cancelled by {actor}: {reason}".strip()]))
+                unit.audit.append(
+                    AuditRecord(
+                        "pipeline.cancelled",
+                        application_id=run.application_id,
+                        pipeline_run_id=run.id,
+                        actor=actor,
+                        correlation_id=run.correlation_id,
+                        payload={"reason": reason},
+                    )
+                )
+                self._notify_scm_status(
+                    transaction,
+                    run.application_id,
+                    run.commit_sha,
+                    ScmCommitStatus.CANCELLED,
+                    pipeline_run_id=run.id,
+                    correlation_id=run.correlation_id,
+                    unit=unit,
+                )
+            self._apply(transaction, unit)
+
+        workflow_id = run.workflow_id if run and run.workflow_id else f"netci-deploy-{dep.id}"
+        try:
+            self.cd_orchestrator.cancel(workflow_id)
+        except Exception as exc:
+            logger.warning("failed to cancel CD workflow %s: %s", workflow_id, exc)
+
+        return updated_dep
+
+    def retry_pipeline(
+        self,
+        pipeline_run_id: UUID,
+        actor: str,
+        idempotency_key: str | None = None,
+    ) -> PipelineRun:
+        request_payload = {"parentRunId": str(pipeline_run_id)}
+        with self._transaction() as transaction:
+            parent = transaction.pipeline_run(pipeline_run_id)
+            if parent is None:
+                raise DeliveryError("PIPELINE_NOT_FOUND", "pipeline run not found", 404)
+            if parent.status in {PipelineStatus.QUEUED, PipelineStatus.RUNNING, PipelineStatus.WAITING_APPROVAL}:
+                raise DeliveryError("RUN_STILL_ACTIVE", "cannot retry an active pipeline run", 409)
+
+            application = transaction.application(parent.application_id)
+            if application is None:
+                raise DeliveryError("APPLICATION_NOT_FOUND", "application not found", 404)
+
+            replay = self._idempotent_replay(
+                transaction, "pipeline.retry", idempotency_key, request_payload
+            )
+            if replay is not None:
+                if not isinstance(replay, PipelineRun):
+                    raise AssertionError("pipeline retry idempotency scope returned another result type")
+                return replay
+
+            corr_id = f"retry-{parent.correlation_id or parent.id}-{uuid4().hex[:6]}"
+            new_run = PipelineRun(
+                application_id=parent.application_id,
+                commit_sha=parent.commit_sha,
+                branch=parent.branch,
+                environment=parent.environment,
+                parameters=dict(parent.parameters),
+                correlation_id=corr_id,
+                started_by=actor,
+                retry_of=parent.id,
+            )
+            unit = UnitOfWork(runs=[(new_run, None)])
+            unit.logs.append(
+                (
+                    new_run.id,
+                    [
+                        f"retried from {parent.id}",
+                        f"queued correlationId={corr_id}",
+                        f"commit={new_run.commit_sha}",
+                        f"startedBy={actor}",
+                    ],
+                )
+            )
+            unit.audit.append(
+                AuditRecord(
+                    "pipeline.retried",
+                    application_id=parent.application_id,
+                    pipeline_run_id=new_run.id,
+                    actor=actor,
+                    correlation_id=corr_id,
+                    payload={"parentRunId": str(parent.id), "newRunId": str(new_run.id)},
+                )
+            )
+            self._notify_scm_status(
+                transaction,
+                parent.application_id,
+                new_run.commit_sha,
+                ScmCommitStatus.PENDING,
+                pipeline_run_id=new_run.id,
+                correlation_id=corr_id,
+                unit=unit,
+            )
+            if idempotency_key is not None:
+                unit.idempotency.append(
+                    IdempotencyRow(
+                        scope="pipeline.retry",
+                        idempotency_key=idempotency_key,
+                        request_hash=self._payload_hash(request_payload),
+                        resource_type="pipeline_run",
+                        resource_id=new_run.id,
+                        response_status=201,
+                    )
+                )
+            self._apply(transaction, unit)
+
+        return self._launch_ci(application, new_run)
+
+    def record_stage_event(
+        self,
+        pipeline_run_id: UUID,
+        *,
+        stage_id: str,
+        stage_name: str,
+        status: str,
+        attempt: int = 1,
+        queued_at: datetime | None = None,
+        started_at: datetime | None = None,
+        completed_at: datetime | None = None,
+        duration_ms: int | None = None,
+        error_message: str | None = None,
+        log_snippet: str | None = None,
+    ) -> PipelineStage:
+        with self._transaction() as transaction:
+            run = transaction.pipeline_run(pipeline_run_id)
+            if run is None:
+                raise DeliveryError("PIPELINE_NOT_FOUND", "pipeline run not found", 404)
+            stage = PipelineStage(
+                pipeline_run_id=pipeline_run_id,
+                stage_id=stage_id,
+                stage_name=stage_name,
+                status=status,
+                attempt=attempt,
+                queued_at=queued_at,
+                started_at=started_at,
+                completed_at=completed_at,
+                duration_ms=duration_ms,
+                error_message=error_message,
+                log_snippet=log_snippet,
+            )
+            saved = transaction.record_pipeline_stage(stage)
+            unit = UnitOfWork()
+            unit.audit.append(
+                AuditRecord(
+                    "pipeline.stage",
+                    application_id=run.application_id,
+                    pipeline_run_id=pipeline_run_id,
+                    correlation_id=run.correlation_id,
+                    payload={
+                        "stageId": stage_id,
+                        "stageName": stage_name,
+                        "status": status,
+                        "attempt": attempt,
+                        "durationMs": duration_ms,
+                    },
+                )
+            )
+            if log_snippet:
+                unit.logs.append((pipeline_run_id, [f"[{stage_name}] {line}" for line in log_snippet.splitlines()]))
+            if error_message:
+                unit.logs.append((pipeline_run_id, [f"[{stage_name}] ERROR: {error_message}"]))
+            self._apply(transaction, unit)
+            return saved
+
+    def list_pipeline_stages(self, pipeline_run_id: UUID) -> tuple[PipelineStage, ...]:
+        with self._transaction() as transaction:
+            run = transaction.pipeline_run(pipeline_run_id)
+            if run is None:
+                raise DeliveryError("PIPELINE_NOT_FOUND", "pipeline run not found", 404)
+            return transaction.pipeline_stages(pipeline_run_id)
+
     # ------------------------------------------------------------- invariants
 
     @staticmethod
@@ -1165,8 +1444,8 @@ class DeliveryPlatform:
 
         if result_status not in {PipelineStatus.SUCCEEDED.value, PipelineStatus.FAILED.value}:
             raise DeliveryError("INVALID_CI_RESULT", "CI result status is not supported", 422)
-        if run.status != PipelineStatus.RUNNING:
-            raise DeliveryError("INVALID_PIPELINE_STATE", "pipeline run is not running", 409)
+        if run.status not in {PipelineStatus.QUEUED, PipelineStatus.RUNNING}:
+            raise DeliveryError("INVALID_PIPELINE_STATE", f"cannot report completion for pipeline run with status {run.status.value}", 409)
 
         if result_status == PipelineStatus.FAILED.value:
             updated = replace(

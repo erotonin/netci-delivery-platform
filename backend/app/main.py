@@ -28,6 +28,7 @@ from .domain.models import (
     Deployment,
     Environment,
     PipelineRun,
+    PipelineStage,
     PipelineStatus,
     Runtime,
     ScmCommitStatus,
@@ -47,6 +48,7 @@ from .policy.rules import (
 from .demo_data import seed_demo_data
 from .portal import PortalError, PortalService
 from .readiness import probe_readiness
+from .reconciler import Reconciler
 from .store import build_database
 from . import workload_identity
 from .workload_identity import (
@@ -123,6 +125,7 @@ workload_identity.require_configured_workload_identity()
 database = build_database()
 platform = DeliveryPlatform(build_ci_launcher(), build_cd_orchestrator(), database=database)
 portal = PortalService(platform, database=database)
+reconciler = Reconciler(platform, platform.ci_launcher, platform.cd_orchestrator)
 seed_demo_data(platform, portal)
 authenticator = build_authenticator()
 rate_limiter = build_rate_limiter()
@@ -374,7 +377,7 @@ def _callback_claims(request: Request) -> CallbackClaims | None:
 def _authorize_callback(
     request: Request,
     *,
-    scope: str,
+    scope: str | tuple[str, ...] | set[str] | frozenset[str],
     workload: str | None = None,
     pipeline_run_id: UUID | None = None,
     deployment_id: UUID | None = None,
@@ -398,7 +401,17 @@ def _authorize_callback(
                 "message": f"this callback may only be made by the {workload} workload",
             },
         )
-    if not claims.permits(scope):
+    if isinstance(scope, (tuple, list, set, frozenset)):
+        if not any(claims.permits(s) for s in scope):
+            allowed = " or ".join(sorted(scope))
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "code": "SCOPE_NOT_PERMITTED",
+                    "message": f"this callback token does not carry the {allowed} scope",
+                },
+            )
+    elif not claims.permits(scope):
         raise HTTPException(
             status_code=403,
             detail={
@@ -565,7 +578,43 @@ def application_json(item: Application) -> dict[str, object]:
 
 
 def pipeline_json(item: PipelineRun) -> dict[str, object]:
-    return {"id": str(item.id), "applicationId": str(item.application_id), "status": item.status.value, "commitSha": item.commit_sha, "branch": item.branch, "environment": item.environment.value, "parameters": dict(item.parameters), "correlationId": item.correlation_id, "jenkinsRunId": item.jenkins_run_id, "workflowId": item.workflow_id, "artifactDigest": item.artifact_digest, "consoleUrl": item.console_url, "startedBy": item.started_by, "createdAt": item.created_at.isoformat(), "updatedAt": item.updated_at.isoformat()}
+    return {
+        "id": str(item.id),
+        "applicationId": str(item.application_id),
+        "status": item.status.value,
+        "commitSha": item.commit_sha,
+        "branch": item.branch,
+        "environment": item.environment.value,
+        "parameters": dict(item.parameters),
+        "correlationId": item.correlation_id,
+        "jenkinsRunId": item.jenkins_run_id,
+        "workflowId": item.workflow_id,
+        "artifactDigest": item.artifact_digest,
+        "consoleUrl": item.console_url,
+        "retryOf": str(item.retry_of) if item.retry_of else None,
+        "startedBy": item.started_by,
+        "createdAt": item.created_at.isoformat(),
+        "updatedAt": item.updated_at.isoformat(),
+    }
+
+
+def stage_json(item: PipelineStage) -> dict[str, object]:
+    return {
+        "id": str(item.id),
+        "pipelineRunId": str(item.pipeline_run_id),
+        "stageId": item.stage_id,
+        "stageName": item.stage_name,
+        "status": item.status,
+        "attempt": item.attempt,
+        "queuedAt": item.queued_at.isoformat() if item.queued_at else None,
+        "startedAt": item.started_at.isoformat() if item.started_at else None,
+        "completedAt": item.completed_at.isoformat() if item.completed_at else None,
+        "durationMs": item.duration_ms,
+        "errorMessage": item.error_message,
+        "logSnippet": item.log_snippet,
+        "createdAt": item.created_at.isoformat(),
+        "updatedAt": item.updated_at.isoformat(),
+    }
 
 
 def deployment_json(item: Deployment) -> dict[str, object]:
@@ -591,6 +640,28 @@ class StrictBody(BaseModel):
     """Request body whose checked-in OpenAPI schema forbids undeclared fields."""
 
     model_config = ConfigDict(extra="forbid")
+
+
+class CancelRequest(StrictBody):
+    reason: str = Field(default="", max_length=256)
+
+
+class StageResultRequest(StrictBody):
+    stageId: str | None = Field(default=None, min_length=1, max_length=64)
+    stageName: str | None = Field(default=None, max_length=128)
+    status: str = Field(pattern=r"^(queued|running|succeeded|failed|cancelled|skipped)$")
+    attempt: int = Field(default=1, ge=1)
+    queuedAt: datetime | None = None
+    startedAt: datetime | None = None
+    completedAt: datetime | None = None
+    durationMs: int | None = Field(default=None, ge=0)
+    errorMessage: str | None = None
+    logSnippet: str | None = None
+
+
+class ReconcileRequest(StrictBody):
+    limit: int = Field(default=50, ge=1, le=500)
+    timeoutSeconds: int | None = Field(default=None, ge=1)
 
 
 class ApplicationCreate(BaseModel):
@@ -1750,6 +1821,102 @@ def get_pipeline_logs(pipelineRunId: UUID, principal: Principal = ReadAccess) ->
     return {"pipelineRunId": str(pipelineRunId), "correlationId": run.correlation_id, "lines": list(lines)}
 
 
+@app.post("/pipeline-runs/{pipelineRunId}/cancel", status_code=status.HTTP_200_OK)
+def cancel_pipeline_run(
+    pipelineRunId: UUID,
+    payload: CancelRequest | None = None,
+    principal: Principal = DeveloperAccess,
+) -> dict[str, object]:
+    run = platform.get_pipeline(pipelineRunId)
+    _require_application_access(platform.get_application(run.application_id), principal)
+    reason = payload.reason if payload else ""
+    updated = platform.cancel_pipeline(pipelineRunId, actor=principal.subject, reason=reason)
+    return pipeline_json(updated)
+
+
+@app.post("/pipeline-runs/{pipelineRunId}/retry", status_code=status.HTTP_201_CREATED)
+def retry_pipeline_run(
+    pipelineRunId: UUID,
+    request: Request,
+    principal: Principal = DeveloperAccess,
+) -> dict[str, object]:
+    parent = platform.get_pipeline(pipelineRunId)
+    _require_application_access(platform.get_application(parent.application_id), principal)
+    idempotency_key = request.headers.get("Idempotency-Key")
+    new_run = platform.retry_pipeline(pipelineRunId, actor=principal.subject, idempotency_key=idempotency_key)
+    return pipeline_json(new_run)
+
+
+@app.get("/pipeline-runs/{pipelineRunId}/stages")
+def get_pipeline_stages(pipelineRunId: UUID, principal: Principal = ReadAccess) -> dict[str, object]:
+    run = platform.get_pipeline(pipelineRunId)
+    _require_application_access(platform.get_application(run.application_id), principal)
+    stages = platform.list_pipeline_stages(pipelineRunId)
+    return {"pipelineRunId": str(pipelineRunId), "items": [stage_json(s) for s in stages]}
+
+
+@app.post("/pipeline-runs/{pipelineRunId}/stages", status_code=status.HTTP_202_ACCEPTED)
+def record_pipeline_stage_result(
+    pipelineRunId: UUID,
+    payload: StageResultRequest,
+    request: Request,
+    _: Principal = PipelineAccess,
+) -> dict[str, object]:
+    _authorize_callback(
+        request,
+        scope=(Scope.CI_STAGE, Scope.CI_RESULT),
+        workload=Workload.JENKINS,
+        pipeline_run_id=pipelineRunId,
+    )
+    stage_name = payload.stageName or payload.stageId or "stage"
+    stage_id = payload.stageId or stage_name.lower().replace(" ", "-")
+    saved = platform.record_stage_event(
+        pipelineRunId,
+        stage_id=stage_id,
+        stage_name=stage_name,
+        status=payload.status,
+        attempt=payload.attempt,
+        queued_at=payload.queuedAt,
+        started_at=payload.startedAt,
+        completed_at=payload.completedAt,
+        duration_ms=payload.durationMs,
+        error_message=payload.errorMessage,
+        log_snippet=payload.logSnippet,
+    )
+    return stage_json(saved)
+
+
+@app.post("/pipeline-runs/{pipelineRunId}/stages/{stageId}", status_code=status.HTTP_202_ACCEPTED)
+def record_pipeline_stage_result_by_id(
+    pipelineRunId: UUID,
+    stageId: str,
+    payload: StageResultRequest,
+    request: Request,
+    _: Principal = PipelineAccess,
+) -> dict[str, object]:
+    _authorize_callback(
+        request,
+        scope=(Scope.CI_STAGE, Scope.CI_RESULT),
+        workload=Workload.JENKINS,
+        pipeline_run_id=pipelineRunId,
+    )
+    stage_name = payload.stageName or stageId
+    saved = platform.record_stage_event(
+        pipelineRunId,
+        stage_id=stageId,
+        stage_name=stage_name,
+        status=payload.status,
+        attempt=payload.attempt,
+        queued_at=payload.queuedAt,
+        started_at=payload.startedAt,
+        completed_at=payload.completedAt,
+        duration_ms=payload.durationMs,
+        error_message=payload.errorMessage,
+        log_snippet=payload.logSnippet,
+    )
+    return stage_json(saved)
+
+
 @app.post("/pipeline-runs/{pipelineRunId}/ci-result", status_code=status.HTTP_202_ACCEPTED)
 def record_ci_result(
     pipelineRunId: UUID,
@@ -1930,3 +2097,29 @@ def rollback_deployment(
     return deployment_json(
         platform.rollback_deployment(deploymentId, payload.targetArtifactDigest)
     )
+
+
+@app.post("/deployments/{deploymentId}/cancel", status_code=status.HTTP_200_OK)
+def cancel_deployment(
+    deploymentId: UUID,
+    payload: CancelRequest | None = None,
+    principal: Principal = DeveloperAccess,
+) -> dict[str, object]:
+    deployment = platform.get_deployment(deploymentId)
+    _require_application_access(
+        platform.get_application(deployment.application_id), principal
+    )
+    reason = payload.reason if payload else ""
+    updated = platform.cancel_deployment(deploymentId, actor=principal.subject, reason=reason)
+    return deployment_json(updated)
+
+
+@app.post("/reconciler/reconcile", status_code=status.HTTP_200_OK)
+def trigger_reconciliation(
+    payload: ReconcileRequest | None = None,
+    _: Principal = AdminAccess,
+) -> dict[str, object]:
+    limit = payload.limit if payload else 50
+    timeout_seconds = payload.timeoutSeconds if payload else None
+    return reconciler.reconcile(limit=limit, timeout_seconds=timeout_seconds)
+

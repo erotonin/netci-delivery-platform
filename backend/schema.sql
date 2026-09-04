@@ -1,5 +1,5 @@
-schema.sql regenerated from 12 migrations
-enation of backend/migrations/*.sql, produced by `python scripts/migrate.py --emit-schema`.
+-- GENERATED FILE - do not edit.
+-- Concatenation of backend/migrations/*.sql, produced by `python scripts/migrate.py --emit-schema`.
 -- Used by the compose initdb mount; `make migrate` applies the same files to an existing database.
 
 -- >>> migration: 0001_baseline.sql
@@ -508,3 +508,30 @@ CREATE TABLE IF NOT EXISTS scm_webhook_deliveries (
 );
 
 CREATE INDEX IF NOT EXISTS scm_webhook_deliveries_repo_idx ON scm_webhook_deliveries (repository_identity);
+
+-- >>> migration: 0013_pipeline_lifecycle_and_stage_events.sql
+-- 0013_pipeline_lifecycle_and_stage_events.sql
+-- Pipeline retry lineage, stage execution event persistence, and reconciler tracking.
+
+ALTER TABLE pipeline_runs ADD COLUMN IF NOT EXISTS retry_of UUID REFERENCES pipeline_runs(id);
+CREATE INDEX IF NOT EXISTS idx_pipeline_runs_retry_of ON pipeline_runs(retry_of);
+
+CREATE TABLE IF NOT EXISTS pipeline_stages (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    pipeline_run_id UUID NOT NULL REFERENCES pipeline_runs(id) ON DELETE CASCADE,
+    stage_id VARCHAR(64) NOT NULL,
+    stage_name VARCHAR(128) NOT NULL,
+    attempt INT NOT NULL DEFAULT 1,
+    status VARCHAR(32) NOT NULL,
+    queued_at TIMESTAMPTZ,
+    started_at TIMESTAMPTZ,
+    completed_at TIMESTAMPTZ,
+    duration_ms BIGINT,
+    error_message TEXT,
+    log_snippet TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (pipeline_run_id, stage_id, attempt)
+);
+
+CREATE INDEX IF NOT EXISTS idx_pipeline_stages_run ON pipeline_stages(pipeline_run_id);

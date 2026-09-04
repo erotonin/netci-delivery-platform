@@ -23,6 +23,7 @@ from ..domain.models import (
     DeploymentStatus,
     Environment,
     PipelineRun,
+    PipelineStage,
     PipelineStatus,
     Runtime,
     ScmCommitStatus,
@@ -63,7 +64,11 @@ APPLICATION_COLUMNS = (
 )
 RUN_COLUMNS = (
     "id, application_id, status, commit_sha, branch, environment, parameters, correlation_id,"
-    " jenkins_run_id, workflow_id, artifact_digest, started_by, console_url, version, created_at, updated_at"
+    " jenkins_run_id, workflow_id, artifact_digest, started_by, console_url, retry_of, version, created_at, updated_at"
+)
+STAGE_COLUMNS = (
+    "id, pipeline_run_id, stage_id, stage_name, attempt, status, queued_at, started_at,"
+    " completed_at, duration_ms, error_message, log_snippet, created_at, updated_at"
 )
 SCM_INTEGRATION_COLUMNS = (
     "id, application_id, provider, repository_identity, secret_token, secret_token_hash,"
@@ -124,7 +129,27 @@ def _run(row: dict[str, Any]) -> PipelineRun:
         artifact_digest=row["artifact_digest"],
         started_by=row["started_by"],
         console_url=row.get("console_url"),
+        retry_of=row.get("retry_of"),
         version=int(row["version"] or 1),
+        created_at=row["created_at"],
+        updated_at=row["updated_at"],
+    )
+
+
+def _stage(row: dict[str, Any]) -> PipelineStage:
+    return PipelineStage(
+        id=row["id"],
+        pipeline_run_id=row["pipeline_run_id"],
+        stage_id=row["stage_id"],
+        stage_name=row["stage_name"],
+        attempt=int(row["attempt"] or 1),
+        status=row["status"],
+        queued_at=row.get("queued_at"),
+        started_at=row.get("started_at"),
+        completed_at=row.get("completed_at"),
+        duration_ms=row.get("duration_ms"),
+        error_message=row.get("error_message"),
+        log_snippet=row.get("log_snippet"),
         created_at=row["created_at"],
         updated_at=row["updated_at"],
     )
@@ -693,8 +718,8 @@ class PostgresSession:
                 INSERT INTO pipeline_runs (id, application_id, commit_sha, branch, environment,
                                            parameters, status, jenkins_run_id, workflow_id,
                                            artifact_digest, correlation_id, started_by,
-                                           console_url, version, created_at, updated_at)
-                VALUES (%s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                                           console_url, retry_of, version, created_at, updated_at)
+                VALUES (%s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
                     run.id,
@@ -710,6 +735,7 @@ class PostgresSession:
                     run.correlation_id,
                     run.started_by,
                     run.console_url,
+                    run.retry_of,
                     run.version,
                     run.created_at,
                     run.updated_at,
@@ -1190,6 +1216,55 @@ class PostgresSession:
         )
         row = self._cursor.fetchone()
         return _scm_delivery(row) if row else None
+
+    # ------------------------------------------------------------- pipeline stages
+
+    def record_pipeline_stage(self, stage: PipelineStage) -> PipelineStage:
+        self._cursor.execute(
+            f"""
+            INSERT INTO pipeline_stages (
+                id, pipeline_run_id, stage_id, stage_name, attempt, status,
+                queued_at, started_at, completed_at, duration_ms, error_message, log_snippet,
+                created_at, updated_at
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (pipeline_run_id, stage_id, attempt) DO UPDATE SET
+                stage_name = EXCLUDED.stage_name,
+                status = EXCLUDED.status,
+                queued_at = COALESCE(EXCLUDED.queued_at, pipeline_stages.queued_at),
+                started_at = COALESCE(EXCLUDED.started_at, pipeline_stages.started_at),
+                completed_at = COALESCE(EXCLUDED.completed_at, pipeline_stages.completed_at),
+                duration_ms = COALESCE(EXCLUDED.duration_ms, pipeline_stages.duration_ms),
+                error_message = COALESCE(EXCLUDED.error_message, pipeline_stages.error_message),
+                log_snippet = COALESCE(EXCLUDED.log_snippet, pipeline_stages.log_snippet),
+                updated_at = EXCLUDED.updated_at
+            RETURNING {STAGE_COLUMNS}
+            """,
+            (
+                stage.id,
+                stage.pipeline_run_id,
+                stage.stage_id,
+                stage.stage_name,
+                stage.attempt,
+                stage.status,
+                stage.queued_at,
+                stage.started_at,
+                stage.completed_at,
+                stage.duration_ms,
+                stage.error_message,
+                stage.log_snippet,
+                stage.created_at,
+                stage.updated_at,
+            ),
+        )
+        row = self._cursor.fetchone()
+        return _stage(row)
+
+    def pipeline_stages(self, pipeline_run_id: UUID) -> tuple[PipelineStage, ...]:
+        self._cursor.execute(
+            f"SELECT {STAGE_COLUMNS} FROM pipeline_stages WHERE pipeline_run_id = %s ORDER BY created_at, attempt, stage_id",
+            (pipeline_run_id,),
+        )
+        return tuple(_stage(row) for row in self._cursor.fetchall())
 
 
 class PostgresDatabase:
