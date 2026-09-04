@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import logging
 from contextlib import contextmanager
+from datetime import datetime
 from typing import Any
 from uuid import UUID
 
@@ -300,6 +301,39 @@ class PostgresSession:
             resource_id=row["resource_id"],
             response_status=int(row["response_status"]),
         )
+
+    def claim_callback_token(
+        self,
+        *,
+        jti: str,
+        workload: str,
+        application_id: UUID,
+        operation: str,
+        expires_at: datetime,
+        pipeline_run_id: UUID | None = None,
+        deployment_id: UUID | None = None,
+    ) -> bool:
+        """Claim a token's `jti`. False means it was already spent.
+
+        `ON CONFLICT DO NOTHING` makes the claim atomic: two replicas handed the same
+        replayed token cannot both see it as unused, because the primary key decides.
+        """
+
+        self._cursor.execute(
+            """
+            INSERT INTO callback_token_uses (
+                jti, workload, application_id, pipeline_run_id, deployment_id, operation, expires_at
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (jti) DO NOTHING
+            RETURNING jti
+            """,
+            (jti, workload, application_id, pipeline_run_id, deployment_id, operation, expires_at),
+        )
+        return self._cursor.fetchone() is not None
+
+    def callback_token_used(self, jti: str) -> bool:
+        self._cursor.execute("SELECT 1 FROM callback_token_uses WHERE jti = %s", (jti,))
+        return self._cursor.fetchone() is not None
 
     # ------------------------------------------------------------ delivery writes
 

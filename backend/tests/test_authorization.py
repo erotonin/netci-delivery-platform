@@ -75,19 +75,56 @@ def token_app(tmp_path, monkeypatch):
     importlib.reload(main)
 
 
-def _application(client, headers) -> dict:
-    response = client.post(
-        "/applications",
+def _module_payload(name: str, team: str | None = None) -> dict:
+    payload = {
+        "name": name,
+        "displayName": name,
+        "repositoryUrl": "https://git.example.com/team/app",
+        "pipelineTemplate": "container-ci-cd-v1",
+        "runtime": "docker",
+        "moduleType": "Backend",
+        "description": "authorization probe",
+        "deploymentEnvironments": [
+            {"displayName": "Development", "environment": "dev", "runtime": "docker",
+             "servers": ["auth-host"]},
+            {"displayName": "Staging", "environment": "staging", "runtime": "docker",
+             "servers": ["auth-host"]},
+            {"displayName": "Production", "environment": "prod", "runtime": "docker",
+             "servers": ["auth-host"]},
+        ],
+    }
+    if team is not None:
+        payload["ownerTeam"] = team
+    return payload
+
+
+def _onboard(client, headers, team: str | None = None):
+    """Register a module, which is how a developer gets an application.
+
+    These tests start runs through `/modules/{id}/pipeline-runs` rather than the
+    application-scoped route, because that route is now platform-admin/machine only: it
+    skips the Portal lookup that binds a run to its module's registered deployment target.
+    The team and role checks under test are the same on both.
+    """
+
+    system_id = f"auth-sys-{secrets.token_hex(4)}"
+    created_system = client.post(
+        "/systems",
         headers=headers,
-        json={
-            "name": f"auth-app-{secrets.token_hex(4)}",
-            "repositoryUrl": "https://git.example.com/team/app",
-            "pipelineTemplate": "container-ci-cd-v1",
-            "runtime": "docker",
-        },
+        json={"id": system_id, "unit": "Platform", "description": "authorization probe"},
     )
+    assert created_system.status_code == 201, created_system.text
+    name = f"auth-app-{secrets.token_hex(4)}"
+    return client.post(
+        f"/systems/{system_id}/modules", headers=headers, json=_module_payload(name, team)
+    )
+
+
+def _application(client, headers) -> dict:
+    response = _onboard(client, headers)
     assert response.status_code == 201, response.text
-    return response.json()
+    module = response.json()
+    return {"id": module["applicationId"], "moduleId": module["id"]}
 
 
 # ------------------------------------------------------------------ authentication
@@ -163,14 +200,14 @@ def test_a_developer_cannot_run_a_production_pipeline(token_app):
     application = _application(client, headers["dana"])
 
     allowed = client.post(
-        f"/applications/{application['id']}/pipeline-runs",
+        f"/modules/{application['moduleId']}/pipeline-runs",
         headers=headers["dana"],
         json={"commitSha": "abcdef1234567", "environment": "staging"},
     )
     assert allowed.status_code == 202
 
     refused = client.post(
-        f"/applications/{application['id']}/pipeline-runs",
+        f"/modules/{application['moduleId']}/pipeline-runs",
         headers=headers["dana"],
         json={"commitSha": "abcdef1234567", "environment": "prod"},
     )
@@ -182,7 +219,7 @@ def test_a_reviewer_may_run_a_production_pipeline(token_app):
     client, headers, _ = token_app
     application = _application(client, headers["pat"])
     response = client.post(
-        f"/applications/{application['id']}/pipeline-runs",
+        f"/modules/{application['moduleId']}/pipeline-runs",
         headers=headers["raj"],
         json={"commitSha": "abcdef1234567", "environment": "prod"},
     )
@@ -196,7 +233,7 @@ def test_the_pipeline_key_cannot_approve_and_a_human_cannot_forge_a_build_result
     client, headers, _ = token_app
     application = _application(client, headers["pat"])
     run = client.post(
-        f"/applications/{application['id']}/pipeline-runs",
+        f"/modules/{application['moduleId']}/pipeline-runs",
         headers=headers["pat"],
         json={"commitSha": "abcdef1234567", "environment": "prod"},
     ).json()
@@ -228,7 +265,7 @@ def test_the_approver_is_the_credential_holder_not_the_request_body(token_app):
     client, headers, _ = token_app
     application = _application(client, headers["pat"])
     run = client.post(
-        f"/applications/{application['id']}/pipeline-runs",
+        f"/modules/{application['moduleId']}/pipeline-runs",
         headers=headers["pat"],
         json={"commitSha": "abcdef1234567", "environment": "prod"},
     ).json()
@@ -261,7 +298,7 @@ def test_the_person_who_started_a_production_run_cannot_approve_it(token_app):
     client, headers, _ = token_app
     application = _application(client, headers["pat"])
     run = client.post(
-        f"/applications/{application['id']}/pipeline-runs",
+        f"/modules/{application['moduleId']}/pipeline-runs",
         headers=headers["raj"],
         json={"commitSha": "abcdef1234567", "environment": "prod"},
     ).json()
@@ -365,16 +402,30 @@ def team_app(tmp_path, monkeypatch):
     importlib.reload(main)
 
 
-def _owned_application(client, headers, team: str | None) -> dict:
-    payload = {
-        "name": f"own-app-{secrets.token_hex(4)}",
-        "repositoryUrl": "https://git.example.com/team/app",
-        "pipelineTemplate": "container-ci-cd-v1",
-        "runtime": "docker",
-    }
-    if team is not None:
-        payload["ownerTeam"] = team
-    return client.post("/applications", headers=headers, json=payload)
+class _OnboardResult:
+    """Presents an onboarded module the way these tests already read an application.
+
+    Both identifiers matter here: `id` is the delivery application the authorization
+    checks are about, `moduleId` is the route a developer actually uses.
+    """
+
+    def __init__(self, response) -> None:
+        self._response = response
+        self.status_code = response.status_code
+
+    def json(self) -> dict:
+        body = self._response.json()
+        if self.status_code != 201:
+            return body
+        return {
+            "id": body["applicationId"],
+            "moduleId": body["id"],
+            "ownerTeam": body.get("ownerTeam"),
+        }
+
+
+def _owned_application(client, headers, team: str | None):
+    return _OnboardResult(_onboard(client, headers, team))
 
 
 def test_an_application_can_only_be_handed_to_a_team_you_belong_to(team_app):
@@ -396,14 +447,14 @@ def test_another_teams_pipeline_cannot_be_started(team_app):
     assert application["ownerTeam"] == "payments"
 
     mine = client.post(
-        f"/applications/{application['id']}/pipeline-runs",
+        f"/modules/{application['moduleId']}/pipeline-runs",
         headers=headers["dana"],
         json={"commitSha": "abcdef1234567", "environment": "staging"},
     )
     assert mine.status_code == 202
 
     theirs = client.post(
-        f"/applications/{application['id']}/pipeline-runs",
+        f"/modules/{application['moduleId']}/pipeline-runs",
         headers=headers["sam"],
         json={"commitSha": "abcdef1234567", "environment": "staging"},
     )
@@ -416,7 +467,7 @@ def test_another_teams_delivery_data_cannot_be_read(team_app):
     client, headers, _ = team_app
     application = _owned_application(client, headers["dana"], "payments").json()
     run = client.post(
-        f"/applications/{application['id']}/pipeline-runs",
+        f"/modules/{application['moduleId']}/pipeline-runs",
         headers=headers["dana"],
         json={"commitSha": "abcdef1234567", "environment": "staging"},
     ).json()
@@ -435,7 +486,7 @@ def test_a_reviewer_from_another_team_cannot_approve_your_production_release(tea
     client, headers, _ = team_app
     application = _owned_application(client, headers["pat"], "payments").json()
     run = client.post(
-        f"/applications/{application['id']}/pipeline-runs",
+        f"/modules/{application['moduleId']}/pipeline-runs",
         headers=headers["raj"],
         json={"commitSha": "abcdef1234567", "environment": "prod"},
     ).json()
@@ -460,7 +511,7 @@ def test_rolling_back_another_teams_deployment_is_refused(team_app):
     client, headers, _ = team_app
     application = _owned_application(client, headers["dana"], "payments").json()
     run = client.post(
-        f"/applications/{application['id']}/pipeline-runs",
+        f"/modules/{application['moduleId']}/pipeline-runs",
         headers=headers["dana"],
         json={"commitSha": "abcdef1234567", "environment": "staging"},
     ).json()
@@ -488,7 +539,7 @@ def test_an_unowned_application_keeps_working_so_ownership_can_be_adopted_gradua
 
     for who in ("dana", "sam"):
         response = client.post(
-            f"/applications/{application['id']}/pipeline-runs",
+            f"/modules/{application['moduleId']}/pipeline-runs",
             headers=headers[who],
             json={"commitSha": "abcdef1234567", "environment": "staging"},
         )
@@ -503,14 +554,14 @@ def test_requiring_an_owner_closes_the_door_once_adoption_is_done(team_app):
 
     # Existing unowned applications become platform-admin only...
     blocked = client.post(
-        f"/applications/{unowned['id']}/pipeline-runs",
+        f"/modules/{unowned['moduleId']}/pipeline-runs",
         headers=headers["dana"],
         json={"commitSha": "abcdef1234567", "environment": "staging"},
     )
     assert blocked.status_code == 403
     assert "NETCI_REQUIRE_APPLICATION_OWNER" in blocked.json()["message"]
     assert client.post(
-        f"/applications/{unowned['id']}/pipeline-runs",
+        f"/modules/{unowned['moduleId']}/pipeline-runs",
         headers=headers["pat"],
         json={"commitSha": "abcdef1234567", "environment": "staging"},
     ).status_code == 202

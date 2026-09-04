@@ -16,6 +16,7 @@ import copy
 import threading
 from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
+from datetime import datetime
 from typing import Any
 from uuid import UUID
 
@@ -44,6 +45,7 @@ class _State:
     modules: dict[str, ModuleRow] = field(default_factory=dict)
     versions: dict[str, list[VersionRow]] = field(default_factory=dict)
     requests: dict[str, RequestRow] = field(default_factory=dict)
+    callback_tokens: dict[str, tuple[str, str, Any]] = field(default_factory=dict)
 
     def copy(self) -> "_State":
         return _State(
@@ -59,6 +61,7 @@ class _State:
             modules=dict(self.modules),
             versions={key: list(value) for key, value in self.versions.items()},
             requests=dict(self.requests),
+            callback_tokens=dict(self.callback_tokens),
         )
 
 
@@ -123,6 +126,25 @@ class InMemorySession:
 
     def idempotency(self, scope: str, idempotency_key: str) -> IdempotencyRow | None:
         return self._state.idempotency.get((scope, idempotency_key))
+
+    def claim_callback_token(
+        self,
+        *,
+        jti: str,
+        workload: str,
+        application_id: UUID,
+        operation: str,
+        expires_at: datetime,
+        pipeline_run_id: UUID | None = None,
+        deployment_id: UUID | None = None,
+    ) -> bool:
+        if jti in self._state.callback_tokens:
+            return False
+        self._state.callback_tokens[jti] = (workload, operation, expires_at)
+        return True
+
+    def callback_token_used(self, jti: str) -> bool:
+        return jti in self._state.callback_tokens
 
     # ------------------------------------------------------------ delivery writes
 

@@ -7,6 +7,7 @@ a property of the code rather than a claim in a document.
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any, Protocol
 from uuid import UUID
 
@@ -45,6 +46,21 @@ class PlatformSession(Protocol):
     def audit_records(self, application_ids: set[UUID] | None = None) -> tuple[AuditRecord, ...]: ...
 
     def idempotency(self, scope: str, idempotency_key: str) -> IdempotencyRow | None: ...
+
+    def claim_callback_token(
+        self,
+        *,
+        jti: str,
+        workload: str,
+        application_id: UUID,
+        operation: str,
+        expires_at: datetime,
+        pipeline_run_id: UUID | None = None,
+        deployment_id: UUID | None = None,
+    ) -> bool:
+        """Record a single-use callback token, returning False if it was already used."""
+
+    def callback_token_used(self, jti: str) -> bool: ...
 
     # ------------------------------------------------------------ delivery writes
 

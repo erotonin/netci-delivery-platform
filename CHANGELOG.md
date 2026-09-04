@@ -14,6 +14,22 @@ Changelog and releases use Semantic Versioning once the project reaches 1.0.0.
 
 ### Changed
 
+- **Machine callbacks use scoped, short-lived workload tokens.** The shared
+  `NETCI_PIPELINE_API_KEY` could not say which build was calling; a token now names
+  one workload, one application and one run or deployment, plus its scopes. A token
+  for run A cannot write to run B, a Jenkins token cannot report a deployment result,
+  and a terminal-scope token is single-use. Outside local mode netCI refuses to start
+  without `NETCI_WORKLOAD_TOKEN_KEYS`, and the shared key is refused unless
+  `NETCI_ALLOW_LEGACY_PIPELINE_KEY` declares a migration window. See ADR-015.
+- **Pipeline `parameters` is a closed build-input allowlist.** Deployment targets,
+  namespaces, credential references, artifact URLs, playbooks, health commands and
+  rollback behaviour can no longer be supplied by a caller: naming one is now
+  `422 DEPLOYMENT_PARAMETER_NOT_ACCEPTED` rather than being silently overridden.
+  `commitSha` must be hexadecimal and `branch` a git refname.
+- `POST /applications/{id}/pipeline-runs` is platform-admin/machine only; developers
+  use `POST /modules/{id}/pipeline-runs`, which binds the run to the module's
+  registered deployment target.
+- Module responses now include `ownerTeam`.
 - **PostgreSQL is canonical at request time.** `DeliveryPlatform` and `PortalService`
   no longer load state into process memory at start-up or answer requests from it;
   every command reads and writes inside one transaction. Multiple API replicas now

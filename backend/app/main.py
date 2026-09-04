@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import os
 import secrets
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Literal
 from urllib.parse import urlsplit
 from uuid import UUID, uuid4
@@ -19,6 +19,7 @@ from .adapters.cd_orchestrator import build_cd_orchestrator
 from .adapters.ci_launcher import build_ci_launcher
 from .adapters.dcim import DcimUnavailable
 from .auth import AuthError, Principal, build_authenticator
+from .build_inputs import BuildInputError, validate_build_inputs
 from .client_address import LOOPBACK_HOSTS, resolve_client
 from .ratelimit import build_rate_limiter
 from .domain.models import (
@@ -41,6 +42,13 @@ from .policy.rules import (
 from .demo_data import seed_demo_data
 from .portal import PortalError, PortalService
 from .store import build_database
+from . import workload_identity
+from .workload_identity import (
+    CallbackClaims,
+    Scope,
+    Workload,
+    WorkloadIdentityError,
+)
 
 
 def configured_cors_origins() -> list[str]:
@@ -102,6 +110,10 @@ app.add_middleware(
 #
 # Nothing is read here. Both services answer every request from the database, so a second
 # replica is correct the moment it starts rather than serving a snapshot of its own boot.
+# Refuses to start outside local mode without a way to tell one workload from another.
+# A control plane that accepts "some build says this deployment is healthy" from anyone
+# holding a shared secret is not one an operator can reason about.
+workload_identity.require_configured_workload_identity()
 database = build_database()
 platform = DeliveryPlatform(build_ci_launcher(), build_cd_orchestrator(), database=database)
 portal = PortalService(platform, database=database)
@@ -176,14 +188,53 @@ def error(
     )
 
 
-def _pipeline_key_principal(authorization: str | None) -> Principal | None:
-    """Recognise the shared pipeline API key and turn it into a machine principal.
+def _bearer(authorization: str | None) -> str:
+    if authorization and authorization.startswith("Bearer "):
+        return authorization.removeprefix("Bearer ").strip()
+    return ""
 
-    Jenkins and the Temporal worker authenticate with one key rather than per-identity
-    tokens, because they are one system, not a set of people. The key grants exactly the
-    PIPELINE role: enough to report what a build did, never enough to approve anything.
+
+def _workload_principal(request: Request, authorization: str | None) -> Principal | None:
+    """Resolve a scoped callback token into a machine principal bound to one resource.
+
+    The verified claims are stashed on the request so the endpoint can check that the
+    resource in the route is the one the token names. Authentication says "this is a real
+    Jenkins token"; only that comparison says "and it is for *this* run".
     """
 
+    supplied = _bearer(authorization)
+    if not supplied or supplied.count(".") != 2:
+        return None
+    try:
+        claims = workload_identity.verify(supplied)
+    except WorkloadIdentityError as exc:
+        raise HTTPException(
+            status_code=exc.status,
+            detail={"code": exc.code, "message": exc.message},
+            headers={"WWW-Authenticate": "Bearer"} if exc.status == 401 else None,
+        ) from exc
+    request.state.callback_claims = claims
+    return Principal(
+        subject=f"workload:{claims.workload}",
+        display_name=f"netCI {claims.workload} workload",
+        email="",
+        roles=frozenset({Role.PIPELINE}),
+        method="workload-token",
+    )
+
+
+def _pipeline_key_principal(authorization: str | None) -> Principal | None:
+    """Recognise the legacy shared pipeline API key.
+
+    One key for every controller and every worker cannot say which build is calling, so
+    it is accepted only in local mode or during an explicitly declared migration window
+    (`NETCI_ALLOW_LEGACY_PIPELINE_KEY`). Outside those it is refused even when set --
+    otherwise "we rolled out workload identity" and "the old key still works" are both
+    true, and only the second matters to whoever has the key.
+    """
+
+    if not workload_identity.legacy_shared_key_allowed():
+        return None
     expected = os.getenv("NETCI_PIPELINE_API_KEY")
     if not expected:
         if os.getenv("NETCI_ENVIRONMENT", "local") != "local":
@@ -192,7 +243,7 @@ def _pipeline_key_principal(authorization: str | None) -> Principal | None:
                 detail={"code": "PIPELINE_KEY_NOT_CONFIGURED", "message": "pipeline API key is not configured"},
             )
         expected = "netci-local-pipeline-key"
-    supplied = authorization.removeprefix("Bearer ") if authorization and authorization.startswith("Bearer ") else ""
+    supplied = _bearer(authorization)
     if not supplied or not secrets.compare_digest(supplied, expected):
         return None
     return Principal(
@@ -210,10 +261,13 @@ def current_principal(
 ) -> Principal:
     """Resolve the caller, or refuse the request.
 
-    The pipeline key is tried first so that machine callers keep working unchanged; only
-    then does the configured human authenticator run.
+    A scoped workload token is tried first, then the legacy shared key where it is still
+    allowed, and only then the configured human authenticator.
     """
 
+    workload = _workload_principal(request, authorization)
+    if workload is not None:
+        return workload
     machine = _pipeline_key_principal(authorization)
     if machine is not None:
         return machine
@@ -297,11 +351,98 @@ DeveloperAccess = Depends(requires(Role.DEVELOPER, Role.PLATFORM_ADMIN))
 ReviewerAccess = Depends(requires(Role.REVIEWER, Role.PLATFORM_ADMIN))
 AdminAccess = Depends(requires(Role.PLATFORM_ADMIN))
 PipelineStartAccess = Depends(requires(Role.DEVELOPER, Role.REVIEWER, Role.PLATFORM_ADMIN))
+# The application-scoped run endpoint skips the Portal lookup that binds a run to its
+# module's registered deployment target, so it is not a developer-facing route.
+LowLevelPipelineAccess = Depends(requires(Role.PLATFORM_ADMIN, Role.PIPELINE))
 # Machine-only, with no human escape hatch. These endpoints assert what a build or a
 # deployment actually did; a person holding platform-admin has no business forging one,
 # and including that role here would also make the pipeline key optional whenever
 # NETCI_AUTH_MODE=none, which is exactly when it is most needed.
 PipelineAccess = Depends(requires(Role.PIPELINE, unauthenticated_code="PIPELINE_UNAUTHORIZED"))
+
+
+def _callback_claims(request: Request) -> CallbackClaims | None:
+    return getattr(request.state, "callback_claims", None)
+
+
+def _authorize_callback(
+    request: Request,
+    *,
+    scope: str,
+    workload: str | None = None,
+    pipeline_run_id: UUID | None = None,
+    deployment_id: UUID | None = None,
+) -> CallbackClaims | None:
+    """Check that the token in hand is for *this* resource and this operation.
+
+    Authentication proved the token is real. This is the part that stops a real token for
+    run A from writing to run B, and stops a Jenkins controller from reporting the outcome
+    of a deployment it never ran. A legacy shared key has no claims to check, which is
+    exactly why it is confined to local and migration modes.
+    """
+
+    claims = _callback_claims(request)
+    if claims is None:
+        return None
+    if workload is not None and claims.workload != workload:
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "code": "WORKLOAD_NOT_PERMITTED",
+                "message": f"this callback may only be made by the {workload} workload",
+            },
+        )
+    if not claims.permits(scope):
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "code": "SCOPE_NOT_PERMITTED",
+                "message": f"this callback token does not carry the {scope} scope",
+            },
+        )
+    if pipeline_run_id is not None and claims.pipeline_run_id != pipeline_run_id:
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "code": "RESOURCE_MISMATCH",
+                "message": "this callback token was issued for a different pipeline run",
+            },
+        )
+    if deployment_id is not None and claims.deployment_id != deployment_id:
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "code": "RESOURCE_MISMATCH",
+                "message": "this callback token was issued for a different deployment",
+            },
+        )
+    if claims.single_use:
+        # Claimed in its own transaction and by primary key, so two replicas handed the
+        # same replayed token cannot both decide it was unused.
+        claimed = _claim_single_use(claims, scope)
+        if not claimed:
+            raise HTTPException(
+                status_code=401,
+                detail={
+                    "code": "TOKEN_REPLAYED",
+                    "message": "this callback token has already been used",
+                },
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+    return claims
+
+
+def _claim_single_use(claims: CallbackClaims, scope: str) -> bool:
+    with platform.transaction() as transaction:
+        return transaction.claim_callback_token(
+            jti=claims.jti,
+            workload=claims.workload,
+            application_id=claims.application_id,
+            operation=scope,
+            expires_at=datetime.fromtimestamp(claims.expires_at, tz=timezone.utc),
+            pipeline_run_id=claims.pipeline_run_id,
+            deployment_id=claims.deployment_id,
+        )
 
 
 def _require_environment_role(environment: Environment, principal: Principal) -> None:
@@ -459,10 +600,38 @@ class ApplicationCreate(BaseModel):
 
 
 class PipelineRunCreate(BaseModel):
-    commitSha: str = Field(min_length=7)
-    branch: str = "main"
+    # A commit SHA is hexadecimal. Accepting anything else means accepting something that
+    # is not a commit, and this value reaches a `git checkout` in the CI template.
+    commitSha: str = Field(min_length=7, max_length=64, pattern=r"^[0-9a-fA-F]+$")
+    # A branch also reaches a checkout. The character class stops `main; rm -rf /` and
+    # `main$(id)`; `validate_reference` additionally rejects `..`, which is both a path
+    # escape and an invalid git refname -- a class the character set alone lets through.
+    branch: str = Field(default="main", min_length=1, max_length=255, pattern=r"^[0-9a-zA-Z._\-/]+$")
     environment: Environment
+    #: Caller-supplied *build* inputs only. Deployment targets, credentials, artifacts and
+    #: runtime commands come from the module's registered configuration -- see
+    #: `app.build_inputs` for the boundary and why naming one of those keys is a 422.
     parameters: dict[str, object] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def validate_parameters(self) -> "PipelineRunCreate":
+        self.parameters = validate_build_inputs(self.parameters)
+        return self
+
+    @model_validator(mode="after")
+    def validate_reference(self) -> "PipelineRunCreate":
+        branch = self.branch
+        if ".." in branch or branch.startswith(("/", "-")) or branch.endswith(("/", ".lock")):
+            raise ValueError(
+                "branch must be a git refname: no '..', no leading '/' or '-', no trailing '/'"
+            )
+        return self
+
+
+class CallbackTokenRequest(StrictBody):
+    workload: Literal["jenkins", "temporal"]
+    scopes: list[str] = Field(min_length=1, max_length=8)
+    ttlSeconds: int = Field(default=3600, ge=60, le=86400)
 
 
 class CiResultRequest(StrictBody):
@@ -698,6 +867,18 @@ async def http_exception_handler(request: Request, exc: StarletteHTTPException) 
 
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
+    """Answer a rejected body.
+
+    A refused build input keeps its own code and message. "request validation failed"
+    would be true but useless: the caller needs to be told that it named a key the server
+    owns, not left to guess which of its fields was wrong -- and a silent drop would teach
+    it that the override had worked.
+    """
+
+    for item in exc.errors():
+        cause = item.get("ctx", {}).get("error") if isinstance(item.get("ctx"), dict) else None
+        if isinstance(cause, BuildInputError):
+            return error(cause.code, cause.message, request.state.correlation_id, 422)
     return error("VALIDATION_ERROR", "request validation failed", request.state.correlation_id, 422)
 
 
@@ -1269,8 +1450,17 @@ def start_pipeline_run(
     payload: PipelineRunCreate,
     request: Request,
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key", min_length=1, max_length=128),
-    principal: Principal = PipelineStartAccess,
+    principal: Principal = LowLevelPipelineAccess,
 ) -> JSONResponse | dict[str, object]:
+    """Start a run against a delivery application directly.
+
+    This is the low-level entry point: it names an application rather than a module, so it
+    bypasses the Portal lookup that binds a run to the module's registered deployment
+    target. It is therefore restricted to platform administrators and machine identities;
+    developers start runs through `/modules/{moduleId}/pipeline-runs`, which resolves the
+    server-owned target for them. The same build-input policy applies to both.
+    """
+
     _require_environment_role(payload.environment, principal)
     _require_application_access(platform.get_application(applicationId), principal)
     run = platform.start_pipeline(
@@ -1284,6 +1474,45 @@ def start_pipeline_run(
         started_by=principal.subject,
     )
     return pipeline_json(run)
+
+
+@app.post("/pipeline-runs/{pipelineRunId}/callback-token", status_code=status.HTTP_201_CREATED)
+def issue_pipeline_callback_token(
+    pipelineRunId: UUID,
+    payload: CallbackTokenRequest,
+    principal: Principal = AdminAccess,
+) -> dict[str, object]:
+    """Mint a callback token bound to one pipeline run.
+
+    Normally the CI launcher mints this in-process when it dispatches a build; the
+    endpoint exists so an operator can re-issue one for a run whose token expired, and so
+    the flow is testable end to end. It is platform-admin only: anyone who can mint a
+    token for a run can report that run's result.
+
+    The token is returned once and never stored. netCI keeps only its `jti`.
+    """
+
+    run = platform.get_pipeline(pipelineRunId)
+    _require_application_access(platform.get_application(run.application_id), principal)
+    try:
+        token = workload_identity.mint(
+            workload=payload.workload,
+            application_id=run.application_id,
+            pipeline_run_id=pipelineRunId,
+            scopes=set(payload.scopes),
+            ttl_seconds=payload.ttlSeconds,
+        )
+    except WorkloadIdentityError as exc:
+        raise HTTPException(
+            status_code=exc.status, detail={"code": exc.code, "message": exc.message}
+        ) from exc
+    return {
+        "token": token,
+        "workload": payload.workload,
+        "pipelineRunId": str(pipelineRunId),
+        "scopes": sorted(payload.scopes),
+        "expiresInSeconds": payload.ttlSeconds,
+    }
 
 
 @app.get("/pipeline-runs/{pipelineRunId}")
@@ -1304,8 +1533,12 @@ def get_pipeline_logs(pipelineRunId: UUID, principal: Principal = ReadAccess) ->
 def record_ci_result(
     pipelineRunId: UUID,
     payload: CiResultRequest,
+    request: Request,
     _: Principal = PipelineAccess,
 ) -> dict[str, object]:
+    _authorize_callback(
+        request, scope=Scope.CI_RESULT, workload=Workload.JENKINS, pipeline_run_id=pipelineRunId
+    )
     result: CiResult = platform.record_ci_result(
         pipelineRunId,
         payload.status.value,
@@ -1322,6 +1555,7 @@ def record_ci_result(
 def publish_security_evidence(
     pipelineRunId: UUID,
     payload: SecurityEvidenceRequest,
+    request: Request,
     _: Principal = PipelineAccess,
 ) -> dict[str, object]:
     """CI publishes SBOM, scan and signature evidence; netCI returns the policy verdict.
@@ -1330,17 +1564,22 @@ def publish_security_evidence(
     re-evaluates the same rules before any deployment is created.
     """
 
+    _authorize_callback(request, scope=Scope.CI_EVIDENCE, pipeline_run_id=pipelineRunId)
     decision = platform.record_security_evidence(pipelineRunId, payload.model_dump(mode="json"))
     return {"pipelineRunId": str(pipelineRunId), **decision.as_json()}
 
 
 @app.get("/pipeline-runs/{pipelineRunId}/security-evidence")
-def get_security_evidence(pipelineRunId: UUID, principal: Principal = ReadAccess) -> dict[str, object]:
+def get_security_evidence(
+    pipelineRunId: UUID, request: Request, principal: Principal = ReadAccess
+) -> dict[str, object]:
     run = platform.get_pipeline(pipelineRunId)
     # The Temporal worker is the only machine reader: it re-verifies the artifact just
     # before deploy. Human readers remain team-scoped.
     if not principal.has_any(Role.PIPELINE):
         _require_application_access(platform.get_application(run.application_id), principal)
+    else:
+        _authorize_callback(request, scope=Scope.CI_EVIDENCE, pipeline_run_id=pipelineRunId)
     return platform.security_evidence(pipelineRunId)
 
 
@@ -1379,8 +1618,15 @@ def get_deployment(deploymentId: UUID, principal: Principal = ReadAccess) -> dic
 def record_deployment_result(
     deploymentId: UUID,
     payload: DeploymentResultRequest,
+    request: Request,
     _: Principal = PipelineAccess,
 ) -> dict[str, object]:
+    _authorize_callback(
+        request,
+        scope=Scope.DEPLOYMENT_RESULT,
+        workload=Workload.TEMPORAL,
+        deployment_id=deploymentId,
+    )
     deployment = platform.record_deployment_result(deploymentId, payload.status, payload.message)
     portal.record_production_deployment_result(deploymentId, payload.status, payload.message)
     return deployment_json(deployment)

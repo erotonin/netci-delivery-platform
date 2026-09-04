@@ -456,6 +456,40 @@ paths:
           $ref: '#/components/responses/Conflict'
         '422':
           $ref: '#/components/responses/UnprocessableEntity'
+  /pipeline-runs/{pipelineRunId}/callback-token:
+    post:
+      operationId: issuePipelineCallbackToken
+      summary: Mint a scoped, short-lived callback token for one pipeline run
+      description: >-
+        Machine callbacks authenticate with a token bound to a single workload
+        (`jenkins`/`temporal`), a single application, a single run or deployment, and an
+        explicit set of scopes. A token for run A cannot write to run B, a Jenkins token
+        cannot report a deployment result, and a token carrying a terminal scope is
+        single-use.
+
+
+        Normally the CI launcher mints this in-process when it dispatches a build; this
+        endpoint exists so an operator can re-issue one whose lifetime expired. It is
+        platform-admin only, because whoever can mint a token for a run can report that
+        run's result. The token is returned once and never stored -- netCI keeps only its
+        `jti`, which is what makes replay detectable.
+      parameters:
+        - $ref: '#/components/parameters/PipelineRunId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CallbackTokenRequest' }
+      responses:
+        '201':
+          description: Token issued
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CallbackTokenResponse' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/UnprocessableEntity' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
   /pipeline-runs/{pipelineRunId}:
     get:
       operationId: getPipelineRun
@@ -746,6 +780,16 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/ErrorResponse'
+    Forbidden:
+      description: >-
+        The caller is authenticated but not permitted. For machine callbacks this is
+        `WORKLOAD_NOT_PERMITTED` (wrong workload kind for the operation),
+        `SCOPE_NOT_PERMITTED` (the token does not carry the scope) or `RESOURCE_MISMATCH`
+        (the token was issued for a different run or deployment).
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
     ServiceUnavailable:
       description: >-
         The canonical PostgreSQL store could not be reached (`PERSISTENCE_UNAVAILABLE`).
@@ -757,6 +801,40 @@ components:
           schema:
             $ref: '#/components/schemas/ErrorResponse'
   schemas:
+    CallbackTokenRequest:
+      type: object
+      additionalProperties: false
+      required: [workload, scopes]
+      properties:
+        workload:
+          type: string
+          enum: [jenkins, temporal]
+          description: Which machine the token is for. A workload can only be issued scopes it may hold.
+        scopes:
+          type: array
+          minItems: 1
+          maxItems: 8
+          items:
+            type: string
+            enum: [ci:result, ci:logs, ci:evidence, ci:report, deployment:result, deployment:read]
+        ttlSeconds:
+          type: integer
+          minimum: 60
+          maximum: 86400
+          default: 3600
+    CallbackTokenResponse:
+      type: object
+      required: [token, workload, pipelineRunId, scopes, expiresInSeconds]
+      properties:
+        token:
+          type: string
+          description: Returned once. netCI stores only the token's jti, never the token.
+        workload: { type: string }
+        pipelineRunId: { type: string, format: uuid }
+        scopes:
+          type: array
+          items: { type: string }
+        expiresInSeconds: { type: integer }
     ModuleCreate:
       type: object
       required: [name, repositoryUrl, pipelineTemplate, runtime, deploymentEnvironments]

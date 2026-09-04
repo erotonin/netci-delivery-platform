@@ -87,6 +87,39 @@ Vite serves Portal requests through same-origin `/api` and rewrites that prefix 
 
 For a separately hosted browser client, `NETCI_ALLOWED_ORIGINS` is a comma-separated list of exact `http` or `https` origins. Wildcards, credentials in URLs, paths, queries and fragments are rejected at startup. Only `GET`, `POST` and the headers required by this contract are allowed through CORS; `X-Correlation-Id` is exposed to the browser.
 
+## Machine callbacks
+
+Jenkins and the Temporal worker authenticate with a short-lived token that names one
+workload, one application and one run or deployment, plus the scopes it may use. See
+[ADR-015](decisions/ADR-015-workload-identity-and-input-trust.md).
+
+| Refusal | Code | Meaning |
+| --- | --- | --- |
+| 401 | `TOKEN_EXPIRED` | past `exp`; mint a new one |
+| 401 | `INVALID_SIGNATURE` / `INVALID_ISSUER` / `INVALID_AUDIENCE` | not a token this netCI issued |
+| 401 | `TOKEN_REPLAYED` | a terminal-scope token was already used |
+| 403 | `RESOURCE_MISMATCH` | a real token, for a different run or deployment |
+| 403 | `WORKLOAD_NOT_PERMITTED` | e.g. a Jenkins token at the deployment-result endpoint |
+| 403 | `SCOPE_NOT_PERMITTED` | the token does not carry that operation's scope |
+
+`NETCI_WORKLOAD_TOKEN_KEYS` is `kid:secret` pairs, newest first; the first signs, all of
+them verify. Rotate by publishing the new key, waiting one token lifetime, then dropping
+the old one. Outside `NETCI_ENVIRONMENT=local`, netCI refuses to start without it unless
+`NETCI_ALLOW_LEGACY_PIPELINE_KEY=true` declares a migration window.
+
+## Build inputs
+
+`parameters` on a pipeline run carries **build inputs only**. Deployment targets,
+namespaces, credential references, artifact URLs, playbooks, health commands and rollback
+behaviour come from the module's registered configuration and are applied after any caller
+input. Naming one of those keys is `422 DEPLOYMENT_PARAMETER_NOT_ACCEPTED` — refused, not
+silently dropped, because a silent drop is indistinguishable from the override having
+worked. `commitSha` must be hexadecimal and `branch` a git refname; both reach a checkout.
+
+`POST /applications/{id}/pipeline-runs` is platform-admin/machine only: it names an
+application rather than a module, so it cannot apply the module's target policy.
+Developers use `POST /modules/{id}/pipeline-runs`.
+
 ## Persistence
 
 PostgreSQL is canonical at request time. Every command reads the rows it is about to change inside its own transaction and writes them back with the version it read; every query reads the database with a filter. Nothing is cached between requests and nothing is loaded at start-up, which is what makes multiple API replicas and multiple workers correct: they share state because they share the database, not because they were started together. See [ADR-014](decisions/ADR-014-postgresql-canonical-state.md).

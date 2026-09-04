@@ -311,6 +311,9 @@ class PortalService:
         if item is None:
             raise KeyError("module not found")
         runs = self._module_runs(transaction, item)
+        application = (
+            transaction.application(item.application_id) if item.application_id else None
+        )
         deployments = (
             self.platform.list_deployments(item.application_id, session=transaction)
             if item.application_id
@@ -324,6 +327,7 @@ class PortalService:
             "description": item.description,
             "runtime": item.runtime,
             "applicationId": str(item.application_id) if item.application_id else None,
+            "ownerTeam": application.owner_team if application else None,
             "versions": [row.version for row in transaction.portal_versions(module_id)],
             "deploymentEnvironments": list(item.deployment_config),
             "pipelineConfig": dict(item.pipeline_config),
