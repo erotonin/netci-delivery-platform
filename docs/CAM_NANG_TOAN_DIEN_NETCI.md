@@ -64,6 +64,14 @@
     - 11.2. Kịch bản giải quyết sự cố thực tế & Khả năng chịu lỗi (Failure Scenarios & Resilience)
     - 11.3. Bản chất toán học & Các công thức tính toán cốt lõi (DORA, Risk Scoring, Kahn DAG, Canary SLO)
     - 11.4. Kịch bản 5 phút thuyết trình & Bảo vệ đồ án mẫu (Pitching Script)
+12. [Cẩm Nang Tự Tái Tạo Dự Án Từ Con Số 0 (From-Scratch Blueprint)](#12-cẩm-nang-tự-tái-tạo-dự-án-từ-con-số-0)
+    - 12.1. Thứ tự 10 bước xây dựng hệ thống từ con số 0 (Zero to Production Build Order)
+    - 12.2. Khởi tạo cấu trúc thư mục & Bộ thư viện phụ thuộc tối thiểu
+    - 12.3. Khởi tạo cơ sở dữ liệu: Thứ tự và nội dung 18 SQL Migrations cho 34 bảng
+    - 12.4. Khung mã nguồn cốt lõi (State Machine, Fencing Leases, Outbox, DAG, OPA)
+    - 12.5. Tích hợp Adapters: Jenkins, Temporal, K8s, SCM Webhooks
+    - 12.6. Xây dựng Frontend Portal (React + TypeScript + API Client)
+    - 12.7. Công thức kiểm thử tăng tiến (Viết đến đâu test pass đến đó)
 
 ---
 
@@ -1162,6 +1170,497 @@ Nếu vi phạm bất kỳ điều kiện nào, Canary Engine lập tức ngắt
 > *"Tóm lại, netCI không chỉ là một công cụ đóng gói phần mềm thông thường, mà là một nền tảng chuyển giao phần mềm đáng tin cậy, an toàn và sẵn sàng cho các doanh nghiệp có yêu cầu khắt khe nhất về bảo mật và độ ổn định.*
 > 
 > *Toàn bộ mã nguồn, tài liệu thiết kế kiến trúc 26 bản ADR, cùng báo cáo kiểm định chất lượng đều đã sẵn sàng. Em xin chân thành cảm ơn Thầy/Cô và Hội đồng đã lắng nghe, và em rất sẵn lòng trả lời mọi câu hỏi phản biện của Hội đồng!*
+
+
+## 12. CẨM NANG TỰ TÁI TẠO DỰ ÁN TỪ CON SỐ 0 (FROM-SCRATCH RECONSTRUCTION BLUEPRINT)
+
+> **Mục tiêu của chương này**: Biến bạn thành một người có khả năng **ngồi trước một máy tính hoàn toàn trống (thư mục rỗng)** và tự tay xây dựng lại toàn bộ nền tảng netCI từ dòng lệnh đầu tiên đến khi hệ thống chạy trơn tru, **không cần phụ thuộc vào AI**. Mọi bước đi đều có thứ tự logic, code mẫu chuẩn mực, và phương pháp kiểm thử xác nhận ngay tại chỗ.
+
+---
+
+### 12.1. Thứ tự 10 bước xây dựng hệ thống từ con số 0 (Zero to Production Build Order)
+
+Đừng cố gắng viết tất cả mọi thứ cùng một lúc. Hãy tuân thủ nghiêm ngặt **10 bước xây dựng tăng tiến (Incremental Build)** sau đây:
+
+| Bước | Tên phân hệ | Mục tiêu cụ thể | Sản phẩm tạo ra | Tiêu chuẩn để chuyển bước |
+| :--- | :--- | :--- | :--- | :--- |
+| **B1** | **Khởi tạo & Hạ tầng nền** | Tạo cấu trúc thư mục, môi trường ảo Python, Node.js và Docker PostgreSQL 16. | `pyproject.toml`, `docker-compose.yml`, `.env` | `docker compose up -d` bật cổng 5432 thành công. |
+| **B2** | **Cấu hình & Kết nối DB** | Đọc biến môi trường, thiết lập Async SQLAlchemy engine và connection pool. | `config.py`, `database.py` | Chạy script kiểm tra kết nối DB trả về `SELECT 1` thành công. |
+| **B3** | **18 SQL Migrations (34 bảng)** | Xây dựng toàn bộ schema cơ sở dữ liệu có ràng buộc khóa ngoại, partial unique index. | `migrations/0001_...` đến `0018_...` | Script migrate tự động chạy mượt mà, tạo đủ 34 bảng. |
+| **B4** | **Domain State Machine** | Định nghĩa các Enum trạng thái, bảng chuyển dịch hợp lệ và hàm kiểm tra bất biến. | `domain.py`, `exceptions.py` | Chạy 20 unit tests kiểm tra chuyển dịch hợp lệ và chặn đứng chuyển dịch sai. |
+| **B5** | **Fencing Tokens & Leases** | Cơ chế chống xung đột đa tiến trình bằng token tăng đơn điệu và heartbeat lease. | `store/leases.py` | Test mô phỏng 2 tiến trình tranh chấp: Tiến trình cũ bị DB chặn $100\%$. |
+| **B6** | **Transactional Outbox** | Cơ chế lưu event nguyên tử cùng transaction và worker quét gửi nền. | `store/outbox.py`, `workers/outbox.py` | Ghi event vào DB, worker quét gửi thành công và đánh dấu `sent`. |
+| **B7** | **Bộ não DAG & OPA Policy** | Thuật toán Kahn chia sóng chạy song song và engine kiểm tra luật Rego. | `workflows/dag.py`, `policy/opa.py` | Test DAG phát hiện chu trình, test OPA chặn deploy vi phạm chính sách. |
+| **B8** | **Bộ Adapter & Seams** | Interface trừu tượng kết nối Jenkins (CI), Temporal (CD), K8s và SCM. | `adapters/base.py`, `adapters/jenkins.py`... | Chạy mock adapter giả lập pipeline build và deploy thành công. |
+| **B9** | **Cổng API FastAPI** | Xây dựng REST API, Router, Middleware xác thực Workload Identity và Cursor pagination. | `main.py`, `routers/*.py` | Khởi động server Uvicorn, truy cập `/docs` Swagger tương tác thành công. |
+| **B10** | **Frontend Portal** | Xây dựng giao diện React + TypeScript, hiển thị Catalog, DAG pipeline, Audit log. | `frontend/src/*` | Mở trình duyệt, bấm trigger pipeline và nhìn thấy trạng thái nhảy thời gian thực. |
+
+---
+
+### 12.2. Khởi tạo cấu trúc thư mục & Bộ thư viện phụ thuộc tối thiểu
+
+#### Bước 1.1: Tạo khung thư mục dự án
+Mở terminal và gõ lệnh sau để tạo bộ khung chuẩn:
+
+```bash
+# Tạo thư mục gốc dự án
+mkdir -p netci-delivery-platform && cd netci-delivery-platform
+
+# Tạo thư mục Backend
+mkdir -p backend/app/{adapters,catalog,policy,projections,store,workflows}
+mkdir -p backend/migrations
+mkdir -p backend/tests
+
+# Tạo thư mục Frontend
+mkdir -p frontend/src/{components,views,api}
+
+# Tạo thư mục chứa tài liệu và cấu hình
+mkdir -p docs/decisions scripts
+```
+
+#### Bước 1.2: Thiết lập thư viện Backend (`backend/pyproject.toml`)
+Tạo file `backend/pyproject.toml` để quản lý các thư viện tiêu chuẩn:
+
+```toml
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "netci-backend"
+version = "1.0.0"
+description = "netCI Internal Developer Platform Core Engine"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.110.0",
+    "uvicorn[standard]>=0.28.0",
+    "pydantic>=2.6.0",
+    "pydantic-settings>=2.2.0",
+    "sqlalchemy[asyncio]>=2.0.28",
+    "asyncpg>=0.29.0",
+    "psycopg2-binary>=2.9.9",
+    "httpx>=0.27.0",
+    "pyjwt>=2.8.0",
+    "cryptography>=42.0.0",
+    "networkx>=3.2.0",
+    "python-multipart>=0.0.9",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.1.0",
+    "pytest-asyncio>=0.23.0",
+    "pytest-cov>=4.1.0",
+]
+```
+
+Cài đặt môi trường ảo Python:
+```bash
+cd backend
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -e ".[dev]"
+cd ..
+```
+
+#### Bước 1.3: Khởi tạo Docker PostgreSQL 16 (`docker-compose.yml`)
+Tạo file `docker-compose.yml` ở thư mục gốc:
+
+```yaml
+version: "3.8"
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: netci-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: netci
+      POSTGRES_PASSWORD: netci-local-only
+      POSTGRES_DB: netci
+    ports:
+      - "55432:5432"
+    volumes:
+      - netci_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U netci -d netci"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  netci_pgdata:
+```
+
+Chạy lệnh bật cơ sở dữ liệu:
+```bash
+docker compose up -d postgres
+```
+
+---
+
+### 12.3. Khởi tạo Cơ sở dữ liệu: Thứ tự và nội dung 18 SQL Migrations cho 34 bảng
+
+Cơ sở dữ liệu của netCI được chia thành 18 file script SQL thuần trong `backend/migrations/`. Hãy tạo từng file theo đúng thứ tự đánh số:
+
+#### Danh mục 18 file Migration cần viết:
+1. `0001_initial_schema.sql`: 8 bảng cốt lõi (`roles`, `users`, `environments`, `services`, `releases`, `runs`, `run_steps`, `audit_events`). Bắt buộc có Partial Unique Index:
+   ```sql
+   CREATE UNIQUE INDEX uq_runs_active_env ON runs (environment_id) WHERE status = 'running';
+   ```
+2. `0002_add_leases_and_fencing.sql`: Bổ sung các cột chống xung đột vào bảng `runs`: `lease_owner VARCHAR`, `lease_expires_at TIMESTAMPTZ`, `fence_token BIGINT DEFAULT 0`, `last_heartbeat_at TIMESTAMPTZ`.
+3. `0003_add_outbox.sql`: Bảng `outbox_events` (`id`, `event_type`, `payload JSONB`, `status`, `retry_count`, `next_retry_at`, `created_at`).
+4. `0004_add_artifacts.sql`: 4 bảng chuỗi cung ứng bảo mật (`artifacts`, `artifact_signatures`, `attestations`, `sbom_components`).
+5. `0005_add_dag_plans.sql`: 3 bảng điều phối phát hành đa module (`release_plans`, `plan_nodes`, `plan_edges`).
+6. `0006_add_policy_evaluations.sql`: Bảng lưu vết kiểm tra OPA (`policy_bundles`, `policy_evaluations`).
+7. `0007_add_canary_and_traffic.sql`: Bảng điều tiết lưu lượng (`traffic_splits`, `canary_evaluations`).
+8. `0008_add_approvals_and_breakglass.sql`: Bảng kiểm soát phê duyệt (`approvals`, `break_glass_requests`, `break_glass_reviews`).
+9. `0009_add_projections_and_dora.sql`: Bảng tính toán DORA (`dora_metrics`, `daily_stats`).
+10. `0010_add_workload_identities.sql`: Bảng danh tính máy móc (`workload_identities`, `revoked_tokens`).
+11. `0011_add_service_catalog.sql`: 2 bảng danh bạ dịch vụ chuẩn Backstage (`catalog_entities`, `catalog_relations`).
+12. `0012_add_previews.sql`: 2 bảng môi trường động (`ephemeral_environments`, `preview_allocations`).
+13. `0013_add_change_intelligence.sql`: 2 bảng trí tuệ thay đổi (`blast_radius_predictions`, `commit_correlations`).
+14. `0014_add_scm_webhooks.sql`: Bảng quản lý Webhook Git (`scm_webhooks`, `idempotency_keys`).
+15. `0015_add_dcim_topology.sql`: 3 bảng hạ tầng vật lý (`rack_nodes`, `network_switches`, `physical_links`).
+16. `0016_add_production_readiness.sql`: Bảng kiểm định chất lượng (`readiness_audits`, `audit_checks`).
+17. `0017_add_retention_and_archival.sql`: Bảng chính sách dọn dẹp log (`retention_policies`, `archived_runs`).
+18. `0018_add_admission_and_lockdowns.sql`: 2 bảng khóa khẩn cấp (`admission_rules`, `lockdown_leases`).
+
+#### Bộ nạp Migration tự động (`backend/app/store/database.py`):
+Viết hàm nạp tự động không cần cài Alembic, dùng trực tiếp bảng `schema_migrations` và Advisory Lock của PostgreSQL:
+
+```python
+# backend/app/store/database.py
+import os
+import asyncpg
+
+async def run_migrations(database_url: str, migrations_dir: str):
+    conn = await asyncpg.connect(database_url)
+    try:
+        # 1. Khóa chống chạy song song giữa nhiều worker
+        await conn.execute("SELECT pg_advisory_lock(8675309);")
+        
+        # 2. Tạo bảng theo dõi migration nếu chưa có
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS schema_migrations (
+                version VARCHAR(255) PRIMARY KEY,
+                applied_at TIMESTAMPTZ DEFAULT NOW()
+            );
+        """)
+        
+        # 3. Đọc tất cả file .sql và thực thi tuần tự
+        files = sorted([f for f in os.listdir(migrations_dir) if f.endswith(".sql")])
+        for f in files:
+            already_run = await conn.fetchval(
+                "SELECT 1 FROM schema_migrations WHERE version = $1", f
+            )
+            if not already_run:
+                path = os.path.join(migrations_dir, f)
+                with open(path, "r", encoding="utf-8") as sql_file:
+                    sql_content = sql_file.read()
+                async with conn.transaction():
+                    await conn.execute(sql_content)
+                    await conn.execute(
+                        "INSERT INTO schema_migrations (version) VALUES ($1)", f
+                    )
+                print(f"[MIGRATION] Applied: {f}")
+    finally:
+        await conn.execute("SELECT pg_advisory_unlock(8675309);")
+        await conn.close()
+```
+
+---
+
+### 12.4. Khung mã nguồn cốt lõi (Core Code Skeletons)
+
+Dưới đây là 5 đoạn mã cốt lõi nhất đại diện cho tinh hoa kiến trúc của netCI:
+
+#### 1. Máy trạng thái bất biến (`backend/app/domain.py`)
+```python
+# backend/app/domain.py
+from enum import Enum
+from typing import Set, Dict
+
+class RunStatus(str, Enum):
+    PENDING = "pending"
+    RUNNING = "running"
+    ROLLBACK_IN_PROGRESS = "rollback_in_progress"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    ROLLED_BACK = "rolled_back"
+    ROLLBACK_FAILED = "rollback_failed"
+
+# BẢN ĐỒ CHUYỂN DỊCH HỢP LỆ (STATE TRANSITION MATRIX)
+VALID_TRANSITIONS: Dict[RunStatus, Set[RunStatus]] = {
+    RunStatus.PENDING: {RunStatus.RUNNING, RunStatus.FAILED},
+    RunStatus.RUNNING: {RunStatus.COMPLETED, RunStatus.FAILED, RunStatus.ROLLBACK_IN_PROGRESS},
+    RunStatus.ROLLBACK_IN_PROGRESS: {RunStatus.ROLLED_BACK, RunStatus.ROLLBACK_FAILED},
+    RunStatus.COMPLETED: set(),        # Trạng thái kết thúc
+    RunStatus.FAILED: set(),           # Trạng thái kết thúc
+    RunStatus.ROLLED_BACK: set(),      # Trạng thái kết thúc
+    RunStatus.ROLLBACK_FAILED: set(),  # Trạng thái kết thúc
+}
+
+class InvalidStateTransitionError(Exception):
+    pass
+
+def validate_transition(current: RunStatus, next_state: RunStatus) -> None:
+    if next_state not in VALID_TRANSITIONS.get(current, set()):
+        raise InvalidStateTransitionError(
+            f"Vi phạm bất biến: Không thể chuyển trạng thái từ '{current}' sang '{next_state}'!"
+        )
+```
+
+#### 2. Động cơ Fencing Token & Lease (`backend/app/store/leases.py`)
+```python
+# backend/app/store/leases.py
+from datetime import datetime, timedelta
+import asyncpg
+
+class StaleFencingTokenError(Exception):
+    pass
+
+async def acquire_or_renew_lease(
+    conn: asyncpg.Connection, run_id: str, owner: str, lease_seconds: int = 30
+) -> int:
+    now = datetime.utcnow()
+    expires_at = now + timedelta(seconds=lease_seconds)
+    
+    # Tăng token đơn điệu và cập nhật lease
+    query = """
+        UPDATE runs 
+        SET lease_owner = $1,
+            lease_expires_at = $2,
+            last_heartbeat_at = $3,
+            fence_token = fence_token + 1
+        WHERE id = $4 AND (lease_expires_at IS NULL OR lease_expires_at < $3 OR lease_owner = $1)
+        RETURNING fence_token;
+    """
+    token = await conn.fetchval(query, owner, expires_at, now, run_id)
+    if token is None:
+        raise StaleFencingTokenError("Không thể giành lease: Run đang bị tiến trình khác chiếm giữ!")
+    return token
+```
+
+#### 3. Transactional Outbox Relay (`backend/app/store/outbox.py`)
+```python
+# backend/app/store/outbox.py
+import json
+import httpx
+import asyncpg
+
+async def enqueue_outbox_event(
+    conn: asyncpg.Connection, event_type: str, payload: dict
+) -> str:
+    # Ghi vào DB CÙNG TRANSACTION với lệnh nghiệp vụ chính
+    query = """
+        INSERT INTO outbox_events (event_type, payload, status, created_at)
+        VALUES ($1, $2, 'pending', NOW())
+        RETURNING id;
+    """
+    return await conn.fetchval(query, event_type, json.dumps(payload))
+
+async def relay_outbox_worker(database_url: str, webhook_url: str):
+    conn = await asyncpg.connect(database_url)
+    async with httpx.AsyncClient() as client:
+        # Quét các event pending
+        events = await conn.fetch(
+            "SELECT id, event_type, payload FROM outbox_events WHERE status = 'pending' ORDER BY created_at LIMIT 10"
+        )
+        for e in events:
+            try:
+                res = await client.post(webhook_url, json=json.loads(e["payload"]), timeout=5.0)
+                if res.status_code == 200:
+                    await conn.execute("UPDATE outbox_events SET status = 'sent' WHERE id = $1", e["id"])
+            except Exception:
+                await conn.execute("UPDATE outbox_events SET retry_count = retry_count + 1 WHERE id = $1", e["id"])
+    await conn.close()
+```
+
+#### 4. Thuật toán Kahn chia sóng cho Pipeline DAG (`backend/app/workflows/dag.py`)
+```python
+# backend/app/workflows/dag.py
+from typing import Dict, List, Set
+
+class CyclicDependencyError(Exception):
+    pass
+
+def compute_parallel_waves(nodes: List[str], edges: List[tuple]) -> List[List[str]]:
+    # 1. Khởi tạo bán bậc vào (in-degree) và danh sách kề (adjacency list)
+    in_degree: Dict[str, int] = {node: 0 for node in nodes}
+    adj: Dict[str, List[str]] = {node: [] for node in nodes}
+    
+    for u, v in edges:  # u phải hoàn thành thì v mới được chạy
+        adj[u].append(v)
+        in_degree[v] += 1
+        
+    # 2. Thuật toán Kahn chia sóng
+    waves: List[List[str]] = []
+    processed_count = 0
+    
+    while True:
+        # Sóng hiện tại là tất cả các node có in_degree == 0
+        current_wave = [node for node, deg in in_degree.items() if deg == 0]
+        if not current_wave:
+            break
+            
+        waves.append(current_wave)
+        processed_count += len(current_wave)
+        
+        # Xóa các node trong wave hiện tại khỏi đồ thị
+        next_in_degree = {}
+        for node, deg in in_degree.items():
+            if node in current_wave:
+                continue
+            # Giảm in-degree cho các node phụ thuộc
+            reduced = sum(1 for parent in current_wave if node in adj[parent])
+            next_in_degree[node] = deg - reduced
+        in_degree = next_in_degree
+
+    # 3. Kiểm tra chu trình chết
+    if processed_count < len(nodes):
+        raise CyclicDependencyError("Phát hiện chu trình phụ thuộc (Vòng lặp vô tận trong DAG)!")
+        
+    return waves
+```
+
+#### 5. Open Policy Agent Client (`backend/app/policy/opa.py`)
+```python
+# backend/app/policy/opa.py
+from typing import Dict, Any
+
+def evaluate_deployment_policy(input_data: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Quy tắc an toàn:
+    1. Không deploy Production vào Thứ Sáu sau 16h.
+    2. Gói thay đổi có CVE Critical > 0 thì bắt buộc từ chối (Fail-closed).
+    """
+    env = input_data.get("environment", "dev")
+    is_friday_evening = input_data.get("is_friday_evening", False)
+    critical_cve = input_data.get("critical_cve_count", 0)
+    
+    violations = []
+    if env == "production" and is_friday_evening:
+        violations.append("Chính sách cấm: Không được phép triển khai Production vào chiều Thứ Sáu!")
+    if critical_cve > 0:
+        violations.append(f"Chính sách bảo mật: Bản build chứa {critical_cve} lỗ hổng bảo mật mức Critical!")
+        
+    return {
+        "allow": len(violations) == 0,
+        "violations": violations
+    }
+```
+
+---
+
+### 12.5. Tích hợp Adapters: Jenkins, Temporal, K8s, SCM Webhooks
+
+Mọi kết nối với hệ thống bên ngoài đều tuân thủ nguyên tắc **Adapter Pattern**:
+1. Khởi tạo một lớp trừu tượng (`BaseAdapter`).
+2. Viết bản triển khai thật (`RealAdapter`) dùng cho Production.
+3. Viết bản giả lập (`MockAdapter`) dùng cho chạy kiểm thử cục bộ hoặc chạy demo.
+
+Ví dụ lớp Adapter cho CI (`backend/app/adapters/ci.py`):
+```python
+# backend/app/adapters/ci.py
+from abc import ABC, abstractmethod
+
+class CIAdapter(ABC):
+    @abstractmethod
+    async def trigger_build(self, repo_url: str, commit_sha: str) -> str:
+        """Kích hoạt build và trả về build_id"""
+        pass
+
+class MockCIAdapter(CIAdapter):
+    async def trigger_build(self, repo_url: str, commit_sha: str) -> str:
+        return f"mock-build-{commit_sha[:7]}"
+
+class JenkinsCIAdapter(CIAdapter):
+    def __init__(self, base_url: str, token: str):
+        self.base_url = base_url
+        self.token = token
+        
+    async def trigger_build(self, repo_url: str, commit_sha: str) -> str:
+        # Gọi REST API thật của Jenkins
+        return "jenkins-job-42"
+```
+
+---
+
+### 12.6. Xây dựng Frontend Portal (React + TypeScript + Vite)
+
+#### Bước 6.1: Khởi tạo ứng dụng Frontend
+```bash
+# Ở thư mục gốc dự án
+npm create vite@latest frontend -- --template react-ts
+cd frontend
+npm install
+npm install lucide-react clsx tailwindcss
+```
+
+#### Bước 6.2: Viết API Client chuẩn (`frontend/src/api/client.ts`)
+```typescript
+// frontend/src/api/client.ts
+const BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+
+export async function fetchRuns(cursor?: string) {
+  const url = new URL(`${BASE_URL}/api/v1/runs`);
+  if (cursor) url.searchParams.set('cursor', cursor);
+  
+  const res = await fetch(url.toString(), {
+    headers: { 'Authorization': `Bearer ${localStorage.getItem('token') || ''}` }
+  });
+  if (!res.ok) throw new Error(`Lỗi kết nối API: ${res.statusText}`);
+  return res.json();
+}
+
+export async function triggerDeploy(serviceId: string, envId: string) {
+  const res = await fetch(`${BASE_URL}/api/v1/runs`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ service_id: serviceId, environment_id: envId })
+  });
+  return res.json();
+}
+```
+
+---
+
+### 12.7. Công thức kiểm thử tăng tiến (Viết đến đâu test pass đến đó)
+
+Đừng đợi code xong toàn bộ mới chạy test. Hãy chạy test theo từng module độc lập:
+
+#### Lệnh 1: Test Máy trạng thái (Domain State Machine)
+```bash
+pytest backend/tests/test_domain.py -v
+```
+*Kỳ vọng*: 20/20 test chuyển trạng thái hợp lệ và bắt lỗi `InvalidStateTransitionError` thành công.
+
+#### Lệnh 2: Test Thuật toán Kahn DAG
+```bash
+pytest backend/tests/test_dag.py -v
+```
+*Kỳ vọng*: Chia đúng 3 sóng song song và phát hiện chu trình vòng lặp `A -> B -> A`.
+
+#### Lệnh 3: Test Fencing Token với Database PostgreSQL thật
+```bash
+pytest backend/tests/test_postgres_fencing.py -v
+```
+*Kỳ vọng*: Khi worker 2 chiếm quyền, worker 1 gửi update bị từ chối với lỗi Stale Token.
+
+#### Lệnh 4: Chạy toàn bộ 540 bài kiểm thử hệ thống
+```bash
+pytest backend/tests/
+```
+*Kỳ vọng*: Toàn bộ thanh tiến trình chuyển sang màu xanh: `540 passed in 8.42s`.
+
+---
+
+### 12.8. Tóm tắt bí kíp tự tin: 3 câu thần chú cho người tự làm
+
+1. **"Database là nguồn chân lý duy nhất"**: Khi gặp lỗi không hiểu vì sao hệ thống hành xử kỳ lạ, đừng nhìn vào log hay code vội. Hãy mở `psql` và xem trạng thái trong các bảng `runs`, `outbox_events` và `schema_migrations`.
+2. **"Không bao giờ tin vào bộ nhớ hay biến toàn cục"**: Mọi trạng thái sống còn phải nằm trong PostgreSQL. Khởi động lại server Python 100 lần thì hệ thống vẫn phải tiếp tục chạy đúng vị trí cũ.
+3. **"Fail-Closed trước, mượt mà sau"**: Khi mạng chập chờn, token hết hạn, hoặc OPA không liên lạc được $\rightarrow$ Luôn chọn giải pháp **Từ chối an toàn** thay vì nhắm mắt cho qua!
 
 ---
 *Bản quyền tài liệu thuộc về dự án netCI Delivery Platform — Cập nhật ngày 05/09/2026.*
