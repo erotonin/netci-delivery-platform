@@ -1,5 +1,5 @@
 {
-  "timestamp": "2026-09-05T02:40:28.105682+00:00",
+  "timestamp": "2026-09-05T02:58:29.794488+00:00",
   "platform": "netCI Delivery Platform",
   "release": "netci-local-rc1",
   "totalChecks": 28,
@@ -72,9 +72,9 @@
         "jenkins_scopes": [
           "ci:logs",
           "ci:report",
+          "ci:stage",
           "ci:result",
-          "ci:evidence",
-          "ci:stage"
+          "ci:evidence"
         ]
       }
     },
@@ -99,9 +99,9 @@
       "verdict": "PASS",
       "details": {
         "queued_transitions": [
-          "failed",
+          "cancelled",
           "running",
-          "cancelled"
+          "failed"
         ]
       }
     },
@@ -112,9 +112,9 @@
       "verdict": "PASS",
       "details": {
         "pending_transitions": [
-          "failed",
           "deploying",
-          "cancelled"
+          "cancelled",
+          "failed"
         ]
       }
     },
