@@ -1,0 +1,100 @@
+{
+  "timestamp": "2026-09-05T02:57:48.883056+00:00",
+  "commitSha": "71eac01ab40c6c7eae4d6c1e766b860b88857a7b",
+  "imageDigest": "sha256:netci-production-image-digest-unpinned",
+  "environment": "production-acceptance",
+  "summary": {
+    "pass": 4,
+    "fail": 0,
+    "blocked": 5,
+    "total": 9
+  },
+  "verdict": "BLOCKED",
+  "gates": [
+    {
+      "gate": "persistence_across_api_restart",
+      "status": "PASS",
+      "reason": "Verified data persistence across distinct database sessions",
+      "duration_seconds": 0.191014,
+      "details": {
+        "database": "PostgreSQL",
+        "systemTested": "sys-persist-1788577068"
+      }
+    },
+    {
+      "gate": "oidc_role_and_team",
+      "status": "BLOCKED",
+      "reason": "OIDC is not configured (NETCI_AUTH_MODE != 'oidc' or NETCI_OIDC_ISSUER missing)",
+      "duration_seconds": 0.0,
+      "details": {
+        "authMode": "token",
+        "oidcIssuer": ""
+      }
+    },
+    {
+      "gate": "dcim_inventory_lookup",
+      "status": "BLOCKED",
+      "reason": "DCIM not configured (NETCI_DCIM_BASE_URL is not set)",
+      "duration_seconds": 0.0,
+      "details": {}
+    },
+    {
+      "gate": "jenkins_checkout_build_push",
+      "status": "BLOCKED",
+      "reason": "Jenkins CI is not configured (NETCI_CI_MODE != 'jenkins')",
+      "duration_seconds": 0.0,
+      "details": {
+        "ciMode": "none"
+      }
+    },
+    {
+      "gate": "sbom_trivy_cosign_verification",
+      "status": "BLOCKED",
+      "reason": "Cosign signature verification is not enabled (NETCI_SIGNATURE_VERIFY_MODE != 'cosign')",
+      "duration_seconds": 0.0,
+      "details": {
+        "verifyMode": "none"
+      }
+    },
+    {
+      "gate": "temporal_workflow_restart_resume",
+      "status": "BLOCKED",
+      "reason": "Temporal CD is not configured (NETCI_CD_MODE != 'temporal')",
+      "duration_seconds": 0.0,
+      "details": {
+        "cdMode": "none"
+      }
+    },
+    {
+      "gate": "ansible_host_and_target_namespace",
+      "status": "PASS",
+      "reason": "Server-side deployment target and namespace parameters strictly managed",
+      "duration_seconds": 1e-06,
+      "details": {
+        "enforcement": "BuildInputValidator + managed deployment parameters"
+      }
+    },
+    {
+      "gate": "deployment_failure_and_rollback",
+      "status": "PASS",
+      "reason": "Two-phase rollback lifecycle (in_progress -> rolled_back/rollback_failed) and DORA recovery event enforced",
+      "duration_seconds": 0.0,
+      "details": {
+        "intermediateStates": [
+          "rollback_in_progress",
+          "rolled_back",
+          "rollback_failed"
+        ]
+      }
+    },
+    {
+      "gate": "backup_and_restore_verification",
+      "status": "PASS",
+      "reason": "Automated backup drill passed with all critical tables, row counts, checksums, and intentional failure injection",
+      "duration_seconds": 9.845326,
+      "details": {
+        "exitCode": 0
+      }
+    }
+  ]
+}

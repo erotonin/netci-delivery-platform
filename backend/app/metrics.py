@@ -186,11 +186,14 @@ class PrometheusMetricsMiddleware(BaseHTTPMiddleware):
         # Normalize high-cardinality paths (e.g. UUIDs, IDs)
         # Using route template if matched by Starlette router
         match_route = None
-        for route in request.app.routes:
-            match, _ = route.matches(request.scope)
-            if match.name == "FULL":
-                match_route = getattr(route, "path", None)
-                break
+        try:
+            for route in getattr(request.app, "routes", []):
+                match, _ = route.matches(request.scope)
+                if getattr(match, "name", "") == "FULL":
+                    match_route = getattr(route, "path", None)
+                    break
+        except Exception:
+            match_route = None
         if match_route:
             route_path = match_route
 

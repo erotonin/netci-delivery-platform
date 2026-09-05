@@ -49,7 +49,7 @@ As netCI transitions to long-term reliable production operation (P1.4), several 
 
 7. **AES-256-GCM Encrypted Backups & Automated Disaster Recovery Drill (`scripts/netci_backup.py`, `scripts/netci_dr_drill.py`)**:
    - Extended `netci_backup.py` to support AES-256-GCM authenticated encryption (`--encrypt`, `--encryption-key`, salt + nonce + ciphertext).
-   - Automated DR drill script `scripts/netci_dr_drill.py` that takes a live encrypted backup, verifies checksums, restores into an isolated scratch database, verifies all 25 critical tables, executes row-count and row-checksum comparisons, verifies zero foreign-key orphan violations, checks migration list completeness, and outputs a timestamped evidence artifact in `evidence/dr_drill_*.json`.
+   - Automated DR drill script `scripts/netci_dr_drill.py` that takes a live encrypted backup, verifies checksums, restores into an isolated scratch database, verifies all 34 critical tables across all 18 migrations, executes row-count and row-checksum comparisons, verifies zero foreign-key orphan violations, checks migration list completeness, and outputs a timestamped evidence artifact in `evidence/dr_drill_*.json`.
 
 ## Consequences
 - Guarantees at-least-once notification delivery with zero dual-write inconsistencies.
