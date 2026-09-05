@@ -59,6 +59,11 @@
    - 8.3. Kết quả chứng nhận Production Readiness Audit (28/28 checks)
 9. [Cách tự kiểm chứng toàn bộ hệ thống](#9-cách-tự-kiểm-chứng-toàn-bộ-hệ-thống)
 10. [Rủi ro thực tế & Những việc cần làm khi đưa vào doanh nghiệp](#10-rủi-ro-thực-tế--những-việc-cần-làm-khi-đưa-vào-doanh-nghiệp)
+11. [Bộ Câu Hỏi Phản Biện & Tuyệt Kỹ Bảo Vệ Kiến Trúc (Defense Masterclass)](#11-bộ-câu-hỏi-phản-biện--tuyệt-kỹ-bảo-vệ-kiến-trúc)
+    - 11.1. Top 10 câu hỏi "Vì sao làm như này mà không làm như kia?" (Trade-off Analysis)
+    - 11.2. Kịch bản giải quyết sự cố thực tế & Khả năng chịu lỗi (Failure Scenarios & Resilience)
+    - 11.3. Bản chất toán học & Các công thức tính toán cốt lõi (DORA, Risk Scoring, Kahn DAG, Canary SLO)
+    - 11.4. Kịch bản 5 phút thuyết trình & Bảo vệ đồ án mẫu (Pitching Script)
 
 ---
 
@@ -807,6 +812,356 @@ Vì netCI tuân thủ tuyệt đối nguyên tắc **Fail-Closed** và **Không 
    - Gắn file `kubeconfig` của cụm k8s vào thư mục chỉ định (`NETCI_KUBECONFIG_DIR`) để Admission Controller và Temporal triển khai pod thật.
 4. **Cổng Webhook Slack/Teams**:
    - Điền URL webhook của kênh thông báo công ty vào cấu hình outbox để nhân viên nhận tin nhắn tức thì khi deploy thành công.
+
+
+## 11. BỘ CÂU HỎI PHẢN BIỆN & TUYỆT KỸ BẢO VỆ KIẾN TRÚC (DEFENSE MASTERCLASS)
+
+> Phần này là **vũ khí tối thượng** để bạn tự tin đứng trước ban giám khảo, hội đồng công nghệ, CTO, hoặc các kỹ sư Principal/Senior. Khi được hỏi: *"Tại sao em làm thế này mà không làm thế kia?"*, bạn sẽ không trả lời theo cảm tính ("em thấy trên mạng làm thế"), mà trả lời bằng **phân tích đánh đổi (trade-off analysis), bản chất phân tán (distributed systems) và bằng chứng toán học**.
+
+---
+
+### 11.1. Top 10 câu hỏi "Vì sao làm như này mà không làm như kia?" (Trade-off Analysis)
+
+#### Câu hỏi 1: Tại sao dùng PostgreSQL làm Single Source of Truth mà không dùng NoSQL (MongoDB, DynamoDB) cho linh hoạt?
+* **Câu trả lời phản biện**:
+  * **Bản chất bài toán Delivery Platform**: Đây là hệ thống điều phối trạng thái hạ tầng nhạy cảm (Critical Infrastructure State Machine). Yêu cầu số 1 không phải là "tốc độ ghi vô hạn" mà là **tính nhất quán tuyệt đối (ACID)** và **ngăn chặn xung đột đồng thời (Concurrency Control)**.
+  * **Tại sao NoSQL thất bại ở bài toán này?**
+    1. *Hiện tượng ghi đè (Race Condition)*: Trong NoSQL (MongoDB/DynamoDB), nếu 2 kỹ sư cùng bấm deploy lên môi trường Production tại cùng một mili-giây, hoặc 2 worker cùng claim một release, việc thiếu **Row-level Lock (`SELECT ... FOR UPDATE`)** và tính chất *Eventual Consistency* sẽ dẫn đến cả 2 worker cùng nghĩ mình được chạy, gây đè nát môi trường thật.
+    2. *Thiếu Partial Unique Index*: Trong netCI, chúng ta có chỉ mục độc nhất có điều kiện:
+       ```sql
+       CREATE UNIQUE INDEX uq_runs_active_env ON runs (environment_id) WHERE status = 'running';
+       ```
+       Chỉ mục này ép ở cấp độ tầng lưu trữ rằng: **Trên một môi trường, tại một thời điểm CHỈ ĐƯỢC PHÉP CÓ DUY NHẤT 1 RUN ĐANG CHẠY**. Không có NoSQL nào cung cấp được sự đảm bảo tuyệt đối này ở tầng storage engine mà không phải phụ thuộc vào lock phân tán bên ngoài.
+    3. *Toàn vẹn tham chiếu (Referential Integrity)*: Một release bị xóa không thể để lại các execution log mồ côi. Khóa ngoại (`FOREIGN KEY ON DELETE CASCADE/RESTRICT`) của PostgreSQL bảo vệ toàn vẹn dữ liệu xuyên suốt 34 bảng.
+  * **Đánh đổi chấp nhận**: PostgreSQL đòi hỏi thiết kế schema chặt chẽ (schema migration qua 18 script), nhưng đổi lại hệ thống có độ tin cậy $100\%$ về mặt trạng thái.
+
+---
+
+#### Câu hỏi 2: Tại sao phải tách rời Jenkins (CI) và Temporal (CD) thay vì dùng Jenkins làm luôn cả CD hoặc dùng ArgoCD/GitOps thuần?
+* **Câu trả lời phản biện**:
+  * **Nguyên tắc "Tách rời Compute ngắn hạn và Workflow dài hạn"**:
+    * **Jenkins (CI - Ephemeral Compute)**: Xuất sắc trong việc cấp phát máy ảo/container ngắn hạn để biên dịch mã nguồn (compile code), kéo hàng gigabyte thư viện, chạy 1,000 unit test. Tác vụ này tiêu tốn CPU/RAM cực lớn nhưng kết thúc trong vài phút. Khi xong, máy ảo bị hủy bỏ (ephemeral).
+    * **Temporal (CD - Durable Execution Workflow)**: Quá trình CD (phân phối) lại có bản chất hoàn toàn khác: Nó cần **chờ đợi (Long-running & Durable)**. Ví dụ: Deploy xong Canary 10%, hệ thống phải dừng lại 4 tiếng để lắng nghe tỷ lệ lỗi; hoặc dừng lại 2 ngày để chờ Trưởng nhóm phê duyệt (Human Approval Gate). Nếu dùng Jenkins để chờ, bạn sẽ phải giữ một worker/thread chạy ngâm trong 2 ngày -> Lãng phí tài nguyên và nếu Jenkins restart thì pipeline đứt gánh giữa đường. Temporal lưu toàn bộ lịch sử biến số vào event history, cho phép workflow ngủ hàng tháng mà không tốn một chu kỳ CPU nào.
+  * **Tại sao không dùng ArgoCD / GitOps thuần?**
+    * ArgoCD cực kỳ mạnh trên Kubernetes thuần túy (Kubernetes-native). Nhưng trong thực tế doanh nghiệp lớn, hạ tầng không chỉ có k8s. Doanh nghiệp còn có máy chủ vật lý Linux (Bare-metal), máy ảo AWS EC2, tác vụ chạy Database Migration với khóa an toàn, và các cổng phê duyệt tuân thủ chính sách liên phòng ban. ArgoCD không phải là một Orchestration State Machine tổng thể cho các tác vụ phi-Kubernetes này. netCI đứng ở tầng trên làm Bộ Não Điều Phối (Control Plane), biến Jenkins và ArgoCD thành các worker thực thi bên dưới.
+
+---
+
+#### Câu hỏi 3: Tại sao netCI không dùng luôn Spotify Backstage mà phải tự xây Control Plane riêng?
+* **Câu trả lời phản biện**:
+  * **Hiểu lầm phổ biến về Backstage**: Nhiều người nghĩ Backstage là một hệ thống CI/CD hoàn chỉnh. **Thực tế hoàn toàn không phải!**
+  * **Spotify Backstage thực chất là gì?** Backstage là một **Frontend Plugin Framework** (viết bằng React + Node.js). Nó chỉ là cái "vỏ bọc giao diện" (Frontend Portal) và cung cấp một danh mục phần mềm dạng tĩnh (Software Catalog đọc từ file `catalog-info.yaml` trên Git). Backstage **KHÔNG HỀ CÓ**:
+    1. Không có Máy trạng thái triển khai (Deployment State Machine).
+    2. Không có Cơ chế khóa hạ tầng chống xung đột (Fencing Tokens & Leases).
+    3. Không có Động cơ phân tích đồ thị song song (DAG Engine).
+    4. Không có Cơ chế Rollback hai pha bảo vệ hạ tầng.
+  * **Mối quan hệ giữa netCI và Backstage**:
+    * netCI chính là **Trái Tim & Bộ Não Điều Khiển (The Delivery Engine)** mà Backstage đang thiếu.
+    * Chúng ta đã thiết kế sẵn **Backstage Seam** (`backend/app/catalog/`): netCI cung cấp các API chuẩn để Backstage có thể cắm trực tiếp vào. Người dùng công ty nếu thích giao diện của Backstage thì vẫn có thể dùng Backstage, nhưng toàn bộ logic sinh tử đằng sau sẽ do netCI thực thi!
+
+---
+
+#### Câu hỏi 4: Tại sao dùng Fencing Tokens + DB Lease thay vì dùng Redis Redlock để khóa tài nguyên?
+* **Câu trả lời phản biện**:
+  * **Bài học kinh điển của Martin Kleppmann (Tác giả cuốn sách Designing Data-Intensive Applications)**:
+    * Khóa phân tán kiểu Redis Redlock dựa trên giả định về **Thời Gian Thực (Wall-clock time)**. Giả sử Worker A lấy được lock trong 30 giây. Đột nhiên Worker A gặp hiện tượng "Garbage Collection Pause" (dừng tiến trình thu hồi bộ nhớ) hoặc nghẽn mạng trong 35 giây.
+    * Hết 30 giây, Redis tự động giải phóng lock và cấp lock đó cho Worker B.
+    * Khi Worker A tỉnh dậy, nó **nghĩ rằng nó vẫn đang giữ lock** và tiếp tục gửi lệnh ghi đè xuống Kubernetes/Server. Cả Worker A và Worker B cùng thao tác -> Gây thảm họa phân rã hệ thống (Split-Brain).
+  * **Giải pháp Fencing Token của netCI**:
+    * Chúng ta không tin vào đồng hồ phân tán. Mỗi khi một run giành được quyền thực thi (lease), nó được PostgreSQL cấp một con số tăng đơn điệu (Monotonic Fencing Token, ví dụ: Run sau có token = 43, run trước token = 42).
+    * Mọi lệnh ghi hoặc cập nhật trạng thái xuống database đều kèm điều kiện:
+      ```sql
+      UPDATE runs SET status = 'completed' WHERE id = :run_id AND fence_token = :token;
+      ```
+    * Nếu Worker A tỉnh dậy với token cũ ($42$), database lập tức từ chối vì token hiện tại đã là $43$ ($0\text{ rows updated}$). Thảm họa bị triệt tiêu $100\%$ về mặt toán học.
+
+```
+                    HIỂM HỌA SPLIT-BRAIN KHI DÙNG REDLOCK
+Worker A (Token 42): [Giành Lock 30s] ---> [BỊ GC PAUSE 35s...] --------> [Tỉnh dậy ghi đè!] -> THẢM HỌA!
+Redis Lock:                                [Hết 30s -> Mất Lock]
+Worker B (Token 43):                       [Giành Lock Mới] ----> [Đang Deploy...]
+
+               CƠ CHẾ BẢO VỆ TUYỆT ĐỐI VỚI FENCING TOKEN CỦA NETCI
+Worker A (Token 42): [BỊ GC PAUSE...] ---------------------------------> [Gửi SQL với Token 42]
+                                                                                   |
+                                                                        [BÁC BỎ: DB đã lên Token 43!]
+Worker B (Token 43): [Được cấp Token 43] ----> [Gửi SQL Token 43] -----> [CHẤP THUẬN: An toàn 100%]
+```
+
+---
+
+#### Câu hỏi 5: Tại sao dùng Transactional Outbox Pattern thay vì bắn trực tiếp Webhook hoặc Kafka message ngay khi có sự kiện?
+* **Câu trả lời phản biện**:
+  * **Hiểm họa "Hai Bước Ghi Độc Lập" (Dual-Write Hazard)**:
+    * Giả sử khi một bản build thành công, code của bạn viết như sau:
+      ```python
+      # CÁCH LÀM SAI LẦM:
+      db.commit_run_status("completed")  # Bước 1: Ghi DB
+      send_slack_webhook(event)          # Bước 2: Bắn Webhook ra ngoài
+      ```
+    * Nếu bước 1 thành công nhưng bước 2 mạng bị ngắt (hoặc Slack bị sập 500): Webhook biến mất vĩnh viễn, người dùng không nhận được thông báo, hệ thống bên ngoài không biết deploy đã xong.
+    * Nếu đảo ngược lại: Bắn webhook trước rồi commit DB sau. Nếu DB bị deadlock hoặc lỗi kết nối, webhook đã bay đi báo tin mừng giả dối (False Green), trong khi DB bị rollback.
+  * **Cách netCI giải quyết triệt để**:
+    * Sử dụng bảng `outbox_events`. Việc ghi nhận trạng thái Run và việc chèn event vào outbox nằm trong **CÙNG MỘT TRANSACTION DATABASE DUY NHẤT**:
+      ```sql
+      BEGIN;
+      UPDATE runs SET status = 'completed' WHERE id = '...';
+      INSERT INTO outbox_events (id, event_type, payload, status) VALUES ('...', 'run.completed', '{...}', 'pending');
+      COMMIT;
+      ```
+    * Cả 2 cùng thành công, hoặc cả 2 cùng thất bại (All-or-Nothing).
+    * Một worker chạy nền độc lập (`OutboxRelay`) sẽ quét các event `pending`, gửi đi với cơ chế thử lại lũy thừa (Exponential Backoff: 1s, 2s, 4s, 8s...). Dù Slack có sập nửa ngày, khi Slack sống lại, event vẫn được gửi chuẩn xác mà không bao giờ mất dữ liệu.
+
+---
+
+#### Câu hỏi 6: Tại sao dùng thuật toán Kahn cho Pipeline DAG thay vì đệ quy DFS (Depth-First Search)?
+* **Câu trả lời phản biện**:
+  * **DFS thuần túy chỉ giải quyết được việc sắp xếp thứ tự 1 chiều**, nhưng trong CI/CD hiện đại, chúng ta cần **thực thi song song (Parallel Execution)** theo từng đợt sóng (Waves).
+  * **Nguyên lý của thuật toán Kahn (dựa trên Bán bậc vào - In-degree)**:
+    1. Tính `in-degree` (số lượng công việc tiền đề phụ thuộc) của từng bước trong Pipeline.
+    2. Gom tất cả các bước có `in-degree = 0` vào một mảng: **Đây chính là nhóm công việc có thể nổ súng chạy song song cùng lúc ngay lập tức!**
+    3. Khi một bước hoàn thành, giảm `in-degree` của các bước sau nó đi 1. Bước nào chạm mốc 0 lại được đẩy vào hàng đợi chạy tiếp theo.
+  * **Phát hiện chu trình chết (Cycle Detection)**: Nếu Pipeline bị ai đó cấu hình vòng lặp vô tận (Bước A cần B, B cần C, C lại cần A), thuật toán DFS nếu không xử lý khéo léo sẽ gây tràn bộ nhớ ngăn xếp (Stack Overflow). Thuật toán Kahn chỉ cần đếm: Nếu tổng số bước duyệt được $< V$ (tổng số node), hệ thống khẳng định $100\%$ đồ thị có vòng lặp luẩn quẩn và từ chối chạy ngay ở bước nộp kế hoạch. Độ phức tạp cực kỳ tối ưu: $\mathcal{O}(V + E)$.
+
+---
+
+#### Câu hỏi 7: Tại sao dùng Open Policy Agent (OPA Rego) thay vì viết `if/else` bằng code Python trong ứng dụng?
+* **Câu trả lời phản biện**:
+  * **Nguyên tắc Phân quyền Trách nhiệm (Separation of Governance & Execution)**:
+    * Nếu viết luật bằng code Python: Mỗi khi Giám đốc Bảo mật (CISO) yêu cầu *"Từ hôm nay cấm deploy vào thứ Sáu sau 17h"* hoặc *"Chỉ image quét 0 lỗi Critical mới được lên Production"*, lập trình viên backend sẽ phải sửa code Python, chạy lại unit test, build lại Docker image của netCI và restart server.
+  * **Với OPA Rego (Policy-as-Code)**:
+    * Chính sách bảo mật được tách hoàn toàn ra khỏi mã nguồn ứng dụng, lưu thành các file `.rego`.
+    * Đội bảo mật kiểm soát repo policy riêng. netCI chỉ đóng vai trò là điểm thực thi chính sách (Policy Enforcement Point - PEP), nạp policy bundle động mà không cần dừng hệ thống 1 giây nào.
+    * Khả năng Audit: Mọi quyết định cho phép (`allow = true`) hay từ chối (`allow = false`) kèm lý do vi phạm đều được sinh ra dưới dạng tài liệu JSON chuẩn hóa, phục vụ trực tiếp cho các kỳ kiểm toán tuân thủ quốc tế (SOC2, ISO 27001).
+
+---
+
+#### Câu hỏi 8: Tại sao Rollback phải là Máy Trạng Thái Hai Pha (`rollback_in_progress` -> `rolled_back` / `rollback_failed`) mà không chuyển thẳng sang `rolled_back`?
+* **Câu trả lời phản biện**:
+  * **Triết lý "Chống hiển thị màu xanh giả" (Zero False Greens)**:
+    * Rất nhiều hệ thống kém chất lượng trên thị trường mắc lỗi này: Khi người dùng bấm nút "Rollback", hệ thống lập tức đổi giao diện sang màu xanh lá cây `Rolled Back` để tạo cảm giác an tâm tức thì.
+    * Nhưng trên thực tế hạ tầng: Lệnh rollback đang gửi xuống cụm Kubernetes hoặc máy chủ có thể bị thất bại thảm hại! (Ví dụ: Docker image phiên bản cũ đã bị xóa khỏi registry, hoặc máy chủ hết dung lượng ổ cứng không kéo được bản cũ về).
+    * Nếu hệ thống báo xanh giả, kỹ sư trực ca sẽ an tâm đi ngủ, trong khi người dùng thực tế đang nhận lỗi 500 sập dịch vụ!
+  * **Cơ chế Hai Pha của netCI**:
+    * Pha 1: Chuyển sang `rollback_in_progress`. Cửa khóa hạ tầng vẫn giữ nguyên.
+    * Pha 2: Runner thực sự thực thi lệnh hạ cấp dưới hạ tầng và kiểm tra trạng thái sức khỏe (Healthcheck probe).
+      * Nếu hạ tầng xác nhận bản cũ đã nhận 100% traffic an toàn -> Chuyển `rolled_back`.
+      * Nếu có bất kỳ lỗi nào xảy ra -> Chuyển ngay sang `rollback_failed` (màu đỏ đậm) và bắn cảnh báo khẩn PagerDuty/Slack để con người nhảy vào can thiệp thủ công. Tuyệt đối không lừa dối người vận hành!
+
+---
+
+#### Câu hỏi 9: Tại sao Workload Identity Token lại dùng HMAC-SHA256 với Single-Use Nonce (`jti`) thay vì dùng mTLS hay dựng máy chủ OAuth2 riêng?
+* **Câu trả lời phản biện**:
+  * **Bối cảnh của CI/CD Runner**: Các runner thực thi là các container ngắn hạn (chỉ sống từ 1 đến 5 phút rồi biến mất).
+  * **Nhược điểm của mTLS**: Đòi hỏi hạ tầng Quản lý khóa công khai (PKI - Public Key Infrastructure), phải liên tục cấp phát, xác thực và thu hồi chứng chỉ (Certificate Rotation) cho hàng nghìn container sinh ra và chết đi mỗi ngày. Chi phí vận hành hạ tầng là quá đắt đỏ và cồng kềnh.
+  * **Nhược điểm của OAuth2 Server riêng (Keycloak/Hydra)**: Tạo ra thêm một thành phần phụ thuộc (Single Point of Failure). Nếu Keycloak quá tải, toàn bộ pipeline CI/CD của công ty bị tê liệt hoàn toàn.
+  * **Giải pháp của netCI**:
+    * Sử dụng Workload Identity Token tự ký bằng HMAC-SHA256 với bí mật bảo vệ của hệ thống.
+    * Token gắn chặt với: `run_id`, `environment_id`, và thời hạn cực ngắn (TTL = 15 phút).
+    * Cơ chế **Single-Use `jti` (JWT ID)**: Mỗi token có một mã `jti` duy nhất. Sau khi Runner hoàn thành việc báo cáo kết quả, `jti` này bị đánh dấu `revoked` vĩnh viễn trong database. Kẻ gian dù có bắt trộm được token qua log mạng cũng không thể tái sử dụng (Replay Attack). Vừa nhẹ như lông hồng, vừa an toàn bảo mật cấp ngân hàng.
+
+---
+
+#### Câu hỏi 10: Tại sao dùng Phân trang con trỏ (Cursor-based Pagination) thay vì `OFFSET / LIMIT` truyền thống cho Audit Logs?
+* **Câu trả lời phản biện**:
+  * **Vấn đề hiệu năng khi dữ liệu lớn**:
+    * Trong một hệ thống giao hàng phần mềm quy mô lớn, bảng `audit_events` và `deployment_logs` nhanh chóng chạm mốc hàng chục triệu bản ghi.
+    * Nếu dùng `OFFSET 100000 LIMIT 50`: Cơ sở dữ liệu PostgreSQL buộc phải duyệt qua và đọc đủ $100,000$ dòng dữ liệu trong ổ cứng rồi mới vứt bỏ để lấy ra đúng $50$ dòng cuối cùng. Thời gian phản hồi sẽ tăng từ vài mili-giây lên 5-10 giây, làm nghẽn toàn bộ kết nối DB.
+  * **Hiện tượng "Trôi Trang" (Page Drift)**:
+    * Khi người dùng đang xem trang 1, hệ thống liên tục ghi thêm 10 log mới. Khi người dùng bấm sang trang 2, do có 10 dòng mới đẩy vào đầu bảng, các dòng của trang 1 bị đẩy lùi xuống trang 2. Người dùng sẽ nhìn thấy các bản ghi bị lặp lại hoặc bị nhảy cóc bỏ sót dữ liệu.
+  * **Cách netCI thiết kế Cursor Pagination**:
+    * Sử dụng chỉ mục B-tree kết hợp `(created_at, id)`:
+      ```sql
+      SELECT * FROM audit_events 
+      WHERE (created_at, id) < (:cursor_created_at, :cursor_id) 
+      ORDER BY created_at DESC, id DESC 
+      LIMIT 50;
+      ```
+    * Cơ sở dữ liệu nhảy thẳng tới vị trí con trỏ thông qua cây B-tree với độ phức tạp $\mathcal{O}(\log N)$, sau đó đọc tuần tự 50 dòng. Thời gian truy vấn luôn giữ mức $< 2\text{ms}$ bất kể bảng có 100 nghìn hay 100 triệu dòng!
+
+---
+
+### 11.2. Kịch bản giải quyết sự cố thực tế & Khả năng chịu lỗi (Failure Scenarios & Resilience)
+
+Khi đi bảo vệ đồ án hoặc trả lời phỏng vấn, câu hỏi phân loại ứng viên xuất sắc nhất luôn là: *"Nếu hệ thống đang chạy mà bị sập bất thình lình thì chuyện gì xảy ra?"*. Dưới đây là 5 kịch bản sự cố thực tế và cách netCI xử lý tự động:
+
+#### Kịch bản 1: Đang deploy dở thì toàn bộ cụm máy chủ netCI bị cúp điện đột ngột
+* **Hiện tượng**: Worker đang chạy một pipeline deploy quan trọng lên Production thì mất điện. Tiến trình bị tiêu diệt ngay lập tức mà không kịp ghi status `failed` hay `completed`.
+* **Cơ chế phục hồi của netCI (Lease Expiration & Heartbeat Reaper)**:
+  * Trong netCI, mỗi run khi chạy phải liên tục gửi nhịp tim (Heartbeat) cập nhật cột `last_heartbeat_at` trong database.
+  * Khi server khởi động lại, tiến trình bảo vệ `ZombieReaper` được kích hoạt. Nó quét toàn bộ các run có trạng thái `running` mà đã quá hạn Lease (ví dụ: Không có heartbeat trong 5 phút).
+  * netCI tự động thu hồi Lease, chuyển trạng thái run đó về `failed` với mã lỗi `RUN_TIMEOUT_OR_NODE_CRASH`, và kích hoạt Outbox báo động. Hạ tầng môi trường Production lập tức được giải phóng khóa (Release Lock) để không bị treo vĩnh viễn.
+
+#### Kịch bản 2: Sự cố Split-brain — Runner ma bị đơ rồi đột ngột sống lại đòi ghi đè
+* **Hiện tượng**: Runner 1 chạy quá chậm do nghẽn mạng, bị hệ thống coi là đã chết và cấp quyền chạy cho Runner 2 (với `fence_token` mới). Bất thình lình mạng thông suốt, Runner 1 sống lại và cố gắng gửi API báo cáo kết quả hoàn thành.
+* **Cơ chế triệt tiêu của netCI**:
+  * Runner 1 mang theo token cũ ($F_1$).
+  * Khi Runner 1 gọi API kết thúc, tầng `FencingTokenVerifier` kiểm tra trong DB thấy token hiện tại đã là $F_2$ ($F_2 > F_1$).
+  * netCI từ chối ngay lập tức với mã lỗi HTTP `409 Conflict: STALE_FENCING_TOKEN`. Toàn bộ dữ liệu của Runner ma bị phong tỏa, bảo vệ tuyệt đối tính nhất quán của hệ thống.
+
+#### Kịch bản 3: Sập cổng Webhook Slack hoặc hệ thống tiếp nhận bên ngoài
+* **Hiện tượng**: Một đợt deploy thành công cần thông báo cho toàn bộ công ty qua Slack, nhưng đúng lúc đó mạng Internet quốc tế bị đứt hoặc Slack gặp sự cố ngừng hoạt động (Outage).
+* **Cơ chế phục hồi của netCI**:
+  * Nhờ kiến trúc **Transactional Outbox**, sự kiện deploy không bao giờ bị mất. Bản ghi event nằm an toàn trong bảng `outbox_events` với `status = 'pending'`.
+  * Tiến trình `OutboxRelay` ghi nhận lỗi kết nối, tự động tăng `retry_count` và lùi thời gian thử lại theo thuật toán **Exponential Backoff có thêm độ nhiễu (Jitter)** để tránh hiện tượng bão yêu cầu (Thundering Herd):
+    $$T_{\text{wait}} = 2^{\text{retry\_count}} + \text{random\_jitter}(0, 1) \text{ (giây)}$$
+  * Khi Slack hoạt động trở lại, các thông báo được gửi đi tuần tự, đầy đủ không thiếu một tin nhắn nào.
+
+#### Kịch bản 4: Rollback bị nghẽn hạ tầng (K8s không kéo được Image cũ)
+* **Hiện tượng**: Phiên bản mới bị lỗi, hệ thống kích hoạt tự động rollback về phiên bản v1.2. Nhưng Docker Registry chứa image v1.2 bị mất kết nối, khiến pod Kubernetes rơi vào trạng thái `ImagePullBackOff`.
+* **Cơ chế an toàn của netCI**:
+  * Nhờ máy trạng thái Hai Pha, hệ thống đang giữ trạng thái `rollback_in_progress`.
+  * Bộ đếm giờ của Canary/Rollback Engine phát hiện sau thời gian quy định (`rollback_timeout_seconds`) mà pod v1.2 vẫn chưa đạt trạng thái `Ready`.
+  * netCI chuyển ngay trạng thái thành `rollback_failed`, gióng chuông báo động đỏ PagerDuty/Email cho toàn bộ đội DevOps On-call, đồng thời ghi lại vết Audit toàn vẹn. Kỹ sư tiếp quản sự cố biết chính xác nguyên nhân mà không bị đánh lừa bởi màu xanh giả tạo.
+
+#### Kịch bản 5: Quá tải cơ sở dữ liệu khi 10,000 lập trình viên cùng thao tác
+* **Hiện tượng**: Đầu giờ sáng, hàng nghìn kỹ sư cùng vào portal tra cứu trạng thái và kích hoạt pipeline.
+* **Cơ chế tự vệ của netCI**:
+  1. **Connection Pooling có vách ngăn (Bounded Pool)**: Sử dụng SQLAlchemy/asyncpg với cấu hình giới hạn cứng số lượng kết nối tối đa (`max_overflow`, `pool_size`), ngăn chặn tình trạng làm tràn RAM của PostgreSQL.
+  2. **Rate Limiting bằng thuật toán Token Bucket**: Bảo vệ các endpoint nhạy cảm (như trigger run, nạp webhook SCM). Nếu một repo hoặc một IP gửi quá ngưỡng cho phép, hệ thống trả về mã `429 Too Many Requests` ngay tại tầng Middleware trước khi kịp chạm vào Database.
+
+---
+
+### 11.3. Bản chất toán học & Các công thức tính toán cốt lõi
+
+netCI không dùng các chỉ số "ước lượng". Mọi tính toán trong hệ thống đều dựa trên nền tảng toán học chuẩn xác:
+
+#### 1. Bộ chỉ số DORA Metrics chuẩn quốc tế (`backend/app/projections/dora.py`)
+DORA (DevOps Research and Assessment) là tiêu chuẩn vàng của ngành công nghệ thế giới để đo lường hiệu suất chuyển giao phần mềm:
+
+* **Deployment Frequency (Tần suất triển khai - DF)**:
+  $$\text{DF} = \frac{N_{\text{successful\_deployments}}}{\Delta t \text{ (ngày/tuần/tháng)}}$$
+  * *Xếp hạng Elite*: Triển khai nhiều lần trong một ngày.
+
+* **Lead Time for Changes (Thời gian dẫn từ code đến sản phẩm - LTC)**:
+  $$\text{LTC} = \frac{1}{M} \sum_{i=1}^{M} \left( T_{\text{production\_deployed}}^{(i)} - T_{\text{first\_commit}}^{(i)} \right)$$
+  * Đo bằng phút hoặc giờ. Đo lường tốc độ đưa giá trị từ ý tưởng thành phần mềm chạy thật.
+
+* **Change Failure Rate (Tỷ lệ thay đổi thất bại - CFR)**:
+  $$\text{CFR} = \frac{N_{\text{failed\_or\_rolled\_back\_runs}}}{N_{\text{total\_production\_runs}}} \times 100\%$$
+  * *Xếp hạng Elite*: $\le 5\%$. Đo lường độ ổn định của quy trình kiểm thử và tự động hóa.
+
+* **Mean Time to Recovery (Thời gian phục hồi bình quân - MTTR)**:
+  $$\text{MTTR} = \frac{1}{K} \sum_{j=1}^{K} \left( T_{\text{recovery\_healthy}}^{(j)} - T_{\text{incident\_detected}}^{(j)} \right)$$
+  * Đo lường khả năng dập tắt sự cố nhanh chóng nhờ cơ chế Auto-rollback tự động của netCI.
+
+---
+
+#### 2. Mô hình Chấm điểm Rủi ro Triển khai (Risk Scoring Model - `backend/app/policy/risk.py`)
+Trước khi một bản release được phép đưa lên Production, netCI tính toán **Điểm rủi ro (Risk Score)** $R \in [0, 100]$ dựa trên hàm trọng số tuyến tính:
+
+$$R = \min \left( 100, \sum_{k=1}^{n} w_k \cdot f_k \right)$$
+
+Trong đó:
+* $w_{\text{env}}$: Hệ số môi trường (Production = $40$, Staging = $10$, Dev = $0$).
+* $w_{\text{time}}$: Hệ số ngoài giờ hành chính hoặc cuối tuần ($+25$ điểm nếu deploy vào thứ Sáu sau 16h).
+* $w_{\text{payload}}$: Kích thước gói thay đổi (Số file sửa đổi $> 50$ file hoặc $> 2000$ dòng code: $+20$ điểm).
+* $w_{\text{author}}$: Lịch sử tác giả (Kỹ sư mới gia nhập chưa có lịch sử deploy thành công: $+15$ điểm).
+* $w_{\text{cve}}$: Điểm lỗ hổng bảo mật từ công cụ quét bảo mật (Mỗi lỗi CVE High/Critical: $+30$ điểm).
+
+**Quy tắc ra quyết định**:
+* Nếu $R < 30$: **Rủi ro thấp** $\rightarrow$ Tự động phê duyệt (Auto-approved) và tiến hành deploy thẳng.
+* Nếu $30 \le R < 70$: **Rủi ro trung bình** $\rightarrow$ Bắt buộc cần 1 Trưởng nhóm phê duyệt (Single Approval Gate).
+* Nếu $R \ge 70$: **Rủi ro cao** $\rightarrow$ Bắt buộc cần 2 cấp phê duyệt (Phụ trách Kỹ thuật + Đội Bảo mật), đồng thời kích hoạt chế độ giám sát Canary nghiêm ngặt.
+
+---
+
+#### 3. Thuật toán Kahn lập lịch DAG (`backend/app/workflows/dag.py`)
+Cho đồ thị có hướng không chu trình $G = (V, E)$ đại diện cho các bước trong pipeline:
+* Tập đỉnh $V$: Các tác vụ (`build`, `test-unit`, `test-integration`, `security-scan`, `deploy-canary`, `deploy-prod`).
+* Tập cạnh $E$: Mối quan hệ phụ thuộc ($(u, v) \in E$ nghĩa là $u$ phải chạy xong thì $v$ mới được chạy).
+
+**Thuật toán chia sóng song song (Wave Partitioning)**:
+```
+Khởi tạo:
+  S_0 = { v ∈ V | in_degree(v) = 0 }   // Sóng 0: Các việc chạy được ngay
+  wave_index = 0
+
+Vòng lặp:
+  Trong khi S_{wave_index} không rỗng:
+    1. Thực thi đồng thời tất cả các node trong S_{wave_index} trên cụm Runner.
+    2. Khi các node hoàn thành:
+       Với mỗi node u ∈ S_{wave_index}:
+         Với mỗi cạnh (u, v) ∈ E:
+           in_degree(v) = in_degree(v) - 1
+    3. wave_index = wave_index + 1
+    4. S_{wave_index} = { v ∈ V | in_degree(v) == 0 và chưa thực thi }
+
+Kiểm tra chu trình:
+  Nếu tổng số node đã xử lý < |V|:
+    BÁO LỖI: Đồ thị chứa chu trình (Cyclic Dependency)!
+```
+Độ phức tạp tính toán: Thời gian $\mathcal{O}(|V| + |E|)$, Không gian $\mathcal{O}(|V|)$. Tối ưu tuyệt đối cho hệ thống quy mô lớn.
+
+---
+
+#### 4. Phân tích Canary & Công thức Vi phạm SLO (`backend/app/traffic.py`)
+Khi triển khai chiến lược Canary, lưu lượng người dùng được dịch chuyển dần theo từng bước:
+$$P_{\text{traffic}} = [10\%, 25\%, 50\%, 100\%]$$
+Tại mỗi bước $k$, hệ thống quan sát tỷ lệ lỗi thực tế $E_k$ và độ trễ phân vị 99 ($L_{99, k}$) trong cửa sổ quan sát $\Delta T$:
+
+$$E_k = \frac{\sum \text{HTTP 5xx Errors}}{\sum \text{Total Requests}} \times 100\%$$
+
+**Điều kiện kích hoạt Tự động Rollback tức thì (Automatic Rollback Trigger)**:
+$$\text{Rollback} \iff \left( E_k > E_{\text{threshold}} \right) \lor \left( L_{99, k} > L_{\text{threshold}} \right) \lor \left( \Delta E_k > \alpha \cdot E_{\text{baseline}} \right)$$
+
+Trong đó:
+* $E_{\text{threshold}}$: Ngưỡng lỗi tối đa cho phép (thường là $1\%$).
+* $L_{\text{threshold}}$: Ngưỡng độ trễ p99 tối đa (thường là $500\text{ms}$).
+* $\alpha$: Hệ số suy biến so với phiên bản ổn định cũ (thường là $1.5$ lần).
+
+Nếu vi phạm bất kỳ điều kiện nào, Canary Engine lập tức ngắt lưu lượng của bản mới về $0\%$ trong vòng chưa đầy $3$ giây và kích hoạt quy trình phục hồi an toàn.
+
+---
+
+### 11.4. Kịch bản 5 phút thuyết trình & Bảo vệ đồ án mẫu (Pitching Script)
+
+> Hãy luyện tập đọc kịch bản này 2-3 lần. Đây là cấu trúc thuyết trình chuẩn quốc tế theo phương pháp **Problem - Solution - Architecture - Evidence - Conclusion**, giúp người nghe lập tức bị cuốn hút và đánh giá bạn ở tầm vóc của một Kỹ sư Thiết kế Hệ thống (System Architect).
+
+---
+
+#### Phút 1: Đặt vấn đề nhức nhối (The Hook & Pain Point)
+> *"Kính thưa Thầy/Cô và Hội đồng giám khảo,*
+> 
+> *Trong phát triển phần mềm hiện đại, có một nghịch lý rất lớn: Lập trình viên có thể viết code rất nhanh, nhưng từ lúc dòng code được viết ra cho đến khi nó chạy an toàn trên Production lại là một cơn ác mộng. Các doanh nghiệp thường gặp 3 nỗi đau kinh điển:*
+> 1. *Xung đột hạ tầng: Hai người cùng deploy một lúc gây đè nát môi trường.*
+> 2. *Màu xanh giả dối: Công cụ CI/CD báo xanh, nhưng lên thực tế thì sập vì không có cơ chế rollback chuẩn.*
+> 3. *Kiểm toán thủ công: Ai deploy cái gì, rủi ro ra sao, tuân thủ chính sách thế nào gần như không thể truy vết khi có sự cố.*
+> 
+> *Để giải quyết triệt để vấn đề này, em đã nghiên cứu và phát triển **netCI Delivery Platform** — một Nền tảng Phân phối Phần mềm Nội bộ thế hệ mới với phương châm cốt lõi: **Không bao giờ hiển thị màu xanh giả và An toàn tuyệt đối về mặt trạng thái phân tán**."*
+
+---
+
+#### Phút 2: Giới thiệu Kiến trúc & Các nguyên tắc vàng (The Solution Architecture)
+> *"Về mặt kiến trúc, netCI được xây dựng dựa trên 4 trụ cột công nghệ vững chắc:*
+> 1. *Thứ nhất, **PostgreSQL làm Single Source of Truth**: Toàn bộ hệ thống được quản lý qua 34 bảng dữ liệu chặt chẽ và 18 bản migration. Chúng em sử dụng Row-level Lock (`SELECT FOR UPDATE`) và Partial Unique Index để triệt tiêu hoàn toàn hiện tượng Race Condition ở cấp độ vật lý.*
+> 2. *Thứ hai, **Cơ chế Fencing Tokens và DB Leases**: Thay vì tin vào khóa phân tán Redis vốn rất dễ bị lỗi Split-brain khi có GC pause, netCI sử dụng token tăng đơn điệu để loại bỏ 100% rủi ro của các tiến trình ma.*
+> 3. *Thứ ba, **Transactional Outbox Pattern**: Mọi sự kiện thông báo hay tích hợp bên ngoài đều được ghi nhận nguyên tử trong cùng một Database Transaction, đảm bảo tính nhất quán tuyệt đối giữa dữ liệu và thông báo.*
+> 4. *Thứ tư, **Bộ não điều phối Workflow bằng thuật toán Kahn**: Pipeline DAG được phân tích bán bậc vào để thực thi song song theo từng làn sóng, đồng thời phát hiện chu trình phụ thuộc trong độ phức tạp tuyến tính O(V+E)."*
+
+---
+
+#### Phút 3: Trình diễn các chốt chặn an toàn (Safety Governance in Action)
+> *"Điểm khác biệt lớn nhất giữa netCI và các công cụ thông thường trên thị trường là **Tính Tuân Thủ & Quản Trị Chủ Động (Proactive Governance)**:*
+> * netCI tích hợp bộ engine đánh giá rủi ro tự động dựa trên mô hình toán học chấm điểm từ 0 đến 100.
+> * Chúng em phân tách hoàn toàn tầng chính sách bằng **Open Policy Agent (OPA Rego)**. Doanh nghiệp có thể cập nhật luật cấm deploy hay kiểm tra lỗ hổng bảo mật mà không cần can thiệp một dòng code backend nào.
+> * Đặc biệt, quy trình **Rollback của netCI là một Máy trạng thái hai pha (Two-Phase Rollback)**: Hệ thống chỉ ghi nhận thành công khi hạ tầng thực sự phục hồi. Nếu có lỗi hạ tầng, hệ thống sẽ kích hoạt cảnh báo đỏ ngay lập tức chứ tuyệt đối không báo xanh giả để ru ngủ kỹ sư trực ca."*
+
+---
+
+#### Phút 4: Bằng chứng kiểm chứng thực tế & Kiểm định thảm họa (Evidence & Resilience)
+> *"Để chứng minh tính sẵn sàng cho môi trường sản xuất thực tế (Production-Ready), dự án của chúng em không dừng lại ở mức ý tưởng hay code chạy demo, mà đã trải qua quy trình kiểm thử cực kỳ khắt khe:*
+> * Toàn bộ **13 Phase kỹ thuật** đã hoàn thành 100%.
+> * Hệ sinh thái mã nguồn được bảo vệ bởi **540 kịch bản kiểm thử tự động**, bao gồm 451 backend tests, 63 postgres integration tests và 26 frontend tests.
+> * Chúng em đã thực hiện thành công bài kiểm định **Production Readiness Audit đạt 28/28 tiêu chí tuyệt đối**.
+> * Và quan trọng nhất: Chúng em đã tự động hóa kịch bản **Diễn tập phục hồi thảm họa (Disaster Recovery Drill)**: Mô phỏng toàn bộ dữ liệu bị mất và phục hồi hoàn toàn chỉ trong **4.01 giây** với tính toàn vẹn 100%."*
+
+---
+
+#### Phút 5: Kết luận & Mời hội đồng phản biện (Call to Action & Q&A)
+> *"Tóm lại, netCI không chỉ là một công cụ đóng gói phần mềm thông thường, mà là một nền tảng chuyển giao phần mềm đáng tin cậy, an toàn và sẵn sàng cho các doanh nghiệp có yêu cầu khắt khe nhất về bảo mật và độ ổn định.*
+> 
+> *Toàn bộ mã nguồn, tài liệu thiết kế kiến trúc 26 bản ADR, cùng báo cáo kiểm định chất lượng đều đã sẵn sàng. Em xin chân thành cảm ơn Thầy/Cô và Hội đồng đã lắng nghe, và em rất sẵn lòng trả lời mọi câu hỏi phản biện của Hội đồng!*
 
 ---
 *Bản quyền tài liệu thuộc về dự án netCI Delivery Platform — Cập nhật ngày 05/09/2026.*
