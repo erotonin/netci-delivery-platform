@@ -163,23 +163,57 @@ def discover_tables(url: str) -> list[str]:
 
 def table_counts(url: str, tables: list[str]) -> dict[str, int]:
     """Row counts per table, or -1 if the table is absent."""
-    counts: dict[str, int] = {}
-    for table in tables:
-        exists = psql_value(url, f"SELECT to_regclass('public.{table}') IS NOT NULL")
-        counts[table] = int(psql_value(url, f"SELECT count(*) FROM {table}")) if exists == "t" else -1
+    if not tables:
+        return {}
+    counts: dict[str, int] = {t: -1 for t in tables}
+    in_clause = ", ".join(f"'{safe_identifier(t, what='table')}'" for t in tables)
+    existing_raw = psql_value(
+        url,
+        f"SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' AND table_name IN ({in_clause});",
+    )
+    existing = set(line.strip() for line in existing_raw.splitlines() if line.strip())
+    existing_tables = [t for t in tables if t in existing]
+    if not existing_tables:
+        return counts
+
+    union_queries = [
+        f"SELECT '{safe_identifier(t, what='table')}', count(*) FROM {safe_identifier(t, what='table')}"
+        for t in existing_tables
+    ]
+    batch_sql = " UNION ALL ".join(union_queries) + ";"
+    raw = psql_value(url, batch_sql)
+    for line in raw.splitlines():
+        if "|" in line:
+            tbl, cnt_str = line.split("|", 1)
+            counts[tbl.strip()] = int(cnt_str.strip())
     return counts
 
 
 def table_checksums(url: str, tables: list[str]) -> dict[str, str]:
     """Content checksum per table across all rows ordered deterministically."""
-    checksums: dict[str, str] = {}
-    for table in tables:
-        exists = psql_value(url, f"SELECT to_regclass('public.{table}') IS NOT NULL")
-        if exists == "t":
-            cs = psql_value(url, f"SELECT coalesce(md5(string_agg(md5(t::text), '' ORDER BY t::text)), 'empty') FROM {table} t;")
-            checksums[table] = cs
-        else:
-            checksums[table] = "absent"
+    if not tables:
+        return {}
+    checksums: dict[str, str] = {t: "absent" for t in tables}
+    in_clause = ", ".join(f"'{safe_identifier(t, what='table')}'" for t in tables)
+    existing_raw = psql_value(
+        url,
+        f"SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' AND table_name IN ({in_clause});",
+    )
+    existing = set(line.strip() for line in existing_raw.splitlines() if line.strip())
+    existing_tables = [t for t in tables if t in existing]
+    if not existing_tables:
+        return checksums
+
+    union_queries = [
+        f"SELECT '{safe_identifier(t, what='table')}', coalesce(md5(string_agg(md5(t::text), '' ORDER BY t::text)), 'empty') FROM {safe_identifier(t, what='table')} t"
+        for t in existing_tables
+    ]
+    batch_sql = " UNION ALL ".join(union_queries) + ";"
+    raw = psql_value(url, batch_sql)
+    for line in raw.splitlines():
+        if "|" in line:
+            tbl, cs = line.split("|", 1)
+            checksums[tbl.strip()] = cs.strip()
     return checksums
 
 
@@ -197,21 +231,32 @@ def check_referential_integrity(url: str) -> list[str]:
         "WHERE rc.constraint_schema = 'public';"
     )
     raw = psql_value(url, fk_query)
-    violations: list[str] = []
+    fk_pairs = []
     for line in raw.splitlines():
         parts = [p.strip() for p in line.split("|")]
-        if len(parts) != 4:
-            continue
-        fk_table, fk_col, uq_table, uq_col = parts
-        orphan_query = (
-            f"SELECT count(*) FROM {fk_table} fk "
-            f"WHERE fk.{fk_col} IS NOT NULL "
-            f"AND NOT EXISTS (SELECT 1 FROM {uq_table} uq WHERE uq.{uq_col} = fk.{fk_col});"
-        )
-        count = int(psql_value(url, orphan_query))
-        if count > 0:
-            violations.append(f"{fk_table}.{fk_col} -> {uq_table}.{uq_col}: {count} orphaned rows")
+        if len(parts) == 4:
+            fk_pairs.append(parts)
+
+    if not fk_pairs:
+        return []
+
+    orphan_selects = [
+        f"SELECT '{fk_table}.{fk_col} -> {uq_table}.{uq_col}', count(*) FROM {safe_identifier(fk_table, what='table')} fk "
+        f"WHERE fk.{safe_identifier(fk_col, what='column')} IS NOT NULL "
+        f"AND NOT EXISTS (SELECT 1 FROM {safe_identifier(uq_table, what='table')} uq WHERE uq.{safe_identifier(uq_col, what='column')} = fk.{safe_identifier(fk_col, what='column')})"
+        for fk_table, fk_col, uq_table, uq_col in fk_pairs
+    ]
+    batch_orphan_sql = " UNION ALL ".join(orphan_selects) + ";"
+    batch_raw = psql_value(url, batch_orphan_sql)
+    violations: list[str] = []
+    for line in batch_raw.splitlines():
+        if "|" in line:
+            rel, count_str = line.split("|", 1)
+            count = int(count_str.strip())
+            if count > 0:
+                violations.append(f"{rel.strip()}: {count} orphaned rows")
     return violations
+
 
 
 def get_encryption_key(explicit: str | None = None) -> str | None:

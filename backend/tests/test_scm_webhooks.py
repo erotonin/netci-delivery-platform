@@ -111,7 +111,7 @@ def test_github_webhook_signature_verification_and_trigger():
         "x-hub-signature-256": "sha256=invalid-signature",
         "content-type": "application/json",
     }
-    res_bad = client.post("/webhooks/scm/github", data=raw_body, headers=bad_headers)
+    res_bad = client.post("/webhooks/scm/github", content=raw_body, headers=bad_headers)
     assert res_bad.status_code == 401
 
     # 2. Valid signature -> 201
@@ -122,7 +122,7 @@ def test_github_webhook_signature_verification_and_trigger():
         "x-hub-signature-256": f"sha256={valid_sig}",
         "content-type": "application/json",
     }
-    res_good = client.post("/webhooks/scm/github", data=raw_body, headers=good_headers)
+    res_good = client.post("/webhooks/scm/github", content=raw_body, headers=good_headers)
     assert res_good.status_code == 201
     data = res_good.json()
     assert data["status"] == "triggered"
@@ -168,7 +168,7 @@ def test_gitlab_webhook_token_verification_and_trigger():
         "x-gitlab-token": "wrong-token",
         "content-type": "application/json",
     }
-    res_bad = client.post("/webhooks/scm/gitlab", data=raw_body, headers=bad_headers)
+    res_bad = client.post("/webhooks/scm/gitlab", content=raw_body, headers=bad_headers)
     assert res_bad.status_code == 401
 
     # Valid token -> 201
@@ -178,7 +178,7 @@ def test_gitlab_webhook_token_verification_and_trigger():
         "x-gitlab-token": secret,
         "content-type": "application/json",
     }
-    res_good = client.post("/webhooks/scm/gitlab", data=raw_body, headers=good_headers)
+    res_good = client.post("/webhooks/scm/gitlab", content=raw_body, headers=good_headers)
     assert res_good.status_code == 201
     data = res_good.json()
     assert data["status"] == "triggered"
@@ -217,12 +217,12 @@ def test_webhook_replay_delivery_id_deduplication():
     }
 
     # First delivery: accepted and triggered (201)
-    res1 = client.post("/webhooks/scm/github", data=raw_body, headers=headers)
+    res1 = client.post("/webhooks/scm/github", content=raw_body, headers=headers)
     assert res1.status_code == 201
     assert res1.json()["status"] == "triggered"
 
     # Replayed delivery: atomically detected as duplicate, returns 200 without re-triggering
-    res2 = client.post("/webhooks/scm/github", data=raw_body, headers=headers)
+    res2 = client.post("/webhooks/scm/github", content=raw_body, headers=headers)
     assert res2.status_code == 200
     assert res2.json()["status"] == "ignored_duplicate"
     assert res2.json()["deliveryId"] == delivery_id
@@ -258,7 +258,7 @@ def test_repository_a_does_not_trigger_application_b():
 
     res = client.post(
         "/webhooks/scm/github",
-        data=raw_a,
+        content=raw_a,
         headers={
             "x-github-delivery": delivery_id,
             "x-github-event": "push",
@@ -283,7 +283,7 @@ def test_repository_a_does_not_trigger_application_b():
     raw_unmapped = json.dumps(unmapped_payload).encode("utf-8")
     res_unmapped = client.post(
         "/webhooks/scm/github",
-        data=raw_unmapped,
+        content=raw_unmapped,
         headers={
             "x-github-delivery": f"del-{uuid4().hex}",
             "x-github-event": "push",

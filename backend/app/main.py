@@ -2227,7 +2227,7 @@ async def receive_scm_webhook(
     raw_body = await request.body()
     if len(raw_body) > MAX_WEBHOOK_PAYLOAD_BYTES:
         raise HTTPException(
-            status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            status.HTTP_413_CONTENT_TOO_LARGE,
             "webhook payload exceeds maximum permitted size of 1MB",
         )
 
