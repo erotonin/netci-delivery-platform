@@ -428,6 +428,7 @@ export type ProductionRequest = {
   comment: string | null
   strategy?: 'rolling' | 'canary' | 'blue_green'
   strategyConfig?: Record<string, unknown>
+  canaryRules?: { header_name?: string; header_value?: string; cookie?: string }
   releasePlan?: ReleasePlan | null
   policyDecision?: { id: string; allowed: boolean; riskScore: number; reason: string; checks: Record<string, unknown> } | null
 }
@@ -446,6 +447,7 @@ export type ProductionRequestCreate = {
   runAutomationTests: boolean
   strategy?: 'rolling' | 'canary' | 'blue_green'
   strategyConfig?: Record<string, unknown>
+  canaryRules?: { header_name?: string; header_value?: string; cookie?: string }
 }
 
 export function getPortalDashboard(): Promise<PortalDashboard> {
@@ -567,6 +569,29 @@ export function startModulePipeline(moduleId: string, payload: PipelineRunCreate
     headers: { 'Idempotency-Key': requestId(), 'X-Correlation-Id': requestId() },
     body: JSON.stringify(payload),
   })
+}
+
+export type GitSample = {
+  id: string
+  name: string
+  runtime: Runtime
+  code: string
+  moduleType: string
+  repositoryUrl: string
+  defaultEnvironment: string
+  port: number
+  description: string
+  runner: string
+}
+
+export type GitInfo = {
+  currentCommitSha: string
+  currentBranch: string
+  samples: GitSample[]
+}
+
+export function getGitInfo(): Promise<GitInfo> {
+  return request<GitInfo>('/git/info')
 }
 
 export function cancelPipelineRun(pipelineRunId: string, reason = ''): Promise<PipelineRun> {
@@ -1251,4 +1276,85 @@ export function deprovisionSelfServiceResource(requestIdParam: string): Promise<
     headers: { 'X-Correlation-Id': requestId() },
   })
 }
+
+export type SecurityWaiver = {
+  id: string
+  cveId: string
+  moduleId?: string | null
+  reason: string
+  approvedBy: string
+  status: 'active' | 'expired' | 'revoked'
+  expiresAt: string
+  createdAt: string
+  isValid: boolean
+}
+
+export type SecurityWaiverCreate = {
+  cveId: string
+  moduleId?: string | null
+  reason: string
+  expiresAt: string
+}
+
+export type ServerMaintenanceState = {
+  serverName: string
+  inMaintenance: boolean
+  reason: string
+  updatedBy: string
+  updatedAt: string
+}
+
+export type ServerTelemetry = {
+  serverName: string
+  cpuPercent: number
+  memPercent: number
+  diskPercent: number
+  status: 'normal' | 'critical'
+  observedAt: string
+}
+
+export function listSecurityWaivers(moduleId?: string, activeOnly: boolean = true): Promise<SecurityWaiver[]> {
+  const q = new URLSearchParams()
+  if (moduleId) q.set('moduleId', moduleId)
+  if (activeOnly) q.set('activeOnly', 'true')
+  const qs = q.toString() ? `?${q.toString()}` : ''
+  return request<SecurityWaiver[]>(`/api/v1/security/waivers${qs}`)
+}
+
+export function createSecurityWaiver(payload: SecurityWaiverCreate): Promise<SecurityWaiver> {
+  return request<SecurityWaiver>('/api/v1/security/waivers', {
+    method: 'POST',
+    headers: { 'X-Correlation-Id': requestId() },
+    body: JSON.stringify(payload),
+  })
+}
+
+export function revokeSecurityWaiver(waiverId: string): Promise<{ id: string; status: string }> {
+  return request<{ id: string; status: string }>(`/api/v1/security/waivers/${encodeURIComponent(waiverId)}/revoke`, {
+    method: 'POST',
+    headers: { 'X-Correlation-Id': requestId() },
+  })
+}
+
+export function listServersMaintenance(): Promise<ServerMaintenanceState[]> {
+  return request<ServerMaintenanceState[]>('/api/v1/servers/maintenance')
+}
+
+export function toggleServerMaintenance(
+  serverName: string,
+  inMaintenance: boolean,
+  reason: string = '',
+  updatedBy: string = 'operator'
+): Promise<ServerMaintenanceState> {
+  return request<ServerMaintenanceState>(`/api/v1/servers/${encodeURIComponent(serverName)}/maintenance`, {
+    method: 'POST',
+    headers: { 'X-Correlation-Id': requestId() },
+    body: JSON.stringify({ inMaintenance, reason, updatedBy }),
+  })
+}
+
+export function getServerTelemetry(serverName: string): Promise<ServerTelemetry> {
+  return request<ServerTelemetry>(`/api/v1/servers/${encodeURIComponent(serverName)}/telemetry`)
+}
+
 

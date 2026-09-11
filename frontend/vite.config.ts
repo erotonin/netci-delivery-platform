@@ -4,7 +4,7 @@ import react from '@vitejs/plugin-react'
 // Where the Portal's /api requests go. An environment variable because the lab and a
 // developer's compose stack listen on different ports, and hardcoding one means the
 // other silently talks to nothing.
-const apiTarget = process.env.NETCI_API_URL ?? 'http://127.0.0.1:8000'
+const apiTarget = process.env.NETCI_API_URL ?? 'http://127.0.0.1:8100'
 const apiProxy = {
   '/api': {
     target: apiTarget,
@@ -25,7 +25,7 @@ export default defineConfig({
     // has nothing to do with the code under test.
     include: ['src/**/*.{test,spec}.{ts,tsx}'],
   },
-  server: { port: 5173, proxy: apiProxy },
+  server: { host: '0.0.0.0', port: 5173, proxy: apiProxy },
   // The same proxy for `vite preview`, which serves the production build. Without it the
   // browser tests would exercise a bundle that cannot reach the API -- and the one thing
   // they exist to check is that the Portal and the API agree.

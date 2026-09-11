@@ -25,9 +25,13 @@ function statusLabel(status: string): string {
   return statusLabels[status] ?? status.replace(/_/g, ' ')
 }
 
-function displayRequestId(request: ProductionRequest): string {
-  if (request.id.toUpperCase().startsWith('PR-')) return request.id.toUpperCase()
-  return `PR-${new Date(request.scheduledFor).getFullYear()}-${request.id.replace(/-/g, '').slice(0, 8).toUpperCase()}`
+function displayRequestId(request: any): string {
+  if (!request) return 'PR-UNKNOWN'
+  const id = request.id || request.requestId
+  if (!id || typeof id !== 'string') return 'PR-UNKNOWN'
+  if (id.toUpperCase().startsWith('PR-')) return id.toUpperCase()
+  const year = request.scheduledFor ? new Date(request.scheduledFor).getFullYear() : new Date().getFullYear()
+  return `PR-${year}-${id.replace(/-/g, '').slice(0, 8).toUpperCase()}`
 }
 
 function scheduledDate(value: string): string {
@@ -70,7 +74,7 @@ function RequestDetails({
     let active = true
     getProductionRequestPlan(request.id)
       .then((plan) => {
-        if (active) setCurrentReq(plan)
+        if (active) setCurrentReq((prev) => ({ ...prev, ...plan, id: (plan as any).id || (plan as any).requestId || prev.id }))
       })
       .catch(() => {})
 
@@ -93,7 +97,7 @@ function RequestDetails({
       notify(`Canary advanced to step ${res.step} (${res.trafficWeight}% traffic).`)
       setTrafficInfo({ trafficWeight: res.trafficWeight, canaryStep: res.step })
       const updated = await getProductionRequestPlan(request.id)
-      setCurrentReq(updated)
+      setCurrentReq((prev) => ({ ...prev, ...updated, id: (updated as any).id || (updated as any).requestId || prev.id }))
       onRefresh?.()
     } catch (err) {
       notify(err instanceof Error ? err.message : 'Failed to advance canary', 'error')
@@ -108,7 +112,7 @@ function RequestDetails({
       await abortCanary(request.id, 'Aborted from Release Portal')
       notify('Canary aborted. Traffic rolled back.')
       const updated = await getProductionRequestPlan(request.id)
-      setCurrentReq(updated)
+      setCurrentReq((prev) => ({ ...prev, ...updated, id: (updated as any).id || (updated as any).requestId || prev.id }))
       onRefresh?.()
     } catch (err) {
       notify(err instanceof Error ? err.message : 'Failed to abort canary', 'error')
@@ -218,6 +222,27 @@ function RequestDetails({
           </span>
         ))}
       </div>
+
+      {/* L7 Traffic Steering Rules */}
+      {isCanary && (
+        <div className="canary-rules-panel" style={{ margin: '10px 0', padding: '10px 14px', background: 'rgba(2, 132, 199, 0.08)', borderRadius: 8, border: '1px solid rgba(2, 132, 199, 0.2)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+            <Split size={15} color="#0284c7" />
+            <strong style={{ fontSize: 12, color: '#0284c7' }}>L7 Traffic Steering & Routing Policy</strong>
+          </div>
+          <div style={{ fontSize: 12, display: 'flex', gap: 16, flexWrap: 'wrap' }}>
+            {currentReq.canaryRules?.header_name || (currentReq.strategyConfig?.canary_rules as any)?.header_name ? (
+              <span>HTTP Header: <code className="mono" style={{ color: '#38bdf8' }}>{currentReq.canaryRules?.header_name || (currentReq.strategyConfig?.canary_rules as any)?.header_name}: {currentReq.canaryRules?.header_value || (currentReq.strategyConfig?.canary_rules as any)?.header_value || 'true'}</code></span>
+            ) : null}
+            {currentReq.canaryRules?.cookie || (currentReq.strategyConfig?.canary_rules as any)?.cookie ? (
+              <span>Session Cookie: <code className="mono" style={{ color: '#38bdf8' }}>{currentReq.canaryRules?.cookie || (currentReq.strategyConfig?.canary_rules as any)?.cookie}</code></span>
+            ) : null}
+            {!currentReq.canaryRules?.header_name && !(currentReq.strategyConfig?.canary_rules as any)?.header_name && !currentReq.canaryRules?.cookie && !(currentReq.strategyConfig?.canary_rules as any)?.cookie ? (
+              <span className="muted">Standard progressive percentage split (Step 1: 10%)</span>
+            ) : null}
+          </div>
+        </div>
+      )}
 
       {/* Canary Traffic Controls */}
       {isCanary && isApproved && (
@@ -389,6 +414,9 @@ function NewRequest({
   const [scheduledFor, setScheduledFor] = useState(localScheduleDefault)
   const [review, setReview] = useState(false)
   const [strategy, setStrategy] = useState<'rolling' | 'canary' | 'blue_green'>('rolling')
+  const [canaryHeaderName, setCanaryHeaderName] = useState('X-Beta-Tester')
+  const [canaryHeaderValue, setCanaryHeaderValue] = useState('true')
+  const [canaryCookie, setCanaryCookie] = useState('')
   const [rollback, setRollback] = useState<'automatic' | 'manual'>('automatic')
   const [automation, setAutomation] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -424,7 +452,19 @@ function NewRequest({
         rollbackStrategy: rollback,
         runAutomationTests: automation,
         strategy,
-        strategyConfig: strategy === 'canary' ? { steps: [10, 25, 50, 100] } : {},
+        strategyConfig: strategy === 'canary' ? {
+          steps: [10, 25, 50, 100],
+          canary_rules: {
+            header_name: canaryHeaderName || undefined,
+            header_value: canaryHeaderValue || undefined,
+            cookie: canaryCookie || undefined,
+          },
+        } : {},
+        canaryRules: strategy === 'canary' ? {
+          header_name: canaryHeaderName || undefined,
+          header_value: canaryHeaderValue || undefined,
+          cookie: canaryCookie || undefined,
+        } : undefined,
       })
       onClose()
     } catch (submitError) {
@@ -600,6 +640,48 @@ function NewRequest({
                 <small>Instant cutover with zero downtime</small>
               </button>
             </div>
+            {strategy === 'canary' && (
+              <div
+                className="canary-l7-box full"
+                style={{
+                  marginTop: '12px',
+                  padding: '14px',
+                  background: 'rgba(56, 189, 248, 0.06)',
+                  border: '1px solid rgba(56, 189, 248, 0.25)',
+                  borderRadius: '8px',
+                }}
+              >
+                <strong style={{ display: 'block', fontSize: '13px', color: '#0284c7', marginBottom: '8px' }}>
+                  L7 Traffic Steering & Header Routing (Zero-Downtime Canary)
+                </strong>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                  <label className="field">
+                    <span style={{ fontSize: '12px' }}>HTTP Header Name</span>
+                    <input
+                      value={canaryHeaderName}
+                      onChange={(e) => setCanaryHeaderName(e.target.value)}
+                      placeholder="e.g. X-Beta-Tester"
+                    />
+                  </label>
+                  <label className="field">
+                    <span style={{ fontSize: '12px' }}>HTTP Header Value</span>
+                    <input
+                      value={canaryHeaderValue}
+                      onChange={(e) => setCanaryHeaderValue(e.target.value)}
+                      placeholder="e.g. true"
+                    />
+                  </label>
+                </div>
+                <label className="field" style={{ marginTop: '8px' }}>
+                  <span style={{ fontSize: '12px' }}>Session Cookie Rule (Optional)</span>
+                  <input
+                    value={canaryCookie}
+                    onChange={(e) => setCanaryCookie(e.target.value)}
+                    placeholder="e.g. beta_user=1"
+                  />
+                </label>
+              </div>
+            )}
           </section>
 
           <section className="form-section form-grid">

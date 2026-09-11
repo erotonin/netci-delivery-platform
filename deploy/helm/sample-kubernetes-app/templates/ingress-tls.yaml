@@ -1,0 +1,47 @@
+{{- if or .Values.ingress.enabled (and .Values.traits (and .Values.traits.autoTlsIngress .Values.traits.autoTlsIngress.enabled)) -}}
+{{- $host := .Values.traits.autoTlsIngress.host | default (printf "%s.staging.netci.local" (include "sample-kubernetes-app.fullname" .)) -}}
+{{- $secretName := .Values.traits.autoTlsIngress.tlsSecretName | default (printf "%s-tls" (include "sample-kubernetes-app.fullname" .)) -}}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "sample-kubernetes-app.fullname" . }}-ingress
+  labels:
+    app.kubernetes.io/name: {{ include "sample-kubernetes-app.name" . }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    netci.io/trait: auto-tls-ingress
+  annotations:
+    cert-manager.io/cluster-issuer: {{ .Values.traits.autoTlsIngress.clusterIssuer | default "selfsigned-issuer" | quote }}
+    ingress.kubernetes.io/ssl-redirect: "true"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - {{ $host | quote }}
+      secretName: {{ $secretName | quote }}
+  rules:
+    - host: {{ $host | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "sample-kubernetes-app.fullname" . }}
+                port:
+                  number: {{ .Values.service.port }}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ include "sample-kubernetes-app.fullname" . }}-cert
+  labels:
+    app.kubernetes.io/name: {{ include "sample-kubernetes-app.name" . }}
+    netci.io/trait: auto-tls-ingress
+spec:
+  secretName: {{ $secretName | quote }}
+  issuerRef:
+    name: {{ .Values.traits.autoTlsIngress.clusterIssuer | default "selfsigned-issuer" }}
+    kind: ClusterIssuer
+  dnsNames:
+    - {{ $host | quote }}
+{{- end }}

@@ -7,10 +7,11 @@ import os
 import urllib.error
 import urllib.parse
 import urllib.request
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any, Protocol
 
-from ..domain.models import ServerHealthRecord, utc_now
+from ..domain.models import ServerHealthRecord, ServerMaintenanceState, utc_now
 
 
 class DcimUnavailable(RuntimeError):
@@ -27,10 +28,98 @@ class DcimPage:
 @dataclass(frozen=True)
 class TargetValidationResult:
     valid: bool
-    status: str  # e.g., 'active', 'decommissioned', 'maintenance', 'offline', 'not_found', 'unconfigured'
+    status: str  # e.g., 'active', 'decommissioned', 'maintenance', 'offline', 'not_found', 'unconfigured', 'resource_exhausted'
     message: str
     server_name: str | None = None
     details: dict[str, Any] | None = None
+
+
+@dataclass(frozen=True)
+class ServerTelemetry:
+    cpu_percent: float = 0.0
+    mem_percent: float = 0.0
+    disk_percent: float = 0.0
+    observed_at: datetime = field(default_factory=utc_now)
+
+
+_MAINTENANCE_REGISTRY: dict[str, ServerMaintenanceState] = {}
+_TELEMETRY_REGISTRY: dict[str, Any] = {}
+
+
+def set_server_maintenance(server_name: str, in_maintenance: bool, reason: str = "", operator: str = "operator") -> ServerMaintenanceState:
+    state = ServerMaintenanceState(
+        server_name=server_name,
+        in_maintenance=in_maintenance,
+        reason=reason,
+        updated_by=operator,
+        updated_at=utc_now(),
+    )
+    _MAINTENANCE_REGISTRY[server_name] = state
+    return state
+
+
+def get_server_maintenance(server_name: str) -> ServerMaintenanceState | None:
+    return _MAINTENANCE_REGISTRY.get(server_name)
+
+
+def list_server_maintenance_states() -> list[ServerMaintenanceState]:
+    return list(_MAINTENANCE_REGISTRY.values())
+
+
+def update_server_telemetry(server_name: str, cpu_percent: float, memory_percent: float, disk_percent: float) -> dict[str, Any]:
+    record = {
+        "server_name": server_name,
+        "cpu_percent": cpu_percent,
+        "memory_percent": memory_percent,
+        "disk_percent": disk_percent,
+        "updated_at": utc_now().isoformat(),
+    }
+    _TELEMETRY_REGISTRY[server_name] = record
+    return record
+
+
+def get_server_telemetry(server_name: str) -> dict[str, Any] | None:
+    return _TELEMETRY_REGISTRY.get(server_name)
+
+
+def check_preflight_telemetry(server_name: str) -> TargetValidationResult | None:
+    m_state = get_server_maintenance(server_name)
+    if m_state and m_state.in_maintenance:
+        return TargetValidationResult(
+            valid=False,
+            status="maintenance",
+            message=f"Target {server_name} is currently in maintenance mode: {m_state.reason or 'Scheduled maintenance'}",
+            server_name=server_name,
+            details={"in_maintenance": True, "reason": m_state.reason},
+        )
+
+    telemetry = get_server_telemetry(server_name)
+    if telemetry:
+        disk = float(telemetry.get("disk_percent") or 0)
+        cpu = float(telemetry.get("cpu_percent") or 0)
+        if disk > 90.0:
+            return TargetValidationResult(
+                valid=False,
+                status="resource_exhausted",
+                message=f"Target {server_name} disk usage ({disk:.1f}%) exceeds safety threshold (90%)",
+                server_name=server_name,
+                details=telemetry,
+            )
+        if cpu > 95.0:
+            return TargetValidationResult(
+                valid=False,
+                status="resource_exhausted",
+                message=f"Target {server_name} CPU usage ({cpu:.1f}%) exceeds safety threshold (95%)",
+                server_name=server_name,
+                details=telemetry,
+            )
+    return TargetValidationResult(
+        valid=True,
+        status="healthy",
+        message=f"Target {server_name} passed pre-flight telemetry checks",
+        server_name=server_name,
+        details=telemetry,
+    )
 
 
 class DcimCatalog(Protocol):
@@ -66,8 +155,10 @@ class UnconfiguredDcimCatalog:
     def validate_target(
         self, system_id: str, module_id: str, environment: str, target: str
     ) -> TargetValidationResult:
-        # In unconfigured mode, fail closed if in production, or if strict
-        # Return unconfigured status truthfully
+        preflight = check_preflight_telemetry(target)
+        if preflight:
+            return preflight
+
         return TargetValidationResult(
             valid=True,
             status="unconfigured",
@@ -156,26 +247,22 @@ class HttpDcimCatalog:
                             server_name=hostname,
                             details=s,
                         )
-                    if status in ("maintenance", "draining", "maintenance_mode"):
+                    maint_rec = _MAINTENANCE_REGISTRY.get(hostname)
+                    if maint_rec and maint_rec.in_maintenance:
                         return TargetValidationResult(
                             valid=False,
                             status="maintenance",
-                            message=f"Target {target} is currently in maintenance",
+                            message=f"Target {target} is in NetCI maintenance mode: {maint_rec.reason}",
                             server_name=hostname,
-                            details=s,
+                            details={"maintenance": maint_rec.__dict__},
                         )
-                    if status in ("offline", "failed", "unreachable"):
-                        return TargetValidationResult(
-                            valid=False,
-                            status="offline",
-                            message=f"Target {target} is offline or unreachable in DCIM",
-                            server_name=hostname,
-                            details=s,
-                        )
+                    telem_gate = check_preflight_telemetry(hostname)
+                    if not telem_gate.valid:
+                        return telem_gate
                     return TargetValidationResult(
                         valid=True,
                         status=status,
-                        message=f"Target {target} is active and ready",
+                        message=f"Target {target} is active and passed pre-flight telemetry gate",
                         server_name=hostname,
                         details=s,
                     )

@@ -317,3 +317,42 @@ class NotificationRecord:
     created_at: datetime = field(default_factory=utc_now)
     delivered_at: datetime | None = None
 
+
+class WaiverStatus(str, Enum):
+    ACTIVE = "active"
+    EXPIRED = "expired"
+    REVOKED = "revoked"
+
+
+@dataclass(frozen=True)
+class SecurityWaiver:
+    cve_id: str
+    reason: str
+    approved_by: str
+    expires_at: datetime
+    module_id: str | None = None
+    status: WaiverStatus = WaiverStatus.ACTIVE
+    id: UUID = field(default_factory=uuid4)
+    created_at: datetime = field(default_factory=utc_now)
+
+    @property
+    def is_valid(self) -> bool:
+        return self.status == WaiverStatus.ACTIVE and self.expires_at > utc_now()
+
+
+@dataclass(frozen=True)
+class ServerMaintenanceState:
+    server_name: str
+    in_maintenance: bool = True
+    reason: str = ""
+    updated_by: str = "operator"
+    updated_at: datetime = field(default_factory=utc_now)
+
+
+@dataclass(frozen=True)
+class L7CanaryRule:
+    header_name: str | None = None
+    header_value: str | None = None
+    cookie: str | None = None
+    user_email_regex: str | None = None
+

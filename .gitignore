@@ -25,6 +25,7 @@ sample-apps/*/dist/
 postgres-data/
 registry-data/
 minio-data/
+storage/
 jenkins-*-home/
 evidence/raw/
 *.tsbuildinfo

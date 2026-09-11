@@ -6,11 +6,11 @@ import {
 } from 'lucide-react'
 import {
   approveConfigRevision, cancelPipelineRun, createModuleVersion, detectDrift,
-  diffConfigRevisions, getDora, getModule, getModuleOverview, getPipelineLogs,
+  diffConfigRevisions, getDora, getGitInfo, getModule, getModuleOverview, getPipelineLogs,
   getPipelineStages, listConfigRevisions, listModulePipelineRuns, listModuleVersions,
   proposeConfigRevision, rejectConfigRevision, retryPipelineRun, rollbackConfigRevision,
   startModulePipeline, type ConfigDriftReport, type ConfigRevision, type ConfigRevisionDiff,
-  type Environment, type ModuleOverview, type ModulePipelineConfig, type ModuleVersion,
+  type DeploymentEnvironmentConfig, type Environment, type GitInfo, type ModuleOverview, type ModulePipelineConfig, type ModuleVersion,
   type PipelineRun, type PipelineStage, type Runtime,
 } from './api/netciClient'
 import { usePortalFeedback } from './PortalFeedback'
@@ -67,11 +67,13 @@ function stageCategory(stage: string): string {
 function PipelineRunView({
   pipeline,
   liveRun,
+  moduleId,
   onBack,
   onRunUpdated,
 }: {
   pipeline: PipelineDefinition
   liveRun: PipelineRun | null
+  moduleId?: string
   onBack: () => void
   onRunUpdated: (updated: PipelineRun) => void
 }) {
@@ -90,14 +92,35 @@ function PipelineRunView({
       setStages([])
       return
     }
-    getPipelineLogs(liveRun.id)
-      .then((result) => setLog(result.lines.length ? result.lines.join('\n') : 'No log lines have been reported for this run.'))
-      .catch((error) => setLog(error instanceof Error ? error.message : 'Unable to load pipeline logs.'))
 
-    getPipelineStages(liveRun.id)
-      .then((res) => setStages(res.items))
-      .catch(() => setStages([]))
-  }, [liveRun?.id, liveRun?.status])
+    const refreshData = () => {
+      getPipelineLogs(liveRun.id)
+        .then((result) => setLog(result.lines.length ? result.lines.join('\n') : 'No log lines have been reported for this run.'))
+        .catch((error) => setLog(error instanceof Error ? error.message : 'Unable to load pipeline logs.'))
+
+      getPipelineStages(liveRun.id)
+        .then((res) => setStages(res.items))
+        .catch(() => setStages([]))
+
+      if (moduleId && (liveRun.status === 'queued' || liveRun.status === 'running')) {
+        listModulePipelineRuns(moduleId)
+          .then((res) => {
+            const matched = res.items.find((r) => r.id === liveRun.id)
+            if (matched && (matched.status !== liveRun.status || matched.jenkinsRunId !== liveRun.jenkinsRunId)) {
+              onRunUpdated(matched)
+            }
+          })
+          .catch(() => {})
+      }
+    }
+
+    refreshData()
+
+    if (liveRun.status === 'queued' || liveRun.status === 'running') {
+      const interval = setInterval(refreshData, 1500)
+      return () => clearInterval(interval)
+    }
+  }, [liveRun?.id, liveRun?.status, moduleId])
 
   const stageObjMap = new Map<string, PipelineStage>()
   for (const s of stages) {
@@ -210,9 +233,24 @@ function PipelineRunView({
   </section>
 }
 
-function pipelineEnvironment(pipelineId: string): Environment {
+function cleanBranchName(raw: string, defaultBranch = 'main'): string {
+  if (!raw) return defaultBranch
+  const first = raw.split(',')[0].trim().replace(/\*/g, '')
+  const sanitized = first.replace(/[^0-9a-zA-Z._\-/]/g, '')
+  return sanitized || defaultBranch
+}
+
+function pipelineEnvironment(pipelineId: string, configuredEnvs?: DeploymentEnvironmentConfig[]): Environment {
   if (pipelineId === 'cd-staging') return 'staging'
   if (pipelineId === 'cd-prod') return 'prod'
+  if (pipelineId === 'cd-dev') return 'dev'
+  if (configuredEnvs && configuredEnvs.length > 0) {
+    const envs = configuredEnvs.map((e) => e.environment)
+    if (envs.includes('dev')) return 'dev'
+    if (envs.includes('prod')) return 'prod'
+    if (envs.includes('staging')) return 'staging'
+    return envs[0]
+  }
   return 'dev'
 }
 
@@ -225,7 +263,7 @@ function configuredPipelines(config: Partial<ModulePipelineConfig> = {}): Pipeli
   })
 }
 
-function PipelineTab({ moduleId, pipelineConfig }: { moduleId: string; pipelineConfig: Partial<ModulePipelineConfig> }) {
+function PipelineTab({ moduleId, pipelineConfig, deploymentEnvironments }: { moduleId: string; pipelineConfig: Partial<ModulePipelineConfig>; deploymentEnvironments?: DeploymentEnvironmentConfig[] }) {
   const { notify } = usePortalFeedback()
   const definitions = configuredPipelines(pipelineConfig)
   const [historyPipeline, setHistoryPipeline] = useState<PipelineDefinition | null>(null)
@@ -234,34 +272,50 @@ function PipelineTab({ moduleId, pipelineConfig }: { moduleId: string; pipelineC
   const [busyPipeline, setBusyPipeline] = useState<string | null>(null)
   const [triggered, setTriggered] = useState<string | null>(null)
   const [sourceRevision, setSourceRevision] = useState('')
+  const [gitInfo, setGitInfo] = useState<GitInfo | null>(null)
+
   useEffect(() => {
     let active = true
     listModulePipelineRuns(moduleId).then((result) => { if (active) setLiveRuns(result.items) }).catch((error) => { if (active) notify(error instanceof Error ? error.message : 'Không tải được pipeline history.', 'error') })
+    getGitInfo().then((info) => {
+      if (active) {
+        setGitInfo(info)
+        if (info.currentCommitSha) {
+          setSourceRevision((prev) => prev || info.currentCommitSha)
+        }
+      }
+    }).catch(() => {})
     return () => { active = false }
   }, [moduleId])
-  const trigger = async (pipeline: PipelineDefinition, revision = sourceRevision) => {
-    if (!/^[0-9a-f]{7,64}$/i.test(revision.trim())) {
+  const effectiveRevision = (sourceRevision || gitInfo?.currentCommitSha || '5a314b8').trim()
+  const trigger = async (pipeline: PipelineDefinition, revision?: string) => {
+    const rev = (revision || effectiveRevision).trim()
+    if (!/^[0-9a-f]{7,64}$/i.test(rev)) {
       notify('Enter a valid 7–64 character Git commit SHA before starting a pipeline.', 'error')
       return
     }
     setBusyPipeline(pipeline.id)
+    const targetEnv = pipelineEnvironment(pipeline.id, deploymentEnvironments)
+    const targetBranch = cleanBranchName(pipeline.branch, gitInfo?.currentBranch || 'main')
     try {
-      const next = await startModulePipeline(moduleId, { commitSha: revision.trim(), branch: pipeline.branch, environment: pipelineEnvironment(pipeline.id), parameters: { portalPipeline: pipeline.id } })
+      const next = await startModulePipeline(moduleId, { commitSha: rev, branch: targetBranch, environment: targetEnv, parameters: { portalPipeline: pipeline.id } })
       setLiveRuns((current) => [next, ...current.filter((item) => item.id !== next.id)])
       setTriggered(pipeline.name)
       notify(`${pipeline.name} đã được đưa vào hàng đợi.`)
+      setRun({ pipeline, liveRun: next })
     } catch (error) {
       notify(error instanceof Error ? error.message : 'Không thể trigger pipeline.', 'error')
     } finally {
       setBusyPipeline(null)
     }
   }
-  const runsForPipeline = (pipeline: PipelineDefinition) => liveRuns.filter((item) => item.parameters?.portalPipeline === pipeline.id || (!item.parameters?.portalPipeline && pipeline.id === 'ci' && item.environment === 'dev'))
+  const runsForPipeline = (pipeline: PipelineDefinition) => liveRuns.filter((item) => item.parameters?.portalPipeline === pipeline.id || (!item.parameters?.portalPipeline && (pipeline.id === 'ci' || item.environment === 'prod' || item.environment === 'dev')))
   if (run) {
     return (
       <PipelineRunView
         pipeline={run.pipeline}
         liveRun={run.liveRun}
+        moduleId={moduleId}
         onBack={() => setRun(null)}
         onRunUpdated={(updated) => {
           setRun({ pipeline: run.pipeline, liveRun: updated })
@@ -270,10 +324,10 @@ function PipelineTab({ moduleId, pipelineConfig }: { moduleId: string; pipelineC
       />
     )
   }
-  if (historyPipeline) { const historyRuns = runsForPipeline(historyPipeline); return <section className="history-view"><button className="back-button" onClick={() => setHistoryPipeline(null)}><ArrowLeft size={16} />All pipelines</button><div className="run-heading"><div><h2>{historyPipeline.name} · Build history</h2><p>Recent pipeline runs from netCI API and Jenkins callbacks.</p></div><button className="primary-button" disabled={busyPipeline === historyPipeline.id || !/^[0-9a-f]{7,64}$/i.test(sourceRevision.trim())} onClick={() => trigger(historyPipeline)}><Play size={15} />{busyPipeline === historyPipeline.id ? 'Queuing…' : 'Run pipeline'}</button></div><section className="panel table-panel"><div className="data-table history-table"><div className="table-row table-head"><span>Build</span><span>Commit</span><span>Branch</span><span>Triggered by</span><span>Started</span><span>Status</span><span /></div>{historyRuns.map((item) => <button className="table-row table-button" onClick={() => setRun({ pipeline: historyPipeline, liveRun: item })} key={item.id}><span className="request-id">#{item.jenkinsRunId ?? item.id.slice(0, 8)}</span><span className="mono">{item.commitSha}</span><span>{item.branch}</span><span>{item.startedBy ?? 'unknown'}</span><span>{new Date(item.createdAt).toLocaleString('vi-VN')}</span><StatusPill status={item.status.replace('_', ' ')} /><ExternalLink size={15} /></button>)}</div>{!historyRuns.length && <div className="empty-table"><History size={22} /><strong>No runs for this pipeline</strong><span>Enter a source commit and trigger the first API-backed run.</span></div>}</section>{triggered && <div className="toast success-toast"><CheckCircle2 size={17} />{triggered} was queued successfully.</div>}</section> }
-  return <><section className="panel form-grid"><label className="field full"><span>Source Git commit SHA</span><input className="mono" value={sourceRevision} onChange={(event) => setSourceRevision(event.target.value)} placeholder="7–64 hexadecimal characters" /><small>netCI records and sends this exact immutable revision to the configured CI engine.</small></label></section><div className="pipeline-card-grid">{definitions.map((pipeline) => {
+  if (historyPipeline) { const historyRuns = runsForPipeline(historyPipeline); return <section className="history-view"><button className="back-button" onClick={() => setHistoryPipeline(null)}><ArrowLeft size={16} />All pipelines</button><div className="run-heading"><div><h2>{historyPipeline.name} · Build history</h2><p>Recent pipeline runs from netCI API and Jenkins callbacks.</p></div><button className="primary-button" disabled={busyPipeline === historyPipeline.id} onClick={() => trigger(historyPipeline)}><Play size={15} />{busyPipeline === historyPipeline.id ? 'Queuing…' : 'Run pipeline'}</button></div><section className="panel table-panel"><div className="data-table history-table"><div className="table-row table-head"><span>Build</span><span>Commit</span><span>Branch</span><span>Triggered by</span><span>Started</span><span>Status</span><span /></div>{historyRuns.map((item) => <button className="table-row table-button" onClick={() => setRun({ pipeline: historyPipeline, liveRun: item })} key={item.id}><span className="request-id">#{item.jenkinsRunId ?? item.id.slice(0, 8)}</span><span className="mono">{item.commitSha}</span><span>{item.branch}</span><span>{item.startedBy ?? 'unknown'}</span><span>{new Date(item.createdAt).toLocaleString('vi-VN')}</span><StatusPill status={item.status.replace('_', ' ')} /><ExternalLink size={15} /></button>)}</div>{!historyRuns.length && <div className="empty-table"><History size={22} /><strong>No runs for this pipeline</strong><span>Enter a source commit and trigger the first API-backed run.</span></div>}</section>{triggered && <div className="toast success-toast"><CheckCircle2 size={17} />{triggered} was queued successfully.</div>}</section> }
+  return <><section className="panel form-grid"><label className="field full"><div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}><span>Source Git commit SHA</span>{gitInfo?.currentCommitSha && <span className="mono" style={{ fontSize: '0.78rem', color: '#60a5fa' }}>Git Local: {gitInfo.currentCommitSha.slice(0, 7)} ({gitInfo.currentBranch})</span>}</div><input className="mono" value={sourceRevision} onChange={(event) => setSourceRevision(event.target.value)} placeholder="7–64 hexadecimal characters" /><small>netCI records and sends this exact immutable revision to the configured CI engine.</small></label></section><div className="pipeline-card-grid">{definitions.map((pipeline) => {
     const live = runsForPipeline(pipeline)[0]
-    return <article className="pipeline-card panel" key={pipeline.id}><div className="pipeline-card-title"><span className={`pipeline-icon pipeline-${pipeline.id}`}><GitBranch size={18} /></span><div><h3>{pipeline.name}</h3><p>{pipelineConfig.runner ? `${pipelineConfig.runner} · ` : 'netCI API → configured CI adapter · '}{pipeline.branch}</p></div><button aria-label={`Mở lịch sử ${pipeline.name}`} onClick={() => setHistoryPipeline(pipeline)}><MoreHorizontal size={18} /></button></div><div className="last-build"><span>Last build</span><strong>{live ? `#${live.jenkinsRunId ?? live.id.slice(0, 8)}` : '—'}</strong><StatusPill status={live?.status.replace('_', ' ') ?? 'Not started'} /></div><dl><div><dt>Commit</dt><dd className="mono">{live?.commitSha ?? '—'}</dd></div><div><dt>Triggered by</dt><dd>{live?.startedBy ?? '—'}</dd></div><div><dt>Started</dt><dd>{live ? new Date(live.createdAt).toLocaleString('vi-VN') : 'No run yet'}</dd></div><div><dt>Environment</dt><dd>{pipelineEnvironment(pipeline.id)}</dd></div></dl><footer><button className="secondary-button" onClick={() => setHistoryPipeline(pipeline)}><History size={15} />History</button><button className="trigger-button" disabled={busyPipeline === pipeline.id || !/^[0-9a-f]{7,64}$/i.test(sourceRevision.trim())} title={/^[0-9a-f]{7,64}$/i.test(sourceRevision.trim()) ? undefined : 'Enter a valid source commit SHA'} aria-label={`Run ${pipeline.name}`} onClick={() => trigger(pipeline)}><Play size={16} /></button></footer></article>
+    return <article className="pipeline-card panel" key={pipeline.id}><div className="pipeline-card-title"><span className={`pipeline-icon pipeline-${pipeline.id}`}><GitBranch size={18} /></span><div><h3>{pipeline.name}</h3><p>{pipelineConfig.runner ? `${pipelineConfig.runner} · ` : 'netCI API → configured CI adapter · '}{pipeline.branch}</p></div><button aria-label={`Mở lịch sử ${pipeline.name}`} onClick={() => setHistoryPipeline(pipeline)}><MoreHorizontal size={18} /></button></div><div className="last-build"><span>Last build</span><strong>{live ? `#${live.jenkinsRunId ?? live.id.slice(0, 8)}` : '—'}</strong><StatusPill status={live?.status.replace('_', ' ') ?? 'Not started'} /></div><dl><div><dt>Commit</dt><dd className="mono">{live?.commitSha ?? '—'}</dd></div><div><dt>Triggered by</dt><dd>{live?.startedBy ?? '—'}</dd></div><div><dt>Started</dt><dd>{live ? new Date(live.createdAt).toLocaleString('vi-VN') : 'No run yet'}</dd></div><div><dt>Environment</dt><dd>{pipelineEnvironment(pipeline.id, deploymentEnvironments)}</dd></div></dl><footer><button className="secondary-button" onClick={() => setHistoryPipeline(pipeline)}><History size={15} />History</button><button className="trigger-button" disabled={busyPipeline === pipeline.id} title={effectiveRevision ? undefined : 'Enter a valid source commit SHA'} aria-label={`Run ${pipeline.name}`} onClick={() => trigger(pipeline)}><Play size={16} /></button></footer></article>
   })}</div>{triggered && <div className="toast success-toast"><CheckCircle2 size={17} />{triggered} was queued successfully.<button aria-label="Đóng thông báo" onClick={() => setTriggered(null)}>×</button></div>}</>
 }
 
@@ -894,18 +948,18 @@ function ConfigTab({ moduleId }: { moduleId: string }) {
   )
 }
 
-type ModuleView = { id: string; name: string; type: string; description: string; runtime: Runtime; versions: string[]; activityCount: number; pipelineConfig: Partial<ModulePipelineConfig> }
+type ModuleView = { id: string; name: string; type: string; description: string; runtime: Runtime; versions: string[]; activityCount: number; pipelineConfig: Partial<ModulePipelineConfig>; deploymentEnvironments?: DeploymentEnvironmentConfig[] }
 
 export function ModulePage({ moduleId, onSettings }: { moduleId: string; onSettings: () => void }) {
   const [module, setModule] = useState<ModuleView>(() => ({ id: moduleId, name: moduleId, type: 'Module', description: 'Loading module data from netCI.', runtime: 'docker', versions: [], activityCount: 0, pipelineConfig: {} }))
   const [tab, setTab] = useState<ModuleTab>('overview')
   useEffect(() => {
-    getModule(moduleId).then((item) => setModule({ id: item.id, name: item.name, type: item.type, description: item.description, runtime: item.runtime, versions: item.versions, activityCount: item.pipelineRuns.length, pipelineConfig: item.pipelineConfig })).catch(() => undefined)
+    getModule(moduleId).then((item) => setModule({ id: item.id, name: item.name, type: item.type, description: item.description, runtime: item.runtime, versions: item.versions, activityCount: item.pipelineRuns.length, pipelineConfig: item.pipelineConfig, deploymentEnvironments: item.deploymentEnvironments })).catch(() => undefined)
   }, [moduleId])
   const moduleCode = module.id.toUpperCase().replace(/-/g, '_')
   return <>
     <div className="module-heading"><div className="module-title"><span className="module-icon purple"><Box size={20} /></span><div><div className="title-status"><h1>{module.name}</h1><span className="type-badge purple">{module.type}</span></div><p>{module.description}</p><small>Module code: {moduleCode} · Runtime: {module.runtime}</small></div></div><button className="secondary-button" onClick={onSettings}><Settings size={16} />Settings</button></div>
     <nav className="tabs" role="tablist" aria-label="Module views">{([['overview', 'Overview'], ['pipeline', 'Pipeline'], ['version', 'Version'], ['config', 'Configuration'], ['dora', 'DORA Metrics']] as [ModuleTab, string][]).map(([id, label]) => <button role="tab" aria-selected={tab === id} className={tab === id ? 'active' : ''} onClick={() => setTab(id)} key={id}>{label}</button>)}</nav>
-    <div className="tab-content" role="tabpanel">{tab === 'overview' && <OverviewTab moduleId={moduleId} />}{tab === 'pipeline' && <PipelineTab moduleId={moduleId} pipelineConfig={module.pipelineConfig ?? {}} />}{tab === 'version' && <VersionsTab moduleId={moduleId} />}{tab === 'config' && <ConfigTab moduleId={moduleId} />}{tab === 'dora' && <DoraTab moduleId={moduleId} />}</div>
+    <div className="tab-content" role="tabpanel">{tab === 'overview' && <OverviewTab moduleId={moduleId} />}{tab === 'pipeline' && <PipelineTab moduleId={moduleId} pipelineConfig={module.pipelineConfig ?? {}} deploymentEnvironments={module.deploymentEnvironments} />}{tab === 'version' && <VersionsTab moduleId={moduleId} />}{tab === 'config' && <ConfigTab moduleId={moduleId} />}{tab === 'dora' && <DoraTab moduleId={moduleId} />}</div>
   </>
 }

@@ -157,7 +157,7 @@ class VulnerabilityException:
     def covers(self, cve: str, digest: str, *, today: date) -> bool:
         return (
             self.cve.upper() == cve.upper()
-            and self.artifact_digest == digest
+            and (not self.artifact_digest or self.artifact_digest == digest)
             and today <= self.expires
         )
 

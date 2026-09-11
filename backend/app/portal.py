@@ -1304,6 +1304,7 @@ class PortalService:
             "releasePlan": request.release_plan,
             "strategy": request.strategy,
             "strategyConfig": request.strategy_config,
+            "canaryRules": (request.strategy_config or {}).get("canary_rules") or {},
         }
 
     def production_request(self, request_id: str) -> dict[str, object] | None:

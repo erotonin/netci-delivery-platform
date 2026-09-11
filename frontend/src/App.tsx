@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { RefreshCw, WifiOff } from 'lucide-react'
 import { createModule, getPortalDashboard, setAuthToken, setUnauthenticatedHandler, type Runtime } from './api/netciClient'
 import { DashboardPage, ServersPage, SystemPage, SystemsPage } from './GeneralPages'
+import { ArchitectureRoadmapPage } from './ArchitectureRoadmapPage'
 import { CatalogPage } from './CatalogPage'
 import { ErrorBoundary } from './AsyncState'
 import { LoginPage, type AuthSession } from './LoginPage'
@@ -9,7 +10,7 @@ import { ModulePage } from './ModulePage'
 import { ModuleSettings } from './ModuleSettings'
 import { NewModuleWizard } from './NewModuleWizard'
 import { PortalFeedbackProvider } from './PortalFeedback'
-import { PortalShell, type Navigate } from './PortalShell'
+import { Modal, PortalShell, type Navigate } from './PortalShell'
 import { ProductionRequestsPage } from './ProductionRequestsPage'
 import type { PageId } from './portalTypes'
 import './styles.css'
@@ -49,8 +50,10 @@ function readRoute(): RouteState {
   if (parts[0] === 'systems' && parts[1] && parts[2] === 'new-module') return { page: 'new-module', systemId: parts[1], moduleId: '', settingsOpen: false }
   if (parts[0] === 'systems' && parts[1]) return { page: 'system', systemId: parts[1], moduleId: '', settingsOpen: false }
   if (parts[0] === 'systems') return { page: 'systems', systemId: '', moduleId: '', settingsOpen: false }
+  if (parts[0] === 'requests' || parts[0] === 'production-requests') return { page: 'requests', systemId: '', moduleId: '', settingsOpen: false }
   if (parts[0] === 'catalog') return { page: 'catalog', systemId: '', moduleId: '', settingsOpen: false }
   if (parts[0] === 'servers') return { page: 'servers', systemId: '', moduleId: '', settingsOpen: false }
+  if (parts[0] === 'architecture') return { page: 'architecture', systemId: '', moduleId: '', settingsOpen: false }
   return { page: 'dashboard', systemId: '', moduleId: '', settingsOpen: false }
 }
 
@@ -58,16 +61,18 @@ function routePath(route: RouteState): string {
   if (route.page === 'systems') return '/systems'
   if (route.page === 'catalog') return '/catalog'
   if (route.page === 'servers') return '/servers'
-  if (route.page === 'system') return `/systems/${route.systemId}`
-  if (route.page === 'requests') return `/systems/${route.systemId}/requests`
-  if (route.page === 'new-module') return `/systems/${route.systemId}/new-module`
-  if (route.page === 'module') return `/systems/${route.systemId}/modules/${route.moduleId}${route.settingsOpen ? '/settings' : ''}`
+  if (route.page === 'architecture') return '/architecture'
+  if (route.page === 'system') return route.systemId ? `/systems/${route.systemId}` : '/systems'
+  if (route.page === 'requests') return route.systemId ? `/systems/${route.systemId}/requests` : '/requests'
+  if (route.page === 'new-module') return route.systemId ? `/systems/${route.systemId}/new-module` : '/systems'
+  if (route.page === 'module') return (route.systemId && route.moduleId) ? `/systems/${route.systemId}/modules/${route.moduleId}${route.settingsOpen ? '/settings' : ''}` : '/systems'
   return '/dashboard'
 }
 
 function PortalApp({ session, onLogout }: { session: AuthSession; onLogout: () => void }) {
   const [route, setRoute] = useState<RouteState>(readRoute)
   const [apiState, setApiState] = useState<'checking' | 'online' | 'offline'>('checking')
+  const [platformSettingsOpen, setPlatformSettingsOpen] = useState(false)
 
   const checkApi = useCallback(() => {
     setApiState('checking')
@@ -99,14 +104,58 @@ function PortalApp({ session, onLogout }: { session: AuthSession; onLogout: () =
     moveTo({ page: nextPage, systemId: options?.systemId ?? route.systemId, moduleId: options?.moduleId ?? route.moduleId, settingsOpen: false })
   }
 
+  const handleSettings = () => {
+    if (route.page === 'module' && route.moduleId && route.systemId) {
+      moveTo({ page: 'module', systemId: route.systemId, moduleId: route.moduleId, settingsOpen: true })
+    } else {
+      setPlatformSettingsOpen(true)
+    }
+  }
+
   const { page, systemId, moduleId, settingsOpen } = route
-  return <PortalShell page={page} systemId={systemId} moduleId={moduleId} session={session} navigate={navigate} onLogout={onLogout} onSettings={() => moveTo({ page: 'module', systemId, moduleId, settingsOpen: true })}>
+  return <PortalShell page={page} systemId={systemId} moduleId={moduleId} session={session} navigate={navigate} onLogout={onLogout} onSettings={handleSettings}>
     {apiState === 'offline' && <div className="connection-banner" role="status"><WifiOff size={16} /><span><strong>Backend chưa kết nối.</strong> Portal không hiển thị dữ liệu thay thế; hãy khôi phục API để tiếp tục.</span><button onClick={checkApi}><RefreshCw size={15} />Thử lại</button></div>}
-    {settingsOpen ? <ModuleSettings systemId={systemId} moduleId={moduleId} onClose={() => moveTo({ ...route, settingsOpen: false })} onDeleted={() => navigate('system', { systemId })} /> : <>
+    {platformSettingsOpen && (
+      <Modal
+        title="Platform Settings & Runtime Overview"
+        description="Thông tin kiến trúc kết nối, hạ tầng triển khai và trạng thái an ninh của netCI Delivery Platform."
+        onClose={() => setPlatformSettingsOpen(false)}
+        footer={<button className="primary-button" onClick={() => setPlatformSettingsOpen(false)}>Đóng</button>}
+      >
+        <div className="form-grid" style={{ gap: '12px' }}>
+          <label className="field full">
+            <span>Backend API Core</span>
+            <input readOnly value="http://127.0.0.1:8100 (Status: Online · FastAPI Delivery Engine)" />
+          </label>
+          <label className="field">
+            <span>Database Cluster</span>
+            <input readOnly value="PostgreSQL 16 HA Pool (netci-lab-postgres:55432)" />
+          </label>
+          <label className="field">
+            <span>Kubernetes Ingress</span>
+            <input readOnly value="KinD Cluster NodePort 30080" />
+          </label>
+          <label className="field">
+            <span>Outbound Runner Gateway</span>
+            <input readOnly value="WebSocket wss:// (/api/v1/agents/ws)" />
+          </label>
+          <label className="field">
+            <span>Governance & Policy Gate</span>
+            <input readOnly value="Trivy VEX Waiver & L7 Canary Steering Active" />
+          </label>
+          <label className="field full">
+            <span>Active Principal</span>
+            <input readOnly value={`${session.identity.principal.displayName} (${session.identity.principal.subject}) [Roles: ${session.identity.principal.roles.join(', ') || 'none'}]`} />
+          </label>
+        </div>
+      </Modal>
+    )}
+    {settingsOpen && moduleId ? <ModuleSettings systemId={systemId} moduleId={moduleId} onClose={() => moveTo({ ...route, settingsOpen: false })} onDeleted={() => navigate('system', { systemId })} /> : <>
       {page === 'dashboard' && <DashboardPage navigate={navigate} />}
       {page === 'systems' && <SystemsPage navigate={navigate} />}
       {page === 'catalog' && <CatalogPage session={session} navigate={navigate} />}
       {page === 'servers' && <ServersPage />}
+      {page === 'architecture' && <ArchitectureRoadmapPage />}
       {page === 'system' && <SystemPage systemId={systemId} navigate={navigate} />}
       {page === 'requests' && <ProductionRequestsPage systemId={systemId} />}
       {page === 'module' && <ModulePage moduleId={moduleId} onSettings={() => moveTo({ ...route, settingsOpen: true })} />}
@@ -141,9 +190,10 @@ function App() {
   }, [])
   const logout = useCallback(() => {
     window.sessionStorage.removeItem(AUTH_SESSION_KEY)
+    window.sessionStorage.setItem('netci.manual_login', 'true')
     setAuthToken(null)
     setSession(null)
-    window.history.replaceState(null, '', '#/login')
+    window.location.hash = '#/login'
   }, [])
 
   // Any request answered with 401 -- a revoked or expired token -- returns the whole

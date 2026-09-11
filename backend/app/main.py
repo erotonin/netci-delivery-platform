@@ -1,15 +1,24 @@
 from __future__ import annotations
 
 import hashlib
+import json
+import logging
 import os
 import secrets
+
+logger = logging.getLogger("netci.main")
 from datetime import datetime, timezone
 from contextlib import asynccontextmanager
 from typing import Any, Literal
 from urllib.parse import urlsplit
 from uuid import UUID, uuid4
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response, status
+from pathlib import Path
+import shutil
+import tarfile
+import zipfile
+
+from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response, status, UploadFile, File, WebSocket, WebSocketDisconnect
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response as PlainResponse
@@ -18,7 +27,13 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from .adapters.cd_orchestrator import build_cd_orchestrator
 from .adapters.ci_launcher import build_ci_launcher
-from .adapters.dcim import DcimUnavailable
+from .adapters.dcim import (
+    DcimUnavailable,
+    _MAINTENANCE_REGISTRY,
+    _TELEMETRY_REGISTRY,
+    ServerTelemetry,
+    set_server_maintenance,
+)
 from .auth import AuthError, Principal, build_authenticator
 from .build_inputs import BuildInputError, validate_build_inputs
 from .client_address import LOOPBACK_HOSTS, resolve_client
@@ -28,6 +43,7 @@ from .domain.models import (
     DeliveryEvent,
     Deployment,
     Environment,
+    L7CanaryRule,
     NotificationRecord,
     NotificationStatus,
     PipelineRun,
@@ -38,6 +54,9 @@ from .domain.models import (
     ScmIntegration,
     ScmProviderType,
     ScmWebhookDelivery,
+    SecurityWaiver,
+    ServerMaintenanceState,
+    WaiverStatus,
 )
 from .adapters.scm import MAX_WEBHOOK_PAYLOAD_BYTES, get_scm_provider
 from .delivery import CiResult, DeliveryError, DeliveryPlatform
@@ -47,6 +66,7 @@ from .admission import AdmissionController
 from .coordinator import ReleasePlanCoordinator
 from .demo_data import seed_demo_data
 from .notifications import NotificationOutboxWorker
+from .adapters.local_runner import LocalPipelineRunnerWorker
 from .policy.break_glass import BreakGlassError, BreakGlassService
 from .policy.engine import PolicyEngine
 from .policy.quota import QuotaEnforcer, QuotaViolation
@@ -150,7 +170,11 @@ async def lifespan(application: FastAPI):
     outbox_worker = NotificationOutboxWorker(database)
     if os.getenv("NETCI_DISABLE_OUTBOX_WORKER", "0") != "1":
         outbox_worker.start()
+    local_runner = LocalPipelineRunnerWorker(platform, database=database)
+    if os.getenv("NETCI_DISABLE_LOCAL_RUNNER", "0") != "1":
+        local_runner.start()
     yield
+    local_runner.stop()
     outbox_worker.stop()
     if hasattr(database, "close"):
         database.close()
@@ -1008,6 +1032,7 @@ class ProductionRequestCreate(StrictBody):
     runAutomationTests: bool = True
     strategy: Literal["rolling", "canary", "blue_green"] = "rolling"
     strategyConfig: dict[str, Any] = Field(default_factory=dict)
+    canaryRules: dict[str, Any] = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def validate_modules(self) -> "ProductionRequestCreate":
@@ -1017,6 +1042,19 @@ class ProductionRequestCreate(StrictBody):
         if self.scheduledFor.tzinfo is None:
             raise ValueError("scheduledFor must include a timezone offset")
         return self
+
+
+class SecurityWaiverCreate(StrictBody):
+    cveId: str = Field(min_length=3, max_length=64)
+    reason: str = Field(min_length=5, max_length=1000)
+    expiresAt: datetime
+    moduleId: str | None = None
+
+
+class ServerMaintenanceRequest(StrictBody):
+    inMaintenance: bool
+    reason: str = ""
+    updatedBy: str = "operator"
 
 
 class VersionCreate(StrictBody):
@@ -1502,6 +1540,65 @@ def list_module_pipeline_runs(moduleId: str, principal: Principal = ReadAccess) 
         raise HTTPException(status_code=404, detail={"code": "MODULE_NOT_FOUND", "message": str(exc)}) from exc
 
 
+@app.get("/git/info")
+def get_git_info(principal: Principal = ReadAccess) -> dict[str, object]:
+    commit_sha = "5a314b8"
+    branch = "main"
+    try:
+        res = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True, timeout=2)
+        if res.returncode == 0 and res.stdout.strip():
+            commit_sha = res.stdout.strip()[:7]
+        b_res = subprocess.run(["git", "rev-parse", "--abbrev-ref", "HEAD"], capture_output=True, text=True, timeout=2)
+        if b_res.returncode == 0 and b_res.stdout.strip():
+            branch = b_res.stdout.strip()
+    except Exception:
+        pass
+
+    samples = [
+        {
+            "id": "hello-container",
+            "name": "Hello Container API",
+            "runtime": "docker",
+            "code": "container-api",
+            "moduleType": "Backend",
+            "repositoryUrl": "https://github.com/netci/sample-apps-hello-container",
+            "defaultEnvironment": "prod",
+            "port": 18081,
+            "description": "Golang HTTP service packaged as Docker container with zero-CVE Trivy baseline",
+            "runner": "docker-linux",
+        },
+        {
+            "id": "hello-kubernetes",
+            "name": "Hello Kubernetes App",
+            "runtime": "kubernetes",
+            "code": "k8s-workload",
+            "moduleType": "Backend",
+            "repositoryUrl": "https://github.com/netci/sample-apps-hello-kubernetes",
+            "defaultEnvironment": "staging",
+            "port": 8080,
+            "description": "Cloud-native microservice with Helm chart deployed on KinD cluster",
+            "runner": "k8s-runner",
+        },
+        {
+            "id": "hello-systemd-go",
+            "name": "Hello Systemd Worker",
+            "runtime": "systemd",
+            "code": "systemd-worker",
+            "moduleType": "Worker",
+            "repositoryUrl": "https://github.com/netci/sample-apps-hello-systemd-go",
+            "defaultEnvironment": "prod",
+            "port": 18082,
+            "description": "Background Linux daemon managed via systemd user unit with automated restarts",
+            "runner": "linux-host",
+        },
+    ]
+    return {
+        "currentCommitSha": commit_sha,
+        "currentBranch": branch,
+        "samples": samples,
+    }
+
+
 @app.get("/modules/{moduleId}/versions")
 def list_module_versions(moduleId: str, principal: Principal = ReadAccess) -> dict[str, object]:
     try:
@@ -1735,7 +1832,7 @@ def create_production_request(
             run_automation_tests=payload.runAutomationTests,
             idempotency_key=idempotency_key,
             strategy=payload.strategy,
-            strategy_config=payload.strategyConfig,
+            strategy_config=dict(payload.strategyConfig, canary_rules=payload.canaryRules) if payload.canaryRules else payload.strategyConfig,
         )
     except KeyError as exc:
         raise HTTPException(status_code=404, detail={"code": "MODULE_NOT_FOUND", "message": str(exc)}) from exc
@@ -1753,16 +1850,23 @@ def get_production_request_plan(requestId: str, principal: Principal = ReadAcces
             status_code=404, detail={"code": "REQUEST_NOT_FOUND", "message": "production request not found"}
         )
     return {
+        "id": requestId,
         "requestId": requestId,
         "status": existing.get("status"),
         "strategy": existing.get("strategy"),
         "releasePlan": existing.get("releasePlan"),
         "modules": existing.get("modules"),
+        "scheduledFor": existing.get("scheduledFor"),
+        "comment": existing.get("comment"),
+        "rollbackStrategy": existing.get("rollbackStrategy"),
+        "deploymentId": existing.get("deploymentId"),
+        "canaryRules": existing.get("canaryRules") or existing.get("strategyConfig", {}).get("canary_rules", {}),
     }
 
 
 class AdvanceCanaryRequest(StrictBody):
     metrics: dict[str, float] = Field(default_factory=dict)
+    canaryRules: dict[str, Any] = Field(default_factory=dict)
 
 
 @app.post("/production-requests/{requestId}/canary/advance")
@@ -1782,6 +1886,18 @@ def advance_canary_step(
             status_code=400, detail={"code": "NO_ACTIVE_DEPLOYMENT", "message": "no deployment currently active for this request"}
         )
     metrics_data = payload.metrics if payload else {}
+    if payload and payload.canaryRules:
+        modules = existing.get("modules") or []
+        for m in modules:
+            mod_id = m.get("moduleId")
+            if mod_id:
+                try:
+                    mod = portal.module(mod_id)
+                    app_id = mod.get("applicationId")
+                    if app_id:
+                        default_traffic_router.set_canary_rules(str(app_id), "prod", payload.canaryRules)
+                except Exception:
+                    pass
     coordinator = ReleasePlanCoordinator(portal, platform)
     try:
         return coordinator.advance_canary(requestId, UUID(str(deployment_id)), metrics_data)
@@ -2793,6 +2909,184 @@ def revoke_security_exception(
     return {"id": str(exceptionId), "status": "revoked", "revokedBy": principal.subject}
 
 
+_ACTIVE_RUNNERS: dict[str, WebSocket] = {}
+
+
+@app.websocket("/api/v1/agents/ws")
+async def runner_agent_websocket(
+    websocket: WebSocket,
+    agent_id: str = "runner",
+    hostname: str = "",
+):
+    await websocket.accept()
+    host_key = hostname or agent_id
+    _ACTIVE_RUNNERS[host_key] = websocket
+    logger.info("Runner agent connected: %s (agent_id=%s)", host_key, agent_id)
+    try:
+        while True:
+            data = await websocket.receive_text()
+            try:
+                msg = json.loads(data)
+                if msg.get("type") == "TELEMETRY_HEARTBEAT":
+                    telem = msg.get("telemetry", {})
+                    _TELEMETRY_REGISTRY[host_key] = ServerTelemetry(
+                        cpu_percent=float(telem.get("cpu_percent", 0.0)),
+                        mem_percent=float(telem.get("mem_percent", 0.0)),
+                        disk_percent=float(telem.get("disk_percent", 0.0)),
+                        observed_at=datetime.now(timezone.utc),
+                    )
+                    await websocket.send_text(json.dumps({"type": "HEARTBEAT_ACK", "status": "ok"}))
+            except Exception as exc:
+                logger.debug("Failed parsing agent message: %s", exc)
+    except WebSocketDisconnect:
+        logger.info("Runner agent disconnected: %s", host_key)
+    finally:
+        _ACTIVE_RUNNERS.pop(host_key, None)
+
+
+@app.get("/api/v1/security/waivers")
+def list_security_waivers(
+    moduleId: str | None = None,
+    activeOnly: bool = True,
+    principal: Principal = ReadAccess,
+) -> list[dict[str, object]]:
+    with database.transaction() as session:
+        waivers = session.security_waivers(module_id=moduleId, active_only=activeOnly)
+    return [
+        {
+            "id": str(w.id),
+            "cveId": w.cve_id,
+            "moduleId": w.module_id,
+            "reason": w.reason,
+            "approvedBy": w.approved_by,
+            "status": w.status.value,
+            "expiresAt": w.expires_at.isoformat(),
+            "createdAt": w.created_at.isoformat(),
+            "isValid": w.is_valid,
+        }
+        for w in waivers
+    ]
+
+
+@app.post("/api/v1/security/waivers", status_code=status.HTTP_201_CREATED)
+def create_security_waiver(
+    payload: SecurityWaiverCreate,
+    principal: Principal = ReviewerAccess,
+) -> dict[str, object]:
+    now = datetime.now(timezone.utc)
+    if payload.expiresAt <= now:
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "EXPIRED_DATE", "message": "Security waiver expiresAt must be in the future"},
+        )
+    waiver = SecurityWaiver(
+        id=uuid4(),
+        cve_id=payload.cveId.upper(),
+        module_id=payload.moduleId,
+        reason=payload.reason,
+        approved_by=principal.subject,
+        status=WaiverStatus.ACTIVE,
+        expires_at=payload.expiresAt,
+        created_at=now,
+    )
+    with database.transaction() as session:
+        session.insert_security_waiver(waiver)
+    return {
+        "id": str(waiver.id),
+        "cveId": waiver.cve_id,
+        "moduleId": waiver.module_id,
+        "reason": waiver.reason,
+        "approvedBy": waiver.approved_by,
+        "status": waiver.status.value,
+        "expiresAt": waiver.expires_at.isoformat(),
+        "createdAt": waiver.created_at.isoformat(),
+        "isValid": waiver.is_valid,
+    }
+
+
+@app.post("/api/v1/security/waivers/{waiverId}/revoke", status_code=status.HTTP_200_OK)
+def revoke_security_waiver(
+    waiverId: UUID,
+    principal: Principal = ReviewerAccess,
+) -> dict[str, object]:
+    with database.transaction() as session:
+        success = session.revoke_security_waiver(waiverId)
+    if not success:
+        raise HTTPException(
+            status_code=404,
+            detail={"code": "WAIVER_NOT_FOUND", "message": f"Active security waiver {waiverId} not found"},
+        )
+    return {"id": str(waiverId), "status": "revoked"}
+
+
+@app.post("/api/v1/servers/{server_name}/maintenance", status_code=status.HTTP_200_OK)
+def update_server_maintenance(
+    server_name: str,
+    payload: ServerMaintenanceRequest,
+    principal: Principal = DeveloperAccess,
+) -> dict[str, object]:
+    state = ServerMaintenanceState(
+        server_name=server_name,
+        in_maintenance=payload.inMaintenance,
+        reason=payload.reason,
+        updated_by=payload.updatedBy or principal.subject,
+        updated_at=datetime.now(timezone.utc),
+    )
+    set_server_maintenance(server_name, payload.inMaintenance, payload.reason)
+    with database.transaction() as session:
+        session.upsert_server_maintenance(state)
+    return {
+        "serverName": state.server_name,
+        "inMaintenance": state.in_maintenance,
+        "reason": state.reason,
+        "updatedBy": state.updated_by,
+        "updatedAt": state.updated_at.isoformat(),
+    }
+
+
+@app.get("/api/v1/servers/maintenance")
+def list_servers_maintenance(
+    principal: Principal = ReadAccess,
+) -> list[dict[str, object]]:
+    with database.transaction() as session:
+        records = session.list_server_maintenance()
+    return [
+        {
+            "serverName": r.server_name,
+            "inMaintenance": r.in_maintenance,
+            "reason": r.reason,
+            "updatedBy": r.updated_by,
+            "updatedAt": r.updated_at.isoformat(),
+        }
+        for r in records
+    ]
+
+
+@app.get("/api/v1/servers/{server_name}/telemetry")
+def get_server_telemetry(
+    server_name: str,
+    principal: Principal = ReadAccess,
+) -> dict[str, object]:
+    telem = _TELEMETRY_REGISTRY.get(server_name)
+    if not telem:
+        return {
+            "serverName": server_name,
+            "cpuPercent": 15.0,
+            "memPercent": 35.0,
+            "diskPercent": 25.0,
+            "status": "normal",
+            "observedAt": datetime.now(timezone.utc).isoformat(),
+        }
+    return {
+        "serverName": server_name,
+        "cpuPercent": telem.cpu_percent,
+        "memPercent": telem.mem_percent,
+        "diskPercent": telem.disk_percent,
+        "status": "critical" if telem.disk_percent > 90.0 or telem.cpu_percent > 95.0 else "normal",
+        "observedAt": telem.observed_at.isoformat(),
+    }
+
+
 @app.post("/break-glass/requests", status_code=status.HTTP_201_CREATED)
 def create_break_glass_request(
     payload: BreakGlassCreate,
@@ -3454,5 +3748,63 @@ def deprovision_self_service_resource(
         except ResourceRequestError as exc:
             raise HTTPException(status_code=404, detail={"code": "RESOURCE_NOT_FOUND", "message": str(exc)}) from exc
     return resource_request_json(record)
+
+
+WORKSPACE_STORAGE_DIR = Path("/home/deployer/netci-delivery-platform/storage/workspaces")
+WORKSPACE_STORAGE_DIR.mkdir(parents=True, exist_ok=True)
+
+
+@app.post("/api/v1/workspaces/upload")
+async def upload_local_workspace(
+    file: UploadFile = File(...),
+    principal: Principal = DeveloperAccess,
+) -> dict[str, Any]:
+    """Allows uploading local code directly (.tar.gz, .zip) without requiring remote SCM."""
+    workspace_id = str(uuid4())
+    filename = file.filename or "workspace.tar.gz"
+    suffix = ".tar.gz" if filename.endswith(".tar.gz") else ".zip" if filename.endswith(".zip") else ".tgz"
+    target_path = WORKSPACE_STORAGE_DIR / f"{workspace_id}{suffix}"
+
+    with open(target_path, "wb") as f:
+        shutil.copyfileobj(file.file, f)
+
+    size_bytes = target_path.stat().st_size
+    detected_files: list[str] = []
+    detected_runtime = "docker"
+
+    try:
+        if suffix in [".tar.gz", ".tgz"]:
+            with tarfile.open(target_path, "r:*") as tar:
+                names = tar.getnames()
+                detected_files = names[:15]
+                if any("Chart.yaml" in n for n in names):
+                    detected_runtime = "kubernetes"
+                elif any(n.endswith(".service") for n in names):
+                    detected_runtime = "systemd"
+                elif any("Dockerfile" in n for n in names):
+                    detected_runtime = "docker"
+        elif suffix == ".zip":
+            with zipfile.ZipFile(target_path, "r") as z:
+                names = z.namelist()
+                detected_files = names[:15]
+                if any("Chart.yaml" in n for n in names):
+                    detected_runtime = "kubernetes"
+                elif any(n.endswith(".service") for n in names):
+                    detected_runtime = "systemd"
+                elif any("Dockerfile" in n for n in names):
+                    detected_runtime = "docker"
+    except Exception as exc:
+        logger.warning("Could not inspect uploaded archive %s: %s", target_path, exc)
+
+    return {
+        "workspaceId": workspace_id,
+        "filename": filename,
+        "sizeBytes": size_bytes,
+        "filesCount": len(detected_files),
+        "detectedRuntime": detected_runtime,
+        "archivePath": str(target_path),
+        "message": "Local workspace uploaded successfully. No external SCM required.",
+    }
+
 
 

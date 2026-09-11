@@ -175,6 +175,12 @@ metrics.register_gauge(
 class PrometheusMetricsMiddleware(BaseHTTPMiddleware):
     """ASGI Middleware collecting request rate, status code, and latency."""
 
+    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        await super().__call__(scope, receive, send)
+
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
         # Don't trace Prometheus scraping itself to avoid feedback loops
         if request.url.path == "/metrics":

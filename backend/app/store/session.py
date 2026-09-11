@@ -23,7 +23,9 @@ from ..domain.models import (
     ScmIntegration,
     ScmProviderType,
     ScmWebhookDelivery,
+    SecurityWaiver,
     ServerHealthRecord,
+    ServerMaintenanceState,
 )
 from ..persistence import AuditRecord, IdempotencyRow, UnitOfWork
 from .records import (
@@ -350,6 +352,24 @@ class PlatformSession(Protocol):
     def revoke_security_exception(
         self, exception_id: UUID, revoked_by: str, revoked_at: datetime
     ) -> bool: ...
+
+    def insert_security_waiver(self, waiver: SecurityWaiver) -> None: ...
+
+    def security_waivers(
+        self, module_id: str | None = None, active_only: bool = True
+    ) -> tuple[SecurityWaiver, ...]: ...
+
+    def get_active_waiver(
+        self, cve_id: str, module_id: str | None = None
+    ) -> SecurityWaiver | None: ...
+
+    def revoke_security_waiver(self, waiver_id: UUID) -> bool: ...
+
+    def upsert_server_maintenance(self, state: ServerMaintenanceState) -> None: ...
+
+    def get_server_maintenance(self, server_name: str) -> ServerMaintenanceState | None: ...
+
+    def list_server_maintenance(self) -> tuple[ServerMaintenanceState, ...]: ...
 
     def insert_break_glass_request(self, record: BreakGlassRecord) -> None: ...
 

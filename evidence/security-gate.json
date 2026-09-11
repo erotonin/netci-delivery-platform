@@ -1,20 +1,20 @@
 {
   "gate": "security-gate",
   "description": "Real Syft/Trivy/Cosign supply chain against the netCI policy: one allow and three deny cases.",
-  "result": "pass",
-  "error": null,
-  "commit": "f04e7a4b02daa9662fa273da5a0991b6cdc57af8",
+  "result": "fail",
+  "error": "ApiError: /pipeline-runs/f8d5e96c-0476-402a-b01c-870fe41e0b5c/logs -> 404: {'code': 'PIPELINE_NOT_FOUND', 'message': 'pipeline run not found', 'correlationId': '33811e06-4b70-47bb-8eb9-47a4e75cf296'}",
+  "commit": "5a314b819a2911825d99ff6137c60a27fcf98cd6",
   "host": {
-    "platform": "Linux-6.8.0-134-generic-x86_64-with-glibc2.39",
+    "platform": "Linux-6.8.0-139-generic-x86_64-with-glibc2.39",
     "python": "3.12.3",
     "hostname": "openstack-aio"
   },
-  "startedAt": "2026-08-28T07:00:26.874575+00:00",
-  "endedAt": "2026-08-28T07:00:36.206548+00:00",
+  "startedAt": "2026-09-08T11:14:47.418871+00:00",
+  "endedAt": "2026-09-08T11:14:53.306985+00:00",
   "context": {
     "apiUrl": "http://127.0.0.1:8100",
     "pipelineApiKey": "netci-local-pipeline-key",
-    "allowDeploymentId": "8440d1ec-88c5-4589-9bc7-ec286d6053f0"
+    "allowDeploymentId": "a91cb89a-45b4-4797-a259-c358bca1ea39"
   },
   "assertions": [
     {
@@ -28,7 +28,7 @@
     {
       "assertion": "the build produced an immutable sha256 digest",
       "passed": true,
-      "detail": "sha256:79992c9dedfab0aa97dfa6d4d0e29dffcfdb2fb4769bc6a61c4dfa42eb065d37"
+      "detail": "sha256:fe6d78c386a77c5152631fc332e7f3813ac61a09361748068ba3b63f04f12ab4"
     },
     {
       "assertion": "Syft produced a CycloneDX SBOM with components",
@@ -76,8 +76,8 @@
       "assertion": "the deployment carries the digest that was scanned and signed",
       "passed": true,
       "detail": {
-        "expected": "sha256:79992c9dedfab0aa97dfa6d4d0e29dffcfdb2fb4769bc6a61c4dfa42eb065d37",
-        "actual": "sha256:79992c9dedfab0aa97dfa6d4d0e29dffcfdb2fb4769bc6a61c4dfa42eb065d37"
+        "expected": "sha256:fe6d78c386a77c5152631fc332e7f3813ac61a09361748068ba3b63f04f12ab4",
+        "actual": "sha256:fe6d78c386a77c5152631fc332e7f3813ac61a09361748068ba3b63f04f12ab4"
       }
     },
     {
@@ -97,7 +97,7 @@
     {
       "assertion": "the image has a sha256 identity",
       "passed": true,
-      "detail": "sha256:35afdf1cdb0b5442ec926e8cc340de564215fc8b8fc4a1f6464126dc769c4801"
+      "detail": "sha256:ca86fc053896b48b837479b53a1c53b7dd13d61db4274c3da9a3d5511da09bfb"
     },
     {
       "assertion": "a vulnerable artifact is denied by policy",
@@ -154,25 +154,14 @@
         "expected": 422,
         "actual": 422
       }
-    },
-    {
-      "assertion": "the policy decision is written to the run log",
-      "passed": true,
-      "detail": [
-        "queued correlationId=431d32fa-0e44-42c4-9430-dd9cd73f5dd3",
-        "commit=abc1234",
-        "startedBy=anonymous",
-        "security-evidence decision=allow reason=artifact satisfies the netCI supply-chain policy",
-        "policy=allow artifact satisfies the netCI supply-chain policy"
-      ]
     }
   ],
   "steps": [
     {
       "name": "tool-preflight",
       "command": null,
-      "startedAt": "2026-08-28T07:00:26.874660+00:00",
-      "endedAt": "2026-08-28T07:00:26.874660+00:00",
+      "startedAt": "2026-09-08T11:14:47.419022+00:00",
+      "endedAt": "2026-09-08T11:14:47.419022+00:00",
       "durationSeconds": 0.0,
       "exitCode": 0,
       "passed": true,
@@ -192,8 +181,8 @@
     {
       "name": "api-health",
       "command": null,
-      "startedAt": "2026-08-28T07:00:26.894712+00:00",
-      "endedAt": "2026-08-28T07:00:26.894712+00:00",
+      "startedAt": "2026-09-08T11:14:47.442278+00:00",
+      "endedAt": "2026-09-08T11:14:47.442278+00:00",
       "durationSeconds": 0.0,
       "exitCode": 0,
       "passed": true,
@@ -206,11 +195,12 @@
           "ci": "none",
           "cd": "none",
           "auth": "none",
-          "signatureVerification": "none"
+          "signatureVerification": "none",
+          "rateLimit": "off"
         },
         "dependencies": {
           "portalPersistence": {
-            "mode": "postgresql",
+            "mode": "memory",
             "status": "ready"
           },
           "deliveryPersistence": "ok"
@@ -223,9 +213,9 @@
         "bash",
         "/home/deployer/netci-delivery-platform/templates/systemd-ansible-ci-cd-v1/scripts/ci/test.sh"
       ],
-      "startedAt": "2026-08-28T07:00:26.895150+00:00",
-      "endedAt": "2026-08-28T07:00:26.968177+00:00",
-      "durationSeconds": 0.073,
+      "startedAt": "2026-09-08T11:14:47.443297+00:00",
+      "endedAt": "2026-09-08T11:14:47.743682+00:00",
+      "durationSeconds": 0.3,
       "exitCode": 0,
       "passed": true,
       "stdout": "ok  \texample.com/netci/hello-systemd\t(cached)\n",
@@ -238,12 +228,12 @@
         "bash",
         "/home/deployer/netci-delivery-platform/templates/systemd-ansible-ci-cd-v1/scripts/ci/build.sh"
       ],
-      "startedAt": "2026-08-28T07:00:26.968237+00:00",
-      "endedAt": "2026-08-28T07:00:27.202512+00:00",
-      "durationSeconds": 0.234,
+      "startedAt": "2026-09-08T11:14:47.743828+00:00",
+      "endedAt": "2026-09-08T11:14:47.914563+00:00",
+      "durationSeconds": 0.171,
       "exitCode": 0,
       "passed": true,
-      "stdout": "79992c9dedfab0aa97dfa6d4d0e29dffcfdb2fb4769bc6a61c4dfa42eb065d37  dist/hello-systemd-v0.1.0\n",
+      "stdout": "fe6d78c386a77c5152631fc332e7f3813ac61a09361748068ba3b63f04f12ab4  dist/hello-systemd-v0.1.0\n",
       "stderr": "",
       "detail": {}
     },
@@ -253,9 +243,9 @@
         "bash",
         "/home/deployer/netci-delivery-platform/templates/systemd-ansible-ci-cd-v1/scripts/ci/sbom.sh"
       ],
-      "startedAt": "2026-08-28T07:00:27.202710+00:00",
-      "endedAt": "2026-08-28T07:00:28.488326+00:00",
-      "durationSeconds": 1.286,
+      "startedAt": "2026-09-08T11:14:47.914744+00:00",
+      "endedAt": "2026-09-08T11:14:49.712154+00:00",
+      "durationSeconds": 1.797,
       "exitCode": 0,
       "passed": true,
       "stdout": "",
@@ -268,13 +258,13 @@
         "bash",
         "/home/deployer/netci-delivery-platform/templates/systemd-ansible-ci-cd-v1/scripts/ci/scan.sh"
       ],
-      "startedAt": "2026-08-28T07:00:28.488553+00:00",
-      "endedAt": "2026-08-28T07:00:28.567684+00:00",
-      "durationSeconds": 0.079,
+      "startedAt": "2026-09-08T11:14:49.712457+00:00",
+      "endedAt": "2026-09-08T11:14:49.891783+00:00",
+      "durationSeconds": 0.179,
       "exitCode": 0,
       "passed": true,
       "stdout": "",
-      "stderr": "2026-08-28T14:00:28+07:00\tINFO\t[vuln] Vulnerability scanning is enabled\n2026-08-28T14:00:28+07:00\tINFO\tNumber of language-specific files\tnum=1\n2026-08-28T14:00:28+07:00\tINFO\t[gobinary] Detecting vulnerabilities...\n",
+      "stderr": "2026-09-08T18:14:49+07:00\tINFO\t[vuln] Vulnerability scanning is enabled\n2026-09-08T18:14:49+07:00\tINFO\tNumber of language-specific files\tnum=1\n2026-09-08T18:14:49+07:00\tINFO\t[gobinary] Detecting vulnerabilities...\n",
       "detail": {}
     },
     {
@@ -285,9 +275,9 @@
         "--output-key-prefix",
         "cosign"
       ],
-      "startedAt": "2026-08-28T07:00:28.568053+00:00",
-      "endedAt": "2026-08-28T07:00:28.715836+00:00",
-      "durationSeconds": 0.148,
+      "startedAt": "2026-09-08T11:14:49.892234+00:00",
+      "endedAt": "2026-09-08T11:14:50.149418+00:00",
+      "durationSeconds": 0.257,
       "exitCode": 0,
       "passed": true,
       "stdout": "",
@@ -300,12 +290,12 @@
         "bash",
         "/home/deployer/netci-delivery-platform/templates/systemd-ansible-ci-cd-v1/scripts/ci/sign.sh"
       ],
-      "startedAt": "2026-08-28T07:00:28.715949+00:00",
-      "endedAt": "2026-08-28T07:00:28.901918+00:00",
-      "durationSeconds": 0.186,
+      "startedAt": "2026-09-08T11:14:50.149524+00:00",
+      "endedAt": "2026-09-08T11:14:50.457802+00:00",
+      "durationSeconds": 0.308,
       "exitCode": 0,
       "passed": true,
-      "stdout": "MEUCIDLpfCwJ07rzYa215n1digGnPtLyJXv/+3sJehC5W8kFAiEA27RzJmfcaEpFJY1iQxQ15Fiq7DSfPivIv+DWPzu5aOA=\n",
+      "stdout": "MEUCIQC/VtHy+OOAAmUtstWIXO4wMFV4P5IoKMd7lQumQaIvvwIgegIDmzpdwYt+sDa2fs2PkcxeXbI+MIkJcqe3YdijJ0Q=\n",
       "stderr": "Using payload from: /home/deployer/netci-delivery-platform/sample-apps/hello-systemd-go/dist/hello-systemd-v0.1.0\nWrote bundle to file /home/deployer/netci-delivery-platform/.netci-gate/security/clean/signature.bundle.json\n",
       "detail": {}
     },
@@ -321,9 +311,9 @@
         "--insecure-ignore-tlog=true",
         "/home/deployer/netci-delivery-platform/sample-apps/hello-systemd-go/dist/hello-systemd-v0.1.0"
       ],
-      "startedAt": "2026-08-28T07:00:28.902077+00:00",
-      "endedAt": "2026-08-28T07:00:28.936777+00:00",
-      "durationSeconds": 0.035,
+      "startedAt": "2026-09-08T11:14:50.457946+00:00",
+      "endedAt": "2026-09-08T11:14:50.512718+00:00",
+      "durationSeconds": 0.055,
       "exitCode": 0,
       "passed": true,
       "stdout": "",
@@ -333,31 +323,31 @@
     {
       "name": "provision-run",
       "command": null,
-      "startedAt": "2026-08-28T07:00:28.971575+00:00",
-      "endedAt": "2026-08-28T07:00:28.971575+00:00",
+      "startedAt": "2026-09-08T11:14:50.536742+00:00",
+      "endedAt": "2026-09-08T11:14:50.536742+00:00",
       "durationSeconds": 0.0,
       "exitCode": 0,
       "passed": true,
       "stdout": "",
       "stderr": "",
       "detail": {
-        "applicationId": "94352aca-79c3-423d-a5a4-0f8d0f08b9fc",
-        "pipelineRunId": "473089a6-40a1-45e7-a122-54fcb33fddc1",
-        "name": "gate-sec-allow-44ec3b"
+        "applicationId": "b19b2a43-c1a2-4286-a541-8410d1566429",
+        "pipelineRunId": "f8d5e96c-0476-402a-b01c-870fe41e0b5c",
+        "name": "gate-sec-allow-59618a"
       }
     },
     {
       "name": "allow:policy-decision",
       "command": null,
-      "startedAt": "2026-08-28T07:00:28.978975+00:00",
-      "endedAt": "2026-08-28T07:00:28.978975+00:00",
+      "startedAt": "2026-09-08T11:14:50.540447+00:00",
+      "endedAt": "2026-09-08T11:14:50.540447+00:00",
       "durationSeconds": 0.0,
       "exitCode": 0,
       "passed": true,
       "stdout": "",
       "stderr": "",
       "detail": {
-        "pipelineRunId": "473089a6-40a1-45e7-a122-54fcb33fddc1",
+        "pipelineRunId": "f8d5e96c-0476-402a-b01c-870fe41e0b5c",
         "decision": "allow",
         "reason": "artifact satisfies the netCI supply-chain policy",
         "checks": {
@@ -380,13 +370,13 @@
         "netci-gate-vulnerable:latest",
         "/home/deployer/netci-delivery-platform/.netci-gate/security/vulnerable/context"
       ],
-      "startedAt": "2026-08-28T07:00:28.989647+00:00",
-      "endedAt": "2026-08-28T07:00:35.940474+00:00",
-      "durationSeconds": 6.951,
+      "startedAt": "2026-09-08T11:14:50.544865+00:00",
+      "endedAt": "2026-09-08T11:14:52.983048+00:00",
+      "durationSeconds": 2.438,
       "exitCode": 0,
       "passed": true,
       "stdout": "",
-      "stderr": "#0 building with \"default\" instance using docker driver\n\n#1 [internal] load build definition from Dockerfile\n#1 transferring dockerfile: 149B done\n#1 DONE 0.0s\n\n#2 [internal] load metadata for docker.io/library/python:3.9-slim-buster\n#2 DONE 6.7s\n\n#3 [internal] load .dockerignore\n#3 transferring context: 2B done\n#3 DONE 0.0s\n\n#4 [internal] load build context\n#4 transferring context: 996B done\n#4 DONE 0.0s\n\n#5 [1/3] FROM docker.io/library/python:3.9-slim-buster@sha256:320a7a4250aba4249f458872adecf92eea88dc6abd2d76dc5c0f01cac9b53990\n#5 resolve docker.io/library/python:3.9-slim-buster@sha256:320a7a4250aba4249f458872adecf92eea88dc6abd2d76dc5c0f01cac9b53990 done\n#5 DONE 0.0s\n\n#6 [2/3] WORKDIR /app\n#6 CACHED\n\n#7 [3/3] COPY app.py /app/app.py\n#7 CACHED\n\n#8 exporting to image\n#8 exporting layers done\n#8 exporting manifest sha256:fe2366fe55f289908ca55f39483511832a51e113a54aad4cc35150b8258c8d00 done\n#8 exporting config sha256:357da95691f02a027021b8c53028de979826f9deb6deb29c64c9eccb6c62a23e done\n#8 exporting attestation manifest sha256:0c410b2e9c4f2285d121feb8017544be4b4d2c55ef2d4df3cde7a95e8bc9746e done\n#8 exporting manifest list sha256:35afdf1cdb0b5442ec926e8cc340de564215fc8b8fc4a1f6464126dc769c4801 done\n#8 naming to docker.io/library/netci-gate-vulnerable:latest done\n#8 unpacking to docker.io/library/netci-gate-vulnerable:latest done\n#8 DONE 0.0s\n",
+      "stderr": "#0 building with \"default\" instance using docker driver\n\n#1 [internal] load build definition from Dockerfile\n#1 transferring dockerfile: 149B done\n#1 DONE 0.0s\n\n#2 [internal] load metadata for docker.io/library/python:3.9-slim-buster\n#2 DONE 2.0s\n\n#3 [internal] load .dockerignore\n#3 transferring context: 2B done\n#3 DONE 0.0s\n\n#4 [internal] load build context\n#4 transferring context: 996B done\n#4 DONE 0.0s\n\n#5 [1/3] FROM docker.io/library/python:3.9-slim-buster@sha256:320a7a4250aba4249f458872adecf92eea88dc6abd2d76dc5c0f01cac9b53990\n#5 resolve docker.io/library/python:3.9-slim-buster@sha256:320a7a4250aba4249f458872adecf92eea88dc6abd2d76dc5c0f01cac9b53990 0.0s done\n#5 DONE 0.0s\n\n#6 [2/3] WORKDIR /app\n#6 CACHED\n\n#7 [3/3] COPY app.py /app/app.py\n#7 CACHED\n\n#8 exporting to image\n#8 exporting layers done\n#8 exporting manifest sha256:fe2366fe55f289908ca55f39483511832a51e113a54aad4cc35150b8258c8d00 done\n#8 exporting config sha256:357da95691f02a027021b8c53028de979826f9deb6deb29c64c9eccb6c62a23e done\n#8 exporting attestation manifest sha256:80a15c807edac82e318d443e785a7ee5dc3a6b88e22b06196970c4b93ddd40e2 0.0s done\n#8 exporting manifest list sha256:ca86fc053896b48b837479b53a1c53b7dd13d61db4274c3da9a3d5511da09bfb done\n#8 naming to docker.io/library/netci-gate-vulnerable:latest done\n#8 unpacking to docker.io/library/netci-gate-vulnerable:latest done\n#8 DONE 0.1s\n",
       "detail": {
         "baseImage": "python:3.9-slim-buster",
         "why": "an unpatched end-of-life base image, so Trivy has real findings"
@@ -410,13 +400,13 @@
         "/home/deployer/netci-delivery-platform/.netci-gate/security/vulnerable/scan-report.json",
         "netci-gate-vulnerable:latest"
       ],
-      "startedAt": "2026-08-28T07:00:35.940561+00:00",
-      "endedAt": "2026-08-28T07:00:36.042493+00:00",
-      "durationSeconds": 0.102,
+      "startedAt": "2026-09-08T11:14:52.983150+00:00",
+      "endedAt": "2026-09-08T11:14:53.199093+00:00",
+      "durationSeconds": 0.216,
       "exitCode": 1,
       "passed": true,
       "stdout": "",
-      "stderr": "2026-08-28T14:00:35+07:00\tINFO\t[vuln] Vulnerability scanning is enabled\n2026-08-28T14:00:36+07:00\tINFO\tDetected OS\tfamily=\"debian\" version=\"10.13\"\n2026-08-28T14:00:36+07:00\tINFO\t[debian] Detecting vulnerabilities...\tos_version=\"10\" pkg_num=93\n2026-08-28T14:00:36+07:00\tINFO\tNumber of language-specific files\tnum=1\n2026-08-28T14:00:36+07:00\tINFO\t[python-pkg] Detecting vulnerabilities...\n2026-08-28T14:00:36+07:00\tWARN\tUsing severities from other vendors for some vulnerabilities. Read https://trivy.dev/docs/v0.71/guide/scanner/vulnerability#severity-selection for details.\n2026-08-28T14:00:36+07:00\tWARN\tThis OS version is no longer supported by the distribution\tfamily=\"debian\" version=\"10.13\"\n2026-08-28T14:00:36+07:00\tWARN\tThe vulnerability detection may be insufficient because security updates are not provided\n",
+      "stderr": "2026-09-08T18:14:53+07:00\tINFO\t[vuln] Vulnerability scanning is enabled\n2026-09-08T18:14:53+07:00\tINFO\tDetected OS\tfamily=\"debian\" version=\"10.13\"\n2026-09-08T18:14:53+07:00\tINFO\t[debian] Detecting vulnerabilities...\tos_version=\"10\" pkg_num=93\n2026-09-08T18:14:53+07:00\tINFO\tNumber of language-specific files\tnum=1\n2026-09-08T18:14:53+07:00\tINFO\t[python-pkg] Detecting vulnerabilities...\n2026-09-08T18:14:53+07:00\tWARN\tUsing severities from other vendors for some vulnerabilities. Read https://trivy.dev/docs/v0.71/guide/scanner/vulnerability#severity-selection for details.\n2026-09-08T18:14:53+07:00\tWARN\tThis OS version is no longer supported by the distribution\tfamily=\"debian\" version=\"10.13\"\n2026-09-08T18:14:53+07:00\tWARN\tThe vulnerability detection may be insufficient because security updates are not provided\n",
       "detail": {}
     },
     {
@@ -429,43 +419,43 @@
         "--format",
         "{{.Id}}"
       ],
-      "startedAt": "2026-08-28T07:00:36.044452+00:00",
-      "endedAt": "2026-08-28T07:00:36.071844+00:00",
-      "durationSeconds": 0.027,
+      "startedAt": "2026-09-08T11:14:53.202952+00:00",
+      "endedAt": "2026-09-08T11:14:53.238597+00:00",
+      "durationSeconds": 0.036,
       "exitCode": 0,
       "passed": true,
-      "stdout": "sha256:35afdf1cdb0b5442ec926e8cc340de564215fc8b8fc4a1f6464126dc769c4801\n",
+      "stdout": "sha256:ca86fc053896b48b837479b53a1c53b7dd13d61db4274c3da9a3d5511da09bfb\n",
       "stderr": "",
       "detail": {}
     },
     {
       "name": "provision-run",
       "command": null,
-      "startedAt": "2026-08-28T07:00:36.094137+00:00",
-      "endedAt": "2026-08-28T07:00:36.094137+00:00",
+      "startedAt": "2026-09-08T11:14:53.260236+00:00",
+      "endedAt": "2026-09-08T11:14:53.260236+00:00",
       "durationSeconds": 0.0,
       "exitCode": 0,
       "passed": true,
       "stdout": "",
       "stderr": "",
       "detail": {
-        "applicationId": "467c24e2-e504-4ea1-9205-29c2db4655b7",
-        "pipelineRunId": "b5b2b04d-7b57-46a5-ad64-a67c75d19516",
-        "name": "gate-sec-vuln-bd256a"
+        "applicationId": "bddcfd72-17f5-4b05-b768-142ce62c62e2",
+        "pipelineRunId": "bf3ff66b-112f-4dd4-a162-8536fec0e05e",
+        "name": "gate-sec-vuln-eac982"
       }
     },
     {
       "name": "deny-vulnerable:policy-decision",
       "command": null,
-      "startedAt": "2026-08-28T07:00:36.100777+00:00",
-      "endedAt": "2026-08-28T07:00:36.100777+00:00",
+      "startedAt": "2026-09-08T11:14:53.264170+00:00",
+      "endedAt": "2026-09-08T11:14:53.264170+00:00",
       "durationSeconds": 0.0,
       "exitCode": 0,
       "passed": true,
       "stdout": "",
       "stderr": "",
       "detail": {
-        "pipelineRunId": "b5b2b04d-7b57-46a5-ad64-a67c75d19516",
+        "pipelineRunId": "bf3ff66b-112f-4dd4-a162-8536fec0e05e",
         "decision": "deny",
         "reason": "artifact has 0 critical and 10 high vulnerabilities",
         "checks": {
@@ -479,8 +469,8 @@
     {
       "name": "deny-vulnerable:ci-result",
       "command": null,
-      "startedAt": "2026-08-28T07:00:36.113056+00:00",
-      "endedAt": "2026-08-28T07:00:36.113056+00:00",
+      "startedAt": "2026-09-08T11:14:53.266822+00:00",
+      "endedAt": "2026-09-08T11:14:53.266822+00:00",
       "durationSeconds": 0.0,
       "exitCode": 0,
       "passed": true,
@@ -491,38 +481,38 @@
         "body": {
           "code": "ARTIFACT_POLICY_DENIED",
           "message": "artifact has 0 critical and 10 high vulnerabilities",
-          "correlationId": "3a06d711-2544-48e6-8586-c92bda23b5a7"
+          "correlationId": "03f1c169-8df6-4270-acac-a1d71ea97783"
         }
       }
     },
     {
       "name": "provision-run",
       "command": null,
-      "startedAt": "2026-08-28T07:00:36.140706+00:00",
-      "endedAt": "2026-08-28T07:00:36.140706+00:00",
+      "startedAt": "2026-09-08T11:14:53.277432+00:00",
+      "endedAt": "2026-09-08T11:14:53.277432+00:00",
       "durationSeconds": 0.0,
       "exitCode": 0,
       "passed": true,
       "stdout": "",
       "stderr": "",
       "detail": {
-        "applicationId": "208ca81e-8e3e-4afb-9720-6258135e2079",
-        "pipelineRunId": "5bd10870-fb36-42b4-8097-f287a8daf809",
-        "name": "gate-sec-unsigned-d64415"
+        "applicationId": "7f1d7d7e-d12a-4485-abc0-369859d47172",
+        "pipelineRunId": "97995d07-22dd-4fd7-8eca-011e7e190c98",
+        "name": "gate-sec-unsigned-864b71"
       }
     },
     {
       "name": "deny-unsigned:policy-decision",
       "command": null,
-      "startedAt": "2026-08-28T07:00:36.146983+00:00",
-      "endedAt": "2026-08-28T07:00:36.146983+00:00",
+      "startedAt": "2026-09-08T11:14:53.280013+00:00",
+      "endedAt": "2026-09-08T11:14:53.280013+00:00",
       "durationSeconds": 0.0,
       "exitCode": 0,
       "passed": true,
       "stdout": "",
       "stderr": "",
       "detail": {
-        "pipelineRunId": "5bd10870-fb36-42b4-8097-f287a8daf809",
+        "pipelineRunId": "97995d07-22dd-4fd7-8eca-011e7e190c98",
         "decision": "deny",
         "reason": "Cosign signature evidence is missing or unverified",
         "checks": {
@@ -536,24 +526,24 @@
     {
       "name": "provision-run",
       "command": null,
-      "startedAt": "2026-08-28T07:00:36.178630+00:00",
-      "endedAt": "2026-08-28T07:00:36.178630+00:00",
+      "startedAt": "2026-09-08T11:14:53.291896+00:00",
+      "endedAt": "2026-09-08T11:14:53.291896+00:00",
       "durationSeconds": 0.0,
       "exitCode": 0,
       "passed": true,
       "stdout": "",
       "stderr": "",
       "detail": {
-        "applicationId": "dcf8e428-eecf-46e5-86d0-b9dd2f54fbcd",
-        "pipelineRunId": "035b4faf-b399-4071-8c8a-77c5ee76f6ec",
-        "name": "gate-sec-mismatch-dbd8df"
+        "applicationId": "6ff718c5-3d46-4d9e-a00f-8641a6ae1b8f",
+        "pipelineRunId": "c71b8184-4ce6-4d9c-842d-42a4afe361f0",
+        "name": "gate-sec-mismatch-7727e3"
       }
     },
     {
       "name": "deny-mismatch:ci-result",
       "command": null,
-      "startedAt": "2026-08-28T07:00:36.200384+00:00",
-      "endedAt": "2026-08-28T07:00:36.200384+00:00",
+      "startedAt": "2026-09-08T11:14:53.297923+00:00",
+      "endedAt": "2026-09-08T11:14:53.297923+00:00",
       "durationSeconds": 0.0,
       "exitCode": 0,
       "passed": true,
@@ -564,28 +554,8 @@
         "body": {
           "code": "ARTIFACT_POLICY_DENIED",
           "message": "security evidence does not describe the artifact being deployed",
-          "correlationId": "6a7c22a9-6ac7-46e4-9a94-797b92782a08"
+          "correlationId": "3da1ebbd-e9f7-4ce0-97bf-26dfb9262eab"
         }
-      }
-    },
-    {
-      "name": "allow:pipeline-log",
-      "command": null,
-      "startedAt": "2026-08-28T07:00:36.202098+00:00",
-      "endedAt": "2026-08-28T07:00:36.202098+00:00",
-      "durationSeconds": 0.0,
-      "exitCode": 0,
-      "passed": true,
-      "stdout": "",
-      "stderr": "",
-      "detail": {
-        "lines": [
-          "queued correlationId=431d32fa-0e44-42c4-9430-dd9cd73f5dd3",
-          "commit=abc1234",
-          "startedBy=anonymous",
-          "security-evidence decision=allow reason=artifact satisfies the netCI supply-chain policy",
-          "policy=allow artifact satisfies the netCI supply-chain policy"
-        ]
       }
     }
   ]

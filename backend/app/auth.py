@@ -134,11 +134,32 @@ def _bearer(authorization: str | None) -> str:
 
 
 class OpenAuthenticator:
-    """No authentication. Every caller is `ANONYMOUS` and holds every human role."""
+    """No authentication required by default, but recognizes demo persona tokens."""
 
     mode = "none"
 
     def authenticate(self, authorization: str | None) -> Principal:
+        if authorization:
+            scheme, _, value = authorization.partition(" ")
+            token = value.strip().lower()
+            if token in {"demo-admin", "admin", "admin-token"}:
+                return Principal(
+                    subject="admin",
+                    display_name="Alexander Admin (Platform Lead)",
+                    email="admin@netci.local",
+                    roles=frozenset({Role.PLATFORM_ADMIN, Role.REVIEWER, Role.DEVELOPER, Role.VIEWER}),
+                    method="demo",
+                    teams=frozenset({"payments", "core", "infrastructure"}),
+                )
+            if token in {"demo-dev", "dev", "dev-token"}:
+                return Principal(
+                    subject="dev",
+                    display_name="David Developer (Backend Engineer)",
+                    email="dev@netci.local",
+                    roles=frozenset({Role.DEVELOPER, Role.VIEWER}),
+                    method="demo",
+                    teams=frozenset({"payments"}),
+                )
         return ANONYMOUS
 
 

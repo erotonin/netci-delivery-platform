@@ -5,8 +5,9 @@ import json
 import urllib.request
 import uuid
 from datetime import datetime, timezone
+import os
 
-API = "http://127.0.0.1:8000"
+API = os.getenv("NETCI_API_URL", "http://127.0.0.1:8100")
 
 def get_json(url: str):
     req = urllib.request.Request(url)

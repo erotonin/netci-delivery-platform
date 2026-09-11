@@ -174,11 +174,11 @@ def gate(recorder: EvidenceRecorder) -> None:
 
     now = datetime.now(timezone.utc)
     # A good release, a release that failed in production, and the fix that restored it.
-    release(client, application_id, commit="d0raaa1", digest=DIGEST_A, healthy=True, commit_at=now - timedelta(hours=3))
+    release(client, application_id, commit="d0aaaa1", digest=DIGEST_A, healthy=True, commit_at=now - timedelta(hours=3))
     broken = release(
-        client, application_id, commit="d0rabb2", digest=DIGEST_B, healthy=False, commit_at=now - timedelta(hours=2)
+        client, application_id, commit="d0aabb2", digest=DIGEST_B, healthy=False, commit_at=now - timedelta(hours=2)
     )
-    release(client, application_id, commit="d0racc3", digest=DIGEST_C, healthy=True, commit_at=now - timedelta(hours=1))
+    release(client, application_id, commit="d0aacc3", digest=DIGEST_C, healthy=True, commit_at=now - timedelta(hours=1))
     recorder.record("released", {"failedDeploymentId": broken})
 
     events = client.delivery_events(application_id)

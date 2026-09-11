@@ -35,7 +35,10 @@ from ..domain.models import (
     ScmIntegration,
     ScmProviderType,
     ScmWebhookDelivery,
+    SecurityWaiver,
     ServerHealthRecord,
+    ServerMaintenanceState,
+    WaiverStatus,
 )
 from ..persistence import (
     AuditRecord,
@@ -97,6 +100,8 @@ class _State:
     catalog_templates: dict[tuple[str, str], CatalogTemplateRecord] = field(default_factory=dict)
     preview_environments: dict[str, PreviewEnvironmentRecord] = field(default_factory=dict)
     resource_requests: dict[UUID, ResourceRequestRecord] = field(default_factory=dict)
+    security_waivers: dict[UUID, SecurityWaiver] = field(default_factory=dict)
+    server_maintenance: dict[str, ServerMaintenanceState] = field(default_factory=dict)
 
     def copy(self) -> "_State":
         return _State(
@@ -132,6 +137,8 @@ class _State:
             catalog_templates=dict(self.catalog_templates),
             preview_environments=dict(self.preview_environments),
             resource_requests=dict(self.resource_requests),
+            security_waivers=dict(self.security_waivers),
+            server_maintenance=dict(self.server_maintenance),
         )
 
 
@@ -923,6 +930,45 @@ class InMemorySession:
             )
             return True
         return False
+
+    def insert_security_waiver(self, waiver: SecurityWaiver) -> None:
+        self._state.security_waivers[waiver.id] = waiver
+
+    def security_waivers(
+        self, module_id: str | None = None, active_only: bool = True
+    ) -> tuple[SecurityWaiver, ...]:
+        records = list(self._state.security_waivers.values())
+        if module_id is not None:
+            records = [r for r in records if r.module_id is None or r.module_id == module_id]
+        if active_only:
+            records = [r for r in records if r.is_valid]
+        records.sort(key=lambda r: r.created_at, reverse=True)
+        return tuple(records)
+
+    def get_active_waiver(
+        self, cve_id: str, module_id: str | None = None
+    ) -> SecurityWaiver | None:
+        for w in self._state.security_waivers.values():
+            if w.cve_id == cve_id and w.is_valid:
+                if module_id is None or w.module_id is None or w.module_id == module_id:
+                    return w
+        return None
+
+    def revoke_security_waiver(self, waiver_id: UUID) -> bool:
+        w = self._state.security_waivers.get(waiver_id)
+        if w and w.status == WaiverStatus.ACTIVE:
+            self._state.security_waivers[waiver_id] = replace(w, status=WaiverStatus.REVOKED)
+            return True
+        return False
+
+    def upsert_server_maintenance(self, state: ServerMaintenanceState) -> None:
+        self._state.server_maintenance[state.server_name] = state
+
+    def get_server_maintenance(self, server_name: str) -> ServerMaintenanceState | None:
+        return self._state.server_maintenance.get(server_name)
+
+    def list_server_maintenance(self) -> tuple[ServerMaintenanceState, ...]:
+        return tuple(self._state.server_maintenance.values())
 
     def insert_break_glass_request(self, record: BreakGlassRecord) -> None:
         self._state.break_glass_requests[record.id] = record

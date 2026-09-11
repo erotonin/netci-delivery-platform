@@ -14,6 +14,26 @@ service:
 ingress:
   enabled: false
 
+# Pluggable Traits for netCI Delivery Platform
+traits:
+  autoTlsIngress:
+    enabled: true
+    host: hello-kubernetes.staging.netci.local
+    clusterIssuer: selfsigned-issuer
+    tlsSecretName: hello-kubernetes-tls
+  kedaAutoscaling:
+    enabled: true
+    minReplicas: 1
+    maxReplicas: 5
+    cooldownPeriod: 300
+    triggers:
+      - type: cpu
+        metricType: Utilization
+        metadata:
+          value: "80"
+  zeroTrustGuard:
+    enabled: true
+
 resources:
   requests:
     cpu: 50m
@@ -23,3 +43,4 @@ resources:
     memory: 256Mi
 
 environment: dev
+

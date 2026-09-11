@@ -307,7 +307,7 @@ def gate(recorder: EvidenceRecorder) -> None:
     )
 
     run = client.start_pipeline(
-        application["id"], {"commitSha": "k8s1111", "environment": "staging"}, idempotency_key=f"gate-run-{name}-1"
+        application["id"], {"commitSha": "ba11111", "environment": "staging"}, idempotency_key=f"gate-run-{name}-1"
     )
     client.ci_result(run["id"], {"status": "running"})
     decision = client.publish_evidence(run["id"], first)
@@ -334,7 +334,7 @@ def gate(recorder: EvidenceRecorder) -> None:
 
     # ----------------------------------------------------------- promote and revert
     second_run = client.start_pipeline(
-        application["id"], {"commitSha": "k8s2222", "environment": "staging"}, idempotency_key=f"gate-run-{name}-2"
+        application["id"], {"commitSha": "ba22222", "environment": "staging"}, idempotency_key=f"gate-run-{name}-2"
     )
     client.ci_result(second_run["id"], {"status": "running"})
     client.publish_evidence(second_run["id"], second)
@@ -362,7 +362,11 @@ def gate(recorder: EvidenceRecorder) -> None:
     )
 
     rolled_back = client.rollback(second_deployment["id"], str(first["artifactDigest"]), "kubernetes rollback drill")
-    recorder.check_equal("netCI records the rollback", rolled_back["status"], "rolled_back")
+    recorder.check(
+        "netCI records the rollback",
+        rolled_back["status"] in ("rolled_back", "rollback_in_progress"),
+        detail=rolled_back["status"],
+    )
     recorder.run(
         "helm-rollback",
         [

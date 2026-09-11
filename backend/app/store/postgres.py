@@ -38,7 +38,10 @@ from ..domain.models import (
     ScmIntegration,
     ScmProviderType,
     ScmWebhookDelivery,
+    SecurityWaiver,
     ServerHealthRecord,
+    ServerMaintenanceState,
+    WaiverStatus,
 )
 from ..persistence import (
     AuditRecord,
@@ -157,6 +160,12 @@ PREVIEW_ENVIRONMENT_COLUMNS = (
 RESOURCE_REQUEST_COLUMNS = (
     "id, application_id, team_id, environment, resource_type, spec, status, status_reason, provider, outputs, requested_by, approved_by, created_at, updated_at"
 )
+SECURITY_WAIVER_COLUMNS = (
+    "id, cve_id, module_id, reason, approved_by, status, expires_at, created_at"
+)
+SERVER_MAINTENANCE_COLUMNS = (
+    "server_name, in_maintenance, reason, updated_by, updated_at"
+)
 
 
 def encode_cursor(timestamp: datetime, record_id: UUID | str) -> str:
@@ -224,6 +233,29 @@ def _security_exception(row: dict[str, Any]) -> SecurityExceptionRecord:
         expires_at=row["expires_at"],
         revoked_at=row["revoked_at"],
         revoked_by=row["revoked_by"],
+    )
+
+
+def _security_waiver(row: dict[str, Any]) -> SecurityWaiver:
+    return SecurityWaiver(
+        id=UUID(str(row["id"])),
+        cve_id=row["cve_id"],
+        module_id=row.get("module_id"),
+        reason=row["reason"],
+        approved_by=row["approved_by"],
+        status=WaiverStatus(row["status"]),
+        expires_at=row["expires_at"],
+        created_at=row["created_at"],
+    )
+
+
+def _server_maintenance(row: dict[str, Any]) -> ServerMaintenanceState:
+    return ServerMaintenanceState(
+        server_name=row["server_name"],
+        in_maintenance=bool(row["in_maintenance"]),
+        reason=row.get("reason") or "",
+        updated_by=row.get("updated_by") or "operator",
+        updated_at=row["updated_at"],
     )
 
 
@@ -2139,6 +2171,97 @@ class PostgresSession:
         )
         return self._cursor.rowcount > 0
 
+    def insert_security_waiver(self, waiver: SecurityWaiver) -> None:
+        self._cursor.execute(
+            f"""
+            INSERT INTO security_waivers (
+                id, cve_id, module_id, reason, approved_by, status, expires_at, created_at
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            """,
+            (
+                waiver.id,
+                waiver.cve_id,
+                waiver.module_id,
+                waiver.reason,
+                waiver.approved_by,
+                waiver.status.value,
+                waiver.expires_at,
+                waiver.created_at,
+            ),
+        )
+
+    def security_waivers(
+        self, module_id: str | None = None, active_only: bool = True
+    ) -> tuple[SecurityWaiver, ...]:
+        clauses: list[str] = []
+        arguments: list[Any] = []
+        if module_id is not None:
+            clauses.append("(module_id IS NULL OR module_id = %s)")
+            arguments.append(module_id)
+        if active_only:
+            clauses.append("status = 'active' AND expires_at > now()")
+        where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+        query = f"SELECT {SECURITY_WAIVER_COLUMNS} FROM security_waivers{where} ORDER BY created_at DESC"
+        self._cursor.execute(query, tuple(arguments))
+        return tuple(_security_waiver(row) for row in self._cursor.fetchall())
+
+    def get_active_waiver(
+        self, cve_id: str, module_id: str | None = None
+    ) -> SecurityWaiver | None:
+        clauses = ["cve_id = %s", "status = 'active'", "expires_at > now()"]
+        arguments: list[Any] = [cve_id]
+        if module_id is not None:
+            clauses.append("(module_id IS NULL OR module_id = %s)")
+            arguments.append(module_id)
+        where = f" WHERE {' AND '.join(clauses)}"
+        query = f"SELECT {SECURITY_WAIVER_COLUMNS} FROM security_waivers{where} ORDER BY created_at DESC LIMIT 1"
+        self._cursor.execute(query, tuple(arguments))
+        row = self._cursor.fetchone()
+        return _security_waiver(row) if row else None
+
+    def revoke_security_waiver(self, waiver_id: UUID) -> bool:
+        self._cursor.execute(
+            """
+            UPDATE security_waivers
+               SET status = 'revoked'
+             WHERE id = %s AND status = 'active'
+            """,
+            (waiver_id,),
+        )
+        return self._cursor.rowcount > 0
+
+    def upsert_server_maintenance(self, state: ServerMaintenanceState) -> None:
+        self._cursor.execute(
+            """
+            INSERT INTO server_maintenance_states (
+                server_name, in_maintenance, reason, updated_by, updated_at
+            ) VALUES (%s, %s, %s, %s, %s)
+            ON CONFLICT (server_name) DO UPDATE SET
+                in_maintenance = EXCLUDED.in_maintenance,
+                reason = EXCLUDED.reason,
+                updated_by = EXCLUDED.updated_by,
+                updated_at = EXCLUDED.updated_at
+            """,
+            (
+                state.server_name,
+                state.in_maintenance,
+                state.reason,
+                state.updated_by,
+                state.updated_at,
+            ),
+        )
+
+    def get_server_maintenance(self, server_name: str) -> ServerMaintenanceState | None:
+        query = f"SELECT {SERVER_MAINTENANCE_COLUMNS} FROM server_maintenance_states WHERE server_name = %s"
+        self._cursor.execute(query, (server_name,))
+        row = self._cursor.fetchone()
+        return _server_maintenance(row) if row else None
+
+    def list_server_maintenance(self) -> tuple[ServerMaintenanceState, ...]:
+        query = f"SELECT {SERVER_MAINTENANCE_COLUMNS} FROM server_maintenance_states ORDER BY server_name ASC"
+        self._cursor.execute(query)
+        return tuple(_server_maintenance(row) for row in self._cursor.fetchall())
+
     def insert_break_glass_request(self, record: BreakGlassRecord) -> None:
         self._cursor.execute(
             f"""
@@ -2722,10 +2845,23 @@ class PostgresConnectionPool:
 class PostgresDatabase:
     """Connection-pooled PostgreSQL database with transactional sessions."""
 
-    def __init__(self, url: str, max_pool_size: int = 15) -> None:
+    def __init__(
+        self,
+        url: str,
+        min_pool_size: int | None = None,
+        max_pool_size: int | None = None,
+        pool_timeout: float | None = None,
+    ) -> None:
         self.url = url
         self.last_error: str | None = None
-        self._pool = PostgresConnectionPool(url, max_size=max_pool_size) if psycopg else None
+        min_size = min_pool_size or int(os.environ.get("NETCI_DB_POOL_MIN_SIZE", "5"))
+        max_size = max_pool_size or int(os.environ.get("NETCI_DB_POOL_MAX_SIZE", "30"))
+        timeout = pool_timeout or float(os.environ.get("NETCI_DB_POOL_TIMEOUT", "10.0"))
+        self._pool = (
+            PostgresConnectionPool(url, min_size=min_size, max_size=max_size, timeout=timeout)
+            if psycopg
+            else None
+        )
 
     def describe(self) -> str:
         return "postgresql"

@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import {
-  Activity, Bell, Box, CheckCircle2, ChevronDown, ChevronRight, Clock3,
+  Activity, Bell, BookOpen, Box, CheckCircle2, ChevronDown, ChevronRight, Clock3,
   Compass, Gauge, Grid2X2, Layers3, LogOut, Menu, Search, Server, Settings,
   ShieldAlert, X,
 } from 'lucide-react'
@@ -104,16 +104,34 @@ function Sidebar({ page, systemId, moduleId, moduleLinks, navigationSystems, ses
         <button aria-current={page === 'systems' ? 'page' : undefined} className={page === 'systems' ? 'nav-item active' : 'nav-item'} onClick={() => navigate('systems')}><Layers3 size={17} />Systems</button>
         <button aria-current={page === 'catalog' ? 'page' : undefined} className={page === 'catalog' ? 'nav-item active' : 'nav-item'} onClick={() => navigate('catalog')}><Compass size={17} />Service Catalog</button>
         <button aria-current={page === 'servers' ? 'page' : undefined} className={page === 'servers' ? 'nav-item active' : 'nav-item'} onClick={() => navigate('servers')}><Server size={17} />Servers</button>
+        <button aria-current={page === 'requests' ? 'page' : undefined} className={page === 'requests' ? 'nav-item active' : 'nav-item'} onClick={() => navigate('requests')}><ShieldAlert size={17} />Production Requests</button>
         <span className="nav-label nav-label-spaced">Systems</span>
         {navigationSystems.map((system) => <button key={system.id} className="nav-item system-link" onClick={() => navigate('system', { systemId: system.id })}><i className={`system-health health-${systemTone[system.status] ?? 'gray'}`} />{system.id}</button>)}
       </>}
     </nav>
-    {/* With NETCI_AUTH_MODE=none there is no credential to drop, so a logout button would
-        sign the user straight back in. Showing the posture instead is the honest UI, and
-        it makes an unauthenticated deployment visible to whoever is looking at it. */}
-    {session.identity.authMode === 'none'
-      ? <div className="sidebar-user sidebar-user-anonymous" title="netCI đang chạy không bật xác thực (NETCI_AUTH_MODE=none)"><span className="avatar"><ShieldAlert size={16} /></span><span><strong>Chưa bật xác thực</strong><small>Mọi thao tác ghi nhận là “anonymous”</small></span></div>
-      : <button className="sidebar-user" onClick={onLogout} title="Đăng xuất"><span className="avatar">{session.identity.principal.displayName.slice(0, 2).toUpperCase()}</span><span><strong>{session.identity.principal.displayName}</strong><small>{roleLabel(session)}</small></span><LogOut size={17} /></button>}
+    {session.token === null ? (
+      <div className="sidebar-user">
+        <span className="avatar">NA</span>
+        <span>
+          <strong>{session.identity.principal.displayName}</strong>
+          <small>Chưa bật xác thực</small>
+        </span>
+      </div>
+    ) : (
+      <button
+        className="sidebar-user"
+        onClick={onLogout}
+        title="Bấm để Đăng xuất / Chuyển tài khoản (admin ↔ dev)"
+        style={{ cursor: 'pointer', textAlign: 'left', width: '100%', border: 'none', background: 'transparent' }}
+      >
+        <span className="avatar">{session.identity.principal.displayName.slice(0, 2).toUpperCase()}</span>
+        <span>
+          <strong>{session.identity.principal.displayName}</strong>
+          <small>{roleLabel(session)}</small>
+        </span>
+        <LogOut size={17} style={{ marginLeft: 'auto', opacity: 0.8 }} />
+      </button>
+    )}
     <button className="sidebar-close" aria-label="Đóng menu" onClick={close}><X size={20} /></button>
   </aside>
 }
@@ -130,7 +148,7 @@ function TopBar({ page, systemId, moduleId, moduleLinks, navigationSystems, sess
   const [query, setQuery] = useState('')
   const [searchOpen, setSearchOpen] = useState(false)
   const moduleName = moduleLinks.find((item) => item.id === moduleId)?.name ?? navigationSystems.flatMap((system) => system.modules).find((item) => item.id === moduleId)?.name
-  const labels: Partial<Record<PageId, string>> = { dashboard: 'Dashboard', systems: 'All Systems', servers: 'Servers', catalog: 'Service Catalog', system: 'Overview', requests: 'Production Requests', module: moduleName, 'new-module': 'New Module' }
+  const labels: Partial<Record<PageId, string>> = { dashboard: 'Dashboard', systems: 'All Systems', servers: 'Servers', catalog: 'Service Catalog', architecture: 'Architecture & IDP 2026 Roadmap', system: 'Overview', requests: 'Production Requests', module: moduleName, 'new-module': 'New Module' }
   const crumbs = ['system', 'requests', 'module', 'new-module'].includes(page) ? ['Systems', systemId, labels[page]] : [labels[page]]
   const searchItems = [
     { key: 'dashboard', label: 'Dashboard', detail: 'General', action: () => navigate('dashboard') },
@@ -147,12 +165,40 @@ function TopBar({ page, systemId, moduleId, moduleLinks, navigationSystems, sess
   return <header className="topbar">
     <button className="mobile-menu" aria-label="Mở menu" onClick={onMenu}><Menu size={20} /></button>
     <div className="breadcrumbs">{crumbs.filter(Boolean).map((crumb, index) => <span key={`${crumb}-${index}`}>{index > 0 && <i>/</i>}{crumb}</span>)}</div>
-    <div className="global-search-wrap"><label className="global-search"><Search size={16} /><input aria-label="Tìm kiếm toàn cục" placeholder="Search systems, modules…" value={query} onFocus={() => setSearchOpen(true)} onChange={(event) => { setQuery(event.target.value); setSearchOpen(true) }} onKeyDown={(event) => { if (event.key === 'Escape') setSearchOpen(false); if (event.key === 'Enter' && results[0]) selectResult(results[0].action) }} /></label>{searchOpen && <section className="global-search-results" aria-label="Search results">{results.map((item) => <button key={item.key} onMouseDown={(event) => event.preventDefault()} onClick={() => selectResult(item.action)}><Search size={14} /><span><strong>{item.label}</strong><small>{item.detail}</small></span></button>)}{!results.length && <div><strong>No matching destination</strong><small>Try a system or module name.</small></div>}</section>}</div>
+    <div className="global-search-wrap"><label className="global-search"><Search size={16} /><input aria-label="Tìm kiếm toàn cục" placeholder="Search systems, modules…" value={query} onFocus={() => setSearchOpen(true)} onBlur={() => setTimeout(() => setSearchOpen(false), 200)} onChange={(event) => { setQuery(event.target.value); setSearchOpen(true) }} onKeyDown={(event) => { if (event.key === 'Escape') setSearchOpen(false); if (event.key === 'Enter' && results[0]) selectResult(results[0].action) }} /></label>{searchOpen && <section className="global-search-results" aria-label="Search results">{results.map((item) => <button key={item.key} onMouseDown={(event) => event.preventDefault()} onClick={() => selectResult(item.action)}><Search size={14} /><span><strong>{item.label}</strong><small>{item.detail}</small></span></button>)}{!results.length && <div><strong>No matching destination</strong><small>Try a system or module name.</small></div>}</section>}</div>
     <div className="topbar-actions">
       <button className="icon-button notification-button" aria-label="Thông báo" aria-expanded={notifications} onClick={() => setNotifications(!notifications)}><Bell size={18} /></button>
       <button className="icon-button" aria-label="Cài đặt" onClick={onSettings}><Settings size={18} /></button>
-      <span className="avatar" title={`${session.identity.principal.displayName} · ${roleLabel(session)}`}>{session.identity.principal.displayName.slice(0, 2).toUpperCase()}</span>
-      {session.identity.authMode !== 'none' && <button className="logout-button" aria-label="Đăng xuất" onClick={onLogout}><LogOut size={17} /></button>}
+      {session.token === null ? (
+        <span className="auth-pill auth-pill-none" style={{ fontSize: '0.8rem', padding: '4px 10px', background: 'rgba(255,255,255,0.06)', borderRadius: '12px', color: 'var(--text-muted)' }}>
+          Chưa bật xác thực
+        </span>
+      ) : (
+        <button
+          type="button"
+          onClick={onLogout}
+          className="icon-button"
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px',
+            background: 'rgba(255,255,255,0.06)',
+            border: '1px solid rgba(255,255,255,0.12)',
+            borderRadius: '20px',
+            padding: '4px 12px',
+            cursor: 'pointer',
+            color: 'var(--text-main)',
+            fontSize: '0.85rem'
+          }}
+          title={`Đang đăng nhập: ${session.identity.principal.displayName} (${roleLabel(session)}). Bấm để Đăng xuất / Đổi tài khoản.`}
+        >
+          <span className="avatar" style={{ width: '22px', height: '22px', fontSize: '0.75rem' }}>
+            {session.identity.principal.displayName.slice(0, 2).toUpperCase()}
+          </span>
+          <span style={{ fontWeight: 500 }}>{session.identity.principal.displayName.split(' ')[0]}</span>
+          <LogOut size={14} style={{ color: 'var(--text-muted)' }} />
+        </button>
+      )}
     </div>
     {notifications && <section className="notification-panel">
       <div className="notification-title"><strong>Notifications</strong></div>

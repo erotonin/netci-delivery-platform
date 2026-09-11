@@ -1,9 +1,30 @@
 import { useEffect, useMemo, useState } from 'react'
 import {
   Activity, ArrowRight, Box, CheckCircle2, ChevronLeft, ChevronRight, CircleAlert,
-  CloudDownload, Layers3, MoreHorizontal, Plus, Search, Server, Trash2,
+  CloudDownload, Cpu, HardDrive, Layers3, MoreHorizontal, Plus, Search, Server, ShieldAlert, ShieldCheck, Trash2,
 } from 'lucide-react'
-import { createSystem, deleteSystem, getDora, getPortalDashboard, getSystem, listServerInventory, listSystems, searchDcimServices, type DcimService, type PortalDashboard, type ServerInventoryItem } from './api/netciClient'
+import {
+  createSecurityWaiver,
+  createSystem,
+  deleteSystem,
+  getDora,
+  getPortalDashboard,
+  getServerTelemetry,
+  getSystem,
+  listSecurityWaivers,
+  listServerInventory,
+  listServersMaintenance,
+  listSystems,
+  revokeSecurityWaiver,
+  searchDcimServices,
+  toggleServerMaintenance,
+  type DcimService,
+  type PortalDashboard,
+  type SecurityWaiver,
+  type ServerInventoryItem,
+  type ServerMaintenanceState,
+  type ServerTelemetry,
+} from './api/netciClient'
 import { usePortalFeedback } from './PortalFeedback'
 import { AsyncPanel, LoadFailure, Skeleton, useAsyncData } from './AsyncState'
 import { DoraCards, Modal, PageHeader, StatusPill, type Navigate } from './PortalShell'
@@ -12,7 +33,7 @@ import type { DoraCardMetric, PortalServer, PortalSystemView } from './portalTyp
 function serverFromApi(item: ServerInventoryItem): PortalServer {
   const environment: PortalServer['environment'] = item.environment === 'prod' ? 'Production' : item.environment === 'staging' ? 'Staging' : 'Dev'
   const status: PortalServer['status'] = item.status === 'maintenance' ? 'Maintenance' : item.status === 'offline' ? 'Offline' : item.status === 'online' ? 'Online' : 'Unknown'
-  return { id: item.hostname, systemId: item.systemId, ip: item.ipAddress, environment, status, lastChecked: 'Not reported' }
+  return { id: item.id || item.hostname, systemId: item.systemId, ip: item.ipAddress || '', environment, status, lastChecked: 'Not reported' }
 }
 
 export function DashboardPage({ navigate }: { navigate: Navigate }) {
@@ -65,6 +86,10 @@ export function SystemsPage({ navigate }: { navigate: Navigate }) {
   const [formError, setFormError] = useState('')
   // Tracked, not swallowed. `.catch(() => undefined)` made a failed load look exactly
   // like an empty estate -- the one reading a delivery platform must never invite.
+  const [systemSource, setSystemSource] = useState<'local' | 'dcim'>('local')
+  const [localId, setLocalId] = useState('')
+  const [localUnit, setLocalUnit] = useState('Core Engineering')
+  const [localDescription, setLocalDescription] = useState('')
   const [loadState, setLoadState] = useState<'loading' | 'ready' | 'error'>('loading')
   const [loadError, setLoadError] = useState<Error | null>(null)
   const [attempt, setAttempt] = useState(0)
@@ -106,18 +131,35 @@ export function SystemsPage({ navigate }: { navigate: Navigate }) {
     }
   }
   const saveSystem = async () => {
-    if (!selected) return
-    if (items.some((item) => item.id === selected.id)) { setFormError(`${selected.name} đã tồn tại trong Release Portal.`); return }
+    let systemId = ''
+    let unit = ''
+    let description = ''
+    let code = ''
+    if (systemSource === 'local') {
+      systemId = localId.trim().toLowerCase().replace(/[^a-z0-9-_]/g, '-')
+      if (!systemId) { setFormError('Vui lòng nhập System ID (chữ thường, số, dấu gạch nối).'); return }
+      if (items.some((item) => item.id.toLowerCase() === systemId.toLowerCase())) {
+        setFormError(`Hệ thống "${systemId}" đã tồn tại trong Release Portal.`)
+        return
+      }
+      unit = localUnit.trim() || 'Core Engineering'
+      description = localDescription.trim() || 'Hệ thống dịch vụ local'
+      code = systemId
+    } else {
+      if (!selected) return
+      if (items.some((item) => item.id === selected.id)) { setFormError(`${selected.name} đã tồn tại trong Release Portal.`); return }
+      systemId = selected.id
+      unit = selected.tenant
+      description = selected.description
+      code = selected.code
+    }
     setSaving(true)
     setFormError('')
     try {
-      // The DCIM id is the integration key used by subsequent module/server lookups.
-      // A display name may contain spaces or change independently, so it must not become
-      // the Portal system id.
-      const created = await createSystem({ id: selected.id, unit: selected.tenant, description: selected.description })
+      const created = await createSystem({ id: systemId, unit, description })
       setItems((current) => [...current, {
         id: created.id,
-        code: selected.code,
+        code,
         unit: created.unit,
         description: created.description,
         owner: created.owner,
@@ -128,7 +170,8 @@ export function SystemsPage({ navigate }: { navigate: Navigate }) {
         failed: created.failedRuns,
       }])
       setModal(false)
-      notify(`${selected.name} đã được thêm từ DCIM.`)
+      notify(`Hệ thống ${created.id} đã được khởi tạo thành công.`)
+      navigate('system', { systemId: created.id })
     } catch (error) {
       setFormError(error instanceof Error ? error.message : 'Không thể tạo system.')
     } finally {
@@ -136,18 +179,42 @@ export function SystemsPage({ navigate }: { navigate: Navigate }) {
     }
   }
   return <>
-    <PageHeader title="Systems" description="Quản lý danh sách hệ thống trong Release Portal." action={<button className="primary-button" onClick={() => setModal(true)}><Plus size={16} />New System</button>} />
+    <PageHeader title="Systems" description="Quản lý danh sách hệ thống trong Release Portal." action={<button className="primary-button" onClick={() => { setFormError(''); setModal(true) }}><Plus size={16} />New System</button>} />
     <section className="panel table-panel">
       <div className="table-toolbar"><label className="input-with-icon"><Search size={16} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Tìm kiếm hệ thống…" /></label></div>
       <div className="data-table systems-table"><div className="table-row table-head"><span>Hệ thống</span><span>Đơn vị</span><span>Mô tả</span><span>Modules</span><span>Trạng thái</span><span /></div>{filtered.map((system) => <button className="table-row table-button" key={system.id} onClick={() => navigate('system', { systemId: system.id })}><span className="strong-cell"><i className={`system-health health-${system.status === 'healthy' ? 'green' : system.status === 'degraded' ? 'amber' : system.status === 'critical' ? 'red' : 'gray'}`} />{system.id}</span><span className="truncate">{system.unit}</span><span className="truncate">{system.description}</span><span><Box size={15} />{system.modules.length} modules</span><StatusPill status={system.status[0].toUpperCase() + system.status.slice(1)} /><ChevronRight size={16} /></button>)}</div>{!filtered.length && loadState === 'loading' && <Skeleton rows={4} />}
       {!filtered.length && loadState === 'error' && <LoadFailure error={loadError} onRetry={() => setAttempt((value) => value + 1)} />}
-      {!filtered.length && loadState === 'ready' && <div className="empty-table"><Search size={22} /><strong>{query ? 'Không tìm thấy hệ thống' : 'Chưa có hệ thống nào'}</strong><span>{query ? 'Thử tên, mã service hoặc đơn vị khác.' : 'Thêm hệ thống đầu tiên từ DCIM để bắt đầu.'}</span></div>}
+      {!filtered.length && loadState === 'ready' && <div className="empty-table"><Search size={22} /><strong>{query ? 'Không tìm thấy hệ thống' : 'Chưa có hệ thống nào'}</strong><span>{query ? 'Thử tên, mã service hoặc đơn vị khác.' : 'Thêm hệ thống đầu tiên để bắt đầu.'}</span></div>}
     </section>
-    {modal && <Modal title="Create new system" description="Search a DCIM service and add it to Release Portal." onClose={() => setModal(false)} footer={<><button className="secondary-button" onClick={() => setModal(false)}>Cancel</button><button className="primary-button" disabled={!selected || saving} onClick={saveSystem}>{saving ? 'Creating…' : 'Create System'}</button></>}>
-      <label className="field"><span>DCIM service</span><div className="search-action"><input value={dcimQuery} onChange={(event) => { setDcimQuery(event.target.value); setResults([]); setSelected(null); setFormError('') }} onKeyDown={(event) => { if (event.key === 'Enter' && dcimQuery.trim().length >= 2) searchDcim() }} placeholder="Search by service name or code" /><button className="secondary-button" disabled={dcimQuery.trim().length < 2 || searching} onClick={searchDcim}><Search size={15} />{searching ? 'Searching…' : 'Search'}</button></div></label>
-      {results.map((service) => <button className={`dcim-result ${selected?.id === service.id ? 'selected' : ''}`} onClick={() => { setSelected(service); setFormError('') }} key={service.id}><span className="result-icon"><Layers3 size={18} /></span><span><strong>{service.name}</strong><small>{service.code} · {service.tenant}</small></span><em>{service.tier}</em></button>)}
+    {modal && <Modal title="Create new system" description="Khởi tạo hệ thống mới để quản lý phân hệ, CI/CD pipeline và hạ tầng triển khai." onClose={() => setModal(false)} footer={<><button className="secondary-button" onClick={() => setModal(false)}>Cancel</button><button className="primary-button" disabled={(systemSource === 'dcim' && !selected) || (systemSource === 'local' && !localId.trim()) || saving} onClick={saveSystem}>{saving ? 'Creating…' : 'Create System'}</button></>}>
+      <div className="segmented compact" style={{ marginBottom: '14px' }}>
+        <button className={systemSource === 'local' ? 'active' : ''} onClick={() => { setSystemSource('local'); setFormError('') }}>Tạo hệ thống Local</button>
+        <button className={systemSource === 'dcim' ? 'active' : ''} onClick={() => { setSystemSource('dcim'); setFormError('') }}>Tìm từ DCIM</button>
+      </div>
+      {systemSource === 'local' ? (
+        <div className="form-grid">
+          <label className="field full">
+            <span>System ID (Mã định danh duy nhất) *</span>
+            <input value={localId} onChange={(e) => setLocalId(e.target.value)} placeholder="e.g. fintech-platform, payment-core, crm-hub" />
+            <small>Chữ thường, số, dấu gạch nối (e.g. fintech-core)</small>
+          </label>
+          <label className="field full">
+            <span>Đơn vị / Khối quản lý</span>
+            <input value={localUnit} onChange={(e) => setLocalUnit(e.target.value)} placeholder="Khối Công nghệ số" />
+          </label>
+          <label className="field full">
+            <span>Mô tả hệ thống</span>
+            <textarea value={localDescription} onChange={(e) => setLocalDescription(e.target.value)} placeholder="Mô tả chức năng và mục đích của hệ thống..." />
+          </label>
+        </div>
+      ) : (
+        <>
+          <label className="field"><span>DCIM service</span><div className="search-action"><input value={dcimQuery} onChange={(event) => { setDcimQuery(event.target.value); setResults([]); setSelected(null); setFormError('') }} onKeyDown={(event) => { if (event.key === 'Enter' && dcimQuery.trim().length >= 2) searchDcim() }} placeholder="Search by service name or code" /><button className="secondary-button" disabled={dcimQuery.trim().length < 2 || searching} onClick={searchDcim}><Search size={15} />{searching ? 'Searching…' : 'Search'}</button></div></label>
+          {results.map((service) => <button className={`dcim-result ${selected?.id === service.id ? 'selected' : ''}`} onClick={() => { setSelected(service); setFormError('') }} key={service.id}><span className="result-icon"><Layers3 size={18} /></span><span><strong>{service.name}</strong><small>{service.code} · {service.tenant}</small></span><em>{service.tier}</em></button>)}
+          {selected && <div className="form-grid"><label className="field full"><span>Display name</span><input value={selected.name} readOnly /></label><label className="field"><span>Service code</span><input value={selected.code} readOnly /></label><label className="field"><span>Tenant / Unit</span><input value={selected.tenant} readOnly /></label><label className="field full"><span>Description</span><textarea value={selected.description} readOnly /></label></div>}
+        </>
+      )}
       {formError && <div className="inline-error" role="alert"><CircleAlert size={15} />{formError}</div>}
-      {selected && <div className="form-grid"><label className="field full"><span>Display name</span><input value={selected.name} readOnly /></label><label className="field"><span>Service code</span><input value={selected.code} readOnly /></label><label className="field"><span>Tenant / Unit</span><input value={selected.tenant} readOnly /></label><label className="field full"><span>Description</span><textarea value={selected.description} readOnly /></label></div>}
     </Modal>}
   </>
 }
@@ -164,28 +231,380 @@ export function ServersPage() {
   const [lastSync, setLastSync] = useState('Not synced')
   const [pageSize, setPageSize] = useState(10)
   const [page, setPage] = useState(1)
+  const [maintenanceMap, setMaintenanceMap] = useState<Record<string, boolean>>({})
+  const [waivers, setWaivers] = useState<SecurityWaiver[]>([])
+  const [waiverModal, setWaiverModal] = useState(false)
+  const [newCve, setNewCve] = useState('')
+  const [newModule, setNewModule] = useState('')
+  const [newReason, setNewReason] = useState('')
+  const [newDays, setNewDays] = useState('14')
+  const [savingWaiver, setSavingWaiver] = useState(false)
+  const [selectedTelemetry, setSelectedTelemetry] = useState<ServerTelemetry | null>(null)
+  const [loadingTelemetry, setLoadingTelemetry] = useState(false)
+
+  const openServerDetails = (server: PortalServer) => {
+    setDetails(server)
+    setSelectedTelemetry(null)
+    setLoadingTelemetry(true)
+    getServerTelemetry(server.id)
+      .then((telem) => setSelectedTelemetry(telem))
+      .catch(() => undefined)
+      .finally(() => setLoadingTelemetry(false))
+  }
+
   useEffect(() => {
     let active = true
-    listServerInventory().then((result) => { if (active) { setItems(result.map(serverFromApi)); setLastSync('API · vừa xong') } }).catch((error) => { if (active) notify(error instanceof Error ? error.message : 'Không thể tải inventory từ netCI API.', 'error') })
+    Promise.all([
+      listServerInventory(),
+      listServersMaintenance().catch(() => []),
+      listSecurityWaivers().catch(() => []),
+    ])
+      .then(([result, maintList, wList]) => {
+        if (active) {
+          setItems(result.map(serverFromApi))
+          setLastSync('API · vừa xong')
+          if (maintList && Array.isArray(maintList)) {
+            const map: Record<string, boolean> = {}
+            for (const s of maintList) {
+              map[s.serverName] = s.inMaintenance
+            }
+            setMaintenanceMap(map)
+          }
+          if (wList && Array.isArray(wList)) {
+            setWaivers(wList)
+          }
+        }
+      })
+      .catch((error) => {
+        if (active) notify(error instanceof Error ? error.message : 'Không thể tải inventory từ netCI API.', 'error')
+      })
     return () => { active = false }
   }, [])
+
   const filtered = useMemo(() => items.filter((item) => `${item.id} ${item.systemId} ${item.ip}`.toLowerCase().includes(query.toLowerCase()) && (environment === 'All environments' || item.environment === environment) && (status === 'All statuses' || item.status === status)), [items, query, environment, status])
   const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize))
   const visible = filtered.slice((page - 1) * pageSize, page * pageSize)
   useEffect(() => setPage((current) => Math.min(current, totalPages)), [totalPages])
+
   const syncServers = async () => {
     setSyncing(true)
-    try { const result = await listServerInventory(); setItems(result.map(serverFromApi)); setSelectedIds([]); setLastSync('API · vừa xong'); notify('Đã đồng bộ các runtime target được cấu hình trong netCI.') } catch (error) { notify(error instanceof Error ? error.message : 'Không thể đồng bộ inventory.', 'error') } finally { setSyncing(false) }
+    try {
+      const [result, maintList, wList] = await Promise.all([
+        listServerInventory(),
+        listServersMaintenance().catch(() => []),
+        listSecurityWaivers().catch(() => []),
+      ])
+      setItems(result.map(serverFromApi))
+      setSelectedIds([])
+      setLastSync('API · vừa xong')
+      if (maintList && Array.isArray(maintList)) {
+        const map: Record<string, boolean> = {}
+        for (const s of maintList) {
+          map[s.serverName] = s.inMaintenance
+        }
+        setMaintenanceMap(map)
+      }
+      setWaivers(wList)
+      notify('Đã đồng bộ các runtime target, trạng thái bảo trì và danh sách miễn trừ bảo mật.')
+    } catch (error) {
+      notify(error instanceof Error ? error.message : 'Không thể đồng bộ inventory.', 'error')
+    } finally {
+      setSyncing(false)
+    }
   }
+
   const toggleAll = () => setSelectedIds(visible.length > 0 && visible.every((item) => selectedIds.includes(item.id)) ? selectedIds.filter((id) => !visible.some((item) => item.id === id)) : [...new Set([...selectedIds, ...visible.map((item) => item.id)])])
+
+  const handleCreateWaiver = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!newCve.trim() || !newReason.trim()) {
+      notify('Vui lòng điền mã CVE và lý do miễn trừ.', 'error')
+      return
+    }
+    setSavingWaiver(true)
+    try {
+      const expiry = new Date()
+      expiry.setDate(expiry.getDate() + (parseInt(newDays, 10) || 14))
+      const created = await createSecurityWaiver({
+        cveId: newCve.trim().toUpperCase(),
+        moduleId: newModule.trim() || undefined,
+        reason: newReason.trim(),
+        expiresAt: expiry.toISOString(),
+      })
+      setWaivers((prev) => [created, ...prev])
+      notify(`Đã tạo miễn trừ bảo mật cho ${created.cveId}`)
+      setWaiverModal(false)
+      setNewCve('')
+      setNewModule('')
+      setNewReason('')
+    } catch (err) {
+      notify(err instanceof Error ? err.message : 'Không thể tạo miễn trừ bảo mật.', 'error')
+    } finally {
+      setSavingWaiver(false)
+    }
+  }
+
   return <>
-    <PageHeader title="Deployment targets" description="Read-only targets currently referenced by module deployment configuration." action={<button className="secondary-button" disabled={syncing} onClick={syncServers}><CloudDownload size={16} />{syncing ? 'Refreshing…' : 'Refresh from API'}</button>} />
-    <div className="sync-note"><CheckCircle2 size={15} />Last refresh: {lastSync} · {items.length} configured targets</div>
-    <section className="panel table-panel"><div className="table-toolbar server-filters"><label className="input-with-icon"><Search size={16} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Tìm hostname, IP, hệ thống…" /></label><select value={environment} onChange={(event) => setEnvironment(event.target.value)}><option>All environments</option><option>Dev</option><option>Staging</option><option>Production</option></select><select value={status} onChange={(event) => setStatus(event.target.value)}><option>All statuses</option><option>Unknown</option><option>Online</option><option>Maintenance</option><option>Offline</option></select></div>
-      <div className="data-table servers-table"><div className="table-row table-head"><span><input type="checkbox" aria-label="Chọn tất cả trên trang" checked={visible.length > 0 && visible.every((item) => selectedIds.includes(item.id))} onChange={toggleAll} /></span><span>Server</span><span>Hệ thống</span><span>IP address</span><span>Environment</span><span>Status</span><span>Last checked</span><span /></div>{visible.map((server) => <div className="table-row" key={server.id}><span><input type="checkbox" aria-label={`Chọn ${server.id}`} checked={selectedIds.includes(server.id)} onChange={() => setSelectedIds((current) => current.includes(server.id) ? current.filter((id) => id !== server.id) : [...current, server.id])} /></span><span className="strong-cell"><Server size={16} />{server.id}</span><span>{server.systemId}</span><span className="mono">{server.ip || '—'}</span><span className={`env-badge env-${server.environment.toLowerCase()}`}>{server.environment}</span><StatusPill status={server.status} /><span>{server.lastChecked}</span><span className="row-actions"><button aria-label={`Chi tiết ${server.id}`} onClick={() => setDetails(server)}><MoreHorizontal size={16} /></button></span></div>)}</div>{!filtered.length && <div className="empty-table"><Server size={22} /><strong>No configured targets</strong><span>Targets appear after a module is connected to real deployment infrastructure.</span></div>}
-      <div className="pagination"><span>Showing {filtered.length ? (page - 1) * pageSize + 1 : 0}–{Math.min(page * pageSize, filtered.length)} of {filtered.length}</span><div><select aria-label="Số dòng mỗi trang" value={pageSize} onChange={(event) => { setPageSize(Number(event.target.value)); setPage(1) }}><option value={10}>10 / page</option><option value={20}>20 / page</option></select><button disabled={page <= 1} aria-label="Trang trước" onClick={() => setPage((current) => Math.max(1, current - 1))}><ChevronLeft size={16} /></button><button className="page-active" disabled aria-current="page">{page}</button><button disabled={page >= totalPages} aria-label="Trang sau" onClick={() => setPage((current) => Math.min(totalPages, current + 1))}><ChevronRight size={16} /></button></div></div>
+    <PageHeader title="Deployment targets & Inventory" description="Quản lý máy chủ triển khai, trạng thái bảo trì và đăng ký miễn trừ bảo mật VEX." action={<button className="secondary-button" disabled={syncing} onClick={syncServers}><CloudDownload size={16} />{syncing ? 'Refreshing…' : 'Refresh from API'}</button>} />
+    <div className="sync-note"><CheckCircle2 size={15} />Last refresh: {lastSync} · {items.length} configured targets · {waivers.length} active VEX waivers</div>
+    
+    <section className="panel table-panel">
+      <div className="table-toolbar server-filters">
+        <label className="input-with-icon"><Search size={16} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Tìm hostname, IP, hệ thống…" /></label>
+        <select value={environment} onChange={(event) => setEnvironment(event.target.value)}><option>All environments</option><option>Dev</option><option>Staging</option><option>Production</option></select>
+        <select value={status} onChange={(event) => setStatus(event.target.value)}><option>All statuses</option><option>Unknown</option><option>Online</option><option>Maintenance</option><option>Offline</option></select>
+      </div>
+      <div className="data-table servers-table">
+        <div className="table-row table-head">
+          <span><input type="checkbox" aria-label="Chọn tất cả trên trang" checked={visible.length > 0 && visible.every((item) => selectedIds.includes(item.id))} onChange={toggleAll} /></span>
+          <span>Server</span>
+          <span>Hệ thống</span>
+          <span>IP address</span>
+          <span>Environment</span>
+          <span>Status</span>
+          <span>Chế độ bảo trì</span>
+          <span />
+        </div>
+        {visible.map((server) => {
+          const isMaint = maintenanceMap[server.id] ?? (server.status === 'Maintenance')
+          return (
+            <div className="table-row" key={server.id}>
+              <span><input type="checkbox" aria-label={`Chọn ${server.id}`} checked={selectedIds.includes(server.id)} onChange={() => setSelectedIds((current) => current.includes(server.id) ? current.filter((id) => id !== server.id) : [...current, server.id])} /></span>
+              <span className="strong-cell"><Server size={16} />{server.id}</span>
+              <span>{server.systemId}</span>
+              <span className="mono">{server.ip || '—'}</span>
+              <span className={`env-badge env-${server.environment.toLowerCase()}`}>{server.environment}</span>
+              <StatusPill status={isMaint ? 'Maintenance' : server.status} />
+              <span>
+                <button
+                  type="button"
+                  className={isMaint ? 'secondary-button' : 'primary-button'}
+                  style={{ fontSize: '11px', padding: '3px 8px', height: '26px' }}
+                  onClick={async () => {
+                    try {
+                      await toggleServerMaintenance(server.id, !isMaint, isMaint ? 'Exit maintenance' : 'Scheduled maintenance')
+                      setMaintenanceMap((prev) => ({ ...prev, [server.id]: !isMaint }))
+                      setItems((prev) => prev.map((s) => s.id === server.id ? { ...s, status: !isMaint ? 'Maintenance' : 'Online' } : s))
+                      notify(`Đã cập nhật chế độ bảo trì cho ${server.id}`)
+                    } catch {
+                      notify('Không thể cập nhật trạng thái bảo trì.', 'error')
+                    }
+                  }}
+                >
+                  {isMaint ? 'Bỏ bảo trì' : 'Bảo trì'}
+                </button>
+              </span>
+              <span className="row-actions"><button aria-label={`Chi tiết ${server.id}`} onClick={() => openServerDetails(server)}><MoreHorizontal size={16} /></button></span>
+            </div>
+          )
+        })}
+      </div>
+      {!filtered.length && <div className="empty-table"><Server size={22} /><strong>No configured targets</strong><span>Targets appear after a module is connected to real deployment infrastructure.</span></div>}
+      <div className="pagination">
+        <span>Showing {filtered.length ? (page - 1) * pageSize + 1 : 0}–{Math.min(page * pageSize, filtered.length)} of {filtered.length}</span>
+        <div>
+          <select aria-label="Số dòng mỗi trang" value={pageSize} onChange={(event) => { setPageSize(Number(event.target.value)); setPage(1) }}><option value={10}>10 / page</option><option value={20}>20 / page</option></select>
+          <button disabled={page <= 1} aria-label="Trang trước" onClick={() => setPage((current) => Math.max(1, current - 1))}><ChevronLeft size={16} /></button>
+          <button className="page-active" disabled aria-current="page">{page}</button>
+          <button disabled={page >= totalPages} aria-label="Trang sau" onClick={() => setPage((current) => Math.min(totalPages, current + 1))}><ChevronRight size={16} /></button>
+        </div>
+      </div>
     </section>
-    {details && <Modal title={details.id} description="Inventory details from the current Portal projection." onClose={() => setDetails(null)} footer={<button className="primary-button" onClick={() => setDetails(null)}>Close</button>}><div className="request-summary"><div><span>System</span><strong>{details.systemId}</strong></div><div><span>IP address</span><strong className="mono">{details.ip}</strong></div><div><span>Status</span><StatusPill status={details.status} /></div></div><div className="form-grid"><label className="field"><span>Environment</span><input readOnly value={details.environment} /></label><label className="field"><span>Last checked</span><input readOnly value={details.lastChecked} /></label></div></Modal>}
+
+    {/* VEX Security Waivers Section */}
+    <section className="panel table-panel" style={{ marginTop: '24px' }}>
+      <div className="panel-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '14px 20px', borderBottom: '1px solid var(--border-subtle, #e2e8f0)' }}>
+        <div>
+          <h3 style={{ margin: 0, fontSize: '15px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <ShieldAlert size={18} color="#0284c7" />
+            VEX Security Waivers (Miễn trừ lỗ hổng bảo mật)
+          </h3>
+          <p style={{ margin: '4px 0 0 0', fontSize: '12px', color: 'var(--text-muted, #64748b)' }}>
+            Miễn trừ có thời hạn cho các CVE Critical đã được đánh giá an toàn hoặc có biện pháp kiểm soát bù đắp (Compensating Controls).
+          </p>
+        </div>
+        <button className="primary-button" onClick={() => setWaiverModal(true)}>
+          <Plus size={16} /> Tạo miễn trừ CVE
+        </button>
+      </div>
+      <div className="data-table">
+        <div className="table-row table-head">
+          <span>CVE Identifier</span>
+          <span>Module</span>
+          <span>Lý do miễn trừ / Compensating Control</span>
+          <span>Người phê duyệt</span>
+          <span>Hết hạn</span>
+          <span>Thao tác</span>
+        </div>
+        {waivers.map((w) => (
+          <div className="table-row" key={w.id}>
+            <span className="strong-cell mono" style={{ color: '#e11d48' }}>{w.cveId}</span>
+            <span>{w.moduleId || 'Tất cả module'}</span>
+            <span>{w.reason}</span>
+            <span>{w.approvedBy}</span>
+            <span>{new Date(w.expiresAt).toLocaleDateString('vi-VN')}</span>
+            <span>
+              {w.status === 'active' ? (
+                <button
+                  type="button"
+                  className="secondary-button"
+                  style={{ fontSize: '11px', padding: '2px 8px', color: '#e11d48' }}
+                  onClick={async () => {
+                    try {
+                      await revokeSecurityWaiver(w.id)
+                      setWaivers((prev) => prev.filter((item) => item.id !== w.id))
+                      notify(`Đã thu hồi miễn trừ cho ${w.cveId}`)
+                    } catch {
+                      notify('Không thể thu hồi miễn trừ', 'error')
+                    }
+                  }}
+                >
+                  Thu hồi
+                </button>
+              ) : (
+                <span className="muted">Đã thu hồi</span>
+              )}
+            </span>
+          </div>
+        ))}
+        {!waivers.length && (
+          <div className="empty-table" style={{ padding: '20px' }}>
+            <ShieldCheck size={24} color="#16a34a" />
+            <strong>Không có miễn trừ nào đang kích hoạt</strong>
+            <span>Mọi lỗ hổng Critical phát hiện qua Trivy scan sẽ kích hoạt hard gate bảo vệ môi trường Production.</span>
+          </div>
+        )}
+      </div>
+    </section>
+
+    {waiverModal && (
+      <Modal
+        title="Tạo miễn trừ bảo mật VEX"
+        description="Cho phép pipeline tiếp tục triển khai khi gặp CVE đã có kế hoạch xử lý hoặc nằm ngoài attack surface."
+        onClose={() => setWaiverModal(false)}
+        footer={
+          <>
+            <button className="secondary-button" onClick={() => setWaiverModal(false)}>Hủy</button>
+            <button className="primary-button" disabled={savingWaiver} onClick={handleCreateWaiver}>
+              {savingWaiver ? 'Đang lưu…' : 'Xác nhận miễn trừ'}
+            </button>
+          </>
+        }
+      >
+        <form onSubmit={handleCreateWaiver} className="form-grid">
+          <label className="field full">
+            <span>Mã CVE Identifier *</span>
+            <input value={newCve} onChange={(e) => setNewCve(e.target.value)} placeholder="e.g. CVE-2026-9999" required />
+          </label>
+          <label className="field full">
+            <span>Module áp dụng (Bỏ trống để áp dụng toàn hệ thống)</span>
+            <input value={newModule} onChange={(e) => setNewModule(e.target.value)} placeholder="e.g. billing-api" />
+          </label>
+          <label className="field full">
+            <span>Thời hạn miễn trừ (Số ngày)</span>
+            <select value={newDays} onChange={(e) => setNewDays(e.target.value)}>
+              <option value="7">7 ngày</option>
+              <option value="14">14 ngày (Mặc định)</option>
+              <option value="30">30 ngày</option>
+              <option value="60">60 ngày</option>
+            </select>
+          </label>
+          <label className="field full">
+            <span>Lý do / Compensating Control *</span>
+            <textarea
+              value={newReason}
+              onChange={(e) => setNewReason(e.target.value)}
+              placeholder="Mô tả phân tích VEX: Component không nhận untrusted input từ Internet, đã có WAF rule chặn payload, bản vá upstream sẽ được phát hành trong sprint tới..."
+              rows={3}
+              required
+            />
+          </label>
+        </form>
+      </Modal>
+    )}
+
+    {details && (
+      <Modal
+        title={`Server: ${details.id}`}
+        description="Chi tiết máy chủ triển khai và quan sát tài nguyên thời gian thực qua Outbound Runner Agent."
+        onClose={() => setDetails(null)}
+        footer={<button className="primary-button" onClick={() => setDetails(null)}>Close</button>}
+      >
+        <div className="request-summary">
+          <div><span>System</span><strong>{details.systemId}</strong></div>
+          <div><span>IP address</span><strong className="mono">{details.ip || '—'}</strong></div>
+          <div><span>Status</span><StatusPill status={details.status} /></div>
+        </div>
+        <div className="form-grid" style={{ marginBottom: 14 }}>
+          <label className="field"><span>Environment</span><input readOnly value={details.environment} /></label>
+          <label className="field"><span>Agent Connection</span><input readOnly value="WebSocket wss:// (Outbound Daemon)" /></label>
+        </div>
+
+        {/* Live Host Telemetry Panel */}
+        <div style={{ padding: '14px 16px', background: 'rgba(255, 255, 255, 0.03)', borderRadius: 8, border: '1px solid var(--border-subtle, #e2e8f0)' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+            <h4 style={{ margin: 0, fontSize: 13, display: 'flex', alignItems: 'center', gap: 6 }}>
+              <Activity size={16} color="#0284c7" />
+              Pre-flight Telemetry (Host Metrics)
+            </h4>
+            {selectedTelemetry && (
+              <span style={{
+                fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 10,
+                background: selectedTelemetry.status === 'critical' ? '#ffe4e6' : '#dcfce7',
+                color: selectedTelemetry.status === 'critical' ? '#e11d48' : '#16a34a',
+              }}>
+                {selectedTelemetry.status.toUpperCase()}
+              </span>
+            )}
+          </div>
+
+          {loadingTelemetry ? (
+            <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>Đang tải telemetry từ agent…</div>
+          ) : selectedTelemetry ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              <div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginBottom: 4 }}>
+                  <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}><Cpu size={14} /> CPU Usage</span>
+                  <strong className="mono">{selectedTelemetry.cpuPercent.toFixed(1)}%</strong>
+                </div>
+                <div style={{ height: 6, background: '#334155', borderRadius: 3, overflow: 'hidden' }}>
+                  <div style={{ width: `${Math.min(selectedTelemetry.cpuPercent, 100)}%`, height: '100%', background: selectedTelemetry.cpuPercent > 95 ? '#e11d48' : '#0284c7', transition: 'width 0.3s ease' }} />
+                </div>
+              </div>
+
+              <div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginBottom: 4 }}>
+                  <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}><Activity size={14} /> Memory Usage</span>
+                  <strong className="mono">{selectedTelemetry.memPercent.toFixed(1)}%</strong>
+                </div>
+                <div style={{ height: 6, background: '#334155', borderRadius: 3, overflow: 'hidden' }}>
+                  <div style={{ width: `${Math.min(selectedTelemetry.memPercent, 100)}%`, height: '100%', background: '#3b82f6', transition: 'width 0.3s ease' }} />
+                </div>
+              </div>
+
+              <div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginBottom: 4 }}>
+                  <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}><HardDrive size={14} /> Disk Usage</span>
+                  <strong className="mono" style={{ color: selectedTelemetry.diskPercent > 90 ? '#e11d48' : 'inherit' }}>
+                    {selectedTelemetry.diskPercent.toFixed(1)}%
+                  </strong>
+                </div>
+                <div style={{ height: 6, background: '#334155', borderRadius: 3, overflow: 'hidden' }}>
+                  <div style={{ width: `${Math.min(selectedTelemetry.diskPercent, 100)}%`, height: '100%', background: selectedTelemetry.diskPercent > 90 ? '#e11d48' : '#10b981', transition: 'width 0.3s ease' }} />
+                </div>
+                {selectedTelemetry.diskPercent > 90 && (
+                  <small style={{ color: '#e11d48', marginTop: 4, display: 'block' }}>
+                    Cảnh báo: Ổ cứng trên 90%, pre-flight gate sẽ chặn deploy tự động.
+                  </small>
+                )}
+              </div>
+            </div>
+          ) : (
+            <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>Chưa có telemetry được ghi nhận.</div>
+          )}
+        </div>
+      </Modal>
+    )}
   </>
 }
 

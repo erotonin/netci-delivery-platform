@@ -106,6 +106,64 @@ class InMemoryTrafficRoutingAdapter(TrafficRoutingAdapter):
         logger.info("Switched blue-green active route for %s:%s -> %s", application_id, environment, active_color)
         return status
 
+    def set_canary_rules(
+        self,
+        application_id: str,
+        environment: str,
+        rules: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Configure L7 header/cookie matching rules for canary traffic steering."""
+        key = (str(application_id), str(environment))
+        if key not in self._routes:
+            self._routes[key] = {
+                "applicationId": str(application_id),
+                "environment": str(environment),
+                "canaryWeight": 0,
+                "baselineWeight": 100,
+                "activeColor": "blue",
+                "canaryRules": {},
+                "updatedAt": datetime.now(timezone.utc).isoformat(),
+            }
+        self._routes[key]["canaryRules"] = rules
+        self._routes[key]["updatedAt"] = datetime.now(timezone.utc).isoformat()
+        logger.info("Updated L7 canary rules for %s:%s -> %s", application_id, environment, rules)
+        return dict(self._routes[key])
+
+    def match_route(
+        self,
+        application_id: str,
+        environment: str,
+        headers: dict[str, str] | None = None,
+        cookies: dict[str, str] | None = None,
+    ) -> str:
+        """Evaluate L7 rules to determine whether request targets 'canary' or 'baseline'."""
+        key = (str(application_id), str(environment))
+        route = self._routes.get(key, {})
+        rules = route.get("canaryRules", {})
+        if rules:
+            # Check header rule
+            hdr_name = rules.get("header_name") or rules.get("headerName")
+            hdr_val = rules.get("header_value") or rules.get("headerValue")
+            if hdr_name and headers:
+                matched_hdr = next(
+                    (v for k, v in headers.items() if k.lower() == hdr_name.lower()),
+                    None,
+                )
+                if matched_hdr is not None and (not hdr_val or matched_hdr == hdr_val):
+                    return "canary"
+
+            # Check cookie rule
+            cookie_rule = rules.get("cookie")
+            if cookie_rule and cookies:
+                c_name, _, c_expected = cookie_rule.partition("=")
+                c_actual = cookies.get(c_name.strip())
+                if c_actual is not None and (not c_expected or c_actual == c_expected.strip()):
+                    return "canary"
+
+        # Fallback to weight-based routing
+        canary_weight = route.get("canaryWeight", 0)
+        return "canary" if canary_weight >= 100 else "baseline"
+
     def get_routing_status(
         self,
         application_id: str,
@@ -119,9 +177,12 @@ class InMemoryTrafficRoutingAdapter(TrafficRoutingAdapter):
                 "canaryWeight": 0,
                 "baselineWeight": 100,
                 "activeColor": "blue",
+                "canaryRules": {},
                 "updatedAt": datetime.now(timezone.utc).isoformat(),
             }
-        return dict(self._routes[key])
+        status = dict(self._routes[key])
+        status.setdefault("canaryRules", {})
+        return status
 
 
 class CanaryAnalyzer:

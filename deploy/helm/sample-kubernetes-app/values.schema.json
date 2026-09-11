@@ -29,6 +29,37 @@
       "additionalProperties": false,
       "properties": {"enabled": {"type": "boolean"}}
     },
+    "traits": {
+      "type": "object",
+      "properties": {
+        "autoTlsIngress": {
+          "type": "object",
+          "properties": {
+            "enabled": {"type": "boolean"},
+            "host": {"type": "string"},
+            "clusterIssuer": {"type": "string"},
+            "tlsSecretName": {"type": "string"}
+          }
+        },
+        "kedaAutoscaling": {
+          "type": "object",
+          "properties": {
+            "enabled": {"type": "boolean"},
+            "minReplicas": {"type": "integer"},
+            "maxReplicas": {"type": "integer"},
+            "cooldownPeriod": {"type": "integer"},
+            "pollingInterval": {"type": "integer"},
+            "triggers": {"type": "array"}
+          }
+        },
+        "zeroTrustGuard": {
+          "type": "object",
+          "properties": {
+            "enabled": {"type": "boolean"}
+          }
+        }
+      }
+    },
     "resources": {"type": "object"},
     "environment": {"enum": ["dev", "staging", "prod"]},
     "nameOverride": {"type": "string"},

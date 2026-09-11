@@ -18,7 +18,10 @@ const identity = (mode: string, roles: string[] = ['developer'], teams: string[]
 })
 
 describe('LoginPage', () => {
-  beforeEach(() => whoamiMock.mockReset())
+  beforeEach(() => {
+    window.location.hash = ''
+    whoamiMock.mockReset()
+  })
 
   it('asks the server how it is configured before drawing a form', async () => {
     whoamiMock.mockImplementationOnce(() => Promise.reject(new NetciApiError(401, null, 'unauthenticated')))

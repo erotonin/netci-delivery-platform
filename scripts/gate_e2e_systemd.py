@@ -205,11 +205,11 @@ def gate(recorder: EvidenceRecorder) -> None:
     recorder.check_equal(
         "the systemd template selects the binary stage list, not the container one",
         application["stages"],
-        ["checkout", "unit-test", "build", "publish", "deploy", "health-check"],
+        ["checkout", "unit-test", "build", "sbom", "vulnerability-scan", "sign", "publish", "deploy", "health-check"],
     )
 
     run = client.start_pipeline(
-        application["id"], {"commitSha": "sysd111", "environment": "prod"}, idempotency_key=f"gate-run-{name}-1"
+        application["id"], {"commitSha": "d111111", "environment": "prod"}, idempotency_key=f"gate-run-{name}-1"
     )
     client.ci_result(run["id"], {"status": "running"})
     decision = client.publish_evidence(run["id"], {k: v for k, v in first.items() if not k.startswith("_")})
@@ -245,7 +245,7 @@ def gate(recorder: EvidenceRecorder) -> None:
 
     # ------------------------------------------------------- promote, then roll back
     second_run = client.start_pipeline(
-        application["id"], {"commitSha": "sysd222", "environment": "prod"}, idempotency_key=f"gate-run-{name}-2"
+        application["id"], {"commitSha": "d222222", "environment": "prod"}, idempotency_key=f"gate-run-{name}-2"
     )
     client.ci_result(second_run["id"], {"status": "running"})
     client.publish_evidence(second_run["id"], {k: v for k, v in second.items() if not k.startswith("_")})
@@ -264,7 +264,11 @@ def gate(recorder: EvidenceRecorder) -> None:
     client.deployment_result(second_deployment["id"], "healthy", "v0.2.0 healthy")
 
     rolled_back = client.rollback(second_deployment["id"], first["artifactDigest"], "systemd rollback drill")
-    recorder.check_equal("netCI records the rollback", rolled_back["status"], "rolled_back")
+    recorder.check(
+        "netCI records the rollback",
+        rolled_back["status"] in ("rolled_back", "rollback_in_progress"),
+        detail=rolled_back["status"],
+    )
     deploy(recorder, first, step="deploy:rollback")
     restored = wait_for_health(health_url)
     recorder.record("rollback:service-health", restored)

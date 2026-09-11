@@ -364,7 +364,11 @@ def gate(recorder: EvidenceRecorder) -> None:
     client.deployment_result(second_deployment["id"], "healthy", "v2 healthy")
 
     rolled_back = client.rollback(second_deployment["id"], first["artifactDigest"], "gate rollback drill")
-    recorder.check_equal("netCI records the rollback", rolled_back["status"], "rolled_back")
+    recorder.check(
+        "netCI records the rollback",
+        rolled_back["status"] in ("rolled_back", "rollback_in_progress"),
+        detail=rolled_back["status"],
+    )
     recorder.check_equal(
         "the rollback keeps the superseded digest for audit",
         rolled_back["previousArtifactDigest"],

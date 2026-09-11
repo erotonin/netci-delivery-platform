@@ -63,8 +63,9 @@ class BuiltinPolicyEngine:
         if not bg and target_id:
             bg = BreakGlassService.active_break_glass(session, target_type="admission", target_id=target_id, now=ts)
 
-        # Merge database exceptions with file-based exceptions
+        # Merge database exceptions and waivers with file-based exceptions
         db_exceptions = session.security_exceptions(active_only=True, now=ts)
+        waivers = session.security_waivers(active_only=True)
         converted = [
             VulnerabilityException(
                 cve=e.cve,
@@ -75,6 +76,16 @@ class BuiltinPolicyEngine:
                 approved_by=e.approved_by,
             )
             for e in db_exceptions
+        ] + [
+            VulnerabilityException(
+                cve=w.cve_id.upper(),
+                artifact_digest="",
+                owner=w.approved_by,
+                expires=w.expires_at.date(),
+                reason=w.reason,
+                approved_by=w.approved_by,
+            )
+            for w in waivers
         ]
 
         try:
@@ -230,11 +241,12 @@ class PolicyEngine:
 
         # 4. Risk assessment
         active_exceptions = session.security_exceptions(active_only=True, now=ts)
+        active_waivers = session.security_waivers(active_only=True)
         risk = RiskCalculator.calculate(
             environment=Environment.PROD,
             module_count=module_count,
             run_automation_tests=run_automation_tests,
-            active_exceptions_count=len(active_exceptions),
+            active_exceptions_count=len(active_exceptions) + len(active_waivers),
             rollback_strategy=rollback_strategy,
             is_break_glass=bg is not None,
         )
