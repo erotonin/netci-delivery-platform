@@ -1720,7 +1720,9 @@ class DeliveryPlatform:
             source = transaction.pipeline_run(source_pipeline_run_id)
             if source is None or source.application_id != application_id:
                 raise DeliveryError("PIPELINE_NOT_FOUND", "source pipeline run not found", 404)
-            if source.status not in {PipelineStatus.SUCCEEDED, PipelineStatus.RUNNING} or not source.artifact_digest:
+            # A run whose release was later rolled back still built and verified its
+            # artifact; the rollback is a fact about a deployment, not about the digest.
+            if source.status not in {PipelineStatus.SUCCEEDED, PipelineStatus.RUNNING, PipelineStatus.ROLLED_BACK} or not source.artifact_digest:
                 raise DeliveryError(
                     "NO_DEPLOYABLE_ARTIFACT",
                     "the source run has no verified artifact digest; a configuration cannot be "
@@ -1764,11 +1766,19 @@ class DeliveryPlatform:
             )
             unit = UnitOfWork()
             if deployment.status == DeploymentStatus.DEPLOYING:
+                # The lease row references the deployment row (foreign key), so the
+                # deployment is written first, inside the same transaction; a refused
+                # lease still raises and rolls both back. The in-memory store enforces
+                # no such constraint, which is how this order was wrong until the first
+                # redeploy against PostgreSQL.
+                self._apply(transaction, UnitOfWork(deployments=[(deployment, None)]))
                 lease = self._acquire_lease(
                     transaction, unit, deployment, carrier, owner=f"redeploy:{actor}"
                 )
                 deployment = replace(deployment, fencing_token=lease.fencing_token)
-            unit.deployments = [(deployment, None)]
+                unit.deployments = [(deployment, 1)]
+            else:
+                unit.deployments = [(deployment, None)]
             unit.audit.append(
                 AuditRecord(
                     "deployment.redeploy_requested",
@@ -2278,6 +2288,20 @@ class DeliveryPlatform:
             return deployment
         # Outside the transaction: this reaches Temporal.
         return self._start_rollback_cd(deployment, source)
+
+    def source_run_in_service(self, application_id: UUID, environment: Environment) -> PipelineRun | None:
+        """The run that built what this environment is serving right now.
+
+        After a rollback the newest deployment record carries the *restored* digest and
+        its run is marked rolled_back; "the latest deployment's run" would then name the
+        release that was pulled. Start from the digest in service and find its builder.
+        """
+
+        with self._transaction() as transaction:
+            digest = self._digest_in_service(transaction, application_id, environment)
+            if digest is None:
+                return None
+            return self._run_that_built(transaction, application_id, digest)
 
     @staticmethod
     def _run_that_built(

@@ -25,6 +25,13 @@ two of them could not run at all, and that a third class of state was not durabl
    dictionaries, so the first real heartbeat would have crashed the gate.
 4. **An unconfigured DCIM reported targets `healthy`.** The pre-flight helper's *pass*
    result is a truthy object; the unconfigured catalog returned it as its own answer.
+5. **"Apply configuration" (redeploy without rebuild) had never run against PostgreSQL.**
+   It acquired the lease before inserting the deployment row, which the lease's foreign
+   key refuses; the in-memory store enforces no constraint, so every test passed. After
+   a rollback it also chose the newest deployment record -- the rolled-back one, whose
+   run is `rolled_back` -- and refused with NO_DEPLOYABLE_ARTIFACT although the
+   environment was serving a verified digest. The UI called the result "Configuration
+   Applied Successfully" with a lead time the API no longer returned.
 
 ## Decision
 
@@ -61,6 +68,12 @@ has reported; it never invents numbers.
 
 **An unconfigured DCIM never calls a target healthy**; only a refusal from the
 pre-flight helper is returned as the catalog's answer.
+
+**A redeploy starts from what is in service.** `source_run_in_service` takes the digest
+the environment serves (healthy or rolled-back-to) and finds the run that built it; the
+deployment row is written before its lease in the same transaction; a PostgreSQL-backed
+test holds the ordering. The UI and OpenAPI say "deployment started / waiting for a
+reviewer" and show the status the worker will move -- never "applied".
 
 **Health gates compare identity.** The docker playbook requires the answering service
 to report the deployed digest; the systemd playbook requires it to report the commit it

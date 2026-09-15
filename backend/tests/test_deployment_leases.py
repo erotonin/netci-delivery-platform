@@ -487,3 +487,34 @@ def test_every_lease_decision_is_in_the_audit_trail(database):
     assert "deployment.lease_acquired" in kinds
     assert "deployment.lease_conflict" in kinds
     assert "deployment.lease_released" in kinds
+
+
+# ------------------------------------------------------------ redeploy on PostgreSQL
+
+
+def test_a_redeploy_writes_the_deployment_before_its_lease(database):
+    """Found live: `redeploy_artifact` acquired the lease before inserting the deployment
+    row, and PostgreSQL refused the lease's foreign key. The in-memory store enforces no
+    constraint, so only a PostgreSQL-backed test can hold this."""
+
+    engine, application = new_application("redeploy-fk")
+    run = engine.start_pipeline(
+        application.id, commit_sha="abc1234", branch="main", environment=Environment.DEV,
+        parameters={"target_hosts": ["dev-01"]}, correlation_id="lease-test", idempotency_key=None,
+    )
+    engine.record_ci_result(run.id, PipelineStatus.RUNNING.value, None, [])
+    engine.record_security_evidence(run.id, evidence(run))
+    first = engine.record_ci_result(run.id, PipelineStatus.SUCCEEDED.value, DIGEST, []).deployment
+    engine.record_deployment_result(first.id, DeploymentStatus.HEALTHY.value, "ok", fencing_token=platform().get_deployment(first.id).fencing_token)
+
+    source = engine.source_run_in_service(application.id, Environment.DEV)
+    assert source is not None and source.id == run.id
+    redeployed = engine.redeploy_artifact(
+        application.id, environment=Environment.DEV, source_pipeline_run_id=source.id,
+        config_revision_id=None, actor="ops", parameters={"target_hosts": ["dev-01"]}, reason="config",
+    )
+    assert redeployed.status == DeploymentStatus.DEPLOYING
+    assert redeployed.fencing_token is not None
+    stored = platform().get_deployment(redeployed.id)
+    assert stored.fencing_token == redeployed.fencing_token
+    assert stored.previous_artifact_digest == DIGEST

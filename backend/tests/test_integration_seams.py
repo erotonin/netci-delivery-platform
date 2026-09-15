@@ -769,3 +769,25 @@ def test_a_new_release_records_the_digest_it_replaces():
     _, _, second = _two_dev_releases(platform, application)
     assert second.previous_artifact_digest == OLDER
     assert second.artifact_digest == DIGEST
+
+
+def test_applying_configuration_after_a_rollback_redeploys_what_is_in_service():
+    """Found live: after a rollback the newest deployment record is the rolled-back one
+    and its run is `rolled_back`, so "apply the active configuration" was refused with
+    NO_DEPLOYABLE_ARTIFACT although the environment was serving a verified digest."""
+    orchestrator = RecordingCdOrchestrator()
+    platform = build_platform(orchestrator=orchestrator)
+    application = create_application(platform)
+    first, second, deployment = _two_dev_releases(platform, application)
+    platform.rollback_deployment(deployment.id, OLDER)
+    platform.record_rollback_result(deployment.id, succeeded=True, message="restored", fencing_token=platform.get_deployment(deployment.id).fencing_token)
+
+    source = platform.source_run_in_service(application.id, Environment.DEV)
+    assert source is not None and source.id == first.id, "OLDER is what dev serves; `first` built it"
+
+    redeployed = platform.redeploy_artifact(
+        application.id, environment=Environment.DEV, source_pipeline_run_id=source.id,
+        config_revision_id=None, actor="ops", parameters={"target_hosts": ["dev-01"]}, reason="config change",
+    )
+    assert redeployed.artifact_digest == OLDER
+    assert redeployed.status == DeploymentStatus.DEPLOYING

@@ -100,6 +100,7 @@ database and its audit log (`GET /audit-events?moduleId=hello-container`).
 | **Kubernetes runtime**: `hello-kubernetes` built on Jenkins B, Helm release in namespace `dev` on the kind cluster, pod running the digest-pinned image `172.17.0.1:55000/hello-kubernetes@sha256:dd398520…` | deployment `0bb63e63…` healthy |
 | **systemd runtime**: `hello-systemd-go` Go binary built on Jenkins A, pushed to the registry as a one-layer OCI artifact, signed, re-verified on the worker, fetched and installed as a user-scope systemd unit answering on :18191 | deployment `51440ee8…` healthy (ADR-029) |
 | Maintenance mode set through the API, API restarted, dispatch to that host refused 422 `DCIM_TARGET_UNAVAILABLE (maintenance)` — the state is in PostgreSQL, not the process | observed 09:11–09:12 UTC |
+| `POST /modules/hello-container/config/apply` (redeploy the in-service digest under the active revision, no rebuild): first attempt refused `NO_DEPLOYABLE_ARTIFACT` after a rollback, second hit a foreign-key error on PostgreSQL — both fixed (ADR-029 §5) — third: `deploying` → worker re-verified → `healthy` in ~20 s | deployment `b41b093f…`, fencing token 11 |
 | Readiness truthfulness: `/readyz` → 503 with `cd.status = no_workers` while the worker was down; `cosign.version = v3.1.2`; 2/2 Jenkins controllers; NetBox `ready` | observed repeatedly |
 
 ---
@@ -136,7 +137,7 @@ heartbeat's objects would have crashed the gate); the telemetry endpoint invente
 
 | Suite | Command | Result |
 |---|---|---|
-| Backend + contract (PostgreSQL-backed) | `NETCI_TEST_DATABASE_URL=…/netci .venv/bin/python -m pytest backend/tests tests/contract -o addopts="" -q` (run in two halves; see CLAUDE.md) | 555 passed, 4 skipped (opt-in Temporal tests, run separately below) + 40 passed |
+| Backend + contract (PostgreSQL-backed) | `NETCI_TEST_DATABASE_URL=…/netci .venv/bin/python -m pytest backend/tests tests/contract -o addopts="" -q` (run in two halves; see CLAUDE.md) | 556 passed, 4 skipped (opt-in Temporal tests, run separately below) + 41 passed |
 | Temporal workflow tests against the time-skipping test server | `NETCI_RUN_TEMPORAL_TEST=1 .venv/bin/python -m pytest backend/tests/test_temporal_workflow.py` | 4 passed |
 | Frontend | `cd frontend && npm test && npm run build` | 26 passed, build OK |
 | Static | `pyflakes backend/app/`, `scripts/migrate.py --check-schema` | clean; schema matches 20 migrations |

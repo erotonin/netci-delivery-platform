@@ -630,10 +630,12 @@ function ConfigTab({ moduleId }: { moduleId: string }) {
     try {
       const res = await applyModuleConfig(moduleId, { environment: fastApplyEnv })
       setFastApplyResult(res)
-      notify(`Fast applied config to ${fastApplyEnv} in ${res.leadTimeSeconds.toFixed(2)}s! Reused digest ${res.artifactDigest.slice(0, 19)}...`)
+      notify(res.status === 'pending_approval'
+        ? `Deployment ${res.deploymentId.slice(0, 8)} to ${fastApplyEnv} is waiting for a reviewer (digest ${res.artifactDigest.slice(0, 19)}…)`
+        : `Deployment ${res.deploymentId.slice(0, 8)} to ${fastApplyEnv} started (digest ${res.artifactDigest.slice(0, 19)}…); the worker reports its health`)
       await checkDrift()
     } catch (error) {
-      notify(error instanceof Error ? error.message : 'Failed to fast apply config', 'error')
+      notify(error instanceof Error ? error.message : 'Could not start the deployment', 'error')
     } finally {
       setApplyingConfig(false)
     }
@@ -976,8 +978,8 @@ function ConfigTab({ moduleId }: { moduleId: string }) {
 
       {fastApplyModal && (
         <Modal
-          title="⚡ Fast-Track Config Deploy (Skip CI Rebuild)"
-          description="Decoupled configuration deployment. Reuses previously verified immutable artifact digest without triggering code checkout, build, vulnerability scan, SBOM, or signing."
+          title="Redeploy with the active configuration"
+          description="Starts a real deployment of the artifact this environment last built (digest-pinned, its evidence re-evaluated and its signature re-verified by the worker) under the active configuration revision, without rebuilding. Production still requires a reviewer's approval."
           onClose={() => setFastApplyModal(false)}
           footer={
             <>
@@ -989,7 +991,7 @@ function ConfigTab({ moduleId }: { moduleId: string }) {
                 onClick={handleFastApply}
                 style={{ background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)' }}
               >
-                {applyingConfig ? 'Applying…' : 'Apply Instantly'}
+                {applyingConfig ? 'Starting…' : 'Start deployment'}
               </button>
             </>
           }
@@ -997,9 +999,9 @@ function ConfigTab({ moduleId }: { moduleId: string }) {
           <div className="form-grid">
             <div className="field full">
               <div style={{ padding: 12, borderRadius: 8, background: 'rgba(16, 185, 129, 0.08)', border: '1px solid rgba(16, 185, 129, 0.2)', marginBottom: 8 }}>
-                <div style={{ fontWeight: 600, color: '#10b981', marginBottom: 4 }}>Enterprise Decoupled Lifecycle</div>
+                <div style={{ fontWeight: 600, color: '#10b981', marginBottom: 4 }}>What this does</div>
                 <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-                  Deploying configuration changes directly applies the desired revision while binding to the latest verified artifact SHA256 digest. Lead time drops from minutes to ~1 second.
+                  A new deployment of the last artifact this environment built, with the active revision's targets and runtime settings. It takes a lease, goes through the same policy, approval and worker gates as any deployment, and is reported healthy only by the worker. If nothing was ever built for this environment it is refused.
                 </div>
               </div>
             </div>
@@ -1022,15 +1024,17 @@ function ConfigTab({ moduleId }: { moduleId: string }) {
             </div>
 
             {fastApplyResult && (
-              <div className="field full" id="fast-apply-result-box" style={{ padding: 12, borderRadius: 6, background: 'rgba(16, 185, 129, 0.1)', border: '1px solid #10b981' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: '#10b981', fontWeight: 600, marginBottom: 6 }}>
-                  <CheckCircle2 size={18} /> Configuration Applied Successfully
+              <div className="field full" id="fast-apply-result-box" style={{ padding: 12, borderRadius: 6, background: 'rgba(2, 132, 199, 0.08)', border: '1px solid #0284c7' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: '#0284c7', fontWeight: 600, marginBottom: 6 }}>
+                  <CheckCircle2 size={18} /> {fastApplyResult.status === 'pending_approval' ? 'Deployment created — waiting for a reviewer' : 'Deployment started — waiting for the worker'}
                 </div>
                 <div style={{ fontSize: '0.85rem' }}>
                   <div>• <strong>Deployment ID:</strong> <code className="mono">{fastApplyResult.deploymentId}</code></div>
-                  <div>• <strong>Reused Artifact Digest:</strong> <code className="mono">{fastApplyResult.artifactDigest}</code></div>
-                  <div>• <strong>Lead Time:</strong> <span style={{ color: '#10b981', fontWeight: 600 }}>{fastApplyResult.leadTimeSeconds.toFixed(2)}s</span> (CI pipeline bypassed)</div>
-                  <div>• <strong>Status:</strong> <span className="mono">{fastApplyResult.status}</span></div>
+                  <div>• <strong>Artifact (reused, digest-pinned):</strong> <code className="mono">{fastApplyResult.artifactDigest}</code></div>
+                  <div>• <strong>Built by run:</strong> <code className="mono">{fastApplyResult.sourcePipelineRunId}</code> · revision #{fastApplyResult.revisionNumber}</div>
+                  <div>• <strong>Status:</strong> <span className="mono">{fastApplyResult.status}</span> — becomes <span className="mono">healthy</span> only when the worker reports it</div>
+                  {fastApplyResult.riskLevel && <div>• <strong>Risk:</strong> {fastApplyResult.riskLevel}{fastApplyResult.riskReasons?.length ? ` (${fastApplyResult.riskReasons.join('; ')})` : ''}</div>}
+                  <div style={{ color: 'var(--text-muted)', marginTop: 4 }}>{fastApplyResult.message}</div>
                 </div>
               </div>
             )}

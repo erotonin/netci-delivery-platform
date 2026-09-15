@@ -2241,7 +2241,14 @@ paths:
           application/json:
             schema: { $ref: '#/components/schemas/ConfigApplyRequest' }
       responses:
-        '200': { description: Redeploy started }
+        '200':
+          description: >-
+            A redeploy of the last built artifact was started (or is waiting for approval in
+            production). Nothing here means "applied": the deployment's status says what the
+            worker has established so far.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ConfigApplyResponse' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
@@ -2505,6 +2512,22 @@ components:
               path: { type: string }
               repositoryUrl: { type: string, nullable: true }
               hasTests: { type: boolean }
+    ConfigApplyResponse:
+      type: object
+      required: [deploymentId, moduleId, environment, revisionNumber, status, artifactDigest, sourcePipelineRunId, message]
+      properties:
+        deploymentId: { type: string, format: uuid }
+        moduleId: { type: string }
+        environment: { $ref: '#/components/schemas/Environment' }
+        revisionNumber: { type: integer }
+        status: { type: string, enum: [pending_approval, deploying] }
+        artifactDigest: { type: string }
+        sourcePipelineRunId: { type: string, format: uuid }
+        fencingToken: { type: integer, nullable: true }
+        configBypassedCi: { type: boolean }
+        riskLevel: { type: string, nullable: true }
+        riskReasons: { type: array, items: { type: string } }
+        message: { type: string }
     ConfigApplyRequest:
       type: object
       additionalProperties: false

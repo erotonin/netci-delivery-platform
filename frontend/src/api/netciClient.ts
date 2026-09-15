@@ -1386,14 +1386,21 @@ export type ConfigApplyRequest = {
   revisionId?: string
 }
 
+// Applying a revision starts a real deployment of the last built artifact. The status
+// is what the platform has established (pending_approval | deploying); "healthy" only
+// ever comes from the worker, later, on the deployment itself.
 export type ConfigApplyResponse = {
   deploymentId: string
   moduleId: string
   environment: Environment
-  revisionId: string
-  status: string
+  revisionNumber: number
+  status: 'pending_approval' | 'deploying'
   artifactDigest: string
-  leadTimeSeconds: number
+  sourcePipelineRunId: string
+  fencingToken?: number | null
+  configBypassedCi?: boolean
+  riskLevel?: string | null
+  riskReasons?: string[]
   message: string
 }
 

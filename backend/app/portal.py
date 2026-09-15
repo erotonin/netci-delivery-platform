@@ -918,12 +918,12 @@ class PortalService:
             # which produced a "healthy" deployment of an artifact that did not exist.
             target_env = Environment(environment.lower())
             source_run_id: UUID | None = None
-            deployed = [
-                d for d in transaction.deployments(application_id=application_id)
-                if d.environment == target_env and d.artifact_digest and d.pipeline_run_id
-            ]
-            if deployed:
-                source_run_id = max(deployed, key=lambda d: d.created_at).pipeline_run_id
+            # What the environment is serving now (after a rollback, the restored digest),
+            # and the run that built it. Found by the live stack: the newest deployment
+            # record after a rollback is the rolled-back one, whose run is `rolled_back`.
+            in_service = self.platform.source_run_in_service(application_id, target_env)
+            if in_service is not None:
+                source_run_id = in_service.id
             if source_run_id is None:
                 succeeded = [
                     r for r in transaction.pipeline_runs(application_id=application_id)
