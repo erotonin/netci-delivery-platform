@@ -97,6 +97,9 @@ database and its audit log (`GET /audit-events?moduleId=hello-container`).
 | second prod release, approved, healthy; then rollback by the reviewer to the previous digest: developer → 403; unknown digest → 409 `ROLLBACK_ARTIFACT_UNKNOWN`; real target → `rollback_in_progress` → worker ran it → `rolled_back` in 17 s; host serves the previous digest | deployment `32dd4eb3…`, fencing token 3 |
 | Configuration revision touching production → `pending_approval`; author's approval → 403 `SEPARATION_OF_DUTIES`; developer → 403 `FORBIDDEN`; reviewer → active | revision 5 |
 | Temporal durability: a workflow started with no worker resumed 12 minutes later when a worker appeared | earlier in the day, run `7c6f7c89…` |
+| **Kubernetes runtime**: `hello-kubernetes` built on Jenkins B, Helm release in namespace `dev` on the kind cluster, pod running the digest-pinned image `172.17.0.1:55000/hello-kubernetes@sha256:dd398520…` | deployment `0bb63e63…` healthy |
+| **systemd runtime**: `hello-systemd-go` Go binary built on Jenkins A, pushed to the registry as a one-layer OCI artifact, signed, re-verified on the worker, fetched and installed as a user-scope systemd unit answering on :18191 | deployment `51440ee8…` healthy (ADR-029) |
+| Maintenance mode set through the API, API restarted, dispatch to that host refused 422 `DCIM_TARGET_UNAVAILABLE (maintenance)` — the state is in PostgreSQL, not the process | observed 09:11–09:12 UTC |
 | Readiness truthfulness: `/readyz` → 503 with `cd.status = no_workers` while the worker was down; `cosign.version = v3.1.2`; 2/2 Jenkins controllers; NetBox `ready` | observed repeatedly |
 
 ---
@@ -120,16 +123,23 @@ And one more, found by the rollback proof: `POST /deployments/{id}/rollback` wro
 `rollback_in_progress` and started nothing — no worker ever executed a manual rollback.
 `RollbackWorkflow` now runs it (ADR-028, decision section).
 
+Running the other two runtimes found five more (ADR-029): the systemd path had no
+artifact store at all; Kubernetes targets were passed as Ansible `--limit` hosts and the
+worker used the wrong Ansible collections; maintenance mode and telemetry were
+process-local dicts (forgotten on restart, invisible to a second replica, and the
+heartbeat's objects would have crashed the gate); the telemetry endpoint invented
+"normal" numbers; an unconfigured DCIM called every target healthy.
+
 ---
 
 ## 5. Test suites at this commit
 
 | Suite | Command | Result |
 |---|---|---|
-| Backend + contract (PostgreSQL-backed) | `NETCI_TEST_DATABASE_URL=…/netci .venv/bin/python -m pytest backend/tests tests/contract -o addopts="" -q` (run in two halves; see CLAUDE.md) | 538 passed, 4 skipped (opt-in Temporal tests, run separately below) + 40 passed |
+| Backend + contract (PostgreSQL-backed) | `NETCI_TEST_DATABASE_URL=…/netci .venv/bin/python -m pytest backend/tests tests/contract -o addopts="" -q` (run in two halves; see CLAUDE.md) | 555 passed, 4 skipped (opt-in Temporal tests, run separately below) + 40 passed |
 | Temporal workflow tests against the time-skipping test server | `NETCI_RUN_TEMPORAL_TEST=1 .venv/bin/python -m pytest backend/tests/test_temporal_workflow.py` | 4 passed |
 | Frontend | `cd frontend && npm test && npm run build` | 26 passed, build OK |
-| Static | `pyflakes backend/app/`, `scripts/migrate.py --check-schema` | clean; schema matches 19 migrations |
+| Static | `pyflakes backend/app/`, `scripts/migrate.py --check-schema` | clean; schema matches 20 migrations |
 
 ---
 
@@ -139,13 +149,13 @@ Say these plainly rather than let the table above imply them.
 
 | Gap | Owner / next step |
 |---|---|
-| Kubernetes and systemd runtimes were not deployed through the live stack today (only `docker`). The `make gate` e2e scripts have exercised both against this host earlier, outside netCI's control plane. | Platform: repeat §3 for `hello-kubernetes` (kind) and `hello-systemd-go` with `runtimeSettings.systemdScope=user`. |
+| All three runtimes were deployed through the live control plane to `dev` only; staging/prod for kubernetes and systemd were not exercised (the docker path was, including approval and rollback). | Platform: run the approval + rollback proofs for the other two runtimes. |
 | The registry is plaintext HTTP; `imagePullHost` is how the host reaches it. A real deployment needs TLS and one name. | Infra. |
 | Rekor / transparency log is off (`--tlog-upload=false`, `--insecure-ignore-tlog`). Signatures are key-based only. | Security: decide on a Rekor instance; set `NETCI_SIGNATURE_REQUIRE_TLOG=true`. |
-| The edge-agent registry (`_ACTIVE_RUNNERS`) is process-local; a second API replica would not see agents connected to the first. | Platform: DB-backed registry. |
+| The edge-agent *socket* registry (`_ACTIVE_RUNNERS`) is process-local by nature; command dispatch to an agent connected to another replica is not supported. Maintenance mode and telemetry are now in PostgreSQL (ADR-029). | Platform: route agent commands through the database (a command table the owning replica polls) if multi-replica dispatch is needed. |
 | Password-grant OIDC in the harness is a lab convenience; the browser login flow was not exercised by automation today. | Platform: Playwright login test against Keycloak. |
 | Single host for every environment. Nothing was proven about network reachability, SSH, or privilege escalation to a separate target. | Infra: a second VM in `local.ini`. |
-| `production_readiness_audit.py` still exists and still prints a verdict; it is a code self-check. | Docs updated; consider renaming its verdict. |
+| `production_readiness_audit.py` is a code self-check; its verdict is now `SELF_CHECK_PASSED` / `SELF_CHECK_FAILED`, never "certified". | Done. |
 
 ---
 

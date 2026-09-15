@@ -27,6 +27,7 @@ from ..domain.models import (
     SecurityWaiver,
     ServerHealthRecord,
     ServerMaintenanceState,
+    ServerTelemetry,
 )
 from ..persistence import AuditRecord, IdempotencyRow, UnitOfWork
 from .records import (
@@ -371,6 +372,10 @@ class PlatformSession(Protocol):
     def get_server_maintenance(self, server_name: str) -> ServerMaintenanceState | None: ...
 
     def list_server_maintenance(self) -> tuple[ServerMaintenanceState, ...]: ...
+
+    def upsert_server_telemetry(self, telemetry: ServerTelemetry) -> None: ...
+
+    def get_server_telemetry(self, server_name: str) -> ServerTelemetry | None: ...
 
     def insert_break_glass_request(self, record: BreakGlassRecord) -> None: ...
 

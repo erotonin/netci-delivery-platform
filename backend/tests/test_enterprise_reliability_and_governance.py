@@ -328,33 +328,34 @@ def test_local_disk_audit_ledger_tamper_evident():
 def test_preflight_telemetry_gate(client: TestClient):
     """Verify that server telemetry correctly identifies critical thresholds
     (disk > 90%) and stale telemetry (age > 300 seconds)."""
-    # 1. Non-existent server defaults to normal
+    # 1. A server no agent ever reported for is *unknown*, not "normal".
     res = client.get("/api/v1/servers/test-unknown-host/telemetry")
-    assert res.status_code == 200
-    data = res.json()
-    assert data["status"] == "normal"
-    assert data["isStale"] is False
+    assert res.status_code == 404
+    assert res.json()["code"] == "TELEMETRY_UNKNOWN"
 
-    # 2. Simulate critical telemetry in registry
-    from app.main import _TELEMETRY_REGISTRY, ServerTelemetry
-    _TELEMETRY_REGISTRY["test-overloaded-host"] = ServerTelemetry(
+    # 2. Critical telemetry, stored the way a heartbeat stores it
+    from app.adapters.dcim import server_state
+    from app.domain.models import ServerTelemetry
+    server_state().record_telemetry(ServerTelemetry(
+        server_name="test-overloaded-host",
         cpu_percent=45.0,
         mem_percent=60.0,
         disk_percent=94.5,  # > 90% disk!
         observed_at=datetime.now(timezone.utc),
-    )
+    ))
 
     res = client.get("/api/v1/servers/test-overloaded-host/telemetry")
     assert res.status_code == 200
     assert res.json()["status"] == "critical"
 
     # 3. Simulate stale telemetry (> 5 minutes old)
-    _TELEMETRY_REGISTRY["test-stale-host"] = ServerTelemetry(
+    server_state().record_telemetry(ServerTelemetry(
+        server_name="test-stale-host",
         cpu_percent=10.0,
         mem_percent=20.0,
         disk_percent=30.0,
         observed_at=datetime.now(timezone.utc) - timedelta(minutes=10),  # 10 min old!
-    )
+    ))
 
     res = client.get("/api/v1/servers/test-stale-host/telemetry")
     assert res.status_code == 200

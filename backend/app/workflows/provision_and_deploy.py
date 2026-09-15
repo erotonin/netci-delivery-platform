@@ -46,6 +46,8 @@ class DeliveryInput:
     release_name: str = "netci-release"
     parameters: dict[str, Any] = field(default_factory=dict)
     require_approval: bool | None = None
+    # The commit the artifact was built from; the runtime health gates compare it.
+    commit_sha: str = ""
 
     @property
     def approval_required(self) -> bool:

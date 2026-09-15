@@ -40,7 +40,7 @@ from .dcim import (
     DcimPage,
     DcimUnavailable,
     TargetValidationResult,
-    _MAINTENANCE_REGISTRY,
+    get_server_maintenance,
     check_preflight_telemetry,
 )
 
@@ -198,7 +198,7 @@ class NetBoxDcimCatalog:
                 message=f"Target {target} is {status} in NetBox",
                 server_name=target, details=device,
             )
-        maintenance = _MAINTENANCE_REGISTRY.get(target)
+        maintenance = get_server_maintenance(target)
         if maintenance and maintenance.in_maintenance:
             return TargetValidationResult(
                 valid=False, status="maintenance",

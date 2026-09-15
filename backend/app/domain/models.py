@@ -350,6 +350,17 @@ class ServerMaintenanceState:
 
 
 @dataclass(frozen=True)
+class ServerTelemetry:
+    """The latest observation an edge agent reported for one server."""
+
+    server_name: str
+    cpu_percent: float = 0.0
+    mem_percent: float = 0.0
+    disk_percent: float = 0.0
+    observed_at: datetime = field(default_factory=utc_now)
+
+
+@dataclass(frozen=True)
 class L7CanaryRule:
     header_name: str | None = None
     header_value: str | None = None

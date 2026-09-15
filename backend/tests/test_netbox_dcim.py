@@ -211,3 +211,13 @@ def test_search_services_maps_tenants_to_systems(netbox):
     assert [s["id"] for s in items] == ["payments"]
     assert items[0]["unit"] == "fintech"
     assert items[0]["source"] == "netbox"
+
+
+def test_an_unconfigured_dcim_never_calls_a_target_healthy():
+    """Found by the readiness self-check: the telemetry pre-flight's *pass* result was
+    returned as the unconfigured catalog's answer, so "no inventory" read as "healthy"."""
+    from app.adapters.dcim import UnconfiguredDcimCatalog
+
+    result = UnconfiguredDcimCatalog().validate_target("sys", "mod", "prod", "server-prod-01")
+    assert result.status == "unconfigured"
+    assert "healthy" not in result.message

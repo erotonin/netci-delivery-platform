@@ -37,6 +37,7 @@ from ..domain.models import (
     SecurityWaiver,
     ServerHealthRecord,
     ServerMaintenanceState,
+    ServerTelemetry,
     WaiverStatus,
 )
 from ..persistence import (
@@ -101,6 +102,7 @@ class _State:
     resource_requests: dict[UUID, ResourceRequestRecord] = field(default_factory=dict)
     security_waivers: dict[UUID, SecurityWaiver] = field(default_factory=dict)
     server_maintenance: dict[str, ServerMaintenanceState] = field(default_factory=dict)
+    server_telemetry: dict[str, ServerTelemetry] = field(default_factory=dict)
 
     def copy(self) -> "_State":
         return _State(
@@ -138,6 +140,7 @@ class _State:
             resource_requests=dict(self.resource_requests),
             security_waivers=dict(self.security_waivers),
             server_maintenance=dict(self.server_maintenance),
+            server_telemetry=dict(self.server_telemetry),
         )
 
 
@@ -968,6 +971,12 @@ class InMemorySession:
 
     def list_server_maintenance(self) -> tuple[ServerMaintenanceState, ...]:
         return tuple(self._state.server_maintenance.values())
+
+    def upsert_server_telemetry(self, telemetry: ServerTelemetry) -> None:
+        self._state.server_telemetry[telemetry.server_name] = telemetry
+
+    def get_server_telemetry(self, server_name: str) -> ServerTelemetry | None:
+        return self._state.server_telemetry.get(server_name)
 
     def insert_break_glass_request(self, record: BreakGlassRecord) -> None:
         self._state.break_glass_requests[record.id] = record

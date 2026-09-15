@@ -1358,6 +1358,12 @@ class PortalService:
             dynamic = self.dcim_catalog.resolve_inventory(module.system_id, module.id, environment.value)
             if dynamic:
                 configured_servers = dynamic
+        if str(module.runtime) in {Runtime.KUBERNETES.value, str(Runtime.KUBERNETES)}:
+            # A Kubernetes target is a namespace reached through a kubeconfig, and the
+            # playbook runs on the worker. Cluster nodes DCIM knows are inventory facts,
+            # not Ansible hosts: passing them as `--limit` against a `hosts: localhost`
+            # play would select nothing and the deployment would silently do nothing.
+            configured_servers = []
 
         managed: dict[str, object] = {
             **runtime_parameters(target),

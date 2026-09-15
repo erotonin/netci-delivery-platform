@@ -1852,6 +1852,7 @@ class DeliveryPlatform:
             release_name=application.name,
             require_approval=False,
             parameters=parameters,
+            commit_sha=run.commit_sha,
         )
         try:
             workflow_id = self.cd_orchestrator.start(request)
@@ -2312,6 +2313,7 @@ class DeliveryPlatform:
             release_name=application.name,
             require_approval=False,
             parameters=parameters,
+            commit_sha=source.commit_sha,
         )
         try:
             workflow_id = self.cd_orchestrator.start_rollback(request)

@@ -149,6 +149,9 @@
           until:
             - systemd_health.status == 200
             - (systemd_health.json.status | default('')) == 'ok'
+            # When netCI says which commit was built, the answer must come from it and
+            # not from whatever was already listening on the port.
+            - (commit_sha | default('')) == '' or (systemd_health.json.version | default('')) == commit_sha
 
       rescue:
         - name: Capture failed release journal before rollback

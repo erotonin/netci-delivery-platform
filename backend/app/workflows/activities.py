@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
 import json
 import os
 import re
+import subprocess
+import tempfile
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -18,12 +21,14 @@ from ..adapters.signature_verifier import (
     SignatureVerifier,
 )
 from ..policy.rules import PolicyViolation, evaluate_artifact_evidence
+from ..adapters.oci_blob import OciBlobError, fetch_blob, with_pull_host
 from .provision_and_deploy import DeliveryInput, DeliveryResult, RollbackResult
 
 
 _SAFE_EVIDENCE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 # Parameters netCI hands the workflow for its own use, never for the playbook.
 _CONTROL_PLANE_PARAMETERS = frozenset({"callback_token", "fencing_token"})
+_WORKER_BLOB_SHA256 = "_netci_worker_blob_sha256"
 _SAFE_INVENTORY_HOST = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,252}$")
 _SAFE_SECRET_REF = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 
@@ -323,6 +328,7 @@ class AnsibleRuntimeRunner:
         # bearer credential that can report this deployment's result.
         for control_key in _CONTROL_PLANE_PARAMETERS:
             parameters.pop(control_key, None)
+        blob_sha256 = parameters.pop(_WORKER_BLOB_SHA256, None)
         target_hosts = parameters.pop("target_hosts", None)
         if delivery.runtime in {"docker", "systemd"}:
             if not isinstance(target_hosts, list) or not target_hosts:
@@ -355,7 +361,11 @@ class AnsibleRuntimeRunner:
             "deployment_id": delivery.deployment_id,
             "target_environment": delivery.environment,
             "artifact_digest": delivery.artifact_digest,
-            "artifact_sha256": delivery.artifact_digest.removeprefix("sha256:"),
+            "commit_sha": delivery.commit_sha,
+            # A binary artifact's identity is its OCI manifest digest; the file the
+            # playbook installs is the manifest's single layer, whose digest this worker
+            # checked on the way to disk. Images are their manifest digest throughout.
+            "artifact_sha256": blob_sha256 or delivery.artifact_digest.removeprefix("sha256:"),
             "release_name": delivery.release_name,
         }
         playbook = self.project_root / "deploy" / "ansible" / "playbooks" / playbook_name
@@ -385,10 +395,50 @@ class AnsibleRuntimeRunner:
                 ["--ssh-common-args", f"-o UserKnownHostsFile={known_hosts} -o StrictHostKeyChecking=yes"]
             )
         command.append(str(playbook))
-        if isinstance(target_hosts, list) and target_hosts:
+        if delivery.runtime in {"docker", "systemd"} and isinstance(target_hosts, list) and target_hosts:
             command.extend(["--limit", ",".join(target_hosts)])
         command.extend(["--extra-vars", json.dumps(extra_vars, sort_keys=True)])
         return command
+
+    def environment(self) -> dict[str, str]:
+        """The Ansible environment the playbooks were written for.
+
+        The playbooks name pinned collections (deploy/ansible/requirements.yml). Left to
+        Ansible's defaults, the worker resolves whatever the invoking user has under
+        ~/.ansible -- a different community.docker than the one tested, or no
+        kubernetes.core at all, which is how the first Kubernetes deployment failed with
+        "couldn't resolve module/action 'kubernetes.core.helm'".
+        """
+
+        env = dict(os.environ)
+        collections = os.getenv("NETCI_ANSIBLE_COLLECTIONS_PATH", "").strip()
+        if collections:
+            env["ANSIBLE_COLLECTIONS_PATH"] = collections
+        return env
+
+    def required_collections(self) -> list[str]:
+        requirements = self.project_root / "deploy" / "ansible" / "requirements.yml"
+        if not requirements.is_file():
+            return []
+        names: list[str] = []
+        for line in requirements.read_text().splitlines():
+            stripped = line.strip()
+            if stripped.startswith("- name:"):
+                names.append(stripped.split(":", 1)[1].strip())
+        return names
+
+    def missing_collections(self) -> list[str]:
+        """Which of the playbooks' collections this worker cannot resolve right now."""
+
+        try:
+            listing = subprocess.run(
+                ["ansible-galaxy", "collection", "list", "--format", "json"],
+                capture_output=True, text=True, timeout=60, env=self.environment(), cwd=self.project_root,
+            )
+            installed = {name for path in json.loads(listing.stdout or "{}").values() for name in path}
+        except (OSError, ValueError, subprocess.TimeoutExpired):
+            installed = set()
+        return [name for name in self.required_collections() if name not in installed]
 
     async def _run(self, command: list[str]) -> None:
         process = await asyncio.create_subprocess_exec(
@@ -396,6 +446,7 @@ class AnsibleRuntimeRunner:
             cwd=self.project_root,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            env=self.environment(),
         )
         stdout, stderr = await process.communicate()
         if process.returncode != 0:
@@ -409,7 +460,39 @@ class AnsibleRuntimeRunner:
             )[-4000:]
             raise RuntimeError(f"runtime adapter failed with exit {process.returncode}: {detail}")
 
+    async def _materialized(self, delivery: DeliveryInput) -> DeliveryInput:
+        """For a binary artifact, fetch it from the registry and hand the playbook a file.
+
+        The signature was verified against the OCI reference (the manifest digest) by
+        the validate_artifact activity; this fetch checks the manifest and the blob
+        against their digests again on the way to disk. Docker and Kubernetes pull by
+        digest themselves and need nothing here.
+        """
+
+        if delivery.runtime != "systemd":
+            return delivery
+        parameters = dict(delivery.parameters)
+        reference = str(parameters.get("artifact_ref") or "").strip()
+        if not reference or parameters.get("artifact_path"):
+            return delivery
+        reference = with_pull_host(reference, str(parameters.get("image_pull_host") or "") or None)
+        cache = Path(os.getenv("NETCI_ARTIFACT_CACHE_DIR", str(Path(tempfile.gettempdir()) / "netci-artifacts")))
+        allow_http = os.getenv("NETCI_REGISTRY_ALLOW_HTTP", "").strip().lower() in {"1", "true", "yes"}
+        try:
+            blob = await asyncio.to_thread(fetch_blob, reference, cache, allow_http=allow_http)
+        except OciBlobError as exc:
+            raise RuntimeError(f"artifact could not be fetched from the registry: {exc}") from exc
+        parameters["artifact_path"] = str(blob.path)
+        # Set by this worker from a manifest it verified, never by a pipeline parameter;
+        # command_for reads it under this name and writes the playbook's artifact_sha256.
+        parameters[_WORKER_BLOB_SHA256] = blob.sha256
+        parameters.pop("artifact_url", None)
+        # The release directory is named after the artifact identity, never a tag.
+        parameters.setdefault("release_version", "rel-" + delivery.artifact_digest.removeprefix("sha256:")[:12])
+        return replace(delivery, parameters=parameters)
+
     async def deploy(self, delivery: DeliveryInput) -> str:
+        delivery = await self._materialized(delivery)
         await self._run(self.command_for("deploy", delivery))
         return f"deployment-{delivery.pipeline_run_id}"
 
@@ -432,4 +515,5 @@ class AnsibleRuntimeRunner:
         return await asyncio.to_thread(request)
 
     async def rollback(self, delivery: DeliveryInput) -> None:
+        delivery = await self._materialized(delivery)
         await self._run(self.command_for("rollback", delivery))

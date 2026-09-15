@@ -16,10 +16,8 @@ from fastapi.testclient import TestClient
 from app.adapters.dcim import (
     HttpDcimCatalog,
     UnconfiguredDcimCatalog,
-    _MAINTENANCE_REGISTRY,
-    _TELEMETRY_REGISTRY,
-    ServerTelemetry,
     check_preflight_telemetry,
+    get_server_telemetry,
     set_server_maintenance,
     update_server_telemetry,
 )
@@ -176,12 +174,23 @@ def test_server_maintenance_api():
     assert data["reason"] == "Kernel security patching"
     assert data["updatedBy"] != "ops-admin", "the actor must come from the principal"
 
-    # Check telemetry API
+    # No agent has reported for this server: the API says so instead of inventing
+    # "normal" numbers, which it used to do.
+    telem_res = client.get(f"/api/v1/servers/{server_name}/telemetry")
+    assert telem_res.status_code == 404
+    assert telem_res.json()["code"] == "TELEMETRY_UNKNOWN"
+
+    # Once an agent reports, the gate and the API read the same stored observation.
+    update_server_telemetry(server_name, cpu_percent=12.5, memory_percent=40.0, disk_percent=61.0)
     telem_res = client.get(f"/api/v1/servers/{server_name}/telemetry")
     assert telem_res.status_code == 200
-    telem_data = telem_res.json()
-    assert "cpuPercent" in telem_data
-    assert "diskPercent" in telem_data
+    assert telem_res.json()["diskPercent"] == 61.0
+    assert telem_res.json()["status"] == "normal"
+
+    # Maintenance set through the API is what the DCIM pre-flight gate sees -- through
+    # the database, not a dict in this process.
+    gate = check_preflight_telemetry(server_name)
+    assert gate.valid is False and gate.status == "maintenance"
 
     # Turn off maintenance
     res2 = client.post(
@@ -243,8 +252,9 @@ def test_runner_agent_websocket(monkeypatch):
         })
         ack = ws.receive_json()
         assert ack["type"] == "HEARTBEAT_ACK"
-        assert "test-srv" in _TELEMETRY_REGISTRY
-        record = _TELEMETRY_REGISTRY["test-srv"]
+        # Stored, not kept in this process: the gate and other replicas read it back.
+        record = get_server_telemetry("test-srv")
+        assert record is not None
         assert record.cpu_percent == 18.5
         assert record.disk_percent == 33.1
 
@@ -268,3 +278,22 @@ async def test_outbound_runner_daemon_execution(monkeypatch):
     res = await daemon._run_command("echo 'NetCI Zero Inbound Port'")
     assert res["exit_code"] == 0
     assert "NetCI Zero Inbound Port" in res["output"]
+
+
+def test_maintenance_mode_survives_a_process_restart(monkeypatch):
+    """Maintenance decides where deployments may go. A dict in the API process forgot
+    every server in maintenance on restart; the store does not."""
+    from app.adapters import dcim
+    from app.store.memory import InMemoryDatabase
+
+    database = InMemoryDatabase()
+    dcim.configure_server_state(dcim.DatabaseServerState(database))
+    try:
+        set_server_maintenance("edge-07", in_maintenance=True, reason="disk swap")
+        # "Restart": a fresh binding to the same database, nothing else carried over.
+        dcim.configure_server_state(dcim.DatabaseServerState(database))
+        assert check_preflight_telemetry("edge-07").status == "maintenance"
+        with database.transaction() as session:
+            assert session.get_server_maintenance("edge-07").reason == "disk swap"
+    finally:
+        dcim.configure_server_state(dcim.InMemoryServerState())

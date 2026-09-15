@@ -1,4 +1,5 @@
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -243,3 +244,96 @@ def test_control_plane_parameters_never_reach_the_ansible_command_line(tmp_path)
     assert "fencing_token" not in joined
     assert '"app_name": "svc"' in joined
     assert "--limit" in command and "host-a" in command
+
+
+def test_the_runner_hands_ansible_the_configured_collections_path(tmp_path, monkeypatch):
+    """The first Kubernetes deployment failed with "couldn't resolve kubernetes.core.helm"
+    because the worker used the invoking user's ~/.ansible instead of the pinned set."""
+    monkeypatch.setenv("NETCI_ANSIBLE_COLLECTIONS_PATH", "/opt/netci/collections")
+    runner = AnsibleRuntimeRunner(tmp_path, tmp_path / "inventory.ini")
+    assert runner.environment()["ANSIBLE_COLLECTIONS_PATH"] == "/opt/netci/collections"
+    monkeypatch.delenv("NETCI_ANSIBLE_COLLECTIONS_PATH")
+    assert "ANSIBLE_COLLECTIONS_PATH" not in runner.environment() or runner.environment()["ANSIBLE_COLLECTIONS_PATH"] == os.environ.get("ANSIBLE_COLLECTIONS_PATH")
+
+
+def test_missing_collections_are_named_from_requirements(tmp_path, monkeypatch):
+    (tmp_path / "deploy" / "ansible").mkdir(parents=True)
+    (tmp_path / "deploy" / "ansible" / "requirements.yml").write_text(
+        "---\ncollections:\n  - name: community.docker\n    version: 5.2.1\n  - name: kubernetes.core\n    version: 6.4.0\n"
+    )
+    runner = AnsibleRuntimeRunner(tmp_path, tmp_path / "inventory.ini")
+    assert runner.required_collections() == ["community.docker", "kubernetes.core"]
+    # Point Ansible at an empty collections dir: both must be reported missing.
+    monkeypatch.setenv("NETCI_ANSIBLE_COLLECTIONS_PATH", str(tmp_path / "empty"))
+    (tmp_path / "empty").mkdir()
+    assert runner.missing_collections() == ["community.docker", "kubernetes.core"]
+
+
+# ------------------------------------------------ binary artifacts from the registry
+
+
+@pytest.mark.asyncio
+async def test_a_systemd_deployment_fetches_its_binary_from_the_registry_and_hands_the_playbook_a_file(tmp_path, monkeypatch):
+    """The systemd path had no artifact store: CI expected pre-signed upload URLs nothing
+    issued, and the worker expected the bundle on its own disk. The registry is now the
+    store; the worker fetches the one-layer artifact and the playbook's artifact_sha256
+    is the layer's digest, not the manifest's."""
+    import hashlib
+    from app.adapters import oci_blob
+
+    content = b"ELF-not-really"
+    layer_sha = hashlib.sha256(content).hexdigest()
+
+    def fake_fetch(reference, destination_dir, *, allow_http=False, timeout=60.0):
+        assert reference == "localhost:55000/hello-systemd-go@sha256:" + "c" * 64, reference
+        path = destination_dir / f"{layer_sha}.bin"
+        destination_dir.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(content)
+        return oci_blob.FetchedBlob(path=path, sha256=layer_sha, size=len(content), media_type="application/octet-stream")
+
+    monkeypatch.setattr("app.workflows.activities.fetch_blob", fake_fetch)
+    monkeypatch.setenv("NETCI_ARTIFACT_CACHE_DIR", str(tmp_path / "cache"))
+    runner = AnsibleRuntimeRunner(tmp_path, tmp_path / "inventory.ini")
+    commands: list[list[str]] = []
+
+    async def record(command):
+        commands.append(command)
+
+    monkeypatch.setattr(runner, "_run", record)
+    await runner.deploy(DeliveryInput(
+        application_id="app-1", pipeline_run_id="run-1", runtime="systemd", environment="dev",
+        artifact_digest="sha256:" + "c" * 64,
+        parameters={
+            "artifact_ref": "172.17.0.1:55000/hello-systemd-go@sha256:" + "c" * 64,
+            "image_pull_host": "localhost:55000",
+            "target_hosts": ["netci-local-systemd-dev"],
+        },
+    ))
+    assert len(commands) == 1
+    extra = json.loads(commands[0][commands[0].index("--extra-vars") + 1])
+    assert extra["artifact_path"] == str(tmp_path / "cache" / f"{layer_sha}.bin")
+    assert extra["artifact_sha256"] == layer_sha
+    assert extra["artifact_digest"] == "sha256:" + "c" * 64
+    assert extra["release_version"] == "rel-" + "c" * 12
+    assert "artifact_url" not in extra
+    assert "_netci_worker_blob_sha256" not in extra
+
+
+@pytest.mark.asyncio
+async def test_a_binary_the_registry_cannot_serve_fails_the_deploy_before_ansible_runs(tmp_path, monkeypatch):
+    from app.adapters.oci_blob import OciBlobError
+
+    def refuse(reference, destination_dir, *, allow_http=False, timeout=60.0):
+        raise OciBlobError("registry answered HTTP 404")
+
+    monkeypatch.setattr("app.workflows.activities.fetch_blob", refuse)
+    runner = AnsibleRuntimeRunner(tmp_path, tmp_path / "inventory.ini")
+    ran = []
+    monkeypatch.setattr(runner, "_run", lambda command: ran.append(command))
+    with pytest.raises(RuntimeError, match="could not be fetched"):
+        await runner.deploy(DeliveryInput(
+            application_id="app-1", pipeline_run_id="run-1", runtime="systemd", environment="dev",
+            artifact_digest="sha256:" + "c" * 64,
+            parameters={"artifact_ref": "localhost:55000/x@sha256:" + "c" * 64, "target_hosts": ["h"]},
+        ))
+    assert ran == []

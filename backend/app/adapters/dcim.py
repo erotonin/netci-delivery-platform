@@ -7,11 +7,11 @@ import os
 import urllib.error
 import urllib.parse
 import urllib.request
-from dataclasses import dataclass, field
-from datetime import datetime
+from dataclasses import dataclass
+
 from typing import Any, Protocol
 
-from ..domain.models import ServerHealthRecord, ServerMaintenanceState, utc_now
+from ..domain.models import ServerHealthRecord, ServerMaintenanceState, ServerTelemetry, utc_now
 
 
 class DcimUnavailable(RuntimeError):
@@ -34,16 +34,87 @@ class TargetValidationResult:
     details: dict[str, Any] | None = None
 
 
-@dataclass(frozen=True)
-class ServerTelemetry:
-    cpu_percent: float = 0.0
-    mem_percent: float = 0.0
-    disk_percent: float = 0.0
-    observed_at: datetime = field(default_factory=utc_now)
+class ServerStateStore(Protocol):
+    """Where maintenance mode and the latest telemetry live: the platform database.
+
+    Both decide whether a deployment may proceed, so both are durable state (CLAUDE.md
+    non-negotiable #3). They used to be process-local dicts: an API restart forgot every
+    server in maintenance, and a second replica never saw what the first was told.
+    """
+
+    def get_maintenance(self, server_name: str) -> ServerMaintenanceState | None: ...
+
+    def set_maintenance(self, state: ServerMaintenanceState) -> None: ...
+
+    def list_maintenance(self) -> list[ServerMaintenanceState]: ...
+
+    def get_telemetry(self, server_name: str) -> ServerTelemetry | None: ...
+
+    def record_telemetry(self, telemetry: ServerTelemetry) -> None: ...
 
 
-_MAINTENANCE_REGISTRY: dict[str, ServerMaintenanceState] = {}
-_TELEMETRY_REGISTRY: dict[str, Any] = {}
+class InMemoryServerState:
+    """For tests and the in-memory database. Not a cache: it *is* the store there."""
+
+    def __init__(self) -> None:
+        self.maintenance: dict[str, ServerMaintenanceState] = {}
+        self.telemetry: dict[str, ServerTelemetry] = {}
+
+    def get_maintenance(self, server_name: str) -> ServerMaintenanceState | None:
+        return self.maintenance.get(server_name)
+
+    def set_maintenance(self, state: ServerMaintenanceState) -> None:
+        self.maintenance[state.server_name] = state
+
+    def list_maintenance(self) -> list[ServerMaintenanceState]:
+        return list(self.maintenance.values())
+
+    def get_telemetry(self, server_name: str) -> ServerTelemetry | None:
+        return self.telemetry.get(server_name)
+
+    def record_telemetry(self, telemetry: ServerTelemetry) -> None:
+        self.telemetry[telemetry.server_name] = telemetry
+
+
+class DatabaseServerState:
+    """Reads and writes through the platform database, one short transaction each."""
+
+    def __init__(self, database: Any) -> None:
+        self.database = database
+
+    def get_maintenance(self, server_name: str) -> ServerMaintenanceState | None:
+        with self.database.transaction() as session:
+            return session.get_server_maintenance(server_name)
+
+    def set_maintenance(self, state: ServerMaintenanceState) -> None:
+        with self.database.transaction() as session:
+            session.upsert_server_maintenance(state)
+
+    def list_maintenance(self) -> list[ServerMaintenanceState]:
+        with self.database.transaction() as session:
+            return list(session.list_server_maintenance())
+
+    def get_telemetry(self, server_name: str) -> ServerTelemetry | None:
+        with self.database.transaction() as session:
+            return session.get_server_telemetry(server_name)
+
+    def record_telemetry(self, telemetry: ServerTelemetry) -> None:
+        with self.database.transaction() as session:
+            session.upsert_server_telemetry(telemetry)
+
+
+_server_state: ServerStateStore = InMemoryServerState()
+
+
+def configure_server_state(store: ServerStateStore) -> None:
+    """Bind the module to the platform database. main.py does this at import time."""
+
+    global _server_state
+    _server_state = store
+
+
+def server_state() -> ServerStateStore:
+    return _server_state
 
 
 def set_server_maintenance(server_name: str, in_maintenance: bool, reason: str = "", operator: str = "operator") -> ServerMaintenanceState:
@@ -54,35 +125,35 @@ def set_server_maintenance(server_name: str, in_maintenance: bool, reason: str =
         updated_by=operator,
         updated_at=utc_now(),
     )
-    _MAINTENANCE_REGISTRY[server_name] = state
+    _server_state.set_maintenance(state)
     return state
 
 
 def get_server_maintenance(server_name: str) -> ServerMaintenanceState | None:
-    return _MAINTENANCE_REGISTRY.get(server_name)
+    return _server_state.get_maintenance(server_name)
 
 
 def list_server_maintenance_states() -> list[ServerMaintenanceState]:
-    return list(_MAINTENANCE_REGISTRY.values())
+    return _server_state.list_maintenance()
 
 
-def update_server_telemetry(server_name: str, cpu_percent: float, memory_percent: float, disk_percent: float) -> dict[str, Any]:
-    record = {
-        "server_name": server_name,
-        "cpu_percent": cpu_percent,
-        "memory_percent": memory_percent,
-        "disk_percent": disk_percent,
-        "updated_at": utc_now().isoformat(),
-    }
-    _TELEMETRY_REGISTRY[server_name] = record
+def update_server_telemetry(server_name: str, cpu_percent: float, memory_percent: float, disk_percent: float) -> ServerTelemetry:
+    record = ServerTelemetry(
+        server_name=server_name,
+        cpu_percent=float(cpu_percent),
+        mem_percent=float(memory_percent),
+        disk_percent=float(disk_percent),
+        observed_at=utc_now(),
+    )
+    _server_state.record_telemetry(record)
     return record
 
 
-def get_server_telemetry(server_name: str) -> dict[str, Any] | None:
-    return _TELEMETRY_REGISTRY.get(server_name)
+def get_server_telemetry(server_name: str) -> ServerTelemetry | None:
+    return _server_state.get_telemetry(server_name)
 
 
-def check_preflight_telemetry(server_name: str) -> TargetValidationResult | None:
+def check_preflight_telemetry(server_name: str) -> TargetValidationResult:
     m_state = get_server_maintenance(server_name)
     if m_state and m_state.in_maintenance:
         return TargetValidationResult(
@@ -94,31 +165,39 @@ def check_preflight_telemetry(server_name: str) -> TargetValidationResult | None
         )
 
     telemetry = get_server_telemetry(server_name)
+    details = (
+        {
+            "cpu_percent": telemetry.cpu_percent,
+            "mem_percent": telemetry.mem_percent,
+            "disk_percent": telemetry.disk_percent,
+            "observed_at": telemetry.observed_at.isoformat(),
+        }
+        if telemetry
+        else None
+    )
     if telemetry:
-        disk = float(telemetry.get("disk_percent") or 0)
-        cpu = float(telemetry.get("cpu_percent") or 0)
-        if disk > 90.0:
+        if telemetry.disk_percent > 90.0:
             return TargetValidationResult(
                 valid=False,
                 status="resource_exhausted",
-                message=f"Target {server_name} disk usage ({disk:.1f}%) exceeds safety threshold (90%)",
+                message=f"Target {server_name} disk usage ({telemetry.disk_percent:.1f}%) exceeds safety threshold (90%)",
                 server_name=server_name,
-                details=telemetry,
+                details=details,
             )
-        if cpu > 95.0:
+        if telemetry.cpu_percent > 95.0:
             return TargetValidationResult(
                 valid=False,
                 status="resource_exhausted",
-                message=f"Target {server_name} CPU usage ({cpu:.1f}%) exceeds safety threshold (95%)",
+                message=f"Target {server_name} CPU usage ({telemetry.cpu_percent:.1f}%) exceeds safety threshold (95%)",
                 server_name=server_name,
-                details=telemetry,
+                details=details,
             )
     return TargetValidationResult(
         valid=True,
         status="healthy",
         message=f"Target {server_name} passed pre-flight telemetry checks",
         server_name=server_name,
-        details=telemetry,
+        details=details,
     )
 
 
@@ -156,7 +235,9 @@ class UnconfiguredDcimCatalog:
         self, system_id: str, module_id: str, environment: str, target: str
     ) -> TargetValidationResult:
         preflight = check_preflight_telemetry(target)
-        if preflight:
+        # Only a refusal is worth returning. The helper's pass result says `healthy`,
+        # and an unconfigured inventory has no basis to say that about any host.
+        if not preflight.valid:
             return preflight
 
         return TargetValidationResult(
@@ -247,7 +328,7 @@ class HttpDcimCatalog:
                             server_name=hostname,
                             details=s,
                         )
-                    maint_rec = _MAINTENANCE_REGISTRY.get(hostname)
+                    maint_rec = get_server_maintenance(hostname)
                     if maint_rec and maint_rec.in_maintenance:
                         return TargetValidationResult(
                             valid=False,

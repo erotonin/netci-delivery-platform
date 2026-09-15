@@ -2365,8 +2365,8 @@ paths:
       parameters:
         - { name: server_name, in: path, required: true, schema: { type: string } }
       responses:
-        '200': { description: Telemetry, or a truthful `unknown` when no agent has reported }
-        '404': { $ref: '#/components/responses/NotFound' }
+        '200': { description: The latest telemetry an agent reported for this server }
+        '404': { description: No agent has ever reported for this server (`TELEMETRY_UNKNOWN`); never answered with invented numbers }
 
 components:
   securitySchemes:

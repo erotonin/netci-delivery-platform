@@ -1331,7 +1331,9 @@ export type ServerTelemetry = {
   cpuPercent: number
   memPercent: number
   diskPercent: number
-  status: 'normal' | 'critical'
+  status: 'normal' | 'critical' | 'stale'
+  isStale?: boolean
+  ageSeconds?: number
   observedAt: string
 }
 

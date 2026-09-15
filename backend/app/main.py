@@ -28,10 +28,11 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from .adapters.cd_orchestrator import build_cd_orchestrator
 from .adapters.ci_launcher import build_ci_launcher
 from .adapters.dcim import (
+    DatabaseServerState,
     DcimUnavailable,
-    _TELEMETRY_REGISTRY,
-    ServerTelemetry,
-    set_server_maintenance,
+    configure_server_state,
+    get_server_telemetry as stored_server_telemetry,
+    update_server_telemetry,
 )
 from .auth import AuthError, Principal, build_authenticator
 from .build_inputs import BuildInputError, validate_build_inputs
@@ -150,6 +151,9 @@ __all__ = ["app", "LOOPBACK_HOSTS", "resolve_client"]
 # mode for the same reason.
 workload_identity.require_configured_workload_identity()
 database = build_database()
+# Maintenance mode and telemetry decide where a deployment may go; they are read by the
+# DCIM catalogs through this binding and live in the same database as everything else.
+configure_server_state(DatabaseServerState(database))
 platform = DeliveryPlatform(build_ci_launcher(), build_cd_orchestrator(), database=database)
 portal = PortalService(platform, database=database)
 reconciler = Reconciler(platform, platform.ci_launcher, platform.cd_orchestrator)
@@ -3153,11 +3157,12 @@ async def runner_agent_websocket(
                 msg_type = msg.get("type")
                 if msg_type == "TELEMETRY_HEARTBEAT":
                     telem = msg.get("telemetry", {})
-                    _TELEMETRY_REGISTRY[host_key] = ServerTelemetry(
-                        cpu_percent=float(telem.get("cpu_percent", 0.0)),
-                        mem_percent=float(telem.get("mem_percent", 0.0)),
-                        disk_percent=float(telem.get("disk_percent", 0.0)),
-                        observed_at=datetime.now(timezone.utc),
+                    await asyncio.to_thread(
+                        update_server_telemetry,
+                        host_key,
+                        float(telem.get("cpu_percent", 0.0)),
+                        float(telem.get("mem_percent", 0.0)),
+                        float(telem.get("disk_percent", 0.0)),
                     )
                     await websocket.send_text(json.dumps({"type": "HEARTBEAT_ACK", "status": "ok"}))
                 elif msg_type == "COMMAND_RESULT":
@@ -3206,7 +3211,7 @@ def get_agents_status(_: Principal = ReadAccess) -> dict[str, Any]:
     items = []
     agents_list = []
     for host_key, info in _ACTIVE_AGENT_INFO.items():
-        telemetry = _TELEMETRY_REGISTRY.get(host_key)
+        telemetry = stored_server_telemetry(host_key)
         item = {
             "hostKey": host_key,
             "agentId": info.get("agent_id"),
@@ -3423,7 +3428,6 @@ def update_server_maintenance(
         updated_by=principal.subject,
         updated_at=datetime.now(timezone.utc),
     )
-    set_server_maintenance(server_name, payload.inMaintenance, payload.reason)
     with database.transaction() as session:
         session.upsert_server_maintenance(state)
     return {
@@ -3458,19 +3462,15 @@ def get_server_telemetry(
     server_name: str,
     principal: Principal = ReadAccess,
 ) -> dict[str, object]:
-    telem = _TELEMETRY_REGISTRY.get(server_name)
+    telem = stored_server_telemetry(server_name)
     now = datetime.now(timezone.utc)
     if not telem:
-        return {
-            "serverName": server_name,
-            "cpuPercent": 15.0,
-            "memPercent": 35.0,
-            "diskPercent": 25.0,
-            "status": "normal",
-            "isStale": False,
-            "ageSeconds": 0.0,
-            "observedAt": now.isoformat(),
-        }
+        # No agent has reported for this server. Answering with invented "normal"
+        # numbers -- which this endpoint used to do -- is a fabricated green.
+        raise HTTPException(
+            status_code=404,
+            detail={"code": "TELEMETRY_UNKNOWN", "message": f"no telemetry has been reported for {server_name}"},
+        )
 
     age_seconds = (now - telem.observed_at).total_seconds()
     is_stale = age_seconds > 300.0

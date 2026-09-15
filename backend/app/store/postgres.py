@@ -40,6 +40,7 @@ from ..domain.models import (
     SecurityWaiver,
     ServerHealthRecord,
     ServerMaintenanceState,
+    ServerTelemetry,
     WaiverStatus,
 )
 from ..persistence import (
@@ -2260,6 +2261,36 @@ class PostgresSession:
         query = f"SELECT {SERVER_MAINTENANCE_COLUMNS} FROM server_maintenance_states ORDER BY server_name ASC"
         self._cursor.execute(query)
         return tuple(_server_maintenance(row) for row in self._cursor.fetchall())
+
+    def upsert_server_telemetry(self, telemetry: ServerTelemetry) -> None:
+        self._cursor.execute(
+            """
+            INSERT INTO server_telemetry (server_name, cpu_percent, mem_percent, disk_percent, observed_at)
+            VALUES (%s, %s, %s, %s, %s)
+            ON CONFLICT (server_name) DO UPDATE SET
+                cpu_percent = EXCLUDED.cpu_percent,
+                mem_percent = EXCLUDED.mem_percent,
+                disk_percent = EXCLUDED.disk_percent,
+                observed_at = EXCLUDED.observed_at
+            """,
+            (telemetry.server_name, telemetry.cpu_percent, telemetry.mem_percent, telemetry.disk_percent, telemetry.observed_at),
+        )
+
+    def get_server_telemetry(self, server_name: str) -> ServerTelemetry | None:
+        self._cursor.execute(
+            "SELECT server_name, cpu_percent, mem_percent, disk_percent, observed_at FROM server_telemetry WHERE server_name = %s",
+            (server_name,),
+        )
+        row = self._cursor.fetchone()
+        if not row:
+            return None
+        return ServerTelemetry(
+            server_name=row["server_name"],
+            cpu_percent=float(row["cpu_percent"]),
+            mem_percent=float(row["mem_percent"]),
+            disk_percent=float(row["disk_percent"]),
+            observed_at=row["observed_at"],
+        )
 
     def insert_break_glass_request(self, record: BreakGlassRecord) -> None:
         self._cursor.execute(

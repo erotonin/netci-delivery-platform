@@ -515,3 +515,30 @@ def test_resubmitting_the_production_target_as_read_back_is_not_a_production_cha
     )
     assert res.status_code == 201, res.text
     assert res.json()["requiresApproval"] is False, res.text
+
+
+def test_kubernetes_targets_carry_no_ansible_hosts(auth_client):
+    """DCIM knows the cluster nodes; they are not `--limit` hosts. With them, the
+    `hosts: localhost` play selected nothing and the deployment did nothing, quietly."""
+    client, headers_for = auth_client
+    from app.domain.models import Environment
+
+    system = client.post("/systems", headers=headers_for("pat"), json={
+        "id": "hello-kubernetes-sys", "unit": "lab", "description": "kubernetes sample",
+    })
+    assert system.status_code == 201, system.text
+    created = client.post("/systems/hello-kubernetes-sys/modules", headers=headers_for("pat"), json={
+        "name": "hello-k8s-target-test",
+        "repositoryUrl": "https://github.com/example/hello-k8s-target-test",
+        "pipelineTemplate": "kubernetes-ci-cd-v1",
+        "runtime": "kubernetes",
+        "deploymentEnvironments": [{
+            "displayName": "Development", "environment": "dev", "runtime": "kubernetes",
+            "servers": [], "tasks": [], "kubeconfigRef": "netci-dev-kubeconfig", "namespace": "dev",
+        }],
+    })
+    assert created.status_code == 201, created.text
+    parameters = main.portal.delivery_parameters("hello-k8s-target-test", Environment.DEV)
+    assert parameters["target_hosts"] == []
+    assert parameters["target_namespace"] == "dev"
+    assert parameters["kubeconfig_ref"] == "netci-dev-kubeconfig"

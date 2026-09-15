@@ -766,12 +766,12 @@ Phase 13 [✓] release-checklist.yaml exists with defined release profile gates 
 Phase 13 [✓] ADR corpus contains comprehensive architecture decisions (>= 25) -> PASS
 ================================================================================
 Audit Complete: 28/28 checks passed.
-Final Platform Verdict: CERTIFIED
+Self-check verdict: SELF_CHECK_PASSED (in-process code invariants; no external infrastructure contacted)
 ================================================================================
 ```
 
-> Dòng "CERTIFIED" ở trên là output nguyên văn của script self-check; nó chỉ nói rằng 28 bất biến
-> của mã đúng trong tiến trình. Nó **không** chứng minh hệ thống chạy được với hạ tầng thật —
+> Verdict của script này là *self-check* (trước đây in chữ "CERTIFIED", đã đổi vì dễ hiểu lầm); nó chỉ nói
+> rằng 28 bất biến của mã đúng trong tiến trình. Nó **không** chứng minh hệ thống chạy được với hạ tầng thật —
 > việc đó là của `scripts/production_acceptance_harness.py` và được ghi ở `docs/LIVE-READINESS.md`.
 
 ---
