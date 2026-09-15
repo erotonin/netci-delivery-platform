@@ -41,9 +41,19 @@ class CdStartRequest:
 
         return f"netci-deploy-{self.deployment_id}"
 
+    @property
+    def rollback_workflow_id(self) -> str:
+        """One id per rollback *generation*: a deployment may be rolled back, redeployed
+        and rolled back again, and the fencing token is what changes between those."""
+
+        generation = self.parameters.get("fencing_token")
+        return f"netci-rollback-{self.deployment_id}-{generation if generation is not None else 0}"
+
 
 class CdOrchestrator(Protocol):
     def start(self, request: CdStartRequest) -> str | None: ...
+
+    def start_rollback(self, request: CdStartRequest) -> str | None: ...
 
     def signal_approval(self, workflow_id: str, actor: str, comment: str) -> None: ...
 
@@ -58,6 +68,9 @@ class NullCdOrchestrator:
     mode = "none"
 
     def start(self, request: CdStartRequest) -> str | None:
+        return None
+
+    def start_rollback(self, request: CdStartRequest) -> str | None:
         return None
 
     def signal_approval(self, workflow_id: str, actor: str, comment: str) -> None:
@@ -135,6 +148,41 @@ class TemporalCdOrchestrator:
             return self._run(start_workflow())
         except Exception as exc:
             raise CdStartError(f"cannot start delivery workflow {request.workflow_id}: {exc}") from exc
+
+    def start_rollback(self, request: CdStartRequest) -> str:
+        """Run RollbackWorkflow for a rollback an operator just requested."""
+
+        from temporalio.common import WorkflowIDReusePolicy
+
+        from ..workflows.provision_and_deploy import DeliveryInput, RollbackWorkflow
+
+        delivery = DeliveryInput(
+            application_id=str(request.application_id),
+            pipeline_run_id=str(request.pipeline_run_id),
+            runtime=request.runtime,
+            environment=request.environment,
+            artifact_digest=request.artifact_digest,
+            deployment_id=str(request.deployment_id),
+            release_name=request.release_name,
+            parameters=dict(request.parameters),
+            require_approval=False,
+        )
+
+        async def start_workflow() -> str:
+            client = await self._client()
+            handle = await client.start_workflow(
+                RollbackWorkflow.run,
+                delivery,
+                id=request.rollback_workflow_id,
+                task_queue=self.task_queue,
+                id_reuse_policy=WorkflowIDReusePolicy.ALLOW_DUPLICATE_FAILED_ONLY,
+            )
+            return handle.id
+
+        try:
+            return self._run(start_workflow())
+        except Exception as exc:  # noqa: BLE001 - surfaced as CdStartError to the caller
+            raise CdStartError(f"cannot start rollback workflow {request.rollback_workflow_id}: {exc}") from exc
 
     def signal_approval(self, workflow_id: str, actor: str, comment: str) -> None:
         from ..workflows.provision_and_deploy import Approval, ProvisionAndDeployWorkflow

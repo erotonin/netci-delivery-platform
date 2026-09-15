@@ -141,6 +141,50 @@ def _scan_obj_for_critical_risk(obj: Any, depth: int = 0) -> list[str]:
     return reasons
 
 
+def _without_nulls(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {k: _without_nulls(v) for k, v in value.items() if v is not None}
+    if isinstance(value, list):
+        return [_without_nulls(v) for v in value]
+    return value.value if isinstance(value, Environment) else value
+
+
+def runtime_parameters(target: dict[str, Any]) -> dict[str, object]:
+    """Playbook inputs from a target's reviewed `runtimeSettings`.
+
+    Field by field, by name: nothing else in the target reaches the playbook, so a key
+    a revision carries for the risk classifier's benefit can never become a variable.
+    The names are the playbooks' own (`app_root`, `host_port`, ...); a caller cannot
+    supply them per run -- build_inputs rejects every one of them.
+    """
+
+    settings = target.get("runtimeSettings")
+    if not isinstance(settings, dict):
+        return {}
+    out: dict[str, object] = {}
+    if settings.get("appRoot"):
+        out["app_root"] = str(settings["appRoot"])
+    if settings.get("hostPort") is not None:
+        out["host_port"] = int(settings["hostPort"])
+    if settings.get("containerPort") is not None:
+        out["container_port"] = int(settings["containerPort"])
+    if settings.get("networkMode"):
+        out["network_mode"] = str(settings["networkMode"])
+    if settings.get("appPort") is not None:
+        port = int(settings["appPort"])
+        out["app_port"] = port
+        # The systemd playbook's health gate probes this URL; deriving it here keeps the
+        # port and the probe in agreement by construction.
+        out["health_url"] = f"http://127.0.0.1:{port}/healthz"
+    if settings.get("systemdScope"):
+        out["systemd_scope"] = str(settings["systemdScope"])
+    if settings.get("become") is not None:
+        out["netci_become"] = bool(settings["become"])
+    if settings.get("imagePullHost"):
+        out["image_pull_host"] = str(settings["imagePullHost"])
+    return out
+
+
 def classify_config_risk(
     pipeline_config: dict[str, Any],
     deployment_config: list[dict[str, Any]],
@@ -564,7 +608,11 @@ class PortalService:
             return False
         if (current_prod is None) != (new_prod is None):
             return True
-        return current_prod != new_prod
+        # A key that is absent and a key that is null mean the same thing to every
+        # reader of this config. Treating them as a change would demand an approver for
+        # a revision that alters nothing in production, which teaches people that the
+        # approval is noise.
+        return _without_nulls(current_prod) != _without_nulls(new_prod)
 
     def config_revisions(self, module_id: str) -> dict[str, object]:
         with self._session() as transaction:
@@ -945,6 +993,7 @@ class PortalService:
                 409,
             )
         managed: dict[str, object] = {
+            **runtime_parameters(target),
             "app_name": module_id,
             "target_environment": environment.value,
             "target_hosts": list(target.get("servers") or []),
@@ -1311,6 +1360,7 @@ class PortalService:
                 configured_servers = dynamic
 
         managed: dict[str, object] = {
+            **runtime_parameters(target),
             "app_name": module.id,
             "target_environment": environment.value,
             "target_hosts": configured_servers,

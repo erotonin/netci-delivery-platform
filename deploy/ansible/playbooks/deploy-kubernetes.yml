@@ -9,7 +9,12 @@
     netci_release_name: "{{ release_name | default('hello-kubernetes') }}"
     netci_target_namespace: "{{ target_namespace | default('staging') }}"
     netci_chart_path: "{{ chart_path | default(playbook_dir ~ '/../../helm/sample-kubernetes-app') }}"
-    netci_image_repository: "{{ image_repository | default('localhost:5000/hello-kubernetes') }}"
+    # The registry may be reachable from the cluster under a different name than the one
+    # CI pushed to; the digest below is unchanged, and the kubelet verifies it on pull.
+    netci_image_repository: >-
+      {{ (image_repository | default('localhost:5000/hello-kubernetes'))
+         | regex_replace('^[^/]+/', image_pull_host ~ '/') if (image_pull_host | default('')) else
+         (image_repository | default('localhost:5000/hello-kubernetes')) }}
     netci_artifact_digest: "{{ artifact_digest | default('') }}"
 
   pre_tasks:

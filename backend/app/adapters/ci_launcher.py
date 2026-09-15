@@ -15,6 +15,7 @@ from uuid import UUID
 
 from .interfaces import JenkinsAdapter
 from .jenkins_router import ControllerState, JenkinsController, JenkinsRouter
+from .. import workload_identity
 from ..runtime_environment import require_live_mode
 
 logger = logging.getLogger(__name__)
@@ -110,6 +111,20 @@ class JenkinsCiLauncher:
         capability = self.required_capability or request.runtime
         attempted: list[str] = []
         last_error: Exception | None = None
+        # One token per build, minted here and handed to Jenkins as a masked parameter.
+        # It can report for this run and nothing else, which is what replaces the shared
+        # key every controller used to hold. Skipped only when no signing key is
+        # configured -- allowed in local mode, refused at startup everywhere else.
+        callback_token = ""
+        if workload_identity.workload_identity_configured():
+            callback_token = workload_identity.mint(
+                workload=workload_identity.Workload.JENKINS,
+                application_id=request.application_id,
+                pipeline_run_id=request.pipeline_run_id,
+                scopes=set(workload_identity.WORKLOAD_SCOPES[workload_identity.Workload.JENKINS]),
+                # A queued build can wait on a busy controller; the token must outlast it.
+                ttl_seconds=workload_identity.MAX_TTL_SECONDS,
+            )
         # Routing is a preference, not a guarantee: a controller can die between the
         # health probe and the trigger, so fall through to the next candidate.
         while True:
@@ -127,7 +142,7 @@ class JenkinsCiLauncher:
             attempted.append(controller.controller_id)
             try:
                 job_name = adapter.create_or_update_job(request.application_id, request.pipeline_template)
-                run = adapter.trigger_ci_run(job_name, request)
+                run = adapter.trigger_ci_run(job_name, request, callback_token)
             except Exception as exc:  # adapter transport failure -> try the next controller
                 last_error = exc
                 logger.warning("controller %s rejected the build: %s", controller.controller_id, exc)

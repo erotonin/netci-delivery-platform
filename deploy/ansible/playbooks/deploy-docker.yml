@@ -6,7 +6,12 @@
     netci_app_name: "{{ app_name | default('hello-container') }}"
     netci_app_root: "{{ app_root | default('/opt/netci-docker-demo') }}"
     netci_registry_url: "{{ registry_url | default('192.168.122.1:5000') }}"
-    netci_image_repository: "{{ image_repository | default(netci_registry_url ~ '/hello-container') }}"
+    # The registry may be reachable from this host under a different name than the one
+    # CI pushed to; the digest below is unchanged, and Docker verifies it on pull.
+    netci_image_repository: >-
+      {{ (image_repository | default(netci_registry_url ~ '/hello-container'))
+         | regex_replace('^[^/]+/', image_pull_host ~ '/') if (image_pull_host | default('')) else
+         (image_repository | default(netci_registry_url ~ '/hello-container')) }}
     netci_artifact_digest: "{{ artifact_digest | default('') }}"
     netci_host_port: "{{ host_port | default(18081) }}"
     # On a host-networked lab the container binds this port directly, so the health
@@ -15,6 +20,11 @@
     netci_container_port: >-
       {{ container_port | default(netci_host_port if netci_network_mode == 'host' else 8080) }}
     netci_health_port: "{{ netci_container_port if netci_network_mode == 'host' else netci_host_port }}"
+    # One Docker host may serve several environments (the lab does). A container name
+    # that is only the application name collides across them, and the collision surfaces
+    # as "release failed its health check", which it did not.
+    netci_container_name: >-
+      {{ container_name | default(netci_app_name ~ ('-' ~ target_environment if (target_environment | default('')) else '')) }}
 
   pre_tasks:
     - name: Require immutable artifact digest
@@ -62,6 +72,9 @@
           until:
             - docker_health.status == 200
             - (docker_health.json.status | default('')) == 'ok'
+            # The answer must come from the release just started, not from whatever was
+            # already listening on the port. The app reports the digest it was given.
+            - (docker_health.json.version | default('')) == netci_artifact_digest
 
       rescue:
         - name: Restore previous Compose definition when available
@@ -87,4 +100,10 @@
 
         - name: Fail after Docker rollback
           ansible.builtin.fail:
-            msg: "new Docker release failed its health check and rollback was attempted"
+            # Name the step that failed: a pull error, a name conflict and a health
+            # check that never turned green are three different problems.
+            msg: >-
+              new Docker release did not come up
+              ({{ ansible_failed_task.name | default('unknown step') }}:
+              {{ ansible_failed_result.msg | default('no message') | truncate(600) }});
+              {{ 'previous release restored' if compose_template.backup_file is defined else 'first release removed' }}

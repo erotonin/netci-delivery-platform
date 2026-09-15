@@ -81,6 +81,16 @@ class JenkinsHttpConfig:
 
 
 def _parameter_xml(name: str, default: str = "") -> str:
+    if name in SECRET_PARAMETERS:
+        # A password parameter is masked in the build page, the console log and the
+        # environment listing. The callback token is a credential for one run; it must
+        # not be readable by everyone who can open the build.
+        return (
+            "<hudson.model.PasswordParameterDefinition>"
+            f"<name>{escape(name)}</name>"
+            "<defaultValue></defaultValue>"
+            "</hudson.model.PasswordParameterDefinition>"
+        )
     return (
         "<hudson.model.StringParameterDefinition>"
         f"<name>{escape(name)}</name>"
@@ -90,10 +100,15 @@ def _parameter_xml(name: str, default: str = "") -> str:
     )
 
 
+#: Parameters that are credentials. Declared masked in the job and never logged here.
+SECRET_PARAMETERS: frozenset[str] = frozenset({"NETCI_CALLBACK_TOKEN"})
+
+
 #: Every value netCI hands a build.  Declared once so the job XML and the trigger
 #: call cannot drift apart.
 JOB_PARAMETERS: tuple[str, ...] = (
     "NETCI_PIPELINE_RUN_ID",
+    "NETCI_CALLBACK_TOKEN",
     "NETCI_APPLICATION_ID",
     "NETCI_CORRELATION_ID",
     "NETCI_API_URL",
@@ -266,12 +281,15 @@ class JenkinsHttpAdapter:
 
     # --------------------------------------------------------------- triggering
 
-    def trigger_ci_run(self, job_name: str, request: "CiLaunchRequest") -> JenkinsRun:
+    def trigger_ci_run(
+        self, job_name: str, request: "CiLaunchRequest", callback_token: str = ""
+    ) -> JenkinsRun:
         """Trigger a build and resolve the queue item into a real build identity."""
 
         query = urllib.parse.urlencode(
             {
                 "NETCI_PIPELINE_RUN_ID": str(request.pipeline_run_id),
+                "NETCI_CALLBACK_TOKEN": callback_token,
                 "NETCI_APPLICATION_ID": str(request.application_id),
                 "NETCI_CORRELATION_ID": request.correlation_id,
                 "NETCI_API_URL": self.config.callback_url,

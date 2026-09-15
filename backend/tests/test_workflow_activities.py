@@ -186,3 +186,60 @@ def test_kubernetes_playbook_uses_explicit_kubeconfig_and_namespace():
     assert "kubeconfig" in workload
     assert helm["release_namespace"] == "{{ netci_target_namespace }}"
     assert workload["namespace"] == "{{ netci_target_namespace }}"
+
+
+# ------------------------------------------------- what a failed deployment says
+
+
+def test_failure_message_names_the_activity_and_the_worker_side_reason():
+    """`delivery workflow failed: ActivityError` was what the live stack recorded when
+    cosign refused an artifact. The deployment record must say which activity refused
+    and why, or the operator has to open Temporal to learn what netCI already knew."""
+    from temporalio.exceptions import ActivityError, ApplicationError
+
+    from app.workflows.provision_and_deploy import _failure_message
+
+    cause = ApplicationError(
+        "cosign could not verify registry/app@sha256:abc: no signatures found",
+        type="SignatureVerificationError",
+    )
+    error = ActivityError(
+        "Activity task failed", scheduled_event_id=1, started_event_id=2, identity="w",
+        activity_type="validate_artifact", activity_id="1", retry_state=None,
+    )
+    error.__cause__ = cause
+    message = _failure_message(error)
+    assert message.startswith("activity validate_artifact failed: SignatureVerificationError: cosign could not verify")
+    assert "ActivityError" not in message
+
+
+def test_failure_message_without_an_activity_still_names_the_exception():
+    from app.workflows.provision_and_deploy import _failure_message
+
+    assert _failure_message(RuntimeError("boom")) == "delivery workflow failed: RuntimeError: boom"
+
+
+def test_control_plane_parameters_never_reach_the_ansible_command_line(tmp_path):
+    """The callback token is a bearer credential for this deployment's result and the
+    fencing token is netCI's lease generation. Both ride in `parameters`; neither may be
+    written into `--extra-vars`, which `ps` shows to every user on the worker host."""
+    runner = AnsibleRuntimeRunner(tmp_path, tmp_path / "inventory.ini")
+    (tmp_path / "inventory.ini").write_text("[docker_targets]\nhost-a\n")
+    poisoned = DeliveryInput(
+        **{
+            **delivery().__dict__,
+            "parameters": {
+                "target_hosts": ["host-a"],
+                "callback_token": "eyJhbGciOi.secret.token",
+                "fencing_token": 7,
+                "app_name": "svc",
+            },
+        }
+    )
+    command = runner.command_for("deploy", poisoned)
+    joined = " ".join(command)
+    assert "eyJhbGciOi" not in joined
+    assert "callback_token" not in joined
+    assert "fencing_token" not in joined
+    assert '"app_name": "svc"' in joined
+    assert "--limit" in command and "host-a" in command

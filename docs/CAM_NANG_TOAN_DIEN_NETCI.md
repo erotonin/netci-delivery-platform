@@ -4,7 +4,7 @@
 >
 > Đọc theo thứ tự từng phần sẽ giúp bạn thấu suốt bức tranh tổng thể một cách tự nhiên nhất.
 >
-> **Phiên bản hiện tại**: Cập nhật tại commit hoàn thiện **Phase 13** — Toàn bộ 13/13 Phase (P0, P1, P2), 26 ADR, 18 SQL Migrations, 34 bảng cơ sở dữ liệu và bài kiểm định 28/28 tiêu chuẩn đạt chứng chỉ **CERTIFIED**.
+> **Phiên bản hiện tại**: 13/13 Phase có mã nguồn, 28 ADR, 19 SQL migrations, 34 bảng. Bài tự kiểm 28/28 của `production_readiness_audit.py` là self-check trong tiến trình — **không phải chứng nhận live**. Trạng thái chạy thật (Keycloak, Jenkins A/B, Temporal, NetBox, registry, cosign) được ghi ở `docs/LIVE-READINESS.md`, kèm những gì **chưa** được chứng minh.
 
 ---
 
@@ -18,7 +18,7 @@
    - 2.1. Thuật ngữ CI/CD & Delivery
    - 2.2. Thuật ngữ bảo mật chuỗi cung ứng (Supply Chain Security)
    - 2.3. Thuật ngữ kiến trúc phần mềm cốt lõi (Seam, CAS, Leases, Fencing, Outbox, DAG...)
-   - 2.4. Thuật ngữ quản trị & Vận hành (OPA, Rego, Break-Glass, Canary, DORA, DCIM...)
+   - 2.4. Thuật ngữ quản trị & Vận hành (Policy-as-Code, Break-Glass, Canary, DORA, DCIM...)
 3. [Bức tranh tổng thể — Các mảnh ghép & Luồng vận hành](#3-bức-tranh-tổng-thể)
    - 3.1. Sơ đồ các hệ thống tham gia
    - 3.2. Vì sao tách rời Jenkins (CI) và Temporal (CD)?
@@ -68,7 +68,7 @@
     - 12.1. Thứ tự 10 bước xây dựng hệ thống từ con số 0 (Zero to Production Build Order)
     - 12.2. Khởi tạo cấu trúc thư mục & Bộ thư viện phụ thuộc tối thiểu
     - 12.3. Khởi tạo cơ sở dữ liệu: Thứ tự và nội dung 18 SQL Migrations cho 34 bảng
-    - 12.4. Khung mã nguồn cốt lõi (State Machine, Fencing Leases, Outbox, DAG, OPA)
+    - 12.4. Khung mã nguồn cốt lõi (State Machine, Fencing Leases, Outbox, DAG, Policy Engine)
     - 12.5. Tích hợp Adapters: Jenkins, Temporal, K8s, SCM Webhooks
     - 12.6. Xây dựng Frontend Portal (React + TypeScript + API Client)
     - 12.7. Công thức kiểm thử tăng tiến (Viết đến đâu test pass đến đó)
@@ -100,7 +100,7 @@ Trong hầu hết các doanh nghiệp công nghệ chưa xây dựng IDP chuẩn
 | **Reproducible (Tái tạo)** | Toàn bộ hệ thống có thể dựng lại từ đầu chỉ bằng mã nguồn Git và các kịch bản migration SQL; không ai phải "cấu hình thủ công bằng chuột" trên giao diện. |
 | **Isolated (Cách ly)** | Mỗi lần build và deploy đều chạy trên môi trường cô lập (container hoặc ephemeral runner riêng biệt), dọn dẹp sạch sẽ sau khi hoàn tất để không để lại rác ảnh hưởng đến lần sau. |
 | **Extensible (Mở rộng)** | Một kiến trúc thống nhất nhưng hỗ trợ cùng lúc nhiều nền tảng chạy khác nhau: từ cụm máy chủ container Docker, cụm Kubernetes hiện đại, cho đến dịch vụ truyền thống `systemd` trên máy chủ vật lý Linux. |
-| **Governed (Kiểm soát)** | Mọi sản phẩm build đều phải có "bảng thành phần" (SBOM), phải quét lỗ hổng (Trivy), phải có chữ ký điện tử (Cosign), phải qua cổng chính sách tự động (OPA/Rego) và có nhật ký kiểm toán bất biến (Audit Trail). |
+| **Governed (Kiểm soát)** | Mọi sản phẩm build đều phải có "bảng thành phần" (SBOM), phải quét lỗ hổng (Trivy), phải có chữ ký điện tử (Cosign), phải qua cổng chính sách tự động (`backend/app/policy/` — luật viết bằng Python, có kiểm thử, ghi `policy_decisions`) và có nhật ký kiểm toán bất biến (Audit Trail). |
 | **Measurable (Đo lường)** | Tự động đo lường 4 chỉ số hiệu suất kỹ thuật chuẩn quốc tế (DORA Metrics) tính trực tiếp từ các sự kiện database thực tế, không dùng số liệu ước chừng hay báo cáo miệng. |
 | **Truthful (Trung thực)** | **Tuyệt đối không bao giờ hiển thị màu xanh giả.** Nếu hệ thống bên ngoài (Jenkins, DCIM, Cosign) chưa được cấu hình hoặc bị sập, netCI kiên quyết báo `not_configured`, `BLOCKED` hoặc `HTTP 503`, thà chặn lại chứ không lừa dối người vận hành. |
 
@@ -171,8 +171,8 @@ Trong hầu hết các doanh nghiệp công nghệ chưa xây dựng IDP chuẩn
 
 ### 2.4. Thuật ngữ quản trị & Vận hành
 
-- **OPA (Open Policy Agent) & Ngôn ngữ Rego**:
-  - *Kỹ thuật*: Chuẩn công nghiệp về Policy-as-Code (Chính sách dưới dạng mã). Thay vì viết cứng các câu lệnh `if/else` trong code Python, chính sách công ty (như: "Không deploy sau 18h", "Chỉ được dùng container image từ registry nội bộ") được viết bằng file Rego. netCI sẽ hỏi OPA: "Yêu cầu deploy này có hợp lệ không?".
+- **Policy-as-Code (chính sách dưới dạng mã)**:
+  - *Kỹ thuật*: netCI **không** tích hợp OPA/Rego. Chính sách nằm trong `backend/app/policy/` (`rules.py`, `engine.py`, `risk.py`, `quota.py`, `break_glass.py`) — là mã Python có kiểm thử, mỗi quyết định được ghi vào bảng `policy_decisions` kèm lý do. Đổi sang một engine ngoài (OPA hay tương đương) là hướng mở được ghi trong ADR-024, chưa thực hiện.
 - **Dual-Control Break-Glass (Đập hộp kính khẩn cấp hai người)**:
   - *Kỹ thuật*: Quy trình vượt rào chính sách khi xảy ra sự cố nghiêm trọng (ví dụ hệ thống production bị sập giữa đêm cần deploy bản vá gấp mà chưa kịp quét bảo mật). Cơ chế Dual-Control bắt buộc: **Người gửi yêu cầu phá kính (Requester) phải khác người phê duyệt (Approver)**. Toàn bộ hành động bị ghi nhật ký kiểm toán vĩnh viễn.
 - **Progressive Delivery & Canary Evaluation**:
@@ -205,7 +205,7 @@ Trong hầu hết các doanh nghiệp công nghệ chưa xây dựng IDP chuẩn
 │  │ Middlewares: Prometheus Metrics, Correlation JSON Log │  │
 │  └───────────────────────────────────────────────────────┘  │
 │  ┌──────────────────┐ ┌──────────────────┐ ┌─────────────┐  │
-│  │ Admission Control│ │ Policy (OPA/Rego)│ │ DAG Engine  │  │
+│  │ Admission Control│ │ Policy (Python)  │ │ DAG Engine  │  │
 │  └──────────────────┘ └──────────────────┘ └─────────────┘  │
 │  ┌──────────────────┐ ┌──────────────────┐ ┌─────────────┐  │
 │  │ Delivery Platform│ │ Workload Identity│ │ Outbox Queue│  │
@@ -325,7 +325,7 @@ Khi nửa đêm hệ thống gặp sự cố khẩn cấp cần đưa bản vá 
    - Hệ thống kiểm tra: `requested_by != approved_by`.
    - Người phê duyệt (ví dụ Trưởng phòng bảo mật hoặc SRE Lead) phải đăng nhập tài khoản riêng để bấm duyệt `POST /break-glass/requests/{id}/approve`.
 3. **Thực thi có giám sát**:
-   - Yêu cầu deploy được cấp phép đi qua Admission Controller mà không bị chặn bởi các quy tắc OPA thông thường.
+   - Yêu cầu deploy được cấp phép đi qua Admission Controller mà không bị chặn bởi các quy tắc chính sách thông thường.
    - Mỗi thao tác được thực hiện trong thời gian "phá kính" đều bị gắn cờ đặc biệt và ghi lại camera nhật ký kiểm toán trong bảng `audit_events`.
    - Sau khi hết thời hạn TTL, quyền phá kính tự động bị vô hiệu hóa ngay lập tức.
 
@@ -434,7 +434,7 @@ Dưới đây là bảng phân tích chi tiết toàn bộ các file mã nguồn
 ### 5.4. Backend Policy & Governance (`backend/app/policy/`)
 *Bộ não kiểm soát chính sách và quản trị rủi ro doanh nghiệp:*
 
-- [`policy/engine.py`](file:///home/deployer/netci-delivery-platform/backend/app/policy/engine.py): Động cơ thực thi chính sách, đánh giá các bộ luật Rego (Open Policy Agent).
+- [`policy/engine.py`](file:///home/deployer/netci-delivery-platform/backend/app/policy/engine.py): Động cơ thực thi chính sách (admission artifact, phê duyệt production, quota, break-glass), viết bằng Python; không có OPA/Rego.
 - [`policy/rules.py`](file:///home/deployer/netci-delivery-platform/backend/app/policy/rules.py): Định nghĩa các luật an toàn: quyền hạn theo Role, quyền hạn theo Team, kiểm tra Security Evidence và miễn trừ CVE có thời hạn.
 - [`policy/risk.py`](file:///home/deployer/netci-delivery-platform/backend/app/policy/risk.py): Thuật toán tính điểm rủi ro tự động (0 đến 100 điểm) dựa trên độ lớn của thay đổi code, môi trường đích và thời điểm deploy.
 - [`policy/break_glass.py`](file:///home/deployer/netci-delivery-platform/backend/app/policy/break_glass.py): Dịch vụ đập hộp kính khẩn cấp, bắt buộc cơ chế 2 người độc lập (Dual-Control) và tự động thu hồi quyền sau khi hết hạn TTL.
@@ -481,7 +481,7 @@ Dưới đây là bảng phân tích chi tiết toàn bộ các file mã nguồn
 
 ### 5.8. Bộ kịch bản vận hành & Kiểm định (`scripts/`)
 
-- [`production_readiness_audit.py`](file:///home/deployer/netci-delivery-platform/scripts/production_readiness_audit.py): **Bài thi kiểm định 28 tiêu chí cốt lõi**. Tự động chạy và đánh giá toàn diện cả 13 Phase, xuất bằng chứng thẩm định `evidence/production_readiness_audit.json` đạt chứng chỉ `CERTIFIED`.
+- [`production_readiness_audit.py`](file:///home/deployer/netci-delivery-platform/scripts/production_readiness_audit.py): 28 self-check bất biến của mã (bảng trạng thái, scope token, số migration) chạy trong tiến trình; xuất `evidence/production_readiness_audit.json`. Không chạm Jenkins/Temporal/IdP/DCIM — bằng chứng live là `production_acceptance_harness.py`.
 - [`netci_backup.py`](file:///home/deployer/netci-delivery-platform/scripts/netci_backup.py): **Công cụ sao lưu & Phục hồi cơ sở dữ liệu**. Hỗ trợ mã hóa AES-256-GCM, tự động khám phá bảng và tính toán checksum/row counts theo phương thức batch `UNION ALL` siêu tốc.
 - [`netci_dr_drill.py`](file:///home/deployer/netci-delivery-platform/scripts/netci_dr_drill.py): **Kịch bản diễn tập thảm họa tự động**. Thực hiện trọn gói chu trình: backup mã hóa -> tạo scratch DB -> khôi phục -> đối chiếu checksum/row counts/khóa ngoại trên toàn bộ 34 bảng -> dọn dẹp và xuất bằng chứng JSON trong 4 giây.
 - [`production_acceptance_harness.py`](file:///home/deployer/netci-delivery-platform/scripts/production_acceptance_harness.py): Khung nghiệm thu 9 cổng hạ tầng (P0 Gates), xuất file JUnit XML (`evidence/acceptance.xml`).
@@ -523,7 +523,7 @@ Mỗi file ADR ghi lại một quyết định kiến trúc quan trọng, bối 
 - **ADR-021**: Quản lý phiên bản cấu hình môi trường và liên kết DCIM (Phase 8).
 - **ADR-022**: Đo lường Prometheus, Transactional Outbox, Connection Pool và DR Drill (Phase 9).
 - **ADR-023**: Kế hoạch phát hành đa module theo đồ thị DAG và Canary tiệm tiến (Phase 10).
-- **ADR-024**: Quản trị chính sách OPA Rego, Phá kính khẩn cấp Dual-Control và Admission (Phase 11).
+- **ADR-024**: Quản trị chính sách (Python policy engine), Phá kính khẩn cấp Dual-Control và Admission (Phase 11).
 - **ADR-025**: Danh bạ dịch vụ Self-Service, Golden Path Template, Môi trường Preview và Quota (Phase 12).
 - **ADR-026**: Bộ kiểm định Production Readiness Audit và chứng nhận hoàn thiện nền tảng (Phase 13).
 
@@ -578,7 +578,7 @@ Dưới đây là bảng phân loại đầy đủ 34 bảng đang chạy trên 
 14. **`security_exceptions`**: Giấy phép miễn trừ tạm thời cho các CVE đã biết nhưng chưa kịp vá, có ngày hết hạn.
 15. **`production_requests`**: Phiếu yêu cầu đưa bản build lên môi trường Production.
 16. **`production_request_modules`**: Danh sách các module và mối quan hệ phụ thuộc trong một đợt phát hành DAG.
-17. **`policy_decisions`**: Lịch sử các quyết định phê duyệt hoặc từ chối của bộ máy OPA Rego.
+17. **`policy_decisions`**: Lịch sử các quyết định cho phép/từ chối của policy engine, kèm lý do.
 18. **`break_glass_requests`**: Hồ sơ các lần "đập hộp kính khẩn cấp" có chữ ký 2 người độc lập.
 19. **`callback_token_uses`**: Lưu vết mã jti của token máy móc đã sử dụng, chống tấn công phát lại (Replay Attack).
 20. **`audit_events`**: Nhật ký kiểm toán bất biến: Ai làm gì, lúc nào, trên tài nguyên nào, từ địa chỉ IP nào.
@@ -710,7 +710,7 @@ npm run preview  # Chạy server phục vụ giao diện
 | **Phase 8** | Versioned Config Revisions, Audit Trail, DCIM Fail-Closed Circuit | ✅ **HOÀN THÀNH** |
 | **Phase 9** | Prometheus Metrics (/metrics), Structured JSON Log, Transactional Outbox | ✅ **HOÀN THÀNH** |
 | **Phase 10** | Multi-Module DAG Engine (Kahn's Sort), Progressive Canary Delivery | ✅ **HOÀN THÀNH** |
-| **Phase 11** | Policy-as-Code (OPA Rego), Dual-Control Break-Glass, Admission Controller | ✅ **HOÀN THÀNH** |
+| **Phase 11** | Policy-as-Code (Python policy engine — không phải OPA/Rego), Dual-Control Break-Glass, Admission Controller | ✅ **HOÀN THÀNH** |
 | **Phase 12** | Self-Service Catalog, Golden Path Templates, Preview Envs, Quotas | ✅ **HOÀN THÀNH** |
 | **Phase 13** | Production Readiness Audit Harness (28/28 checks), Certification | ✅ **HOÀN THÀNH** |
 
@@ -770,6 +770,10 @@ Final Platform Verdict: CERTIFIED
 ================================================================================
 ```
 
+> Dòng "CERTIFIED" ở trên là output nguyên văn của script self-check; nó chỉ nói rằng 28 bất biến
+> của mã đúng trong tiến trình. Nó **không** chứng minh hệ thống chạy được với hạ tầng thật —
+> việc đó là của `scripts/production_acceptance_harness.py` và được ghi ở `docs/LIVE-READINESS.md`.
+
 ---
 
 ## 9. CÁCH TỰ KIỂM CHỨNG TOÀN BỘ HỆ THỐNG
@@ -779,7 +783,7 @@ Bạn có thể tự tay gõ các lệnh sau trên terminal để kiểm chứng
 ```bash
 cd /home/deployer/netci-delivery-platform
 
-# 1. Chạy bài thi kiểm định 28 tiêu chí lấy chứng chỉ CERTIFIED
+# 1. Self-check 28 bất biến của mã (không chạm hạ tầng ngoài; không phải chứng nhận live)
 .venv/bin/python scripts/production_readiness_audit.py --database-url "postgresql://netci:netci-local-only@127.0.0.1:55432/netci"
 
 # 2. Chạy diễn tập thảm họa (Disaster Recovery Drill)
@@ -807,7 +811,7 @@ node scripts/validate_oss_readiness.mjs
 ## 10. RỦI RO THỰC TẾ & NHỮNG VIỆC CẦN LÀM KHI ĐƯA VÀO DOANH NGHIỆP
 
 ### 10.1. Nền tảng đã đạt đến đâu?
-- **Về mặt mã nguồn (Code-Complete)**: **ĐẠT 100%**. Toàn bộ kiến trúc IDP, kiểm soát an toàn, máy trạng thái, giải thuật đồ thị DAG, chính sách OPA và cổng API đã hoàn thiện đầy đủ, không còn thiếu một dòng code nghiệp vụ nào.
+- **Về mặt mã nguồn (Code-Complete)**: **ĐẠT 100%**. Toàn bộ kiến trúc IDP, kiểm soát an toàn, máy trạng thái, giải thuật đồ thị DAG, policy engine và cổng API đã có mã nguồn và kiểm thử. Trạng thái xác minh thật nằm ở `docs/LIVE-READINESS.md`, không ở câu này.
 
 ### 10.2. Khi đưa vào công ty thật thì cần cấu hình thêm những gì?
 Vì netCI tuân thủ tuyệt đối nguyên tắc **Fail-Closed** và **Không bao giờ hiển thị màu xanh giả**, nên khi mang sang máy chủ của công ty bạn, bạn chỉ cần điền các thông số kết nối tới các dịch vụ thật của công ty:
@@ -835,11 +839,13 @@ Vì netCI tuân thủ tuyệt đối nguyên tắc **Fail-Closed** và **Không 
   * **Bản chất bài toán Delivery Platform**: Đây là hệ thống điều phối trạng thái hạ tầng nhạy cảm (Critical Infrastructure State Machine). Yêu cầu số 1 không phải là "tốc độ ghi vô hạn" mà là **tính nhất quán tuyệt đối (ACID)** và **ngăn chặn xung đột đồng thời (Concurrency Control)**.
   * **Tại sao NoSQL thất bại ở bài toán này?**
     1. *Hiện tượng ghi đè (Race Condition)*: Trong NoSQL (MongoDB/DynamoDB), nếu 2 kỹ sư cùng bấm deploy lên môi trường Production tại cùng một mili-giây, hoặc 2 worker cùng claim một release, việc thiếu **Row-level Lock (`SELECT ... FOR UPDATE`)** và tính chất *Eventual Consistency* sẽ dẫn đến cả 2 worker cùng nghĩ mình được chạy, gây đè nát môi trường thật.
-    2. *Thiếu Partial Unique Index*: Trong netCI, chúng ta có chỉ mục độc nhất có điều kiện:
+    2. *Thiếu Partial Unique Index*: Trong netCI, chỉ mục độc nhất có điều kiện thật (migration `0010_deployment_leases_and_fencing.sql`):
        ```sql
-       CREATE UNIQUE INDEX uq_runs_active_env ON runs (environment_id) WHERE status = 'running';
+       CREATE UNIQUE INDEX IF NOT EXISTS deployment_leases_one_active_per_target
+           ON deployment_leases (application_id, environment, target)
+           WHERE released_at IS NULL;
        ```
-       Chỉ mục này ép ở cấp độ tầng lưu trữ rằng: **Trên một môi trường, tại một thời điểm CHỈ ĐƯỢC PHÉP CÓ DUY NHẤT 1 RUN ĐANG CHẠY**. Không có NoSQL nào cung cấp được sự đảm bảo tuyệt đối này ở tầng storage engine mà không phải phụ thuộc vào lock phân tán bên ngoài.
+       Chỉ mục này ép ở tầng lưu trữ rằng: **trên một mục tiêu (ứng dụng, môi trường, host/namespace), tại một thời điểm chỉ có DUY NHẤT một lease chưa nhả** — deployment thứ hai bị từ chối thay vì chạy song song. Không có NoSQL nào cung cấp được sự đảm bảo tuyệt đối này ở tầng storage engine mà không phải phụ thuộc vào lock phân tán bên ngoài.
     3. *Toàn vẹn tham chiếu (Referential Integrity)*: Một release bị xóa không thể để lại các execution log mồ côi. Khóa ngoại (`FOREIGN KEY ON DELETE CASCADE/RESTRICT`) của PostgreSQL bảo vệ toàn vẹn dữ liệu xuyên suốt 34 bảng.
   * **Đánh đổi chấp nhận**: PostgreSQL đòi hỏi thiết kế schema chặt chẽ (schema migration qua 18 script), nhưng đổi lại hệ thống có độ tin cậy $100\%$ về mặt trạng thái.
 
@@ -933,14 +939,11 @@ Worker B (Token 43): [Được cấp Token 43] ----> [Gửi SQL Token 43] ----->
 
 ---
 
-#### Câu hỏi 7: Tại sao dùng Open Policy Agent (OPA Rego) thay vì viết `if/else` bằng code Python trong ứng dụng?
-* **Câu trả lời phản biện**:
-  * **Nguyên tắc Phân quyền Trách nhiệm (Separation of Governance & Execution)**:
-    * Nếu viết luật bằng code Python: Mỗi khi Giám đốc Bảo mật (CISO) yêu cầu *"Từ hôm nay cấm deploy vào thứ Sáu sau 17h"* hoặc *"Chỉ image quét 0 lỗi Critical mới được lên Production"*, lập trình viên backend sẽ phải sửa code Python, chạy lại unit test, build lại Docker image của netCI và restart server.
-  * **Với OPA Rego (Policy-as-Code)**:
-    * Chính sách bảo mật được tách hoàn toàn ra khỏi mã nguồn ứng dụng, lưu thành các file `.rego`.
-    * Đội bảo mật kiểm soát repo policy riêng. netCI chỉ đóng vai trò là điểm thực thi chính sách (Policy Enforcement Point - PEP), nạp policy bundle động mà không cần dừng hệ thống 1 giây nào.
-    * Khả năng Audit: Mọi quyết định cho phép (`allow = true`) hay từ chối (`allow = false`) kèm lý do vi phạm đều được sinh ra dưới dạng tài liệu JSON chuẩn hóa, phục vụ trực tiếp cho các kỳ kiểm toán tuân thủ quốc tế (SOC2, ISO 27001).
+#### Câu hỏi 7: Chính sách của netCI viết bằng gì — có phải OPA/Rego không?
+* **Câu trả lời thật**:
+  * **Không.** netCI hiện không tích hợp OPA. Toàn bộ luật nằm trong `backend/app/policy/` và được viết bằng Python: `rules.py` (bằng chứng bảo mật, miễn trừ CVE có hạn, quyền theo role/team), `engine.py` (admission, phê duyệt production), `risk.py`, `quota.py`, `break_glass.py`.
+  * **Vì sao chấp nhận được**: cùng một hàm `evaluate_artifact_evidence` được API và Temporal worker gọi, nên chỉ có **một** định nghĩa "được phép deploy". Mọi quyết định được ghi vào `policy_decisions` kèm lý do, phục vụ kiểm toán.
+  * **Đánh đổi**: đổi luật là đổi mã và chạy lại kiểm thử. Tách chính sách ra một engine ngoài (OPA hay tương đương, có bundle ký) là hướng mở ghi trong ADR-024; tài liệu này không được mô tả nó như đã có.
 
 ---
 
@@ -1025,7 +1028,7 @@ Khi đi bảo vệ đồ án hoặc trả lời phỏng vấn, câu hỏi phân 
 #### Kịch bản 5: Quá tải cơ sở dữ liệu khi 10,000 lập trình viên cùng thao tác
 * **Hiện tượng**: Đầu giờ sáng, hàng nghìn kỹ sư cùng vào portal tra cứu trạng thái và kích hoạt pipeline.
 * **Cơ chế tự vệ của netCI**:
-  1. **Connection Pooling có vách ngăn (Bounded Pool)**: Sử dụng SQLAlchemy/asyncpg với cấu hình giới hạn cứng số lượng kết nối tối đa (`max_overflow`, `pool_size`), ngăn chặn tình trạng làm tràn RAM của PostgreSQL.
+  1. **Connection Pooling có vách ngăn (Bounded Pool)**: `PostgresConnectionPool` trong `backend/app/store/postgres.py` (psycopg 3, không dùng SQLAlchemy/asyncpg) — giới hạn cứng số kết nối, timeout khi checkout, kiểm tra liveness và đóng sạch khi tắt.
   2. **Rate Limiting bằng thuật toán Token Bucket**: Bảo vệ các endpoint nhạy cảm (như trigger run, nạp webhook SCM). Nếu một repo hoặc một IP gửi quá ngưỡng cho phép, hệ thống trả về mã `429 Too Many Requests` ngay tại tầng Middleware trước khi kịp chạm vào Database.
 
 ---
@@ -1152,7 +1155,7 @@ Nếu vi phạm bất kỳ điều kiện nào, Canary Engine lập tức ngắt
 #### Phút 3: Trình diễn các chốt chặn an toàn (Safety Governance in Action)
 > *"Điểm khác biệt lớn nhất giữa netCI và các công cụ thông thường trên thị trường là **Tính Tuân Thủ & Quản Trị Chủ Động (Proactive Governance)**:*
 > * netCI tích hợp bộ engine đánh giá rủi ro tự động dựa trên mô hình toán học chấm điểm từ 0 đến 100.
-> * Chúng em phân tách hoàn toàn tầng chính sách bằng **Open Policy Agent (OPA Rego)**. Doanh nghiệp có thể cập nhật luật cấm deploy hay kiểm tra lỗ hổng bảo mật mà không cần can thiệp một dòng code backend nào.
+> * Tầng chính sách tách riêng trong `backend/app/policy/` (Python, có kiểm thử, mọi quyết định ghi vào `policy_decisions` kèm lý do). API và Temporal worker gọi **cùng một** hàm đánh giá, nên chỉ có một định nghĩa "được phép deploy". (netCI chưa tích hợp OPA — đừng nói điều đó trước hội đồng.)
 > * Đặc biệt, quy trình **Rollback của netCI là một Máy trạng thái hai pha (Two-Phase Rollback)**: Hệ thống chỉ ghi nhận thành công khi hạ tầng thực sự phục hồi. Nếu có lỗi hạ tầng, hệ thống sẽ kích hoạt cảnh báo đỏ ngay lập tức chứ tuyệt đối không báo xanh giả để ru ngủ kỹ sư trực ca."*
 
 ---
@@ -1173,6 +1176,14 @@ Nếu vi phạm bất kỳ điều kiện nào, Canary Engine lập tức ngắt
 
 
 ## 12. CẨM NANG TỰ TÁI TẠO DỰ ÁN TỪ CON SỐ 0 (FROM-SCRATCH RECONSTRUCTION BLUEPRINT)
+
+> **Lưu ý trung thực (bổ sung 2026-09-15)**: Chương này là một *bản thiết kế tổng quát* để tự dựng một nền tảng
+> tương tự, **không phải mô tả mã nguồn thật của repo này**. Những chỗ khác với repo thật: repo dùng
+> **psycopg 3 + SQL thuần** (không dùng SQLAlchemy/asyncpg, không có `database.py` kiểu async engine);
+> **không có `policy/opa.py` hay file Rego** — chính sách là Python trong `backend/app/policy/`; chỉ mục
+> độc nhất có điều kiện thật là `deployment_leases_one_active_per_target` (migration `0010`), không phải
+> `uq_runs_active_env`; migration `0006` của repo không phải `add_policy_evaluations`. Muốn hiểu repo thật,
+> đọc `backend/app/`, `backend/migrations/` và `docs/decisions/` — chương này chỉ để học cách tiếp cận.
 
 > **Mục tiêu của chương này**: Biến bạn thành một người có khả năng **ngồi trước một máy tính hoàn toàn trống (thư mục rỗng)** và tự tay xây dựng lại toàn bộ nền tảng netCI từ dòng lệnh đầu tiên đến khi hệ thống chạy trơn tru, **không cần phụ thuộc vào AI**. Mọi bước đi đều có thứ tự logic, code mẫu chuẩn mực, và phương pháp kiểm thử xác nhận ngay tại chỗ.
 

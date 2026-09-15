@@ -342,4 +342,11 @@ def build_dcim_catalog() -> DcimCatalog:
             raise ValueError(f"NETCI_DCIM_API_TOKEN_FILE is unreadable: {exc}") from exc
     else:
         token = os.getenv("NETCI_DCIM_API_TOKEN", "").strip()
+    provider = os.getenv("NETCI_DCIM_PROVIDER", "http").strip().lower()
+    if provider == "netbox":
+        from .netbox_dcim import NetBoxDcimCatalog
+
+        return NetBoxDcimCatalog(base_url, token)
+    if provider != "http":
+        raise ValueError(f"unsupported NETCI_DCIM_PROVIDER: {provider!r} (http, netbox)")
     return HttpDcimCatalog(base_url, token)

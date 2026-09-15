@@ -70,7 +70,7 @@ def call(Map config = [:]) {
                 when { expression { env.NETCI_PIPELINE_RUN_ID?.trim() && env.NETCI_API_URL?.trim() } }
                 steps {
                     netciInBuilder {
-                        withCredentials([string(credentialsId: callbackCredentialsId, variable: 'NETCI_PIPELINE_API_KEY')]) {
+                        netciCallbackAuth(callbackCredentialsId) {
                             sh 'mkdir -p "${NETCI_OUTPUT_DIR}"'
                             sh 'python3 scripts/netci_callback.py status --status running --log "jenkins build ${BUILD_TAG} started"'
                         }
@@ -140,7 +140,7 @@ def call(Map config = [:]) {
                 when { expression { env.NETCI_PIPELINE_RUN_ID?.trim() && env.NETCI_API_URL?.trim() } }
                 steps {
                     netciInBuilder {
-                        withCredentials([string(credentialsId: callbackCredentialsId, variable: 'NETCI_PIPELINE_API_KEY')]) {
+                        netciCallbackAuth(callbackCredentialsId) {
                             // Exits non-zero when netCI denies the artifact, so a
                             // policy failure fails the build instead of being logged.
                             sh 'python3 scripts/netci_callback.py evidence'
@@ -166,7 +166,7 @@ def call(Map config = [:]) {
                 script {
                     if (env.NETCI_PIPELINE_RUN_ID?.trim() && env.NETCI_API_URL?.trim()) {
                         netciInBuilder {
-                            withCredentials([string(credentialsId: callbackCredentialsId, variable: 'NETCI_PIPELINE_API_KEY')]) {
+                            netciCallbackAuth(callbackCredentialsId) {
                                 sh 'python3 scripts/netci_callback.py status --status succeeded --log "jenkins build ${BUILD_TAG} succeeded"'
                             }
                         }
@@ -177,7 +177,7 @@ def call(Map config = [:]) {
                 script {
                     if (env.NETCI_PIPELINE_RUN_ID?.trim() && env.NETCI_API_URL?.trim()) {
                         netciInBuilder {
-                            withCredentials([string(credentialsId: callbackCredentialsId, variable: 'NETCI_PIPELINE_API_KEY')]) {
+                            netciCallbackAuth(callbackCredentialsId) {
                                 // Best effort: a failed build must not be hidden by a
                                 // failing callback, but netCI must still learn about it.
                                 sh(script: 'python3 scripts/netci_callback.py status --status failed --log "jenkins build ${BUILD_TAG} failed"', returnStatus: true)

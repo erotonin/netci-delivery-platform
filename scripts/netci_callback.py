@@ -65,9 +65,11 @@ def read_text_file(name: str, *, required: bool = True) -> str:
 
 def post(path: str, payload: dict[str, object]) -> dict[str, object]:
     base = setting("NETCI_API_URL", "http://localhost:8000").rstrip("/")
-    token = setting("NETCI_PIPELINE_API_KEY")
+    # The token netCI minted for this run when it dispatched the build. It can report
+    # for this run and nothing else. The shared key is a fallback only local mode accepts.
+    token = setting("NETCI_CALLBACK_TOKEN") or setting("NETCI_PIPELINE_API_KEY")
     if not token:
-        fail("NETCI_PIPELINE_API_KEY (or NETCI_PIPELINE_API_KEY_FILE) is required")
+        fail("NETCI_CALLBACK_TOKEN (per-run) or NETCI_PIPELINE_API_KEY (legacy, local only) is required")
     request = urllib.request.Request(
         f"{base}{path}",
         data=json.dumps(payload).encode(),

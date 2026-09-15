@@ -81,15 +81,111 @@ def test_operator_health_with_admin_access():
         main_mod.app.dependency_overrides.pop(main_mod.current_principal, None)
 
 
-def test_acceptance_harness_generates_evidence():
-    cmd = [
-        sys.executable,
-        str(ROOT / "scripts" / "production_acceptance_harness.py"),
-    ]
-    env = dict(os.environ)
+def test_acceptance_harness_without_a_stack_is_blocked_not_passed(tmp_path):
+    """No API to talk to means nothing was verified. Every gate must say BLOCKED, and
+    the rehearsal must write its evidence somewhere other than the real evidence dir."""
+    cmd = [sys.executable, str(ROOT / "scripts" / "production_acceptance_harness.py")]
+    env = {k: v for k, v in os.environ.items() if not k.startswith("NETCI_ACCEPTANCE_")}
     env["PYTHONPATH"] = f"{ROOT}/backend:{ROOT}"
+    env["NETCI_ACCEPTANCE_EVIDENCE_DIR"] = str(tmp_path)
     result = subprocess.run(cmd, env=env, capture_output=True, text=True, cwd=ROOT)
-    assert result.returncode in (0, 1)
-    assert "netCI Production Acceptance Harness" in result.stdout
-    assert "Summary:" in result.stdout
-    assert (ROOT / "evidence" / "acceptance.xml").is_file()
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "Summary: 0 PASS, 0 FAIL, 9 BLOCKED" in result.stdout
+    assert (tmp_path / "acceptance.xml").is_file()
+    import json
+    report = json.loads(next(tmp_path.glob("production_acceptance_*.json")).read_text())
+    assert report["verdict"] == "BLOCKED"
+    assert all(g["status"] == "BLOCKED" for g in report["gates"])
+
+
+# ------------------------------------------------------------ cosign readiness
+
+
+def _fake_cosign(directory: Path, version: str) -> Path:
+    binary = directory / "cosign"
+    binary.write_text(
+        "#!/bin/sh\n"
+        f'[ "$1" = version ] && printf \'{{"gitVersion":"{version}"}}\' && exit 0\n'
+        "exit 1\n"
+    )
+    binary.chmod(0o755)
+    return binary
+
+
+def test_cosign_readiness_reports_the_configured_executable_not_path(tmp_path, monkeypatch):
+    """The worker verifies with NETCI_COSIGN_EXECUTABLE; readiness must answer for that
+    binary. Cosign 3 writes bundle signatures cosign 2 cannot read, so which binary and
+    which version are the facts an operator needs when verification says
+    "no signatures found"."""
+    from app import readiness
+
+    key = tmp_path / "cosign.pub"
+    key.write_text("-----BEGIN PUBLIC KEY-----\nx\n-----END PUBLIC KEY-----\n")
+    (tmp_path / "configured").mkdir()
+    configured = _fake_cosign(tmp_path / "configured", "v3.1.2")
+    monkeypatch.setenv("NETCI_SIGNATURE_VERIFY_MODE", "cosign")
+    monkeypatch.setenv("NETCI_COSIGN_PUBLIC_KEY_FILE", str(key))
+    monkeypatch.setenv("NETCI_COSIGN_EXECUTABLE", str(configured))
+    monkeypatch.setenv("PATH", "/nonexistent")
+
+    report = readiness.check_cosign()
+
+    assert report["ready"] is True
+    assert report["executable"] == str(configured)
+    assert report["version"] == "v3.1.2"
+
+
+def test_cosign_readiness_fails_when_the_configured_executable_is_missing(tmp_path, monkeypatch):
+    from app import readiness
+
+    key = tmp_path / "cosign.pub"
+    key.write_text("k")
+    monkeypatch.setenv("NETCI_SIGNATURE_VERIFY_MODE", "cosign")
+    monkeypatch.setenv("NETCI_COSIGN_PUBLIC_KEY_FILE", str(key))
+    monkeypatch.setenv("NETCI_COSIGN_EXECUTABLE", str(tmp_path / "missing-cosign"))
+
+    report = readiness.check_cosign()
+
+    assert report["ready"] is False
+    assert "missing-cosign" in report["error"]
+
+
+# ---------------------------------------------------------------- cd readiness
+
+
+class _Orchestrator:
+    def __init__(self, mode, address="127.0.0.1:1"):
+        self.mode = mode
+        self.address = address
+        self.namespace = "default"
+        self.task_queue = "netci-delivery"
+
+
+def test_cd_readiness_without_temporal_is_optional_and_not_ready_claimed():
+    from app import readiness
+
+    report = readiness.check_cd(_Orchestrator("none"))
+    assert report["status"] == "not_configured" and report["optional"] is True
+
+
+def test_cd_readiness_reports_an_unreachable_temporal_as_not_ready():
+    """"configured" used to count as ready. An address nobody answers must not."""
+    from app import readiness
+
+    report = readiness.check_cd(_Orchestrator("temporal", address="127.0.0.1:1"), timeout_seconds=1.5)
+    assert report["ready"] is False
+    assert report["status"] == "unreachable"
+    assert report["address"] == "127.0.0.1:1"
+
+
+def test_cd_readiness_refuses_a_queue_nobody_polls():
+    from app import readiness
+
+    base = {"mode": "temporal"}
+    assert readiness.judge_cd_pollers(base, 0, None)["status"] == "no_workers"
+    # Temporal still lists a poller that stopped asking for work a while ago.
+    stale = readiness.judge_cd_pollers(base, 1, readiness.CD_POLLER_MAX_AGE_SECONDS + 1)
+    assert stale["status"] == "no_workers" and stale["ready"] is False
+    live = readiness.judge_cd_pollers(base, 2, 11.5)
+    assert live["status"] == "ready" and live["ready"] is True
+    assert live["pollers"] == 2 and live["youngestPollSecondsAgo"] == 11.5

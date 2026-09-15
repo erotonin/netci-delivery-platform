@@ -389,3 +389,129 @@ def test_unconfigured_dcim_never_fakes_online():
     assert record.status != "online"
     assert record.source in ("unconfigured", "dcim-unconfigured")
 
+
+
+# ------------------------------------------------ runtime settings are reviewed config
+
+
+def test_runtime_settings_in_a_revision_become_playbook_inputs(auth_client):
+    """The live lab failed at `/opt/netci-docker-demo: Permission denied` because the
+    playbook defaults were the only way to say where a service lives. That belongs in
+    the reviewed revision, and it must arrive at the playbook under the names the
+    playbook reads."""
+    client, headers_for = auth_client
+    current = client.get("/modules/hello-container/config-revisions", headers=headers_for("dana")).json()
+    active = next(r for r in current["items"] if r["active"])
+    # Keep the production target as it is: dropping it would (rightly) need an approver.
+    untouched = [c for c in active["deploymentConfig"] if c.get("environment") != "dev"]
+    res = client.post(
+        "/modules/hello-container/config-revisions",
+        headers=headers_for("dana"),
+        json={
+            "changeSummary": "lab layout",
+            "deploymentConfig": [
+                {
+                    "environment": "dev",
+                    "servers": ["netci-local-docker-dev"],
+                    "runtimeSettings": {
+                        "appRoot": "/var/tmp/netci-lab/hello-container",
+                        "hostPort": 18081,
+                        "networkMode": "host",
+                        "become": False,
+                        "imagePullHost": "localhost:55000",
+                    },
+                },
+                *untouched,
+            ],
+        },
+    )
+    assert res.status_code == 201, res.text
+    assert res.json()["status"] == "active", res.text
+    from app.domain.models import Environment
+
+    parameters = main.portal.delivery_parameters("hello-container", Environment.DEV)
+    assert parameters["app_root"] == "/var/tmp/netci-lab/hello-container"
+    assert parameters["host_port"] == 18081
+    assert parameters["network_mode"] == "host"
+    assert parameters["netci_become"] is False
+    assert parameters["image_pull_host"] == "localhost:55000"
+    assert parameters["target_hosts"] == ["netci-local-docker-dev"]
+    # Nothing else from the target leaks into the playbook namespace.
+    assert "runtimeSettings" not in parameters
+
+
+@pytest.mark.parametrize(
+    "settings",
+    [
+        {"appRoot": "relative/path"},
+        {"appRoot": "/opt/../etc"},
+        {"appRoot": "/opt/x; rm -rf /"},
+        {"hostPort": 80},
+        {"networkMode": "none"},
+        {"systemdScope": "root"},
+        {"shell": "bash"},
+        {"imagePullHost": "localhost:55000/evil"},
+        {"imagePullHost": "http://localhost:55000"},
+    ],
+)
+def test_runtime_settings_outside_the_playbook_contract_are_refused(auth_client, settings):
+    client, headers_for = auth_client
+    res = client.post(
+        "/modules/hello-container/config-revisions",
+        headers=headers_for("dana"),
+        json={"deploymentConfig": [{"environment": "dev", "servers": ["h1"], "runtimeSettings": settings}]},
+    )
+    assert res.status_code == 422, res.text
+
+
+@pytest.mark.parametrize(
+    "target",
+    [
+        {"environment": "dev", "servers": ["host with space"]},
+        {"environment": "dev", "servers": ["-leading-dash"]},
+        {"environment": "dev", "namespace": "Not_Valid"},
+        {"environment": "moon", "servers": ["h1"]},
+        {"servers": ["h1"]},
+    ],
+)
+def test_a_revision_target_is_validated_like_module_creation(auth_client, target):
+    """A revision becomes the module's active target set; an unvalidated one could
+    name a host the adapter would then pass to `--limit`."""
+    client, headers_for = auth_client
+    res = client.post(
+        "/modules/hello-container/config-revisions",
+        headers=headers_for("dana"),
+        json={"deploymentConfig": [target]},
+    )
+    assert res.status_code == 422, res.text
+
+
+def test_playbook_layout_cannot_be_supplied_per_run(auth_client):
+    """The same names are refused as build inputs: a run may not move the install root."""
+    client, headers_for = auth_client
+    res = client.post(
+        "/modules/hello-container/pipeline-runs",
+        headers=headers_for("dana"),
+        json={
+            "commitSha": "a" * 40,
+            "environment": "dev",
+            "parameters": {"app_root": "/etc", "network_mode": "host"},
+        },
+    )
+    assert res.status_code == 422, res.text
+    assert res.json()["code"] == "BUILD_INPUT_NOT_ALLOWED"
+
+
+def test_resubmitting_the_production_target_as_read_back_is_not_a_production_change(auth_client):
+    """The API returns `null` for unset fields; a revision built from that read-back
+    must not need an approver when production is byte-for-byte the same intent."""
+    client, headers_for = auth_client
+    current = client.get("/modules/hello-container/config-revisions", headers=headers_for("dana")).json()
+    active = next(r for r in current["items"] if r["active"])
+    res = client.post(
+        "/modules/hello-container/config-revisions",
+        headers=headers_for("dana"),
+        json={"changeSummary": "no-op resubmit", "deploymentConfig": active["deploymentConfig"]},
+    )
+    assert res.status_code == 201, res.text
+    assert res.json()["requiresApproval"] is False, res.text

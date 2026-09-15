@@ -149,6 +149,7 @@ def test_portal_can_create_system_and_attach_a_delivery_application_as_module():
         'taskSettings': {'healthCheck': {'script': 'curl -f http://localhost/health', 'retries': 3, 'delay': '10s'}},
         'kubeconfigRef': None,
         'namespace': None,
+        'runtimeSettings': None,
     }]
     assert created_module.json()['pipelineConfig']['runner'] == 'docker-linux'
     assert client.get('/systems/billing-platform').json()['moduleCount'] == 1

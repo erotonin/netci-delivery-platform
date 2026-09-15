@@ -339,6 +339,20 @@ export type DeploymentEnvironmentConfig = {
   taskSettings?: Record<string, unknown>
   kubeconfigRef?: string | null
   namespace?: string | null
+  runtimeSettings?: RuntimeSettings | null
+}
+
+// How the checked-in playbook lays the service out on the target. Reviewed config,
+// never a per-run parameter (the API refuses these names as build inputs).
+export type RuntimeSettings = {
+  appRoot?: string | null
+  hostPort?: number | null
+  containerPort?: number | null
+  networkMode?: 'bridge' | 'host' | null
+  appPort?: number | null
+  systemdScope?: 'system' | 'user' | null
+  become?: boolean | null
+  imagePullHost?: string | null
 }
 
 export type ModulePipelineTabConfig = {

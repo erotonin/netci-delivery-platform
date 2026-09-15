@@ -5,6 +5,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import subprocess
 import secrets
 
@@ -21,7 +22,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response, 
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response as PlainResponse
-from pydantic import BaseModel, ConfigDict, Field, HttpUrl, model_validator
+from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator, model_validator
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from .adapters.cd_orchestrator import build_cd_orchestrator
@@ -37,6 +38,7 @@ from .build_inputs import BuildInputError, validate_build_inputs
 from .client_address import LOOPBACK_HOSTS, resolve_client
 from .ratelimit import build_rate_limiter
 from .domain.models import (
+    DeploymentStatus,
     Application,
     DeliveryEvent,
     Deployment,
@@ -266,7 +268,10 @@ def _workload_principal(request: Request, authorization: str | None) -> Principa
     """
 
     supplied = _bearer(authorization)
-    if not supplied or supplied.count(".") != 2:
+    if not supplied or not workload_identity.looks_like_callback_token(supplied):
+        # Not ours. A Keycloak or Azure AD JWT is also three dot-separated parts, and
+        # treating every such token as a callback token refused every human before the
+        # OIDC authenticator ran. The header's `typ` says whose token it is.
         return None
     try:
         claims = workload_identity.verify(supplied)
@@ -435,6 +440,7 @@ def _authorize_callback(
     workload: str | None = None,
     pipeline_run_id: UUID | None = None,
     deployment_id: UUID | None = None,
+    terminal: bool = False,
 ) -> CallbackClaims | None:
     """Check that the token in hand is for *this* resource and this operation.
 
@@ -489,11 +495,20 @@ def _authorize_callback(
                 "message": "this callback token was issued for a different deployment",
             },
         )
-    if claims.single_use:
+    if claims.single_use and terminal:
+        # Single use applies to the terminal *operation* -- reporting a result -- not to
+        # every call the token makes. The worker reads evidence and heartbeats with the
+        # same token before it reports; spending the jti on the first of those made the
+        # report itself look like a replay.
         # Claimed in its own transaction and by primary key, so two replicas handed the
         # same replayed token cannot both decide it was unused.
         claimed = _claim_single_use(claims, scope)
-        if not claimed:
+        if not claimed and not _deployment_already_terminal(claims.deployment_id):
+            # A second use is a replay -- unless the deployment has already reached a
+            # terminal state, in which case this is Temporal retrying a report that
+            # already landed. The domain answers such a retry idempotently, refuses any
+            # transition the state machine forbids, and the fencing token refuses a
+            # superseded writer; single-use adds nothing there except breaking retries.
             raise HTTPException(
                 status_code=401,
                 detail={
@@ -503,6 +518,22 @@ def _authorize_callback(
                 headers={"WWW-Authenticate": "Bearer"},
             )
     return claims
+
+
+def _deployment_already_terminal(deployment_id: UUID | None) -> bool:
+    if deployment_id is None:
+        return False
+    try:
+        current = platform.get_deployment(deployment_id)
+    except DeliveryError:
+        return False
+    return current.status in {
+        DeploymentStatus.HEALTHY,
+        DeploymentStatus.FAILED,
+        DeploymentStatus.ROLLED_BACK,
+        DeploymentStatus.ROLLBACK_FAILED,
+        DeploymentStatus.CANCELLED,
+    }
 
 
 def _claim_single_use(claims: CallbackClaims, scope: str) -> bool:
@@ -918,6 +949,42 @@ class ModuleTaskSettings(StrictBody):
     healthCheck: HealthCheckSettings | None = None
 
 
+class RuntimeSettings(StrictBody):
+    """How the checked-in playbook lays the service out on the target.
+
+    These are the only playbook inputs a module may configure, and they live in the
+    reviewed configuration revision rather than in a pipeline trigger: a caller who
+    could pass `app_root` per run could point a deployment at any directory on the
+    host. The playbooks own everything else (task order, health gate, rollback).
+    """
+
+    # Where the release is installed. Absolute, no traversal; the playbook still runs
+    # under the worker's own Ansible privilege policy.
+    appRoot: str | None = Field(default=None, min_length=2, max_length=255, pattern=r"^/[A-Za-z0-9._/-]+$")
+    # Docker: port published on the host (bridge) or bound directly (host networking).
+    hostPort: int | None = Field(default=None, ge=1024, le=65535)
+    containerPort: int | None = Field(default=None, ge=1, le=65535)
+    networkMode: Literal["bridge", "host"] | None = None
+    # systemd: the port the unit listens on; the health gate derives its URL from it.
+    appPort: int | None = Field(default=None, ge=1024, le=65535)
+    systemdScope: Literal["system", "user"] | None = None
+    # Whether Ansible escalates privilege on the target. A lab that must not be modified
+    # sets this false and uses a user-writable appRoot and a user-scope systemd unit.
+    become: bool | None = None
+    # The name under which this target's container runtime reaches the registry recorded
+    # in the artifact reference (a registry is often `registry.svc:5000` inside the build
+    # cluster and something else on the host it deploys to). Only the locator changes:
+    # the digest is the identity and the runtime verifies it on pull.
+    imagePullHost: str | None = Field(default=None, min_length=1, max_length=253, pattern=r"^[A-Za-z0-9][A-Za-z0-9.-]*(:[0-9]{1,5})?$")
+
+    @field_validator("appRoot")
+    @classmethod
+    def app_root_has_no_traversal(cls, value: str | None) -> str | None:
+        if value is not None and ".." in value.split("/"):
+            raise ValueError("appRoot must not contain '..' segments")
+        return value
+
+
 class ModulePipelineTabConfig(StrictBody):
     branch: str = Field(min_length=1, max_length=500)
     coverageReportPath: str = Field(min_length=1, max_length=500)
@@ -939,6 +1006,7 @@ class ModuleEnvironmentCreate(StrictBody):
     taskSettings: ModuleTaskSettings = Field(default_factory=ModuleTaskSettings)
     kubeconfigRef: str | None = Field(default=None, min_length=1, max_length=255)
     namespace: str | None = Field(default=None, pattern=r"^[a-z0-9]([-a-z0-9]*[a-z0-9])?$", max_length=63)
+    runtimeSettings: RuntimeSettings | None = None
 
     @model_validator(mode="after")
     def validate_target_connection(self) -> "ModuleEnvironmentCreate":
@@ -998,10 +1066,40 @@ class ModuleUpdate(StrictBody):
     description: str = Field(default="", max_length=1000)
 
 
+class DeploymentTargetRevision(BaseModel):
+    """One environment's target inside a proposed configuration revision.
+
+    A revision becomes the module's active deployment configuration, so the fields the
+    runtime adapter reads are validated with the same rules as module creation. Other
+    keys are kept as-is: the risk classifier reads them, and they never reach a
+    playbook -- `_delivery_parameters` picks fields by name.
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    environment: Environment
+    displayName: str | None = Field(default=None, min_length=1, max_length=120)
+    runtime: Runtime | None = None
+    servers: list[str] = Field(default_factory=list, max_length=200)
+    tasks: list[str] = Field(default_factory=list, max_length=100)
+    taskSettings: ModuleTaskSettings | None = None
+    kubeconfigRef: str | None = Field(default=None, min_length=1, max_length=255)
+    namespace: str | None = Field(default=None, pattern=r"^[a-z0-9]([-a-z0-9]*[a-z0-9])?$", max_length=63)
+    runtimeSettings: RuntimeSettings | None = None
+
+    @field_validator("servers")
+    @classmethod
+    def servers_are_inventory_names(cls, value: list[str]) -> list[str]:
+        for host in value:
+            if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,252}", host):
+                raise ValueError(f"server {host!r} is not an inventory host name")
+        return value
+
+
 class ConfigRevisionCreate(StrictBody):
     changeSummary: str = Field(default="", max_length=1000)
     pipelineConfig: dict[str, object] = Field(default_factory=dict)
-    deploymentConfig: list[dict[str, object]] = Field(default_factory=list)
+    deploymentConfig: list[DeploymentTargetRevision] = Field(default_factory=list, max_length=3)
     expectedVersion: int | None = None
 
 
@@ -1664,7 +1762,9 @@ def propose_module_config_revision(
         return portal.propose_config_revision(
             moduleId,
             pipeline_config=payload.pipelineConfig,
-            deployment_config=payload.deploymentConfig,
+            deployment_config=[
+                item.model_dump(mode="json", exclude_none=True) for item in payload.deploymentConfig
+            ],
             change_summary=payload.changeSummary,
             expected_version=payload.expectedVersion,
             actor=principal.subject,
@@ -2720,7 +2820,37 @@ def get_security_evidence(
     if not principal.has_any(Role.PIPELINE):
         _require_application_access(platform.get_application(run.application_id), principal)
     else:
-        _authorize_callback(request, scope=Scope.CI_EVIDENCE, pipeline_run_id=pipelineRunId)
+        claims = _callback_claims(request)
+        if claims is not None and claims.deployment_id is not None and claims.pipeline_run_id is None:
+            # A deployment token names the deployment, not the run that built it. The
+            # worker re-verifies evidence for *that* run before deploying, so the binding
+            # is derived: the token is good for exactly the run its deployment came from.
+            deployment = platform.get_deployment(claims.deployment_id)
+            # During a rollback the deployment is moving to an older digest, built by an
+            # older run of the same application; the worker re-verifies *that* one. The
+            # binding is still derived from what the deployment currently carries -- a
+            # token can never read evidence for a digest its deployment is not moving to.
+            rolling_back = deployment.status in {
+                DeploymentStatus.ROLLBACK_IN_PROGRESS,
+                DeploymentStatus.ROLLED_BACK,
+                DeploymentStatus.ROLLBACK_FAILED,
+            }
+            built_current_artifact = (
+                rolling_back
+                and run.application_id == deployment.application_id
+                and run.artifact_digest == deployment.artifact_digest
+            )
+            if deployment.pipeline_run_id != pipelineRunId and not built_current_artifact:
+                raise HTTPException(
+                    status_code=403,
+                    detail={
+                        "code": "RESOURCE_MISMATCH",
+                        "message": "this deployment token is not for the run that built this evidence",
+                    },
+                )
+            _authorize_callback(request, scope=Scope.CI_EVIDENCE, deployment_id=claims.deployment_id)
+        else:
+            _authorize_callback(request, scope=Scope.CI_EVIDENCE, pipeline_run_id=pipelineRunId)
     return platform.security_evidence(pipelineRunId)
 
 
@@ -2767,6 +2897,7 @@ def record_deployment_result(
         scope=Scope.DEPLOYMENT_RESULT,
         workload=Workload.TEMPORAL,
         deployment_id=deploymentId,
+        terminal=True,
     )
     deployment = platform.record_deployment_result(
         deploymentId, payload.status, payload.message, fencing_token=payload.fencingToken
@@ -2818,6 +2949,7 @@ def record_rollback_result(
         scope=Scope.DEPLOYMENT_RESULT,
         workload=Workload.TEMPORAL,
         deployment_id=deploymentId,
+        terminal=True,
     )
     return deployment_json(
         platform.record_rollback_result(

@@ -322,6 +322,24 @@ def mint(
     return f"{header_part}.{claims_part}.{_b64url(signature)}"
 
 
+def looks_like_callback_token(token: str) -> bool:
+    """Whether this is a netCI callback token, judged by its unverified header `typ`.
+
+    Only a routing decision: an OIDC JWT from the identity provider has the same three-part
+    shape, and must reach the human authenticator instead. Nothing here is trusted -- the
+    signature is checked by `verify`, which is called next if this says yes.
+    """
+
+    parts = token.split(".")
+    if len(parts) != 3:
+        return False
+    try:
+        header = json.loads(_unb64url(parts[0]))
+    except (ValueError, json.JSONDecodeError):
+        return False
+    return isinstance(header, dict) and header.get("typ") == "netci-callback"
+
+
 def verify(token: str, *, now: int | None = None) -> CallbackClaims:
     """Verify a callback token, or raise. Never returns partially-checked claims."""
 

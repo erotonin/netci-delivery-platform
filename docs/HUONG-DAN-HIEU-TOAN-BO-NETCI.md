@@ -1028,14 +1028,14 @@ NETCI_DEPLOYMENT_LEASE_TTL_SECONDS=900
 | Phase | Nội dung chính | Trạng thái |
 |---|---|---|
 | **10** | ProductionRequest nhiều module, release plan DAG, SAGA compensation, canary/blue-green, traffic adapter | **Đã hoàn thành** (ADR-023) |
-| **11** | PolicyDecision module + OPA, policy bundle có chữ ký, risk-based approval, security exception gắn CVE+digest+expiry, break-glass dual control, quota, Kubernetes admission controller | **Đã hoàn thành** (ADR-024) |
+| **11** | Policy engine bằng Python (`backend/app/policy/`, không phải OPA; policy bundle có chữ ký chưa làm), risk-based approval, security exception gắn CVE+digest+expiry, break-glass dual control, quota, admission gate trong API | **Có mã và kiểm thử** (ADR-024); OPA/bundle ký là hướng mở |
 | **12** | Owning team first-class, service lifecycle, dependency graph, pipeline template có version, preview environment theo PR (namespace + TTL + DNS/TLS thật), ResourceRequest self-service | **Đã hoàn thành** (ADR-025) |
-| **13** | Audit toàn bộ route, quét runtime tìm mock/fake còn sót, chạy mọi loại test, chứng nhận readiness 28/28 checks, viết `LIVE-READINESS.md` | **Đã hoàn thành** (ADR-026) — **CERTIFIED** |
+| **13** | Audit toàn bộ route, quét runtime tìm mock/fake còn sót, chạy mọi loại test, chạy harness 9 cổng trên hạ tầng thật, viết `LIVE-READINESS.md` | **Đã chạy thật ngày 2026-09-15** (ADR-026, ADR-028) — xem `docs/LIVE-READINESS.md`; không dùng chữ "certified" |
 
 ### 8.5. Kết luận trạng thái nền tảng
 
 - ✅ **Toàn bộ 13 Phase kiến trúc đã hoàn thiện mã nguồn và kiểm thử tự động.**
-- ✅ **Audit tự động (`scripts/production_readiness_audit.py`) đạt 28/28 checks PASS, phán quyết: `CERTIFIED`.**
+- ✅ `scripts/production_readiness_audit.py` (28 self-check trong tiến trình, không chạm hạ tầng ngoài) đạt 28/28. **Đây không phải chứng nhận live**: bằng chứng chạy thật nằm ở `docs/LIVE-READINESS.md` và `evidence/production_acceptance_*.json` (harness 9 cổng chạy với Keycloak, Jenkins, Temporal, NetBox, registry, cosign thật).
 - ✅ **Bộ kiểm thử tự động (pytest, openapi contract test, frontend build) hoạt động ổn định và vượt qua 100%.**
 
 ---

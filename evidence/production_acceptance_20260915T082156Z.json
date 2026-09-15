@@ -1,0 +1,169 @@
+{
+  "timestamp": "2026-09-15T08:21:56.529429+00:00",
+  "finishedAt": "2026-09-15T08:26:29.096655+00:00",
+  "commitSha": "592855faeddd309e15e8723dc14aef949f6b3da0",
+  "apiUrl": "http://127.0.0.1:8100",
+  "module": "hello-container",
+  "buildCommit": "31fee125730cb69e55d3da4238725a098d67391f",
+  "summary": {
+    "pass": 8,
+    "fail": 1,
+    "blocked": 0,
+    "total": 9
+  },
+  "verdict": "FAIL",
+  "gates": [
+    {
+      "gate": "persistence_across_api_restart",
+      "status": "PASS",
+      "reason": "a row written to PostgreSQL was served by the running API and gone once deleted",
+      "duration_seconds": 0.22229816099934396,
+      "details": {
+        "systemId": "sys-persist-1789460516"
+      }
+    },
+    {
+      "gate": "oidc_role_and_team",
+      "status": "PASS",
+      "reason": "three IdP identities mapped to platform-admin/reviewer/developer with teams; developer refused for prod",
+      "duration_seconds": 0.013670215997990454,
+      "details": {
+        "admin": {
+          "subject": "4266c11c-d32f-46cb-9873-603a9ff11f09",
+          "roles": [
+            "platform-admin"
+          ],
+          "teams": [
+            "netci-admins"
+          ]
+        },
+        "reviewer": {
+          "subject": "099a2ba6-c6da-478d-a9e2-fcc9b27956e0",
+          "roles": [
+            "reviewer"
+          ],
+          "teams": [
+            "release-managers",
+            "team-payments"
+          ]
+        },
+        "developer": {
+          "subject": "48c226b7-29cd-415b-bf56-ae27140c9925",
+          "roles": [
+            "developer"
+          ],
+          "teams": [
+            "engineers",
+            "team-payments"
+          ]
+        }
+      }
+    },
+    {
+      "gate": "dcim_inventory_lookup",
+      "status": "PASS",
+      "reason": "4 devices from netbox; netci-retired-01 reported decommissioning",
+      "duration_seconds": 5.266812701000163,
+      "details": {
+        "source": "netbox",
+        "devices": [
+          "netci-local-docker-dev",
+          "netci-local-docker-prod",
+          "netci-local-docker-staging",
+          "netci-retired-01"
+        ],
+        "retired": {
+          "id": "netci-retired-01",
+          "hostname": "netci-retired-01",
+          "name": "netci-retired-01",
+          "ipAddress": "",
+          "environment": "prod",
+          "moduleId": "hello-container",
+          "systemId": "hello-container",
+          "status": "decommissioning",
+          "platform": "",
+          "netboxId": 10,
+          "netboxUrl": "http://127.0.0.1:8080/dcim/devices/10/"
+        }
+      }
+    },
+    {
+      "gate": "jenkins_checkout_build_push",
+      "status": "PASS",
+      "reason": "jenkins-a:netci-8c7dc688-ceac-4eff-91ae-d7deec2e8d86#7 built 31fee125730c -> sha256:dec64ba9b58d...",
+      "duration_seconds": 82.00758170700283,
+      "details": {
+        "pipelineRunId": "6a827875-0f20-4c7a-83db-6480c2976b8b",
+        "jenkinsRunId": "jenkins-a:netci-8c7dc688-ceac-4eff-91ae-d7deec2e8d86#7",
+        "artifactDigest": "sha256:dec64ba9b58d5dc9e4a29fe3aaa6b82de82cc0dc2703c50cf5393e3b9173394d",
+        "artifactRef": "172.17.0.1:55000/hello-container@sha256:dec64ba9b58d5dc9e4a29fe3aaa6b82de82cc0dc2703c50cf5393e3b9173394d",
+        "deploymentStatus": "healthy"
+      }
+    },
+    {
+      "gate": "sbom_trivy_cosign_verification",
+      "status": "PASS",
+      "reason": "syft SBOM, trivy passed, cosign v3.1.2 verified sha256:dec64ba9b58d... and refused an unsigned digest",
+      "duration_seconds": 0.15175693900164333,
+      "details": {
+        "sbom": {
+          "generatedBy": "syft",
+          "format": "cyclonedx-json"
+        },
+        "scan": {
+          "critical": 0,
+          "high": 0
+        },
+        "cosignVersion": "v3.1.2",
+        "artifactRef": "172.17.0.1:55000/hello-container@sha256:dec64ba9b58d5dc9e4a29fe3aaa6b82de82cc0dc2703c50cf5393e3b9173394d"
+      }
+    },
+    {
+      "gate": "temporal_workflow_restart_resume",
+      "status": "PASS",
+      "reason": "worker stopped (readiness: no_workers), deployment queued, worker restarted, deployment healthy",
+      "duration_seconds": 154.1494273089993,
+      "details": {
+        "deploymentId": "9e63d42a-0e45-45f6-94e5-cf9b31406b1c",
+        "pipelineRunId": "88c55fd0-bcd4-43c8-bd2c-744b8264bd3b",
+        "readinessWithoutWorker": {
+          "mode": "temporal",
+          "address": "127.0.0.1:7233",
+          "namespace": "default",
+          "taskQueue": "netci-delivery",
+          "pollers": 1,
+          "youngestPollSecondsAgo": 75.022062,
+          "status": "no_workers",
+          "ready": false
+        }
+      }
+    },
+    {
+      "gate": "ansible_host_and_target_namespace",
+      "status": "FAIL",
+      "reason": "RuntimeError: caller-supplied target was answered 422 {'code': 'DEPLOYMENT_PARAMETER_NOT_ACCEPTED', 'message': \"'target_hosts' is decided by the module's registered configuration and cannot be supplied with a run\", 'correlationId': '179e9b5a-3dee-42de-8857-95e32823f81d'}",
+      "duration_seconds": 0.0035019650022150017,
+      "details": {}
+    },
+    {
+      "gate": "deployment_failure_and_rollback",
+      "status": "PASS",
+      "reason": "rolled back sha256:72f2d0893a1b... -> sha256:dec64ba9b58d...; recorded rolled_back",
+      "duration_seconds": 20.143703344998357,
+      "details": {
+        "deploymentId": "9e63d42a-0e45-45f6-94e5-cf9b31406b1c",
+        "from": "sha256:72f2d0893a1b7277871d10d8b1869c408469ee57641715c4c7b852aad327863f",
+        "to": "sha256:dec64ba9b58d5dc9e4a29fe3aaa6b82de82cc0dc2703c50cf5393e3b9173394d"
+      }
+    },
+    {
+      "gate": "backup_and_restore_verification",
+      "status": "PASS",
+      "reason": "backup drill: dump, restore into a scratch database, row counts and checksums compared, failure injection detected",
+      "duration_seconds": 10.409321569000895,
+      "details": {
+        "exitCode": 0
+      }
+    }
+  ]
+}

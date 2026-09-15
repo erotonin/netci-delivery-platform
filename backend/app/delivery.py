@@ -40,6 +40,7 @@ from .persistence import (
     UnitOfWork,
 )
 from .store import DeploymentLease, PlatformDatabase, PlatformSession, build_database, join
+from . import workload_identity
 from .runtime_environment import is_local_runtime
 from .policy.rules import PolicyDecision, evaluate_artifact_evidence
 from .domain.models import (
@@ -283,6 +284,28 @@ class DeliveryPlatform:
             return max(30, int(os.getenv("NETCI_DEPLOYMENT_LEASE_TTL_SECONDS", "900")))
         except ValueError:
             return 900
+
+    @staticmethod
+    def _digest_in_service(
+        transaction: PlatformSession, application_id: UUID, environment: Environment
+    ) -> str | None:
+        """What this environment is running right now, as far as netCI has established.
+
+        The most recent deployment that ended with a release serving traffic: `healthy`,
+        or `rolled_back` (which serves the digest it restored). Recorded on every new
+        deployment as `previous_artifact_digest`, so "roll back to what was there" is a
+        fact the platform holds rather than something an operator reconstructs from logs.
+        """
+
+        settled = [
+            item
+            for item in transaction.deployments(application_id)
+            if item.environment == environment
+            and item.status in {DeploymentStatus.HEALTHY, DeploymentStatus.ROLLED_BACK}
+        ]
+        if not settled:
+            return None
+        return max(settled, key=lambda item: item.updated_at).artifact_digest
 
     @staticmethod
     def lease_target(deployment: Deployment, run: PipelineRun | None) -> str:
@@ -1601,6 +1624,7 @@ class DeliveryPlatform:
             runtime=application.runtime,
             environment=run.environment,
             artifact_digest=artifact_digest,
+            previous_artifact_digest=self._digest_in_service(transaction, run.application_id, run.environment),
             # Inherited, not re-read: the deployment must use the configuration the run
             # was queued against, whatever the module says now.
             config_revision_id=run.config_revision_id,
@@ -1728,6 +1752,7 @@ class DeliveryPlatform:
                 runtime=application.runtime,
                 environment=environment,
                 artifact_digest=source.artifact_digest,
+                previous_artifact_digest=self._digest_in_service(transaction, application_id, environment),
                 config_revision_id=config_revision_id,
                 status=(
                     DeploymentStatus.PENDING_APPROVAL
@@ -1769,11 +1794,15 @@ class DeliveryPlatform:
             self._start_cd(application, carrier, deployment)
         return self.get_deployment(deployment.id)
 
-    def _start_cd(self, application: Application, run: PipelineRun, deployment: Deployment) -> Deployment:
-        """Start the durable CD workflow for a deployment that is ready to move."""
+    def _workflow_parameters(
+        self, application: Application, run: PipelineRun, deployment: Deployment
+    ) -> dict[str, object]:
+        """What the worker needs, from the run that built the artifact being moved.
 
-        if deployment.status != DeploymentStatus.DEPLOYING:
-            return deployment
+        `run` is the run whose evidence locates the artifact: the deployment's own run
+        for a deployment, and the run that built the *target* digest for a rollback.
+        """
+
         parameters = dict(run.parameters)
         with self._transaction() as transaction:
             evidence = transaction.security_evidence(run.id) or {}
@@ -1789,6 +1818,30 @@ class DeliveryPlatform:
             # The workflow carries this back on every callback. Without it a workflow that
             # timed out and resumed cannot be told apart from the one that replaced it.
             parameters["fencing_token"] = deployment.fencing_token
+        # The workflow reports with a token minted for this deployment alone, so the
+        # worker holds nothing that could report for any other. Minting is skipped only
+        # when no signing key is configured, which local mode permits and nothing else does.
+        if workload_identity.workload_identity_configured():
+            parameters["callback_token"] = workload_identity.mint(
+                workload=workload_identity.Workload.TEMPORAL,
+                application_id=application.id,
+                deployment_id=deployment.id,
+                scopes={
+                    workload_identity.Scope.DEPLOYMENT_RESULT,
+                    workload_identity.Scope.DEPLOYMENT_READ,
+                    workload_identity.Scope.CI_EVIDENCE,
+                },
+                # A production approval can wait a day; the token must outlive the wait.
+                ttl_seconds=workload_identity.MAX_TTL_SECONDS,
+            )
+        return parameters
+
+    def _start_cd(self, application: Application, run: PipelineRun, deployment: Deployment) -> Deployment:
+        """Start the durable CD workflow for a deployment that is ready to move."""
+
+        if deployment.status != DeploymentStatus.DEPLOYING:
+            return deployment
+        parameters = self._workflow_parameters(application, run, deployment)
         request = CdStartRequest(
             application_id=application.id,
             pipeline_run_id=run.id,
@@ -1956,6 +2009,7 @@ class DeliveryPlatform:
             runtime=application.runtime,
             environment=Environment.PROD,
             artifact_digest=source.artifact_digest,
+            previous_artifact_digest=self._digest_in_service(transaction, application.id, Environment.PROD),
             status=DeploymentStatus.PENDING_APPROVAL,
             created_at=now,
             updated_at=now,
@@ -2199,8 +2253,90 @@ class DeliveryPlatform:
         return updated
 
     def rollback_deployment(self, deployment_id: UUID, target_artifact_digest: str) -> Deployment:
+        executes = getattr(self.cd_orchestrator, "mode", "none") != "none"
         with self._transaction() as transaction:
-            return self._write_rollback(transaction, deployment_id, target_artifact_digest)
+            source = None
+            if executes:
+                # The worker locates and re-verifies the target through the evidence of
+                # the run that built it. No such run means netCI has no reference for
+                # that digest, and a rollback to an artifact it cannot find is refused
+                # rather than recorded as in progress and left there.
+                current = transaction.deployment(deployment_id)
+                if current is None:
+                    raise DeliveryError("DEPLOYMENT_NOT_FOUND", "deployment not found", 404)
+                source = self._run_that_built(transaction, current.application_id, target_artifact_digest)
+                if source is None:
+                    raise DeliveryError(
+                        "ROLLBACK_ARTIFACT_UNKNOWN",
+                        f"no succeeded run of this application built {target_artifact_digest}; "
+                        "netCI cannot locate or verify it",
+                        409,
+                    )
+            deployment = self._write_rollback(transaction, deployment_id, target_artifact_digest)
+        if not executes or source is None:
+            return deployment
+        # Outside the transaction: this reaches Temporal.
+        return self._start_rollback_cd(deployment, source)
+
+    @staticmethod
+    def _run_that_built(
+        transaction: PlatformSession, application_id: UUID, artifact_digest: str
+    ) -> PipelineRun | None:
+        candidates = [
+            run
+            for run in transaction.pipeline_runs(application_id)
+            if run.artifact_digest == artifact_digest
+            and run.status in {PipelineStatus.SUCCEEDED, PipelineStatus.ROLLED_BACK}
+        ]
+        if not candidates:
+            return None
+        return max(candidates, key=lambda run: run.created_at)
+
+    def _start_rollback_cd(self, deployment: Deployment, source: PipelineRun) -> Deployment:
+        """Start RollbackWorkflow, or record that the rollback could not start.
+
+        `rollback_in_progress` with nothing running is the state this replaces; if Temporal
+        refuses the workflow the deployment is moved to `rollback_failed` with the reason,
+        which is the truth and is what pages someone.
+        """
+
+        application = self.get_application(deployment.application_id)
+        parameters = self._workflow_parameters(application, source, deployment)
+        request = CdStartRequest(
+            application_id=application.id,
+            pipeline_run_id=source.id,
+            deployment_id=deployment.id,
+            runtime=deployment.runtime.value,
+            environment=deployment.environment.value,
+            artifact_digest=deployment.artifact_digest,
+            release_name=application.name,
+            require_approval=False,
+            parameters=parameters,
+        )
+        try:
+            workflow_id = self.cd_orchestrator.start_rollback(request)
+        except CdStartError as exc:
+            self.record_rollback_result(
+                deployment.id, False, f"rollback workflow could not start: {exc}",
+                fencing_token=deployment.fencing_token,
+            )
+            raise DeliveryError("CD_START_FAILED", str(exc), 502) from exc
+        if workflow_id is None:
+            return deployment
+        unit = UnitOfWork()
+        if deployment.pipeline_run_id is not None:
+            unit.logs.append((deployment.pipeline_run_id, [f"rollback-workflow-started workflowId={workflow_id} sourceRun={source.id}"]))
+        unit.audit.append(
+            AuditRecord(
+                "deployment.rollback_workflow_started",
+                application_id=application.id,
+                pipeline_run_id=deployment.pipeline_run_id,
+                deployment_id=deployment.id,
+                payload={"workflowId": workflow_id, "sourcePipelineRunId": str(source.id)},
+            )
+        )
+        self._commit(unit)
+        return deployment
 
     def _write_rollback(
         self, transaction: PlatformSession, deployment_id: UUID, target_artifact_digest: str

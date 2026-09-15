@@ -9,7 +9,7 @@ from temporalio.worker import Worker
 
 from ..adapters.signature_verifier import build_signature_verifier
 from .activities import AnsibleRuntimeRunner, DeliveryActivities, build_deployment_reporter, build_evidence_store
-from .provision_and_deploy import ProvisionAndDeployWorkflow
+from .provision_and_deploy import ProvisionAndDeployWorkflow, RollbackWorkflow
 
 
 async def main() -> None:
@@ -27,13 +27,14 @@ async def main() -> None:
     worker = Worker(
         client,
         task_queue=os.getenv('TEMPORAL_TASK_QUEUE', 'netci-delivery'),
-        workflows=[ProvisionAndDeployWorkflow],
+        workflows=[ProvisionAndDeployWorkflow, RollbackWorkflow],
         activities=[
             activities.validate_artifact,
             activities.deploy,
             activities.health_check,
             activities.rollback,
             activities.report_deployment_result,
+            activities.report_rollback_result,
         ],
     )
     await worker.run()

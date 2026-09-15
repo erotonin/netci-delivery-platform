@@ -1,7 +1,7 @@
 services:
   hello-container:
     image: "{{ netci_image_repository }}@{{ netci_artifact_digest }}"
-    container_name: "{{ netci_app_name }}"
+    container_name: "{{ netci_container_name }}"
     restart: unless-stopped
 {% if netci_network_mode == 'host' %}
     # Host networking is used where the Docker daemon has no bridge/NAT available

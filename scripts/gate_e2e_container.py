@@ -228,6 +228,9 @@ def deploy(recorder: EvidenceRecorder, name: str, digest: str, *, step: str) -> 
         [
             str(PROJECT_ROOT / ".venv/bin/ansible-playbook"),
             "-i", str(PROJECT_ROOT / "deploy/ansible/inventories/localhost.ini"),
+            # One logical target, as netCI itself passes: the inventory lists this host
+            # once per environment under its DCIM name.
+            "--limit", "netci-local-docker-staging",
             str(PROJECT_ROOT / "deploy/ansible/playbooks/deploy-docker.yml"),
             "--extra-vars", json.dumps(extra_vars, sort_keys=True),
         ],

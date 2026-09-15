@@ -2653,6 +2653,64 @@ components:
           description: Legacy display metadata; never executed by a runtime adapter.
         kubeconfigRef: { type: string, minLength: 1, maxLength: 255, nullable: true }
         namespace: { type: string, pattern: '^[a-z0-9]([-a-z0-9]*[a-z0-9])?$', maxLength: 63, nullable: true }
+        runtimeSettings:
+          allOf:
+            - $ref: '#/components/schemas/RuntimeSettings'
+          nullable: true
+    RuntimeSettings:
+      type: object
+      additionalProperties: false
+      description: >-
+        How the checked-in playbook lays the service out on the target. These are the only
+        playbook inputs a module may configure, and they live in the reviewed configuration
+        revision, never in a pipeline trigger (build inputs reject them).
+      properties:
+        appRoot:
+          type: string
+          minLength: 2
+          maxLength: 255
+          pattern: '^/[A-Za-z0-9._/-]+$'
+          nullable: true
+          description: Absolute install path; `..` segments are refused.
+        hostPort: { type: integer, minimum: 1024, maximum: 65535, nullable: true }
+        containerPort: { type: integer, minimum: 1, maximum: 65535, nullable: true }
+        networkMode: { type: string, enum: [bridge, host], nullable: true }
+        appPort: { type: integer, minimum: 1024, maximum: 65535, nullable: true }
+        systemdScope: { type: string, enum: [system, user], nullable: true }
+        become: { type: boolean, nullable: true }
+        imagePullHost:
+          type: string
+          minLength: 1
+          maxLength: 253
+          pattern: '^[A-Za-z0-9][A-Za-z0-9.-]*(:[0-9]{1,5})?$'
+          nullable: true
+          description: >-
+            Host[:port] under which this target's container runtime reaches the registry in the
+            artifact reference. Only the locator changes; the digest is unchanged and verified on pull.
+    DeploymentTargetRevision:
+      type: object
+      additionalProperties: true
+      description: >-
+        One environment's target inside a proposed configuration revision. Fields the runtime
+        adapter reads are validated like DeploymentEnvironmentConfig; other keys are kept for
+        the risk classifier and never reach a playbook.
+      required: [environment]
+      properties:
+        environment: { $ref: '#/components/schemas/Environment' }
+        displayName: { type: string, minLength: 1, maxLength: 120 }
+        runtime: { $ref: '#/components/schemas/Runtime' }
+        servers:
+          type: array
+          maxItems: 200
+          items: { type: string, pattern: '^[A-Za-z0-9][A-Za-z0-9._-]{0,252}$' }
+        tasks: { type: array, maxItems: 100, items: { type: string } }
+        taskSettings: { $ref: '#/components/schemas/ModuleTaskSettings' }
+        kubeconfigRef: { type: string, minLength: 1, maxLength: 255, nullable: true }
+        namespace: { type: string, pattern: '^[a-z0-9]([-a-z0-9]*[a-z0-9])?$', maxLength: 63, nullable: true }
+        runtimeSettings:
+          allOf:
+            - $ref: '#/components/schemas/RuntimeSettings'
+          nullable: true
     ModuleTaskSettings:
       type: object
       additionalProperties: false
@@ -3049,7 +3107,11 @@ components:
       properties:
         changeSummary: { type: string, maxLength: 1000 }
         pipelineConfig: { type: object, additionalProperties: true }
-        deploymentConfig: { type: array, items: { type: object, additionalProperties: true } }
+        deploymentConfig:
+          type: array
+          maxItems: 3
+          items: { $ref: '#/components/schemas/DeploymentTargetRevision' }
+        expectedVersion: { type: integer, nullable: true }
     ConfigRevisionReject:
       type: object
       required: [reason]

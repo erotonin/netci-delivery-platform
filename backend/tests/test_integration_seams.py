@@ -52,6 +52,7 @@ class RecordingCdOrchestrator:
 
     def __init__(self, *, fail: bool = False) -> None:
         self.started: list[CdStartRequest] = []
+        self.rollbacks: list[CdStartRequest] = []
         self.signals: list[tuple[str, str, str]] = []
         self.fail = fail
 
@@ -60,6 +61,12 @@ class RecordingCdOrchestrator:
             raise CdStartError("temporal unreachable")
         self.started.append(request)
         return request.workflow_id
+
+    def start_rollback(self, request: CdStartRequest) -> str:
+        if self.fail:
+            raise CdStartError("temporal unreachable")
+        self.rollbacks.append(request)
+        return request.rollback_workflow_id
 
     def signal_approval(self, workflow_id: str, actor: str, comment: str) -> None:
         self.signals.append((workflow_id, actor, comment))
@@ -110,6 +117,21 @@ def record_allowed_evidence(platform: DeliveryPlatform, run) -> None:
             "signature": {"provider": "cosign", "verified": True},
         },
     )
+
+
+
+def previously_released(platform: DeliveryPlatform, application, digest: str = OTHER_DIGEST) -> None:
+    """A succeeded run that built `digest`: what makes it a real rollback target."""
+    run = start_run(platform, application, Environment.DEV, commit="0000000", key=f"prev-{digest[-6:]}")
+    platform.record_ci_result(run.id, PipelineStatus.RUNNING.value, None, [])
+    platform.record_security_evidence(run.id, {
+        "artifactDigest": digest, "artifactRef": f"registry.local/hello@{digest}",
+        "sbom": {"generatedBy": "syft", "location": "s3://e/prev"},
+        "vulnerabilityScan": {"scanner": "trivy", "status": "passed", "critical": 0, "high": 0},
+        "signature": {"provider": "cosign", "verified": True},
+    })
+    previous = platform.record_ci_result(run.id, PipelineStatus.SUCCEEDED.value, digest, ["built"]).deployment
+    platform.record_deployment_result(previous.id, DeploymentStatus.HEALTHY.value, "ok", fencing_token=platform.get_deployment(previous.id).fencing_token)
 
 
 # --------------------------------------------------------------------- CI seam
@@ -441,6 +463,7 @@ def test_a_recovery_is_only_emitted_once_for_the_same_failure():
 def test_rolling_back_a_healthy_production_release_is_recorded_as_a_change_failure():
     platform = build_platform()
     application = create_application(platform)
+    previously_released(platform, application)
     run = start_run(platform, application, Environment.PROD)
     deployment = drive_to_deployment(platform, run)
     platform.approve_deployment(deployment.id, "reviewer")
@@ -460,6 +483,7 @@ def test_rolling_back_a_healthy_production_release_is_recorded_as_a_change_failu
 def test_rolling_back_a_failed_production_deployment_records_the_restore():
     platform = build_platform()
     application = create_application(platform)
+    previously_released(platform, application)
     run = start_run(platform, application, Environment.PROD)
     deployment = drive_to_deployment(platform, run)
     platform.approve_deployment(deployment.id, "reviewer")
@@ -554,7 +578,7 @@ class StubAdapter:
     def create_or_update_job(self, application_id: UUID, template_id: str) -> str:
         return f"netci-{application_id}"
 
-    def trigger_ci_run(self, job_name: str, request: CiLaunchRequest) -> JenkinsRun:
+    def trigger_ci_run(self, job_name: str, request: CiLaunchRequest, callback_token: str = "") -> JenkinsRun:
         if self.trigger_error is not None:
             raise self.trigger_error
         self.triggered.append(job_name)
@@ -660,3 +684,88 @@ def test_events_older_than_the_reporting_window_are_excluded():
         ]
 
     assert portal.dora_projection([application.id])["sourceEventCount"] == 0
+
+
+# ---------------------------------------------------------- manual rollback seam
+
+OLDER = "sha256:" + "b" * 64
+
+
+def _two_dev_releases(platform: DeliveryPlatform, application):
+    """A healthy release of OLDER, then a healthy release of DIGEST, in dev."""
+    first = start_run(platform, application, Environment.DEV, commit="1111111", key="r1")
+    platform.record_ci_result(first.id, PipelineStatus.RUNNING.value, None, [])
+    platform.record_security_evidence(first.id, {
+        "artifactDigest": OLDER, "artifactRef": f"registry.local/hello@{OLDER}",
+        "sbom": {"generatedBy": "syft", "location": "s3://e/1"},
+        "vulnerabilityScan": {"scanner": "trivy", "status": "passed", "critical": 0, "high": 0},
+        "signature": {"provider": "cosign", "verified": True},
+    })
+    d1 = platform.record_ci_result(first.id, PipelineStatus.SUCCEEDED.value, OLDER, ["built"]).deployment
+    platform.record_deployment_result(d1.id, DeploymentStatus.HEALTHY.value, "ok", fencing_token=platform.get_deployment(d1.id).fencing_token)
+    second = start_run(platform, application, Environment.DEV, commit="2222222", key="r2")
+    platform.record_ci_result(second.id, PipelineStatus.RUNNING.value, None, [])
+    record_allowed_evidence(platform, second)
+    d2 = platform.record_ci_result(second.id, PipelineStatus.SUCCEEDED.value, DIGEST, ["built"]).deployment
+    platform.record_deployment_result(d2.id, DeploymentStatus.HEALTHY.value, "ok", fencing_token=platform.get_deployment(d2.id).fencing_token)
+    return first, second, platform.get_deployment(d2.id)
+
+
+def test_a_manual_rollback_starts_a_rollback_workflow_for_the_run_that_built_the_target():
+    """`rollback_in_progress` with nothing running was what the live stack produced:
+    the state was written and no worker ever executed it. The workflow must start, and
+    it must be pointed at the evidence of the run that built the *target* digest."""
+    orchestrator = RecordingCdOrchestrator()
+    platform = build_platform(orchestrator=orchestrator)
+    application = create_application(platform)
+    first, second, deployment = _two_dev_releases(platform, application)
+
+    rolled = platform.rollback_deployment(deployment.id, OLDER)
+
+    assert rolled.status == DeploymentStatus.ROLLBACK_IN_PROGRESS
+    assert rolled.artifact_digest == OLDER
+    assert len(orchestrator.rollbacks) == 1
+    request = orchestrator.rollbacks[0]
+    assert request.deployment_id == deployment.id
+    assert request.pipeline_run_id == first.id, "evidence comes from the run that built OLDER"
+    assert request.artifact_digest == OLDER
+    assert request.parameters["image_repository"] == "registry.local/hello"
+    assert request.parameters["fencing_token"] == rolled.fencing_token
+    assert request.rollback_workflow_id == f"netci-rollback-{deployment.id}-{rolled.fencing_token}"
+
+
+def test_a_rollback_to_a_digest_nothing_built_is_refused_not_left_in_progress():
+    orchestrator = RecordingCdOrchestrator()
+    platform = build_platform(orchestrator=orchestrator)
+    application = create_application(platform)
+    _, _, deployment = _two_dev_releases(platform, application)
+
+    with pytest.raises(DeliveryError) as exc:
+        platform.rollback_deployment(deployment.id, "sha256:" + "f" * 64)
+    assert exc.value.code == "ROLLBACK_ARTIFACT_UNKNOWN"
+    assert platform.get_deployment(deployment.id).status == DeploymentStatus.HEALTHY
+    assert orchestrator.rollbacks == []
+
+
+def test_a_rollback_whose_workflow_cannot_start_is_recorded_as_rollback_failed():
+    orchestrator = RecordingCdOrchestrator()
+    platform = build_platform(orchestrator=orchestrator)
+    application = create_application(platform)
+    _, _, deployment = _two_dev_releases(platform, application)
+    orchestrator.fail = True
+
+    with pytest.raises(DeliveryError) as exc:
+        platform.rollback_deployment(deployment.id, OLDER)
+    assert exc.value.code == "CD_START_FAILED"
+    after = platform.get_deployment(deployment.id)
+    assert after.status == DeploymentStatus.ROLLBACK_FAILED, "not 'in progress' with nothing running"
+
+
+def test_a_new_release_records_the_digest_it_replaces():
+    """`previousArtifactDigest` was only ever written by a rollback; a second release
+    carried null, so "roll back to what was running" had to be reconstructed by hand."""
+    platform = build_platform()
+    application = create_application(platform)
+    _, _, second = _two_dev_releases(platform, application)
+    assert second.previous_artifact_digest == OLDER
+    assert second.artifact_digest == DIGEST
