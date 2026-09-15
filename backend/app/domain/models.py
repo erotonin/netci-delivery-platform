@@ -350,6 +350,26 @@ class ServerMaintenanceState:
 
 
 @dataclass(frozen=True)
+class StageDefinition:
+    """One entry of the stage catalog: a built-in the shared pipeline implements, or a
+    custom stage that runs a repository script after a built-in one."""
+
+    id: str
+    name: str
+    category: str
+    kind: str  # builtin | custom
+    position: int
+    description: str = ""
+    script: str | None = None
+    after_stage: str | None = None
+    required: bool = False
+    enabled_by_default: bool = True
+    created_by: str = "netci"
+    created_at: datetime = field(default_factory=utc_now)
+    updated_at: datetime = field(default_factory=utc_now)
+
+
+@dataclass(frozen=True)
 class ServerTelemetry:
     """The latest observation an edge agent reported for one server."""
 

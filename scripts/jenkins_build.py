@@ -112,7 +112,14 @@ def main() -> int:
     # Kept short on purpose: the comparison is between two agents, not two toolchains,
     # and the later stages add minutes of registry and scanner time to both sides alike.
     parser.add_argument("--stages", default=os.getenv("NETCI_BENCHMARK_STAGES", "unit-test,build"))
+    # Per-project isolation (ADR-030): create the pod in this namespace and mount this
+    # claim. The pod is then watched there rather than in the cloud's default namespace.
+    parser.add_argument("--isolation-namespace", default="")
+    parser.add_argument("--cache-claim", default="")
+    parser.add_argument("--service-account", default="jenkins-agent")
     arguments = parser.parse_args()
+    if arguments.isolation_namespace:
+        arguments.namespace = arguments.isolation_namespace
 
     if not arguments.url:
         print("set --url or JENKINS_A_URL", file=sys.stderr)
@@ -127,7 +134,10 @@ def main() -> int:
     queue_id = jenkins.trigger(
         arguments.job,
         {
-            "NETCI_AGENT_LABEL": arguments.label,
+            "NETCI_AGENT_LABEL": "" if arguments.label == "netci-ephemeral" and arguments.isolation_namespace else arguments.label,
+            "NETCI_BUILD_NAMESPACE": arguments.isolation_namespace,
+            "NETCI_BUILD_SERVICE_ACCOUNT": arguments.service_account if arguments.isolation_namespace else "",
+            "NETCI_BUILD_CACHE_CLAIM": arguments.cache_claim if arguments.isolation_namespace else "",
             "GIT_URL": arguments.git_url,
             "GIT_BRANCH": arguments.branch,
             "COMMIT_SHA": arguments.branch,

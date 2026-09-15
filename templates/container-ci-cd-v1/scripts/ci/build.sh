@@ -13,7 +13,7 @@ fi
 buildah bud \
   --isolation "${BUILDAH_ISOLATION:-chroot}" \
   --tls-verify="${REGISTRY_TLS_VERIFY}" \
-  --layers=false \
+  --layers="${NETCI_BUILDAH_LAYERS:-false}" \
   "${build_args[@]}" \
   --tag "${PUSH_IMAGE_REF}" \
   "${NETCI_APP_DIR}"

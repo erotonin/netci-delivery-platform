@@ -27,7 +27,10 @@ REGISTRY_HOST_PORT="${NETCI_LAB_REGISTRY_PORT:-55000}"
 ADMIN_PASSWORD="${JENKINS_ADMIN_PASSWORD:-change-me-local-only}"
 NETCI_PIPELINE_API_KEY="${NETCI_PIPELINE_API_KEY:-netci-local-pipeline-key}"
 NETCI_API_PORT="${NETCI_LAB_API_PORT:-8100}"
-GIT_SERVER_IMAGE="${NETCI_GIT_SERVER_IMAGE:-python:3.12-alpine}"
+# The toolbox has git and python3: enough for scripts/lab/git_smart_http.py, which
+# serves the repositories over the smart protocol (see that file for why dumb HTTP
+# was not acceptable once build time was being measured).
+GIT_SERVER_IMAGE="${NETCI_GIT_SERVER_IMAGE:-${TOOLBOX_IMAGE:-netci/ci-toolbox:0.4.0}}"
 GOLDEN_BASE_IMAGE="${NETCI_GOLDEN_BASE_IMAGE:-netci/python-base:3.12-alpine}"
 TRIVY_DB_IMAGE="${NETCI_TRIVY_DB_IMAGE:-aquasec/trivy-db:2}"
 
@@ -37,16 +40,14 @@ GIT_SERVER_IP="172.17.0.52"
 declare -A SHARED_AGENT_IP=([a]="172.17.0.60" [b]="172.17.0.61")
 # The shared agent exists only for the benchmark baseline; the acceptance topology
 # deliberately has no agent that outlives a build.
-WITH_SHARED_AGENT="${NETCI_WITH_SHARED_AGENT:-1}"
 
 log() { printf '  %s\n' "$*"; }
 
 casc_files() {
   local letter="$1"
   local files="/var/jenkins_home/casc/base.yaml,/var/jenkins_home/casc/controller-${letter}.yaml,/var/jenkins_home/casc/ephemeral-agent.yaml"
-  if [[ "${WITH_SHARED_AGENT}" == "1" ]]; then
-    files="${files},/var/jenkins_home/casc/shared-agent.yaml"
-  fi
+  # The benchmark baseline is now a reusable pod template inside ephemeral-agent.yaml
+  # (`netci-shared`); no separate long-lived JNLP container is needed.
   printf '%s' "${files}"
 }
 
@@ -105,8 +106,9 @@ start_git_server() {
   #
   # Served over HTTP rather than git://, because netCI validates repositoryUrl as an
   # http(s) URL -- the right contract for a portal, and not something to relax so a lab
-  # can use a simpler protocol. A bare repo plus `git update-server-info` is enough for
-  # a read-only clone.
+  # can use a simpler protocol. Smart HTTP (git http-backend), not the dumb protocol:
+  # a dumb fetch of an up-to-date repository cost ~6 s here and would have been read as
+  # a cost of the build agent in the benchmark.
   #
   # The snapshot is taken from the *working tree*, not from HEAD: a gate that builds the
   # last commit would silently test code you are no longer running. Nothing in the
@@ -149,8 +151,8 @@ start_git_server() {
   chmod -R a+rX "${ROOT}/.netci-gate/git"
 
   docker run -d --name netci-git-server --network "${NETWORK}" --ip "${GIT_SERVER_IP}" \
-    -v "${ROOT}/.netci-gate/git:/srv/git:ro" -w /srv/git \
-    --entrypoint python3 "${GIT_SERVER_IMAGE}" -m http.server 80 --bind 0.0.0.0 >/dev/null
+    -v "${ROOT}/.netci-gate/git:/srv/git:ro" -v "${ROOT}/scripts/lab/git_smart_http.py:/srv/git_smart_http.py:ro" \
+    --user 0 --entrypoint python3 "${GIT_SERVER_IMAGE}" /srv/git_smart_http.py --root /srv/git --port 80 >/dev/null
   for _ in $(seq 1 30); do
     if curl -sf "http://${GIT_SERVER_IP}/netci.git/info/refs" >/dev/null 2>&1; then
       log "git served at http://${GIT_SERVER_IP}/netci.git ($(git -C "${mirror}" rev-parse --short HEAD))"
@@ -210,33 +212,6 @@ start_controller() {
   log "started ${name} at http://${ip}:8080"
 }
 
-start_shared_agent() {
-  # A long-lived agent that keeps its workspace between builds. It is the baseline the
-  # benchmark measures the ephemeral pod against, and nothing else should use it.
-  local letter="$1" name="netci-shared-agent-${1}" controller="${CONTROLLER_IP[$1]}"
-  local secret
-  secret="$(curl -sf -u "admin:${ADMIN_PASSWORD}" \
-    "http://${controller}:8080/computer/netci-shared/jenkins-agent.jnlp" \
-    | sed -n 's:.*<argument>\([a-f0-9]\{64\}\)</argument>.*:\1:p' | head -n 1)"
-  if [[ -z "${secret}" ]]; then
-    log "no shared-agent secret from jenkins-${letter}; skipping the baseline agent"
-    return 0
-  fi
-  docker rm -f -v "${name}" >/dev/null 2>&1 || true
-  # `seccomp=unconfined` is what a long-lived agent costs: Docker's default profile blocks
-  # clone(CLONE_NEWUSER), so rootless buildah cannot run without it. The ephemeral
-  # Kubernetes agent needs no such grant -- the kubelet's RuntimeDefault profile already
-  # permits it, and the pod is destroyed after the build either way. That asymmetry is one
-  # of the things `scripts/gate_benchmark.py` is measuring, so it is deliberate here.
-  docker run -d --name "${name}" --network "${NETWORK}" --ip "${SHARED_AGENT_IP[$1]}" \
-    --security-opt seccomp=unconfined --security-opt apparmor=unconfined \
-    --entrypoint java "${TOOLBOX_IMAGE}" \
-    -jar /usr/share/jenkins/agent.jar \
-    -url "http://${controller}:8080/" -secret "${secret}" -name netci-shared \
-    -workDir /home/jenkins/agent >/dev/null
-  log "shared agent attached to jenkins-${letter}"
-}
-
 wait_for_controller() {
   local ip="$1" name="$2"
   for _ in $(seq 1 120); do
@@ -263,7 +238,6 @@ up() {
   done
   for letter in a b; do
     wait_for_controller "${CONTROLLER_IP[$letter]}" "jenkins-${letter}"
-    [[ "${WITH_SHARED_AGENT}" == "1" ]] && start_shared_agent "${letter}"
   done
   summary
 }

@@ -6,7 +6,18 @@ vi.mock('./api/netciClient', async (importOriginal) => {
   const original = await importOriginal<typeof import('./api/netciClient')>()
   return {
     ...original,
-    getStageCatalog: vi.fn().mockResolvedValue({ stages: [{ id: 'verify', name: 'Verify', category: 'verify', enabledByDefault: false }], templates: [] }),
+    getStageCatalog: vi.fn().mockResolvedValue({
+      stages: [
+        { id: 'checkout', name: 'Checkout source', category: 'source', kind: 'builtin', required: true, enabledByDefault: true, position: 10 },
+        { id: 'unit-test', name: 'Unit tests', category: 'test', kind: 'builtin', required: false, enabledByDefault: true, position: 20 },
+        { id: 'lint', name: 'Lint', category: 'custom', kind: 'custom', script: 'ci/lint.sh', afterStage: 'unit-test', required: false, enabledByDefault: false, position: 25 },
+        { id: 'build', name: 'Build artifact/image', category: 'build', kind: 'builtin', required: true, enabledByDefault: true, position: 30 },
+      ],
+      templates: [{ id: 'container-ci-cd-v1', name: 'container-ci-cd-v1', runtime: 'docker', stageIds: ['checkout', 'unit-test', 'build'] }],
+    }),
+    getModuleStages: vi.fn().mockResolvedValue({ moduleId: 'backend-api', applicationId: 'a1', stages: ['checkout', 'unit-test', 'build'], pipelineTemplate: 'container-ci-cd-v1' }),
+    setModuleStages: vi.fn().mockImplementation(async (_id: string, stages: string[]) => ({ moduleId: 'backend-api', applicationId: 'a1', stages })),
+    whoami: vi.fn().mockResolvedValue({ principal: { subject: 'dana', displayName: 'Dana', roles: ['developer'], teams: [], method: 'token' }, authMode: 'token', separationOfDuties: true }),
     getModule: vi.fn().mockResolvedValue({ id: 'backend-api', name: 'Backend API', type: 'Backend', description: 'API', runtime: 'docker', versions: [], pipelineRuns: [], pipelineConfig: {} }),
     updateModule: vi.fn().mockResolvedValue({ id: 'backend-api' }),
     listAuditEvents: vi.fn().mockResolvedValue([]),
@@ -16,7 +27,7 @@ vi.mock('./api/netciClient', async (importOriginal) => {
 
 import { PortalFeedbackProvider } from './PortalFeedback'
 import { ModuleSettings } from './ModuleSettings'
-import { deleteModule, updateModule } from './api/netciClient'
+import { deleteModule, setModuleStages, updateModule } from './api/netciClient'
 
 describe('ModuleSettings', () => {
   it('persists General edits through the API', async () => {
@@ -55,5 +66,23 @@ describe('ModuleSettings', () => {
 
     expect(screen.queryByRole('button', { name: /Team & Access/i })).toBeNull()
     expect(screen.queryByRole('button', { name: /Pipeline Access/i })).toBeNull()
+  })
+
+  it('lets a module choose catalog stages, keeps required ones locked, and saves the list', async () => {
+    const user = userEvent.setup()
+    render(<PortalFeedbackProvider><ModuleSettings systemId="netChat" moduleId="backend-api" onClose={vi.fn()} /></PortalFeedbackProvider>)
+    await user.click(await screen.findByRole('button', { name: /Pipeline stages/i }))
+
+    const checkout = await screen.findByRole('checkbox', { name: 'Checkout source' })
+    expect((checkout as HTMLInputElement).disabled).toBe(true)
+    expect((checkout as HTMLInputElement).checked).toBe(true)
+    // Custom stage anchored after unit-test: selectable because unit-test is on.
+    await user.click(screen.getByRole('checkbox', { name: 'Lint' }))
+    expect(screen.getByText(/checkout → unit-test → lint → build/)).toBeTruthy()
+    // No admin form for a developer.
+    expect(screen.queryByRole('button', { name: /Register stage/i })).toBeNull()
+
+    await user.click(screen.getByRole('button', { name: /Save stages/i }))
+    expect(setModuleStages).toHaveBeenCalledWith('backend-api', ['checkout', 'unit-test', 'build', 'lint'])
   })
 })

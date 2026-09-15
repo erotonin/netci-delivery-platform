@@ -19,6 +19,9 @@ Prerequisites, all via environment:
   NETCI_ACCEPTANCE_RETIRED_SERVER   a DCIM device in a blocking state (netci-retired-01)
   NETCI_ACCEPTANCE_WORKER_RESTART   optional command that stops and restarts the Temporal
                                     worker; without it the restart/resume gate is BLOCKED
+  NETCI_ACCEPTANCE_CONTROLLER_CONTROL  optional command `<cmd> stop|start <controller-id>`
+                                    for the Jenkins failover drill; BLOCKED without it
+  NETCI_ACCEPTANCE_FAILOVER_VICTIM  controller to stop (default jenkins-a)
   NETCI_COSIGN_EXECUTABLE / NETCI_COSIGN_PUBLIC_KEY_FILE   for the independent verify
   DATABASE_URL                      the live database, for the persistence and backup gates
 
@@ -552,7 +555,72 @@ def gate_backup(context):
     return "backup drill: dump, restore into a scratch database, row counts and checksums compared, failure injection detected", {"exitCode": exit_code}
 
 
-GATES = [gate_persistence, gate_oidc, gate_dcim, gate_jenkins, gate_cosign, gate_temporal, gate_targets, gate_rollback, gate_backup]
+@gate("multi_controller_failover_mttr")
+def gate_failover(context):
+    """One Jenkins controller is stopped; netCI must notice, route the next build to
+    the survivor, finish it, and take the controller back when it returns. MTTR is
+    measured from the stop to the build's success, detection from the stop to /readyz
+    reporting one healthy controller."""
+
+    api: Api = context["api"]
+    token = context["tokens"]["admin"]
+    control = os.getenv("NETCI_ACCEPTANCE_CONTROLLER_CONTROL", "").strip()
+    if not control:
+        raise Blocked("NETCI_ACCEPTANCE_CONTROLLER_CONTROL is not set: the harness cannot stop and start a controller")
+    victim = os.getenv("NETCI_ACCEPTANCE_FAILOVER_VICTIM", "jenkins-a").strip()
+    _, ready = api.call("GET", "/readyz")
+    ci = (ready or {}).get("ci", {})
+    if ci.get("totalControllers", 0) < 2:
+        raise Blocked(f"failover needs two controllers; readiness reports {ci.get('totalControllers')}")
+    if ci.get("healthyControllers") != ci.get("totalControllers"):
+        raise RuntimeError(f"not every controller is healthy before the drill: {ci}")
+    total = int(ci["totalControllers"])
+
+    stopped_at = time.monotonic()
+    subprocess.run([*shlex.split(control), "stop", victim], check=True, timeout=120)
+    try:
+        def one_down():
+            _, now = api.call("GET", "/readyz")
+            current = (now or {}).get("ci", {})
+            return current if current.get("healthyControllers") == total - 1 else None
+        wait_until("readiness to report the controller down", one_down, timeout=180, interval=3)
+        detection_seconds = round(time.monotonic() - stopped_at, 1)
+
+        run = start_module_run(api, token, context["module"], "dev", context["commit"], f"acceptance-failover-{int(time.time())}")
+        def routed():
+            _, current = api.call("GET", f"/pipeline-runs/{run['id']}", token)
+            if current.get("status") in {"failed", "cancelled"}:
+                raise RuntimeError(f"the rerouted build ended {current['status']}")
+            return current if current.get("jenkinsRunId") else None
+        placed = wait_until("netCI to place the build", routed, timeout=120)
+        controller = str(placed["jenkinsRunId"]).split(":", 1)[0]
+        if controller == victim:
+            raise RuntimeError(f"the build was routed to the stopped controller {victim}")
+        def built():
+            _, current = api.call("GET", f"/pipeline-runs/{run['id']}", token)
+            if current.get("status") in {"failed", "cancelled"}:
+                raise RuntimeError(f"the rerouted build ended {current['status']}")
+            return current if current.get("artifactDigest") else None
+        wait_until("the rerouted build to publish a digest", built, timeout=900)
+        mttr_seconds = round(time.monotonic() - stopped_at, 1)
+    finally:
+        subprocess.run([*shlex.split(control), "start", victim], check=True, timeout=600)
+    def all_back():
+        _, now = api.call("GET", "/readyz")
+        current = (now or {}).get("ci", {})
+        return current if current.get("healthyControllers") == total else None
+    wait_until("the controller to rejoin", all_back, timeout=600, interval=5)
+    rejoin_seconds = round(time.monotonic() - stopped_at, 1)
+    # The deployment that follows the build is not this gate's subject; let it finish
+    # so the next gate starts from a settled state.
+    wait_until("the failover run's deployment to settle", lambda: (d := deployment_for_run(api, token, run["applicationId"], run["id"])) and d["status"] in {"healthy", "failed", "rolled_back"} and d, timeout=600)
+    return f"{victim} stopped; detected in {detection_seconds}s; build routed to {controller} and built (MTTR {mttr_seconds}s); {victim} rejoined at {rejoin_seconds}s", {
+        "victim": victim, "survivor": controller, "detectionSeconds": detection_seconds,
+        "mttrSeconds": mttr_seconds, "rejoinSeconds": rejoin_seconds, "pipelineRunId": run["id"],
+    }
+
+
+GATES = [gate_persistence, gate_oidc, gate_dcim, gate_jenkins, gate_cosign, gate_temporal, gate_targets, gate_rollback, gate_backup, gate_failover]
 
 
 # --------------------------------------------------------------------- main

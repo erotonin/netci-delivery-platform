@@ -26,7 +26,7 @@ jenkins:
                 memory: false
             podRetention: never
             idleMinutes: 0
-            yaml: |
+            yaml: &netciBuildPod |
               apiVersion: v1
               kind: Pod
               metadata:
@@ -89,3 +89,22 @@ jenkins:
                       limits:
                         cpu: "2"
                         memory: "4Gi"
+          # The benchmark's baseline (scripts/gate_benchmark.py): the same pod, kept
+          # alive and reused by consecutive builds, so its workspace and caches carry
+          # over exactly the way a long-lived agent's do. Nothing netCI dispatches
+          # selects it -- a build that can read the previous build's workspace is
+          # what the ephemeral design exists to prevent (ADR-007) -- but a delta needs
+          # something on the other side of it.
+          - name: netci-shared
+            label: netci-shared
+            namespace: ${JENKINS_AGENT_NAMESPACE:-netci-build}
+            serviceAccount: ${JENKINS_AGENT_SERVICE_ACCOUNT:-jenkins-agent}
+            nodeUsageMode: EXCLUSIVE
+            idleMinutes: 120
+            podRetention: always
+            workspaceVolume:
+              emptyDirWorkspaceVolume:
+                memory: false
+            # The same pod spec as the ephemeral template (a YAML anchor, not
+            # inheritance: nested `inheritFrom` does not carry the pod YAML through).
+            yaml: *netciBuildPod

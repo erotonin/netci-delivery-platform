@@ -1,6 +1,6 @@
 export type PageId = 'dashboard' | 'systems' | 'servers' | 'system' | 'requests' | 'module' | 'new-module' | 'catalog' | 'architecture'
 export type ModuleTab = 'overview' | 'pipeline' | 'version' | 'config' | 'dora'
-export type SettingsTab = 'general' | 'activity'
+export type SettingsTab = 'general' | 'pipeline' | 'activity'
 
 export type PortalModuleView = {
   id: string

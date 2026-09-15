@@ -41,6 +41,7 @@ from ..domain.models import (
     ServerHealthRecord,
     ServerMaintenanceState,
     ServerTelemetry,
+    StageDefinition,
     WaiverStatus,
 )
 from ..persistence import (
@@ -163,6 +164,10 @@ RESOURCE_REQUEST_COLUMNS = (
 SECURITY_WAIVER_COLUMNS = (
     "id, cve_id, module_id, reason, approved_by, status, expires_at, created_at"
 )
+STAGE_CATALOG_COLUMNS = (
+    "id, name, category, description, kind, script, after_stage, required, enabled_by_default,"
+    " position, created_by, created_at, updated_at"
+)
 SERVER_MAINTENANCE_COLUMNS = (
     "server_name, in_maintenance, reason, updated_by, updated_at"
 )
@@ -246,6 +251,16 @@ def _security_waiver(row: dict[str, Any]) -> SecurityWaiver:
         status=WaiverStatus(row["status"]),
         expires_at=row["expires_at"],
         created_at=row["created_at"],
+    )
+
+
+def _stage_definition(row: dict[str, Any]) -> StageDefinition:
+    return StageDefinition(
+        id=row["id"], name=row["name"], category=row["category"], description=row.get("description") or "",
+        kind=row["kind"], script=row.get("script"), after_stage=row.get("after_stage"),
+        required=bool(row["required"]), enabled_by_default=bool(row["enabled_by_default"]),
+        position=int(row["position"]), created_by=row.get("created_by") or "netci",
+        created_at=row["created_at"], updated_at=row["updated_at"],
     )
 
 
@@ -2275,6 +2290,35 @@ class PostgresSession:
             """,
             (telemetry.server_name, telemetry.cpu_percent, telemetry.mem_percent, telemetry.disk_percent, telemetry.observed_at),
         )
+
+    def stage_catalog(self) -> tuple[StageDefinition, ...]:
+        self._cursor.execute(f"SELECT {STAGE_CATALOG_COLUMNS} FROM stage_catalog ORDER BY position ASC, id ASC")
+        return tuple(_stage_definition(row) for row in self._cursor.fetchall())
+
+    def stage_definition(self, stage_id: str) -> StageDefinition | None:
+        self._cursor.execute(f"SELECT {STAGE_CATALOG_COLUMNS} FROM stage_catalog WHERE id = %s", (stage_id,))
+        row = self._cursor.fetchone()
+        return _stage_definition(row) if row else None
+
+    def upsert_stage_definition(self, stage: StageDefinition) -> None:
+        self._cursor.execute(
+            """
+            INSERT INTO stage_catalog (id, name, category, description, kind, script, after_stage,
+                                       required, enabled_by_default, position, created_by, created_at, updated_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (id) DO UPDATE SET
+                name = EXCLUDED.name, category = EXCLUDED.category, description = EXCLUDED.description,
+                script = EXCLUDED.script, after_stage = EXCLUDED.after_stage, required = EXCLUDED.required,
+                enabled_by_default = EXCLUDED.enabled_by_default, position = EXCLUDED.position,
+                updated_at = EXCLUDED.updated_at
+            """,
+            (stage.id, stage.name, stage.category, stage.description, stage.kind, stage.script, stage.after_stage,
+             stage.required, stage.enabled_by_default, stage.position, stage.created_by, stage.created_at, stage.updated_at),
+        )
+
+    def delete_stage_definition(self, stage_id: str) -> bool:
+        self._cursor.execute("DELETE FROM stage_catalog WHERE id = %s AND kind = 'custom'", (stage_id,))
+        return self._cursor.rowcount > 0
 
     def get_server_telemetry(self, server_name: str) -> ServerTelemetry | None:
         self._cursor.execute(

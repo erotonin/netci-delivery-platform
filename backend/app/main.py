@@ -1441,6 +1441,71 @@ def stage_catalog(_: Principal = ReadAccess) -> dict[str, list[dict[str, object]
     return platform.stage_catalog()
 
 
+class CustomStageCreate(StrictBody):
+    id: str = Field(pattern=r"^[a-z][a-z0-9-]{1,62}$")
+    name: str = Field(min_length=1, max_length=120)
+    description: str = Field(default="", max_length=1000)
+    category: Literal["source", "test", "build", "security", "publish", "deploy", "verify", "custom"] = "custom"
+    # A path inside the application's repository, run with bash in the builder after
+    # `afterStage`. Never a command: the portal is not a place to type shell.
+    script: str = Field(min_length=4, max_length=255)
+    afterStage: str = Field(min_length=1, max_length=64)
+
+
+@app.post("/stage-catalog", status_code=status.HTTP_201_CREATED)
+def register_custom_stage(payload: CustomStageCreate, principal: Principal = AdminAccess) -> dict[str, object]:
+    """Register a custom stage. Platform-admin only: a stage runs code on every build
+    agent of every module that selects it."""
+
+    return platform.register_custom_stage(
+        actor=principal.subject, stage_id=payload.id, name=payload.name, description=payload.description,
+        category=payload.category, script=payload.script, after_stage=payload.afterStage,
+    )
+
+
+@app.delete("/stage-catalog/{stageId}", status_code=status.HTTP_204_NO_CONTENT)
+def remove_custom_stage(stageId: str, principal: Principal = AdminAccess) -> Response:
+    platform.remove_custom_stage(stageId, actor=principal.subject)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+class ModuleStagesUpdate(StrictBody):
+    stages: list[str] = Field(min_length=1, max_length=64)
+
+
+@app.get("/modules/{moduleId}/stages")
+def get_module_stages(moduleId: str, principal: Principal = ReadAccess) -> dict[str, object]:
+    try:
+        module = _require_module_access(moduleId, principal)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail={"code": "MODULE_NOT_FOUND", "message": str(exc)}) from exc
+    application_id = module.get("applicationId")
+    if not application_id:
+        raise HTTPException(status_code=409, detail={"code": "MODULE_NOT_PROVISIONED", "message": "module has no delivery application"})
+    application = platform.get_application(UUID(str(application_id)))
+    return {"moduleId": moduleId, "applicationId": str(application.id), "stages": list(application.stages),
+            "pipelineTemplate": application.pipeline_template}
+
+
+@app.put("/modules/{moduleId}/stages")
+def set_module_stages(moduleId: str, payload: ModuleStagesUpdate, principal: Principal = DeveloperAccess) -> dict[str, object]:
+    """Choose which catalog stages this module's pipeline runs.
+
+    Built-ins keep the template's order and the required ones stay; custom stages land
+    after their anchor. Takes effect on the next run.
+    """
+
+    try:
+        module = _require_module_access(moduleId, principal)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail={"code": "MODULE_NOT_FOUND", "message": str(exc)}) from exc
+    application_id = module.get("applicationId")
+    if not application_id:
+        raise HTTPException(status_code=409, detail={"code": "MODULE_NOT_PROVISIONED", "message": "module has no delivery application"})
+    application = platform.set_application_stages(UUID(str(application_id)), payload.stages, actor=principal.subject)
+    return {"moduleId": moduleId, "applicationId": str(application.id), "stages": list(application.stages)}
+
+
 @app.get("/portal/dashboard")
 def portal_dashboard(principal: Principal = ReadAccess) -> dict[str, object]:
     return portal.dashboard(_visible_application_ids(principal))
@@ -3042,6 +3107,21 @@ def cancel_deployment(
     reason = payload.reason if payload else ""
     updated = platform.cancel_deployment(deploymentId, actor=principal.subject, reason=reason)
     return deployment_json(updated)
+
+
+@app.get("/api/v1/ci/controllers/drift")
+def ci_controller_drift(_: Principal = AdminAccess) -> dict[str, object]:
+    """Whether the Jenkins controllers run the same configuration.
+
+    Multi-controller operation assumes every controller was rebuilt from the same
+    git-managed JCasC; this compares what each one actually loaded (normalized export,
+    plugin set, non-netCI jobs) so a controller someone changed by hand is visible.
+    """
+
+    probe = getattr(platform.ci_launcher, "controller_drift", None)
+    if probe is None:
+        return {"mode": getattr(platform.ci_launcher, "mode", "none"), "controllers": {}, "drift": False, "differing": [], "unreachable": {}}
+    return {"mode": "jenkins", **probe()}
 
 
 @app.post("/reconciler/reconcile", status_code=status.HTTP_200_OK)

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
-import { Activity, ArrowLeft, Check, History, Settings as Cog } from 'lucide-react'
-import { deleteModule, getModule, listAuditEvents, updateModule, type AuditEvent } from './api/netciClient'
+import { Activity, ArrowLeft, Check, History, ListChecks, Settings as Cog } from 'lucide-react'
+import { deleteModule, getModule, getModuleStages, getStageCatalog, listAuditEvents, registerCustomStage, removeCustomStage, setModuleStages, updateModule, whoami, type AuditEvent, type CustomStageCreate, type StageDefinition } from './api/netciClient'
 import { usePortalFeedback } from './PortalFeedback'
 import { Modal } from './PortalShell'
 import type { SettingsTab } from './portalTypes'
@@ -58,6 +58,137 @@ function GeneralSettings({ module, moduleId, onDeleted }: { module: SettingsModu
   </>
 }
 
+/**
+ * The module's pipeline, chosen from the stage catalog. Built-in stages keep the
+ * template's order and the required ones cannot be unticked; custom stages (registered
+ * by a platform administrator, each a script in the repository) slot in after their
+ * anchor. Nothing here writes a Jenkinsfile: netCI hands the list to the shared pipeline.
+ */
+function PipelineStagesSettings({ moduleId }: { moduleId: string }) {
+  const { notify } = usePortalFeedback()
+  const [catalog, setCatalog] = useState<StageDefinition[]>([])
+  const [templateStages, setTemplateStages] = useState<string[]>([])
+  const [chosen, setChosen] = useState<string[]>([])
+  const [saved, setSaved] = useState<string[]>([])
+  const [isAdmin, setIsAdmin] = useState(false)
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+  const [draft, setDraft] = useState<CustomStageCreate>({ id: '', name: '', script: '', afterStage: 'unit-test', description: '' })
+
+  const load = () => {
+    setLoading(true)
+    Promise.all([getStageCatalog(), getModuleStages(moduleId), whoami().catch(() => null)])
+      .then(([cat, mine, me]) => {
+        setCatalog(cat.stages)
+        const template = cat.templates.find((t) => t.id === mine.pipelineTemplate)
+        setTemplateStages(template ? template.stageIds : cat.stages.filter((s) => s.kind === 'builtin').map((s) => s.id))
+        setChosen(mine.stages)
+        setSaved(mine.stages)
+        setIsAdmin(Boolean(me?.principal.roles.includes('platform-admin')))
+      })
+      .catch((error) => notify(error instanceof Error ? error.message : 'Could not load the stage catalog', 'error'))
+      .finally(() => setLoading(false))
+  }
+  useEffect(load, [moduleId]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const byId = Object.fromEntries(catalog.map((s) => [s.id, s]))
+  const builtins = templateStages.map((id) => byId[id]).filter(Boolean)
+  const customs = catalog.filter((s) => s.kind === 'custom')
+  const dirty = JSON.stringify(chosen) !== JSON.stringify(saved)
+
+  const toggle = (stage: StageDefinition) => {
+    if (stage.required) return
+    setChosen((current) => {
+      if (current.includes(stage.id)) {
+        // Dropping an anchor drops the custom stages hanging off it, visibly, rather
+        // than letting the server refuse the save with STAGE_ANCHOR_DISABLED.
+        return current.filter((id) => id !== stage.id && byId[id]?.afterStage !== stage.id)
+      }
+      return [...current, stage.id]
+    })
+  }
+
+  const save = async () => {
+    setSaving(true)
+    try {
+      const result = await setModuleStages(moduleId, chosen)
+      setChosen(result.stages)
+      setSaved(result.stages)
+      notify('Pipeline stages saved; the next run uses them')
+    } catch (error) {
+      notify(error instanceof Error ? error.message : 'Could not save the stages', 'error')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const register = async () => {
+    try {
+      await registerCustomStage({ ...draft, description: draft.description || undefined })
+      notify(`Stage ${draft.id} registered`)
+      setDraft({ id: '', name: '', script: '', afterStage: 'unit-test', description: '' })
+      load()
+    } catch (error) {
+      notify(error instanceof Error ? error.message : 'Could not register the stage', 'error')
+    }
+  }
+
+  const remove = async (stage: StageDefinition) => {
+    try {
+      await removeCustomStage(stage.id)
+      notify(`Stage ${stage.id} removed from the catalog`)
+      load()
+    } catch (error) {
+      notify(error instanceof Error ? error.message : 'Could not remove the stage', 'error')
+    }
+  }
+
+  if (loading) return <section className="panel"><p>Loading the stage catalog…</p></section>
+
+  // Preview the order the server will produce: template order, custom stages after their anchor.
+  const preview = templateStages.flatMap((id) => chosen.includes(id) ? [id, ...chosen.filter((c) => byId[c]?.afterStage === id)] : [])
+
+  return <>
+    <section className="panel" id="pipeline-stages">
+      <div className="section-heading"><div><h3>Pipeline stages</h3><p>Chosen from the catalog; the shared Jenkins pipeline runs exactly this list. Required stages are what make an artifact deployable and cannot be removed.</p></div></div>
+      <ul className="stage-list" style={{ listStyle: 'none', padding: 0, margin: 0, display: 'grid', gap: 6 }}>
+        {builtins.map((stage) => <li key={stage.id} style={{ display: 'grid', gap: 4 }}>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <input type="checkbox" checked={chosen.includes(stage.id)} disabled={stage.required} onChange={() => toggle(stage)} aria-label={stage.name} />
+            <strong>{stage.name}</strong>
+            <code className="mono">{stage.id}</code>
+            {stage.required && <span className="badge" title="Required by netCI's supply-chain policy">required</span>}
+            <span style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>{stage.description}</span>
+          </label>
+          {customs.filter((c) => c.afterStage === stage.id).map((custom) => <label key={custom.id} style={{ display: 'flex', alignItems: 'center', gap: 8, marginLeft: 28 }}>
+            <input type="checkbox" checked={chosen.includes(custom.id)} disabled={!chosen.includes(stage.id)} onChange={() => setChosen((cur) => cur.includes(custom.id) ? cur.filter((id) => id !== custom.id) : [...cur, custom.id])} aria-label={custom.name} />
+            <span>↳ {custom.name}</span>
+            <code className="mono">{custom.script}</code>
+            <span className="badge">custom</span>
+            {isAdmin && <button className="secondary-button" onClick={() => remove(custom)} title="Remove from the catalog (refused while any module uses it)">Remove</button>}
+          </label>)}
+        </li>)}
+      </ul>
+      <div style={{ marginTop: 12, fontSize: '0.85rem', color: 'var(--text-muted)' }}>Next run will execute: <code className="mono">{preview.join(' → ')}</code></div>
+      <div style={{ marginTop: 12, display: 'flex', gap: 8 }}>
+        <button className="primary-button" id="btn-save-stages" disabled={!dirty || saving} onClick={save}><Check size={15} />{saving ? 'Saving…' : 'Save stages'}</button>
+        {dirty && <button className="secondary-button" onClick={() => setChosen(saved)}>Discard</button>}
+      </div>
+    </section>
+    {isAdmin && <section className="panel" id="stage-catalog-admin">
+      <div className="section-heading"><div><h3>Register a custom stage</h3><p>Platform administrators only. A custom stage runs one script that lives in the module's repository (reviewed in git), in the builder container, after the built-in stage it is anchored to. The portal never accepts a command.</p></div></div>
+      <div className="form-grid">
+        <label className="field"><span>Stage id</span><input value={draft.id} onChange={(e) => setDraft({ ...draft, id: e.target.value })} placeholder="lint" /></label>
+        <label className="field"><span>Name</span><input value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} placeholder="Lint" /></label>
+        <label className="field"><span>Script (repository path)</span><input value={draft.script} onChange={(e) => setDraft({ ...draft, script: e.target.value })} placeholder="ci/lint.sh" /></label>
+        <label className="field"><span>Runs after</span><select value={draft.afterStage} onChange={(e) => setDraft({ ...draft, afterStage: e.target.value as CustomStageCreate['afterStage'] })}>{['checkout', 'unit-test', 'build', 'sbom', 'vulnerability-scan', 'sign', 'publish'].map((id) => <option key={id} value={id}>{id}</option>)}</select></label>
+        <label className="field full"><span>Description</span><input value={draft.description ?? ''} onChange={(e) => setDraft({ ...draft, description: e.target.value })} /></label>
+      </div>
+      <button className="primary-button" id="btn-register-stage" disabled={!draft.id || !draft.name || !draft.script} onClick={register}>Register stage</button>
+    </section>}
+  </>
+}
+
 function ActivitySettings({ moduleId }: { moduleId: string }) {
   const [filter, setFilter] = useState('All actions')
   const [auditEvents, setAuditEvents] = useState<Array<{ id: string; action: string; user: string; pipeline: string; detail: string; time: string }>>([])
@@ -93,6 +224,6 @@ export function ModuleSettings({ systemId, moduleId, onClose, onDeleted }: { sys
     }).catch(() => undefined)
   }, [moduleId])
 
-  const items: Array<[SettingsTab, string, typeof Cog]> = [['general', 'General', Cog], ['activity', 'Activity Log', History]]
-  return <div className="settings-page"><div className="settings-top"><button className="back-button" onClick={onClose}><ArrowLeft size={16} />Back to {module.name}</button><div><h1>Module Settings</h1><p>{module.name} · {systemId}</p></div></div><div className="settings-layout"><aside>{items.map(([id, label, Icon]) => <button className={tab === id ? 'active' : ''} onClick={() => setTab(id)} key={id}><Icon size={17} />{label}</button>)}</aside><main>{tab === 'general' && <GeneralSettings module={module} moduleId={moduleId} onDeleted={onDeleted} />}{tab === 'activity' && <ActivitySettings moduleId={moduleId} />}</main></div></div>
+  const items: Array<[SettingsTab, string, typeof Cog]> = [['general', 'General', Cog], ['pipeline', 'Pipeline stages', ListChecks], ['activity', 'Activity Log', History]]
+  return <div className="settings-page"><div className="settings-top"><button className="back-button" onClick={onClose}><ArrowLeft size={16} />Back to {module.name}</button><div><h1>Module Settings</h1><p>{module.name} · {systemId}</p></div></div><div className="settings-layout"><aside>{items.map(([id, label, Icon]) => <button className={tab === id ? 'active' : ''} onClick={() => setTab(id)} key={id}><Icon size={17} />{label}</button>)}</aside><main>{tab === 'general' && <GeneralSettings module={module} moduleId={moduleId} onDeleted={onDeleted} />}{tab === 'pipeline' && <PipelineStagesSettings moduleId={moduleId} />}{tab === 'activity' && <ActivitySettings moduleId={moduleId} />}</main></div></div>
 }

@@ -130,7 +130,14 @@ def check_ci(launcher: Any) -> dict[str, Any]:
             controllers = getattr(launcher.router, "controllers", [])
             healthy_count = sum(1 for c in controllers if getattr(c, "state", None) and c.state.value == "healthy")
             ready = healthy_count > 0
+            # Where builds will run: a build the launcher cannot isolate is not
+            # dispatched, so a provisioner that cannot reach its cluster makes CI not ready.
+            provisioner = getattr(launcher, "isolation", None)
+            isolation = provisioner.describe() if provisioner is not None else {"mode": "none", "ready": True}
+            if not isolation.get("ready", True):
+                ready = False
             return {
+                "buildIsolation": isolation,
                 "mode": "jenkins",
                 "status": "ready" if ready else "unavailable",
                 "healthyControllers": healthy_count,

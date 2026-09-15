@@ -17,8 +17,28 @@ def call(Map config = [:]) {
     def callbackCredentialsId = config.get('callbackCredentialsId', 'netci-pipeline-api-key')
     def cosignCredentialsId = config.get('cosignCredentialsId', 'netci-cosign-key')
 
+    // Per-project isolation (ADR-030). netCI provisions a namespace, a service account
+    // and a cache claim for the application and names them in the build parameters;
+    // the pod for this build inherits the cloud's template but is created in *that*
+    // namespace and mounts *that* cache. NETCI_AGENT_LABEL names another pod template
+    // to inherit from instead (the benchmark's long-lived `netci-shared` baseline).
+    def isolatedNamespace = params.NETCI_BUILD_NAMESPACE?.trim() ?: ''
+    def agentServiceAccount = params.NETCI_BUILD_SERVICE_ACCOUNT?.trim() ?: ''
+    def cacheClaim = isolatedNamespace ? (params.NETCI_BUILD_CACHE_CLAIM?.trim() ?: '') : ''
+    def agentTemplate = params.NETCI_AGENT_LABEL?.trim() ?: config.get('agentLabel', 'netci-ephemeral')
+    def podYaml = netciCachePodYaml(agentServiceAccount, cacheClaim)
+
     pipeline {
-        agent { label params.NETCI_AGENT_LABEL ?: config.get('agentLabel', 'netci-ephemeral') }
+        agent {
+            kubernetes {
+                inheritFrom agentTemplate
+                namespace isolatedNamespace
+                serviceAccount agentServiceAccount
+                yaml podYaml
+                yamlMergeStrategy merge()
+                defaultContainer 'jnlp'
+            }
+        }
         options {
             timestamps()
             skipDefaultCheckout(true)
@@ -48,20 +68,43 @@ def call(Map config = [:]) {
         stages {
             stage('Checkout') {
                 steps {
-                    netciInBuilder {
-                        script {
-                            if (params.GIT_URL?.trim()) {
+                    // On the agent's own container, not through `container()`: the git
+                    // plugin runs ~30 git commands for one checkout and each exec into
+                    // the builder costs ~0.4 s of round trip (JENKINS-30600). Measured:
+                    // 18-20 s of checkout for a 4 MB repository, all of it overhead. The
+                    // workspace volume is shared, so the builder sees the result.
+                    script {
+                        if (params.GIT_URL?.trim()) {
+                                // With a project cache, keep a bare mirror in it and clone
+                                // from that: the fetch is then the delta since the last
+                                // build instead of the whole history. The mirror is
+                                // refreshed first so a stale cache can never pin a commit.
+                                def extensions = []
+                                if (params.NETCI_BUILD_CACHE_CLAIM?.trim() && fileExists('/netci-cache')) {
+                                    def mirror = '/netci-cache/git/mirror.git'
+                                    sh """
+                                      set -eu
+                                      if [ -d '${mirror}' ]; then
+                                        git -C '${mirror}' remote set-url origin '${params.GIT_URL}'
+                                        git -C '${mirror}' fetch --prune origin '+refs/heads/*:refs/heads/*' || { rm -rf '${mirror}'; git clone --mirror '${params.GIT_URL}' '${mirror}'; }
+                                      else
+                                        mkdir -p /netci-cache/git
+                                        git clone --mirror '${params.GIT_URL}' '${mirror}'
+                                      fi
+                                    """
+                                    extensions << [$class: 'CloneOption', reference: mirror, honorRefspec: true, noTags: false, shallow: false]
+                                }
                                 checkout([
                                     $class: 'GitSCM',
                                     branches: [[name: params.COMMIT_SHA?.trim() ?: (params.GIT_BRANCH ?: 'main')]],
+                                    extensions: extensions,
                                     userRemoteConfigs: [[url: params.GIT_URL]]
                                 ])
-                            } else {
-                                checkout scm
-                            }
+                        } else {
+                            checkout scm
                         }
-                        sh 'mkdir -p "${NETCI_OUTPUT_DIR}"'
                     }
+                    sh 'mkdir -p "${NETCI_OUTPUT_DIR}"'
                 }
             }
             // Reported after checkout, not before: netci_callback.py ships in the
@@ -84,32 +127,55 @@ def call(Map config = [:]) {
                         // pod gets a fresh emptyDir every time. Printing hit or miss is what
                         // makes the benchmark's cache column a measurement rather than a guess.
                         sh '''
-                          mkdir -p "${HOME}/.netci-cache"
-                          if [ -f "${HOME}/.netci-cache/warm" ]; then
+                          cache_dir="${NETCI_CACHE_DIR:-${HOME}/.netci-cache}"
+                          mkdir -p "${cache_dir}"
+                          if [ -f "${cache_dir}/warm" ]; then
                             echo "NETCI_CACHE=hit"
                           else
                             echo "NETCI_CACHE=miss"
-                            date -u +%FT%TZ > "${HOME}/.netci-cache/warm"
+                            date -u +%FT%TZ > "${cache_dir}/warm"
                           fi
+                          echo "NETCI_CACHE_DIR=${cache_dir}"
+                          du -sh "${cache_dir}" 2>/dev/null || true
                         '''
                     }
                 }
+            }
+            stage('Custom: after checkout') {
+                when { expression { netciCustomStagesAfter('checkout') } }
+                steps { script { netciRunCustomStages('checkout') } }
             }
             stage('Unit Test') {
                 when { expression { netciStageEnabled('unit-test', defaultStages) } }
                 steps { netciInBuilder { sh 'bash "${NETCI_CI_SCRIPT_DIR}/test.sh"' } }
             }
+            stage('Custom: after unit-test') {
+                when { expression { netciCustomStagesAfter('unit-test') } }
+                steps { script { netciRunCustomStages('unit-test') } }
+            }
             stage('Build') {
                 when { expression { netciStageEnabled('build', defaultStages) } }
                 steps { netciInBuilder { sh 'bash "${NETCI_CI_SCRIPT_DIR}/build.sh"' } }
+            }
+            stage('Custom: after build') {
+                when { expression { netciCustomStagesAfter('build') } }
+                steps { script { netciRunCustomStages('build') } }
             }
             stage('SBOM') {
                 when { expression { netciStageEnabled('sbom', defaultStages) } }
                 steps { netciInBuilder { sh 'bash "${NETCI_CI_SCRIPT_DIR}/sbom.sh"' } }
             }
+            stage('Custom: after sbom') {
+                when { expression { netciCustomStagesAfter('sbom') } }
+                steps { script { netciRunCustomStages('sbom') } }
+            }
             stage('Vulnerability Scan') {
                 when { expression { netciStageEnabled('vulnerability-scan', defaultStages) } }
                 steps { netciInBuilder { sh 'bash "${NETCI_CI_SCRIPT_DIR}/scan.sh"' } }
+            }
+            stage('Custom: after vulnerability-scan') {
+                when { expression { netciCustomStagesAfter('vulnerability-scan') } }
+                steps { script { netciRunCustomStages('vulnerability-scan') } }
             }
             stage('Sign') {
                 when { expression { netciStageEnabled('sign', defaultStages) } }
@@ -132,9 +198,17 @@ def call(Map config = [:]) {
                     }
                 }
             }
+            stage('Custom: after sign') {
+                when { expression { netciCustomStagesAfter('sign') } }
+                steps { script { netciRunCustomStages('sign') } }
+            }
             stage('Publish') {
                 when { expression { netciStageEnabled('publish', defaultStages) } }
                 steps { netciInBuilder { sh 'bash "${NETCI_CI_SCRIPT_DIR}/publish.sh"' } }
+            }
+            stage('Custom: after publish') {
+                when { expression { netciCustomStagesAfter('publish') } }
+                steps { script { netciRunCustomStages('publish') } }
             }
             stage('Publish Evidence') {
                 when { expression { env.NETCI_PIPELINE_RUN_ID?.trim() && env.NETCI_API_URL?.trim() } }
@@ -200,6 +274,76 @@ def call(Map config = [:]) {
                         }
                     }
                 }
+            }
+        }
+    }
+}
+
+/** The pod fragment that gives a build its project's persistent cache. */
+private String netciCachePodYaml(String serviceAccount, String cacheClaim) {
+    def account = serviceAccount ? "  serviceAccountName: ${serviceAccount}\n" : ''
+    if (!cacheClaim) {
+        return "apiVersion: v1\nkind: Pod\nspec:\n${account}  restartPolicy: Never\n"
+    }
+    // One mount, one path, in both containers: the checkout runs on jnlp and keeps the
+    // git mirror there; the builder keeps image layers and language caches there.
+    return """
+apiVersion: v1
+kind: Pod
+spec:
+${account}  volumes:
+    - name: netci-cache
+      persistentVolumeClaim:
+        claimName: ${cacheClaim}
+  containers:
+    - name: jnlp
+      volumeMounts:
+        - name: netci-cache
+          mountPath: /netci-cache
+    - name: builder
+      env:
+        - name: NETCI_CACHE_DIR
+          value: /netci-cache
+        - name: XDG_DATA_HOME
+          value: /netci-cache/xdg
+        - name: NETCI_BUILDAH_LAYERS
+          value: "true"
+        - name: GOCACHE
+          value: /netci-cache/go-build
+        - name: GOMODCACHE
+          value: /netci-cache/go-mod
+        - name: PIP_CACHE_DIR
+          value: /netci-cache/pip
+      volumeMounts:
+        - name: netci-cache
+          mountPath: /netci-cache
+"""
+}
+
+
+/**
+ * Custom catalog stages (ADR-030): registered by a platform administrator in netCI,
+ * each one a script inside the repository anchored after a built-in stage. netCI
+ * passes the ones this run selected as JSON; nothing here accepts a command.
+ */
+private List netciCustomStagesAfter(String anchor) {
+    def raw = params.NETCI_CUSTOM_STAGES?.trim()
+    if (!raw) { return [] }
+    def entries = readJSON(text: raw)
+    return entries.findAll { it.after == anchor && it.script }
+}
+
+private void netciRunCustomStages(String anchor) {
+    netciCustomStagesAfter(anchor).each { entry ->
+        // The path was validated by netCI (repository-relative, no traversal, *.sh) and
+        // must exist in the checked-out commit; a stage whose script is missing fails
+        // the build rather than being skipped, because a skipped gate is a false green.
+        stage(entry.name ?: entry.id) {
+            netciInBuilder {
+                if (!fileExists(entry.script)) {
+                    error("custom stage '${entry.id}' names ${entry.script}, which is not in this commit")
+                }
+                sh "bash '${entry.script}'"
             }
         }
     }

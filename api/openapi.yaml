@@ -87,7 +87,7 @@ paths:
       operationId: listStageCatalog
       responses:
         '200':
-          description: Available stages and templates
+          description: Available stages (built-in and custom) and templates
           content:
             application/json:
               schema:
@@ -102,6 +102,76 @@ paths:
                     type: array
                     items:
                       $ref: '#/components/schemas/TemplateDefinition'
+    post:
+      operationId: registerCustomStage
+      summary: Register a custom stage (platform-admin) that runs a repository script after a built-in stage
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CustomStageCreate' }
+      responses:
+        '201':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StageDefinition' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/UnprocessableEntity' }
+  /stage-catalog/{stageId}:
+    delete:
+      operationId: removeCustomStage
+      summary: Remove a custom stage no module uses (platform-admin)
+      parameters:
+        - { name: stageId, in: path, required: true, schema: { type: string } }
+      responses:
+        '204': { description: Removed }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /modules/{moduleId}/stages:
+    get:
+      operationId: getModuleStages
+      parameters:
+        - $ref: '#/components/parameters/ModuleId'
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [moduleId, applicationId, stages, pipelineTemplate]
+                properties:
+                  moduleId: { type: string }
+                  applicationId: { type: string, format: uuid }
+                  stages: { type: array, items: { type: string } }
+                  pipelineTemplate: { type: string }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      operationId: setModuleStages
+      summary: Choose which catalog stages this module's pipeline runs (takes effect on the next run)
+      parameters:
+        - $ref: '#/components/parameters/ModuleId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [stages]
+              properties:
+                stages: { type: array, minItems: 1, maxItems: 64, items: { type: string } }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [moduleId, applicationId, stages]
+                properties:
+                  moduleId: { type: string }
+                  applicationId: { type: string, format: uuid }
+                  stages: { type: array, items: { type: string } }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/UnprocessableEntity' }
   /portal/dashboard:
     get:
       operationId: getPortalDashboard
@@ -2342,6 +2412,31 @@ paths:
         '200': { description: Waiver revoked }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/ci/controllers/drift:
+    get:
+      operationId: getCiControllerDrift
+      summary: Compare the configuration every Jenkins controller actually loaded (platform-admin)
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [mode, controllers, drift, differing, unreachable]
+                properties:
+                  mode: { type: string }
+                  controllers:
+                    type: object
+                    additionalProperties:
+                      type: object
+                      properties:
+                        jcascNormalizedSha256: { type: string }
+                        pluginsSha256: { type: string }
+                        pluginCount: { type: integer }
+                        jobs: { type: array, items: { type: string } }
+                  unreachable: { type: object, additionalProperties: { type: string } }
+                  drift: { type: boolean }
+                  differing: { type: array, items: { type: string, enum: [jcascNormalizedSha256, pluginsSha256, jobs] } }
   /api/v1/servers/maintenance:
     get:
       operationId: listServerMaintenance
@@ -2894,13 +2989,32 @@ components:
             createdAt: { type: string, format: date-time }
     StageDefinition:
       type: object
-      required: [id, name, category, enabledByDefault]
+      required: [id, name, category, kind, required, enabledByDefault, position]
       properties:
         id: { type: string }
         name: { type: string }
-        category: { type: string, enum: [source, test, build, security, publish, deploy, verify] }
+        category: { type: string, enum: [source, test, build, security, publish, deploy, verify, custom] }
+        kind: { type: string, enum: [builtin, custom] }
+        description: { type: string }
+        script: { type: string, nullable: true, description: Custom stages only; repository-relative script path }
+        afterStage: { type: string, nullable: true, description: Custom stages only; the built-in stage it runs after }
+        required: { type: boolean, description: Cannot be removed from a module's pipeline }
         enabledByDefault: { type: boolean }
-        parameters: { type: object, additionalProperties: true }
+        position: { type: integer }
+        createdBy: { type: string }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    CustomStageCreate:
+      type: object
+      additionalProperties: false
+      required: [id, name, script, afterStage]
+      properties:
+        id: { type: string, pattern: '^[a-z][a-z0-9-]{1,62}$' }
+        name: { type: string, minLength: 1, maxLength: 120 }
+        description: { type: string, maxLength: 1000 }
+        category: { type: string, enum: [source, test, build, security, publish, deploy, verify, custom], default: custom }
+        script: { type: string, minLength: 4, maxLength: 255, description: Repository-relative path ending in .sh; never a command }
+        afterStage: { type: string, enum: [checkout, unit-test, build, sbom, vulnerability-scan, sign, publish] }
     TemplateDefinition:
       type: object
       required: [id, name, runtime, stageIds]

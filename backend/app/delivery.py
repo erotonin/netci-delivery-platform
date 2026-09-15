@@ -41,10 +41,19 @@ from .persistence import (
 )
 from .store import DeploymentLease, PlatformDatabase, PlatformSession, build_database, join
 from . import workload_identity
+from .stage_catalog import (
+    BUILTIN_STAGES,
+    StageCatalogError,
+    custom_stage,
+    custom_stage_parameters,
+    resolve_pipeline_stages,
+    stage_json,
+)
 from .runtime_environment import is_local_runtime
 from .policy.rules import PolicyDecision, evaluate_artifact_evidence
 from .domain.models import (
     Application,
+    StageDefinition,
     can_transition_deployment,
     can_transition_pipeline,
     DeliveryEvent,
@@ -64,19 +73,6 @@ from .domain.models import (
 logger = logging.getLogger(__name__)
 
 IMMUTABLE_DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
-
-STAGE_CATALOG: tuple[dict[str, object], ...] = (
-    {"id": "checkout", "name": "Checkout source", "category": "source", "enabledByDefault": True},
-    {"id": "unit-test", "name": "Unit tests", "category": "test", "enabledByDefault": True},
-    {"id": "build", "name": "Build artifact/image", "category": "build", "enabledByDefault": True},
-    {"id": "sbom", "name": "Generate SBOM", "category": "security", "enabledByDefault": True},
-    {"id": "vulnerability-scan", "name": "Vulnerability scan", "category": "security", "enabledByDefault": True},
-    {"id": "sign", "name": "Sign artifact", "category": "publish", "enabledByDefault": True},
-    {"id": "publish", "name": "Publish artifact", "category": "publish", "enabledByDefault": True},
-    {"id": "deploy", "name": "Deploy through netCI", "category": "deploy", "enabledByDefault": True},
-    {"id": "health-check", "name": "Health check", "category": "verify", "enabledByDefault": True},
-)
-
 
 @dataclass(frozen=True)
 class TemplateDefinition:
@@ -571,7 +567,66 @@ class DeliveryPlatform:
             }
             for template_id, template in TEMPLATES.items()
         ]
-        return {"stages": [dict(stage) for stage in STAGE_CATALOG], "templates": templates}
+        with self._transaction() as transaction:
+            stages = [stage_json(item) for item in transaction.stage_catalog()]
+        return {"stages": stages, "templates": templates}
+
+    def register_custom_stage(self, *, actor: str, **fields: object) -> dict[str, object]:
+        try:
+            stage = custom_stage(created_by=actor, **fields)  # type: ignore[arg-type]
+        except StageCatalogError as exc:
+            raise DeliveryError(exc.code, exc.message, exc.status_code) from exc
+        with self._transaction() as transaction:
+            existing = transaction.stage_definition(stage.id)
+            if existing is not None and existing.kind == "builtin":
+                raise DeliveryError("STAGE_ID_RESERVED", f"{stage.id!r} is a built-in stage", 409)
+            transaction.upsert_stage_definition(stage)
+            self._apply(transaction, UnitOfWork(audit=[AuditRecord(
+                "stage_catalog.registered", actor=actor,
+                payload={"stageId": stage.id, "script": stage.script, "afterStage": stage.after_stage},
+            )]))
+        return stage_json(stage)
+
+    def remove_custom_stage(self, stage_id: str, *, actor: str) -> None:
+        with self._transaction() as transaction:
+            stage = transaction.stage_definition(stage_id)
+            if stage is None:
+                raise DeliveryError("STAGE_NOT_FOUND", "no such stage", 404)
+            if stage.kind != "custom":
+                raise DeliveryError("STAGE_ID_RESERVED", "built-in stages cannot be removed", 409)
+            users = [a.name for a in transaction.applications() if stage_id in a.stages]
+            if users:
+                raise DeliveryError(
+                    "STAGE_IN_USE", f"stage {stage_id!r} is used by: {', '.join(sorted(users))}", 409
+                )
+            transaction.delete_stage_definition(stage_id)
+            self._apply(transaction, UnitOfWork(audit=[AuditRecord(
+                "stage_catalog.removed", actor=actor, payload={"stageId": stage_id},
+            )]))
+
+    def set_application_stages(self, application_id: UUID, stages: list[str], *, actor: str) -> Application:
+        """Change which catalog stages an application's pipeline runs.
+
+        Validated the same way as at creation, against the catalog as it is now. Takes
+        effect on the next run: a run carries the stage list it was queued with.
+        """
+
+        with self._transaction() as transaction:
+            application = transaction.application(application_id)
+            if application is None:
+                raise DeliveryError("APPLICATION_NOT_FOUND", "application not found", 404)
+            template = TEMPLATES[application.pipeline_template]
+            resolved = self._validate_stages(
+                template, stages, {item.id: item for item in transaction.stage_catalog()}
+            )
+            updated = replace(application, stages=resolved)
+            unit = UnitOfWork(applications=[updated])
+            unit.audit.append(AuditRecord(
+                "application.stages_updated", application_id=application.id, actor=actor,
+                payload={"before": list(application.stages), "after": list(resolved)},
+            ))
+            self._apply(transaction, unit)
+        return updated
 
     # ------------------------------------------------------------ applications
 
@@ -633,7 +688,9 @@ class DeliveryPlatform:
                 raise DeliveryError(
                     "RUNTIME_TEMPLATE_MISMATCH", "runtime does not match pipeline template", 422
                 )
-            selected_stages = self._validate_stages(template, stages)
+            selected_stages = self._validate_stages(
+                template, stages, {item.id: item for item in transaction.stage_catalog()}
+            )
             if transaction.application_by_name(name) is not None:
                 raise DeliveryError("APPLICATION_EXISTS", "application name already exists", 409)
 
@@ -855,6 +912,11 @@ class DeliveryPlatform:
         self._apply(transaction, unit)
         return run
 
+    def _custom_stages_for(self, stage_ids: tuple[str, ...]) -> list[dict[str, str]]:
+        with self._transaction() as transaction:
+            catalog = {item.id: item for item in transaction.stage_catalog()}
+        return custom_stage_parameters(stage_ids, catalog)
+
     def _launch_ci(self, application: Application, run: PipelineRun) -> PipelineRun:
         """Hand the queued run to the configured CI engine and record its identity."""
 
@@ -871,6 +933,7 @@ class DeliveryPlatform:
             environment=run.environment.value,
             correlation_id=run.correlation_id or "",
             parameters=dict(run.parameters),
+            custom_stages=self._custom_stages_for(application.stages),
         )
         try:
             launched = self.ci_launcher.launch(request)
@@ -1313,21 +1376,16 @@ class DeliveryPlatform:
     # ------------------------------------------------------------- invariants
 
     @staticmethod
-    def _validate_stages(template: TemplateDefinition, stages: list[str]) -> tuple[str, ...]:
-        if not stages:
-            return template.stages
-        positions = {stage_id: index for index, stage_id in enumerate(template.stages)}
-        unknown = [stage_id for stage_id in stages if stage_id not in positions]
-        duplicated = len(stages) != len(set(stages))
-        declared_positions = [positions[stage_id] for stage_id in stages if stage_id in positions]
-        out_of_order = declared_positions != sorted(declared_positions)
-        if unknown or duplicated or out_of_order:
-            raise DeliveryError(
-                "INVALID_STAGES",
-                "stages must be unique members of the selected template in catalog order",
-                422,
-            )
-        return tuple(stages)
+    def _validate_stages(
+        template: TemplateDefinition, stages: list[str], catalog: dict[str, StageDefinition] | None = None
+    ) -> tuple[str, ...]:
+        """Resolve a module's choice against the catalog (see stage_catalog.py)."""
+
+        known = catalog if catalog is not None else {s.id: s for s in BUILTIN_STAGES}
+        try:
+            return resolve_pipeline_stages(template.stages, list(stages), known)
+        except StageCatalogError as exc:
+            raise DeliveryError(exc.code, exc.message, exc.status_code) from exc
 
     @staticmethod
     def _commit_timestamp(parameters: dict[str, object], fallback: datetime) -> datetime:

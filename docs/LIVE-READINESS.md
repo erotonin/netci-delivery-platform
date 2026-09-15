@@ -143,6 +143,17 @@ stayed `queued` (now reconciled on a schedule).
 
 ---
 
+## 4b. Second day of live work (2026-09-15, later): isolation, catalog, failover
+
+| Proof | Result |
+|---|---|
+| Per-project build isolation (ADR-030): a build of `hello-container` created namespace `netci-build-hello-container-a29c7b` (SA, Role/RoleBinding for the controller identity, ingress-deny NetworkPolicy, `netci-cache` PVC) on first launch; the pod ran there, on both controllers, with the cache bound | Jenkins B #8 (cold, `NETCI_CACHE=miss`, git mirror created), Jenkins A #12 (warm, `NETCI_CACHE=hit`) |
+| `/readyz` reports `ci.buildIsolation` (mode, controller identity, cache size) and would be not-ready if netCI could not create namespaces | observed |
+| Benchmark, three modes × 5 runs on the lab (`evidence/benchmarks/report.json`, `samples.csv`): reusable-pod baseline 48.2 s, plain ephemeral pod 50.0 s, isolated pod with project cache 51.9 s (warm 52.2 s). Isolation costs ≈ +3.6 s pod/PVC provisioning and ≈ +2 s layered image storage per build (+8 % on this 50 s workload); the cache hits on every warm run (`cacheHitRate 1.0`) but this sample application has nothing expensive to cache, so the measurement establishes **no regression beyond the provisioning cost**, not a gain. A workload with dependencies to download would show the cache's benefit; this one does not, and the number is reported as measured. | `conclusion: acceptable` |
+| Lab git server switched from dumb to smart HTTP because a dumb fetch of an up-to-date repository cost ~6 s per fetch and would have been read as agent cost (`scripts/lab/git_smart_http.py`) | clone 0.57 s, up-to-date fetch 0.04 s |
+| Stage catalog from the database: developer refused to register (403), a shell string refused (`INVALID_STAGE_SCRIPT`), `lint` registered by the admin after `unit-test`, a module dropping `sbom` refused (`REQUIRED_STAGE_REMOVED`), a valid selection stored | live API calls, 2026-09-15 |
+| Controller drift endpoint `GET /api/v1/ci/controllers/drift` | see §4b notes below |
+
 ## 5. Test suites at this commit
 
 | Suite | Command | Result |
@@ -167,6 +178,8 @@ Say these plainly rather than let the table above imply them.
 | Password-grant OIDC in the harness is a lab convenience; the browser login flow was not exercised by automation today. | Platform: Playwright login test against Keycloak. |
 | Single host for every environment. Nothing was proven about network reachability, SSH, or privilege escalation to a separate target. | Infra: a second VM in `local.ini`. |
 | `production_readiness_audit.py` is a code self-check; its verdict is now `SELF_CHECK_PASSED` / `SELF_CHECK_FAILED`, never "certified". | Done. |
+| The benchmark's "shared" baseline is a reusable pod template (`netci-shared`, `idleMinutes: 120`); the kubernetes plugin did not reuse it between builds in this run, so the baseline measured is closer to an ephemeral pod without a cache than to a long-lived agent. The ephemeral-vs-isolated comparison stands on its own. | Platform: confirm pod reuse semantics or bring back a permanent agent for the baseline. |
+| A ReadWriteOnce cache claim serialises a project's concurrent builds on one node; multi-node needs RWX or a registry layer cache. | Infra. |
 
 ---
 

@@ -21,6 +21,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 from uuid import UUID, uuid4
 
+from ..stage_catalog import BUILTIN_STAGES
 from ..domain.models import (
     Application,
     ConfigRevisionStatus,
@@ -38,6 +39,7 @@ from ..domain.models import (
     ServerHealthRecord,
     ServerMaintenanceState,
     ServerTelemetry,
+    StageDefinition,
     WaiverStatus,
 )
 from ..persistence import (
@@ -103,6 +105,7 @@ class _State:
     security_waivers: dict[UUID, SecurityWaiver] = field(default_factory=dict)
     server_maintenance: dict[str, ServerMaintenanceState] = field(default_factory=dict)
     server_telemetry: dict[str, ServerTelemetry] = field(default_factory=dict)
+    stage_catalog: dict[str, StageDefinition] = field(default_factory=lambda: {s.id: s for s in BUILTIN_STAGES})
 
     def copy(self) -> "_State":
         return _State(
@@ -141,6 +144,7 @@ class _State:
             security_waivers=dict(self.security_waivers),
             server_maintenance=dict(self.server_maintenance),
             server_telemetry=dict(self.server_telemetry),
+            stage_catalog=dict(self.stage_catalog),
         )
 
 
@@ -977,6 +981,18 @@ class InMemorySession:
 
     def get_server_telemetry(self, server_name: str) -> ServerTelemetry | None:
         return self._state.server_telemetry.get(server_name)
+
+    def stage_catalog(self) -> tuple[StageDefinition, ...]:
+        return tuple(sorted(self._state.stage_catalog.values(), key=lambda s: (s.position, s.id)))
+
+    def stage_definition(self, stage_id: str) -> StageDefinition | None:
+        return self._state.stage_catalog.get(stage_id)
+
+    def upsert_stage_definition(self, stage: StageDefinition) -> None:
+        self._state.stage_catalog[stage.id] = stage
+
+    def delete_stage_definition(self, stage_id: str) -> bool:
+        return self._state.stage_catalog.pop(stage_id, None) is not None
 
     def insert_break_glass_request(self, record: BreakGlassRecord) -> None:
         self._state.break_glass_requests[record.id] = record

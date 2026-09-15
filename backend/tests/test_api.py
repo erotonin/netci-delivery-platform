@@ -122,7 +122,7 @@ def test_create_application_and_start_pipeline():
         'repositoryUrl': 'https://github.com/example/hello-netci',
         'pipelineTemplate': 'container-ci-cd-v1',
         'runtime': 'docker',
-        'stages': ['checkout', 'unit-test', 'build'],
+        'stages': ['checkout', 'unit-test', 'build', 'sbom', 'vulnerability-scan', 'sign', 'publish'],
     })
     assert create.status_code == 201
     application_id = create.json()['id']
@@ -237,7 +237,8 @@ def test_application_rejects_unknown_duplicate_or_out_of_order_stages(stages):
     response = client.post('/applications', json={**application_payload(), 'stages': stages})
 
     assert response.status_code == 422
-    assert response.json()['code'] == 'INVALID_STAGES'
+    # Unknown stages are named as such; the other shapes are ordering/duplication faults.
+    assert response.json()['code'] in {'INVALID_STAGES', 'UNKNOWN_STAGE', 'REQUIRED_STAGE_REMOVED'}
 
 
 def test_successful_production_ci_creates_a_deployment_waiting_for_approval():

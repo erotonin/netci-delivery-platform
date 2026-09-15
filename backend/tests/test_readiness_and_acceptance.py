@@ -91,7 +91,7 @@ def test_acceptance_harness_without_a_stack_is_blocked_not_passed(tmp_path):
     env["NETCI_ACCEPTANCE_EVIDENCE_DIR"] = str(tmp_path)
     result = subprocess.run(cmd, env=env, capture_output=True, text=True, cwd=ROOT)
     assert result.returncode == 0, result.stdout + result.stderr
-    assert "Summary: 0 PASS, 0 FAIL, 9 BLOCKED" in result.stdout
+    assert "Summary: 0 PASS, 0 FAIL, 10 BLOCKED" in result.stdout
     assert (tmp_path / "acceptance.xml").is_file()
     import json
     report = json.loads(next(tmp_path.glob("production_acceptance_*.json")).read_text())

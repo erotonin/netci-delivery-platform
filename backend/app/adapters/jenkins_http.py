@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import base64
 import http.cookiejar
+import hashlib
+import re
 import json
 import os
 import time
@@ -115,12 +117,20 @@ JOB_PARAMETERS: tuple[str, ...] = (
     "NETCI_ENVIRONMENT",
     "NETCI_TEMPLATE",
     "NETCI_STAGES",
+    # Custom catalog stages as JSON: [{id, name, script, after}]. The script is a path in
+    # the checked-out repository; the pipeline runs it after the anchor stage.
+    "NETCI_CUSTOM_STAGES",
     "GIT_URL",
     "GIT_BRANCH",
     "COMMIT_SHA",
     # Lets the same job be sent to a shared or an ephemeral agent, which is what the
     # benchmark compares. Empty means "use the template default".
     "NETCI_AGENT_LABEL",
+    # Per-project isolation (ADR-030): the namespace the pod is created in, the service
+    # account it runs as, and the claim that carries the project's warm cache.
+    "NETCI_BUILD_NAMESPACE",
+    "NETCI_BUILD_SERVICE_ACCOUNT",
+    "NETCI_BUILD_CACHE_CLAIM",
     "NETCI_BASE_IMAGE",
     "REGISTRY_PUSH_HOST",
     "REGISTRY_PULL_HOST",
@@ -219,6 +229,48 @@ class JenkinsHttpAdapter:
         except (JenkinsHttpError, OSError):
             return False
 
+    @staticmethod
+    def _normalize_jcasc(exported: str) -> str:
+        normalized = re.sub(r"\{AQAAAB[A-Za-z0-9+/=]+\}", "{REDACTED}", exported)
+        normalized = re.sub(
+            r'id: "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"', 'id: "{GENERATED}"', normalized
+        )
+        # Controller identity is expected to differ; it is not drift.
+        normalized = re.sub(r'value: "jenkins-[a-z0-9-]+"', 'value: "{CONTROLLER}"', normalized)
+        normalized = re.sub(r'jenkinsUrl: "[^"]+"', 'jenkinsUrl: "{CONTROLLER}"', normalized)
+        normalized = re.sub(r'systemMessage: "[^"]*"', 'systemMessage: "{CONTROLLER}"', normalized)
+        # Runtime state the export carries along: label atoms of pods that happen to be
+        # running, and a library path the plugin writes once a library has been loaded.
+        normalized = re.sub(r'\n  - name: "[^"]+-[a-z0-9]{5}-[a-z0-9]{5}(?:-[a-z0-9]{5})?"', "", normalized)
+        normalized = re.sub(r'\n  - name: "[^"]+_[0-9]+-[a-z0-9]{5}"', "", normalized)
+        normalized = re.sub(r'\n *libraryPath: "\."', "", normalized)
+        return normalized
+
+    def configuration_fingerprint(self) -> dict[str, object]:
+        """What this controller is actually running, in a form two controllers can be
+        compared by: the live JCasC export (per-instance ciphertext and generated ids
+        masked), the plugin set and the job list. Drift between controllers is what
+        makes a build behave differently depending on where the router sent it.
+        """
+
+        status, _, body = self._request("POST", "/manage/configuration-as-code/export", body=b"", content_type="text/plain")
+        if not 200 <= status < 300:
+            raise JenkinsHttpError(f"JCasC export returned {status}")
+        exported = body.decode(errors="replace")
+        normalized = self._normalize_jcasc(exported)
+        _, _, plugins_body = self._request("GET", "/pluginManager/api/json?depth=1&tree=plugins%5BshortName,version%5D", use_crumb=False)
+        plugins = sorted(
+            f"{item['shortName']}@{item['version']}" for item in json.loads(plugins_body or b"{}").get("plugins", [])
+        )
+        _, _, jobs_body = self._request("GET", "/api/json?tree=jobs%5Bname%5D", use_crumb=False)
+        jobs = sorted(str(item["name"]) for item in json.loads(jobs_body or b"{}").get("jobs", []))
+        return {
+            "jcascNormalizedSha256": hashlib.sha256(normalized.encode()).hexdigest(),
+            "pluginsSha256": hashlib.sha256("\n".join(plugins).encode()).hexdigest(),
+            "pluginCount": len(plugins),
+            "jobs": jobs,
+        }
+
     def queue_depth(self) -> int:
         try:
             _, _, body = self._request("GET", "/queue/api/json?tree=items[id]", use_crumb=False)
@@ -296,10 +348,14 @@ class JenkinsHttpAdapter:
                 "NETCI_ENVIRONMENT": request.environment,
                 "NETCI_TEMPLATE": request.pipeline_template,
                 "NETCI_STAGES": ",".join(request.stages),
+                "NETCI_CUSTOM_STAGES": json.dumps(request.custom_stages) if request.custom_stages else "",
                 "GIT_URL": request.repository_url,
                 "GIT_BRANCH": request.branch,
                 "COMMIT_SHA": request.commit_sha,
                 "NETCI_AGENT_LABEL": str(request.parameters.get("agentLabel", "")),
+                **(request.isolation.as_parameters() if request.isolation else {
+                    "NETCI_BUILD_NAMESPACE": "", "NETCI_BUILD_SERVICE_ACCOUNT": "", "NETCI_BUILD_CACHE_CLAIM": "",
+                }),
                 "NETCI_BASE_IMAGE": self.config.base_image,
                 "REGISTRY_PUSH_HOST": self.config.registry_push_host,
                 "REGISTRY_PULL_HOST": self.config.registry_pull_host,

@@ -69,7 +69,7 @@ def create_test_application(name: str | None = None) -> Application:
         pipeline_template="container-ci-cd-v1",
         runtime=Runtime.DOCKER,
         default_environment=Environment.DEV,
-        stages=("checkout", "unit-test", "build"),
+        stages=("checkout", "unit-test", "build", "sbom", "vulnerability-scan", "sign", "publish"),
         owner_team="core-platform",
         idempotency_key=str(uuid4()),
     )

@@ -12,10 +12,29 @@ export type PipelineStatus =
 export type StageDefinition = {
   id: string
   name: string
-  category: 'source' | 'test' | 'build' | 'security' | 'publish' | 'deploy' | 'verify'
+  category: 'source' | 'test' | 'build' | 'security' | 'publish' | 'deploy' | 'verify' | 'custom'
+  kind: 'builtin' | 'custom'
+  description?: string
+  // Custom stages: a repository-relative script run after `afterStage`.
+  script?: string | null
+  afterStage?: string | null
+  // Cannot be removed from a module's pipeline (checkout, build, SBOM, scan, sign, publish).
+  required: boolean
   enabledByDefault: boolean
+  position: number
   parameters?: Record<string, unknown>
 }
+
+export type CustomStageCreate = {
+  id: string
+  name: string
+  description?: string
+  category?: StageDefinition['category']
+  script: string
+  afterStage: 'checkout' | 'unit-test' | 'build' | 'sbom' | 'vulnerability-scan' | 'sign' | 'publish'
+}
+
+export type ModuleStages = { moduleId: string; applicationId: string; stages: string[]; pipelineTemplate?: string }
 
 export type TemplateDefinition = {
   id: string
@@ -294,6 +313,22 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 
 export function getStageCatalog(): Promise<StageCatalog> {
   return request<StageCatalog>('/stage-catalog')
+}
+
+export function registerCustomStage(payload: CustomStageCreate): Promise<StageDefinition> {
+  return request<StageDefinition>('/stage-catalog', { method: 'POST', body: JSON.stringify(payload) })
+}
+
+export function removeCustomStage(stageId: string): Promise<void> {
+  return request<void>(`/stage-catalog/${encodeURIComponent(stageId)}`, { method: 'DELETE' })
+}
+
+export function getModuleStages(moduleId: string): Promise<ModuleStages> {
+  return request<ModuleStages>(`/modules/${encodeURIComponent(moduleId)}/stages`)
+}
+
+export function setModuleStages(moduleId: string, stages: string[]): Promise<ModuleStages> {
+  return request<ModuleStages>(`/modules/${encodeURIComponent(moduleId)}/stages`, { method: 'PUT', body: JSON.stringify({ stages }) })
 }
 
 export function createApplication(payload: ApplicationCreate, idempotencyKey = requestId()): Promise<Application> {

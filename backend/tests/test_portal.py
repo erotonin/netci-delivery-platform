@@ -121,7 +121,7 @@ def test_portal_can_create_system_and_attach_a_delivery_application_as_module():
         'moduleType': 'Backend',
         'description': 'Billing API',
         'defaultEnvironment': 'dev',
-        'stages': ['checkout', 'unit-test', 'build', 'publish'],
+        'stages': ['checkout', 'unit-test', 'build', 'sbom', 'vulnerability-scan', 'sign', 'publish'],
         'pipelineConfig': {
             'runner': 'docker-linux',
             'strategy': 'Gitflow',
@@ -154,7 +154,7 @@ def test_portal_can_create_system_and_attach_a_delivery_application_as_module():
     assert created_module.json()['pipelineConfig']['runner'] == 'docker-linux'
     assert client.get('/systems/billing-platform').json()['moduleCount'] == 1
     application = next(item for item in client.get('/applications').json() if item['id'] == created_module.json()['applicationId'])
-    assert application['stages'] == ['checkout', 'unit-test', 'build', 'publish']
+    assert application['stages'] == ['checkout', 'unit-test', 'build', 'sbom', 'vulnerability-scan', 'sign', 'publish']
 
 
 def test_system_owner_cannot_be_forged_in_the_request_body():
@@ -192,7 +192,7 @@ def test_invalid_system_does_not_provision_an_orphan_delivery_application():
         'moduleType': 'Backend',
         'description': 'Must not be provisioned',
         'defaultEnvironment': 'dev',
-        'stages': ['checkout', 'build'],
+        'stages': ['checkout', 'build', 'sbom', 'vulnerability-scan', 'sign', 'publish'],
         'deploymentEnvironments': [{
             'displayName': 'Development',
             'environment': 'dev',

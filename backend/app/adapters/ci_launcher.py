@@ -9,13 +9,20 @@ from __future__ import annotations
 
 import logging
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from typing import Protocol
 from uuid import UUID
 
 from .interfaces import JenkinsAdapter
 from .jenkins_router import ControllerState, JenkinsController, JenkinsRouter
 from .. import workload_identity
+from .build_isolation import (
+    BuildIsolation,
+    BuildIsolationError,
+    BuildIsolationProvisioner,
+    SharedNamespaceIsolation,
+    build_isolation_provisioner,
+)
 from ..runtime_environment import require_live_mode
 
 logger = logging.getLogger(__name__)
@@ -39,6 +46,11 @@ class CiLaunchRequest:
     environment: str
     correlation_id: str
     parameters: dict[str, object]
+    # Where the build pod runs and which cache it mounts. Set by the launcher from the
+    # isolation provisioner; None only when isolation is explicitly `none`.
+    isolation: BuildIsolation | None = None
+    # Custom catalog stages in this run's list: id, name, repository script, anchor.
+    custom_stages: list[dict[str, str]] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -91,10 +103,48 @@ class JenkinsCiLauncher:
         adapters: dict[str, JenkinsAdapter],
         *,
         required_capability: str | None = None,
+        isolation: BuildIsolationProvisioner | None = None,
     ) -> None:
         self.router = router
         self.adapters = adapters
         self.required_capability = required_capability
+        self.isolation = isolation or SharedNamespaceIsolation()
+
+    def controller_drift(self) -> dict[str, object]:
+        """Compare what every controller is running (ADR-030).
+
+        Same JCasC from git on every controller is the intent; this reports whether it
+        is the fact. Jobs are compared as a set minus netCI's own jobs, which the router
+        creates on whichever controller first takes a build for the application.
+        """
+
+        fingerprints: dict[str, dict[str, object]] = {}
+        errors: dict[str, str] = {}
+        for controller in self.router.controllers:
+            adapter = self.adapters.get(controller.controller_id)
+            probe = getattr(adapter, "configuration_fingerprint", None)
+            if probe is None:
+                continue
+            try:
+                fingerprints[controller.controller_id] = probe()
+            except Exception as exc:  # noqa: BLE001 - reported, not raised
+                errors[controller.controller_id] = f"{type(exc).__name__}: {exc}"
+        differing: list[str] = []
+        for key in ("jcascNormalizedSha256", "pluginsSha256"):
+            if len({str(fp.get(key)) for fp in fingerprints.values()}) > 1:
+                differing.append(key)
+        job_sets = {
+            cid: {job for job in fp.get("jobs", []) if not str(job).startswith("netci-")}
+            for cid, fp in fingerprints.items()
+        }
+        if len({frozenset(v) for v in job_sets.values()}) > 1:
+            differing.append("jobs")
+        return {
+            "controllers": fingerprints,
+            "unreachable": errors,
+            "drift": bool(differing) or bool(errors),
+            "differing": differing,
+        }
 
     def refresh_health(self) -> None:
         """Ask every adapter whether its controller answers, before routing."""
@@ -109,6 +159,14 @@ class JenkinsCiLauncher:
     def launch(self, request: CiLaunchRequest) -> LaunchedCi:
         self.refresh_health()
         capability = self.required_capability or request.runtime
+        # The project's namespace, service account and cache must exist before a pod is
+        # asked for. Idempotent, so it also repairs a namespace someone deleted; fails
+        # closed, so a build never lands in the shared namespace by accident.
+        try:
+            isolation = self.isolation.ensure(request.application_id, request.application_name)
+        except BuildIsolationError as exc:
+            raise CiLaunchError(f"build isolation unavailable: {exc}") from exc
+        request = replace(request, isolation=isolation)
         attempted: list[str] = []
         last_error: Exception | None = None
         # One token per build, minted here and handed to Jenkins as a masked parameter.
@@ -201,4 +259,4 @@ def build_ci_launcher() -> CiLauncher:
         adapters[name] = JenkinsHttpAdapter(config)
     if not controllers:
         raise ValueError("NETCI_CI_MODE=jenkins requires at least one controller in NETCI_JENKINS_CONTROLLERS")
-    return JenkinsCiLauncher(JenkinsRouter(controllers), adapters)
+    return JenkinsCiLauncher(JenkinsRouter(controllers), adapters, isolation=build_isolation_provisioner())

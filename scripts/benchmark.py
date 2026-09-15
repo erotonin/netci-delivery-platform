@@ -135,15 +135,34 @@ def build_report(
 ) -> dict[str, Any]:
     baseline_samples = [sample for sample in samples if sample.mode == "baseline"]
     ephemeral_samples = [sample for sample in samples if sample.mode == "ephemeral"]
+    isolated_samples = [sample for sample in samples if sample.mode == "isolated"]
     baseline = _mode_report(baseline_samples)
     ephemeral = _mode_report(ephemeral_samples)
 
-    total_delta = _delta_percent(float(baseline["totalSecondsAvg"]), float(ephemeral["totalSecondsAvg"]))
-    build_delta = _delta_percent(float(baseline["buildSecondsAvg"]), float(ephemeral["buildSecondsAvg"]))
-    cache_hit_rate = round(
-        sum(sample.cache_hit for sample in ephemeral_samples) / len(ephemeral_samples),
-        3,
-    )
+    def compare(candidate: list[BenchmarkSample]) -> dict[str, Any]:
+        report = _mode_report(candidate)
+        # The first run of a mode is its cold start: a fresh cache has nothing to hit.
+        # It is reported, but the steady-state figures exclude it so that a single
+        # warm-up does not stand for the cost of every build after it.
+        warm = candidate[1:] if len(candidate) > 1 else candidate
+        warm_report = _mode_report(warm)
+        return {
+            **report,
+            "warm": warm_report,
+            "cacheHitRate": round(sum(s.cache_hit for s in candidate) / len(candidate), 3) if candidate else 0.0,
+            "totalDeltaPercent": _delta_percent(float(baseline["totalSecondsAvg"]), float(report["totalSecondsAvg"])),
+            "warmTotalDeltaPercent": _delta_percent(float(baseline["totalSecondsAvg"]), float(warm_report["totalSecondsAvg"])),
+            "buildDeltaPercent": _delta_percent(float(baseline["buildSecondsAvg"]), float(report["buildSecondsAvg"])),
+            "warmBuildDeltaPercent": _delta_percent(float(baseline["buildSecondsAvg"]), float(warm_report["buildSecondsAvg"])),
+            "warmCheckoutDeltaPercent": _delta_percent(float(baseline["checkoutSecondsAvg"]), float(warm_report["checkoutSecondsAvg"])),
+        }
+
+    ephemeral_comparison = compare(ephemeral_samples) if ephemeral_samples else None
+    isolated_comparison = compare(isolated_samples) if isolated_samples else None
+    # The mode netCI actually dispatches to is the one judged: isolated when measured,
+    # otherwise the plain ephemeral pod.
+    judged = isolated_comparison or ephemeral_comparison or {}
+    total_delta = judged.get("warmTotalDeltaPercent")
 
     if not all(sample.timing_complete for sample in samples):
         conclusion = "inconclusive"
@@ -155,16 +174,23 @@ def build_report(
         conclusion = "acceptable"
 
     return {
-        "schemaVersion": "1.0",
+        "schemaVersion": "1.1",
         "applicationId": application_id,
         "environment": environment,
         "regressionThresholdPercent": regression_threshold,
         "baseline": baseline,
         "ephemeral": ephemeral,
+        "isolated": _mode_report(isolated_samples) if isolated_samples else None,
         "comparison": {
-            "totalDeltaPercent": total_delta,
-            "buildDeltaPercent": build_delta,
-            "cacheHitRate": cache_hit_rate,
+            "judgedMode": "isolated" if isolated_comparison else "ephemeral",
+            "totalDeltaPercent": judged.get("totalDeltaPercent"),
+            "warmTotalDeltaPercent": total_delta,
+            "buildDeltaPercent": judged.get("buildDeltaPercent"),
+            "warmBuildDeltaPercent": judged.get("warmBuildDeltaPercent"),
+            "warmCheckoutDeltaPercent": judged.get("warmCheckoutDeltaPercent"),
+            "cacheHitRate": judged.get("cacheHitRate", 0.0),
+            "ephemeral": ephemeral_comparison,
+            "isolated": isolated_comparison,
             "conclusion": conclusion,
         },
     }
@@ -191,6 +217,9 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Compare baseline and ephemeral Jenkins delivery timings")
     parser.add_argument("--baseline-command", required=True, type=parse_command)
     parser.add_argument("--ephemeral-command", required=True, type=parse_command)
+    # The per-project pod with its cache claim (ADR-030). Optional so an installation
+    # with NETCI_BUILD_ISOLATION=none still has a benchmark.
+    parser.add_argument("--isolated-command", default=None, type=parse_command)
     parser.add_argument("--application-id", required=True)
     parser.add_argument("--environment", required=True)
     parser.add_argument("--runs", type=int, default=3)
@@ -205,6 +234,8 @@ def main() -> int:
     for run in range(1, args.runs + 1):
         samples.append(run_benchmark(args.baseline_command, "baseline", args.application_id, run))
         samples.append(run_benchmark(args.ephemeral_command, "ephemeral", args.application_id, run))
+        if args.isolated_command:
+            samples.append(run_benchmark(args.isolated_command, "isolated", args.application_id, run))
 
     write_results(samples, args.csv)
     report = build_report(
