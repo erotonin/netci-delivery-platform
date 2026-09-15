@@ -3,14 +3,13 @@
 from __future__ import annotations
 
 import logging
-import os
 from dataclasses import dataclass, field
-from datetime import date, datetime, timezone
+from datetime import datetime, timezone
 from typing import Any
-from uuid import UUID, uuid4
+from uuid import uuid4
 
 from ..domain.models import Application, Environment
-from ..store.records import PolicyDecisionRecord, SecurityExceptionRecord
+from ..store.records import PolicyDecisionRecord
 from ..store.session import PlatformSession
 from .break_glass import BreakGlassService
 from .quota import QuotaEnforcer, QuotaViolation
@@ -23,7 +22,6 @@ from .rules import (
     load_vulnerability_exceptions,
     require_environment_permission,
     require_separation_of_duties,
-    require_team_access,
 )
 
 logger = logging.getLogger(__name__)

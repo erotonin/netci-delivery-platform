@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import {
   Activity, ArrowRight, Box, CheckCircle2, ChevronLeft, ChevronRight, CircleAlert,
-  CloudDownload, Cpu, HardDrive, Layers3, MoreHorizontal, Plus, Search, Server, ShieldAlert, ShieldCheck, Trash2,
+  CloudDownload, Cpu, HardDrive, Layers3, MoreHorizontal, Plus, Search, Server, ShieldAlert, ShieldCheck, Trash2, Zap,
 } from 'lucide-react'
 import {
   createSecurityWaiver,
@@ -11,6 +11,8 @@ import {
   getPortalDashboard,
   getServerTelemetry,
   getSystem,
+  getAgentStatus,
+  executeAgentCommand,
   listSecurityWaivers,
   listServerInventory,
   listServersMaintenance,
@@ -18,6 +20,8 @@ import {
   revokeSecurityWaiver,
   searchDcimServices,
   toggleServerMaintenance,
+  type AgentExecuteResponse,
+  type AgentStatusItem,
   type DcimService,
   type PortalDashboard,
   type SecurityWaiver,
@@ -241,10 +245,15 @@ export function ServersPage() {
   const [savingWaiver, setSavingWaiver] = useState(false)
   const [selectedTelemetry, setSelectedTelemetry] = useState<ServerTelemetry | null>(null)
   const [loadingTelemetry, setLoadingTelemetry] = useState(false)
+  const [agentMap, setAgentMap] = useState<Record<string, AgentStatusItem>>({})
+  const [agentCmd, setAgentCmd] = useState('uname -a')
+  const [agentRunning, setAgentRunning] = useState(false)
+  const [agentOutput, setAgentOutput] = useState<AgentExecuteResponse | null>(null)
 
   const openServerDetails = (server: PortalServer) => {
     setDetails(server)
     setSelectedTelemetry(null)
+    setAgentOutput(null)
     setLoadingTelemetry(true)
     getServerTelemetry(server.id)
       .then((telem) => setSelectedTelemetry(telem))
@@ -258,8 +267,9 @@ export function ServersPage() {
       listServerInventory(),
       listServersMaintenance().catch(() => []),
       listSecurityWaivers().catch(() => []),
+      getAgentStatus().catch(() => ({ connectedAgents: 0, agents: [] })),
     ])
-      .then(([result, maintList, wList]) => {
+      .then(([result, maintList, wList, agentRes]) => {
         if (active) {
           setItems(result.map(serverFromApi))
           setLastSync('API · vừa xong')
@@ -272,6 +282,13 @@ export function ServersPage() {
           }
           if (wList && Array.isArray(wList)) {
             setWaivers(wList)
+          }
+          if (agentRes && Array.isArray(agentRes.agents)) {
+            const amap: Record<string, AgentStatusItem> = {}
+            for (const a of agentRes.agents) {
+              amap[a.hostname] = a
+            }
+            setAgentMap(amap)
           }
         }
       })
@@ -370,7 +387,14 @@ export function ServersPage() {
           return (
             <div className="table-row" key={server.id}>
               <span><input type="checkbox" aria-label={`Chọn ${server.id}`} checked={selectedIds.includes(server.id)} onChange={() => setSelectedIds((current) => current.includes(server.id) ? current.filter((id) => id !== server.id) : [...current, server.id])} /></span>
-              <span className="strong-cell"><Server size={16} />{server.id}</span>
+              <span className="strong-cell">
+                <Server size={16} />{server.id}
+                {agentMap[server.id] && (
+                  <span className="mono" style={{ fontSize: '10px', color: '#10b981', background: 'rgba(16, 185, 129, 0.1)', padding: '1px 5px', borderRadius: 4, marginLeft: 6, display: 'inline-flex', alignItems: 'center', gap: 2 }}>
+                    <Zap size={10} /> Edge Agent
+                  </span>
+                )}
+              </span>
               <span>{server.systemId}</span>
               <span className="mono">{server.ip || '—'}</span>
               <span className={`env-badge env-${server.environment.toLowerCase()}`}>{server.environment}</span>
@@ -601,6 +625,67 @@ export function ServersPage() {
             </div>
           ) : (
             <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>Chưa có telemetry được ghi nhận.</div>
+          )}
+        </div>
+
+        {/* Outbound Runner Agent Panel */}
+        <div style={{ marginTop: 14, padding: '14px 16px', background: 'rgba(16, 185, 129, 0.04)', borderRadius: 8, border: '1px solid rgba(16, 185, 129, 0.2)' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+            <h4 style={{ margin: 0, fontSize: 13, display: 'flex', alignItems: 'center', gap: 6, color: '#10b981' }}>
+              <Zap size={16} /> Outbound Edge Runner Agent
+            </h4>
+            <span style={{ fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 10, background: agentMap[details.id] ? '#dcfce7' : 'rgba(255,255,255,0.08)', color: agentMap[details.id] ? '#16a34a' : 'var(--text-muted)' }}>
+              {agentMap[details.id] ? 'AGENT CONNECTED (WS)' : 'AGENT STANDBY / LOCAL'}
+            </span>
+          </div>
+          <p style={{ margin: '0 0 10px 0', fontSize: 12, color: 'var(--text-secondary)' }}>
+            Kết nối Outbound WebSocket đến <code>/api/v1/agents/ws</code>. Không mở port firewall inbound (Zero Inbound Port).
+          </p>
+
+          <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
+            <input
+              value={agentCmd}
+              id="agent-command-input"
+              onChange={(e) => setAgentCmd(e.target.value)}
+              placeholder="e.g. uname -a, df -h, docker ps"
+              style={{ flex: 1, fontFamily: 'monospace', fontSize: 12 }}
+            />
+            <button
+              type="button"
+              id="btn-run-agent-cmd"
+              className="primary-button"
+              disabled={agentRunning}
+              onClick={async () => {
+                setAgentRunning(true)
+                try {
+                  const res = await executeAgentCommand({
+                    hostname: details.id,
+                    command: agentCmd.trim() || 'uname -a',
+                  })
+                  setAgentOutput(res)
+                  notify(`Lệnh hoàn tất trên ${details.id} (exit code ${res.exitCode}) trong ${res.durationMs}ms`)
+                } catch (err) {
+                  notify(err instanceof Error ? err.message : 'Không thể gửi lệnh qua Edge Runner Agent', 'error')
+                } finally {
+                  setAgentRunning(false)
+                }
+              }}
+              style={{ fontSize: 12, padding: '4px 12px' }}
+            >
+              {agentRunning ? 'Running…' : 'Dispatch via Agent'}
+            </button>
+          </div>
+
+          {agentOutput && (
+            <div id="agent-command-output" style={{ background: '#0f172a', padding: 10, borderRadius: 6, border: '1px solid #334155' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: '#94a3b8', marginBottom: 6 }}>
+                <span>Command: <code style={{ color: '#38bdf8' }}>{agentOutput.command}</code></span>
+                <span>Exit Code: <strong style={{ color: agentOutput.exitCode === 0 ? '#4ade80' : '#f87171' }}>{agentOutput.exitCode}</strong> ({agentOutput.durationMs}ms)</span>
+              </div>
+              <pre style={{ margin: 0, fontSize: 11, fontFamily: 'monospace', color: '#f1f5f9', whiteSpace: 'pre-wrap', maxHeight: 150, overflowY: 'auto' }}>
+                {agentOutput.stdout || agentOutput.stderr || '(No output)'}
+              </pre>
+            </div>
           )}
         </div>
       </Modal>

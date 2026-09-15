@@ -9,7 +9,6 @@ from typing import Any
 from uuid import UUID
 
 from .domain.models import DeploymentStatus, Environment
-from .store.session import PlatformSession
 from .traffic import CanaryAnalyzer, default_traffic_router
 
 logger = logging.getLogger(__name__)
@@ -190,8 +189,6 @@ class ReleasePlanCoordinator:
             # Refresh request to get updated module statuses
             request = transaction.portal_request(request_id)
             assert request is not None
-            plan = dict(request.release_plan or {})
-            waves = plan.get("waves", [])
 
         if not is_success:
             self._handle_wave_failure(request_id, module_row.module_id, message or "Deployment failed")

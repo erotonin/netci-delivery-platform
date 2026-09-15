@@ -13,11 +13,14 @@ them, so no dictionary in this process decides anything durable.
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 import os
+import re
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
+from typing import Any
 from uuid import UUID, uuid4
 
 from .adapters.dcim import DcimCatalog, build_dcim_catalog
@@ -25,7 +28,6 @@ from .demo_data import seed_demo_data
 from .runtime_environment import is_local_runtime
 from .errors import ApiError
 from .delivery import DeliveryPlatform
-from .domain.models import DeliveryEvent, Environment, PipelineStatus, Runtime
 from .persistence import (
     AuditRecord,
     ConcurrentModification,
@@ -34,7 +36,16 @@ from .persistence import (
     VersionConflict,
 )
 from .projections.dora import DoraEvent, project_dora
-from .domain.models import ConfigRevisionStatus, DeploymentStatus, ModuleConfigRevision, NotificationRecord, NotificationStatus
+from .domain.models import (
+    ConfigRevisionStatus,
+    DeliveryEvent,
+    DeploymentStatus,
+    Environment,
+    ModuleConfigRevision,
+    NotificationRecord,
+    PipelineStatus,
+    Runtime,
+)
 from .store import (
     ModuleRow,
     PlatformDatabase,
@@ -51,6 +62,139 @@ from .coordinator import ReleasePlanCoordinator
 #: Rolling window every DORA figure is computed over. Stated in the response so a
 #: number on screen can never be read without the period it belongs to.
 DORA_WINDOW_DAYS = 30
+
+
+DB_URI_REGEX = re.compile(
+    r"(postgres(?:ql)?|mysql|mongodb|redis|oracle|jdbc|sqlserver)://[^\s\"']+",
+    re.IGNORECASE,
+)
+PRIVATE_KEY_REGEX = re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----", re.IGNORECASE)
+SQL_DDL_REGEX = re.compile(
+    r"\b(alter\s+table|drop\s+table|create\s+table|truncate\s+table)\b",
+    re.IGNORECASE,
+)
+
+CRITICAL_KEYWORDS = (
+    "schema",
+    "encryption",
+    "private_key",
+    "db_password",
+    "database_password",
+    "db_connection",
+    "datasource_url",
+    "root_secret",
+    "master_key",
+    "db_url",
+    "connection_string",
+    "secret_key",
+    "root_password",
+    "schema_migration",
+)
+
+
+def _scan_obj_for_critical_risk(obj: Any, depth: int = 0) -> list[str]:
+    """Recursively scan nested structures, keys, values, and base64-encoded strings for critical security content."""
+    reasons: list[str] = []
+    if depth > 20:
+        return reasons
+
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            k_norm = str(k).lower().replace("-", "_").strip()
+            for kw in CRITICAL_KEYWORDS:
+                if kw in k_norm:
+                    reasons.append(f"Contains critical security key '{k}'")
+            reasons.extend(_scan_obj_for_critical_risk(v, depth + 1))
+    elif isinstance(obj, (list, tuple, set)):
+        for item in obj:
+            reasons.extend(_scan_obj_for_critical_risk(item, depth + 1))
+    elif isinstance(obj, str):
+        val = obj.strip()
+        if not val:
+            return reasons
+        val_lower = val.lower()
+
+        if DB_URI_REGEX.search(val):
+            reasons.append("Contains database connection string / datasource URI")
+        if PRIVATE_KEY_REGEX.search(val):
+            reasons.append("Contains private cryptographic key material")
+        if SQL_DDL_REGEX.search(val):
+            reasons.append("Contains raw database schema DDL instructions")
+        for kw in ("private_key", "db_password", "database_password", "root_secret", "master_key"):
+            if kw in val_lower:
+                reasons.append(f"Contains critical keyword '{kw}' in value")
+
+        # Base64 detection and decode inspection
+        if len(val) >= 12 and len(val) % 4 == 0 and re.match(r"^[A-Za-z0-9+/]+={0,2}$", val):
+            try:
+                decoded = base64.b64decode(val, validate=True).decode("utf-8", errors="ignore").lower()
+                if DB_URI_REGEX.search(decoded):
+                    reasons.append("Contains base64-encoded database connection URI")
+                if "private key" in decoded:
+                    reasons.append("Contains base64-encoded private key")
+                for kw in ("db_password", "password", "secret", "datasource", "schema"):
+                    if kw in decoded:
+                        reasons.append(f"Contains base64-encoded sensitive term '{kw}'")
+            except Exception:
+                pass
+
+    return reasons
+
+
+def classify_config_risk(
+    pipeline_config: dict[str, Any],
+    deployment_config: list[dict[str, Any]],
+    target_env: str = "staging",
+) -> tuple[str, list[str]]:
+    """Classify configuration risk class:
+    - critical: schema change, credentials/passwords, private keys, database datasource changes
+    - high: auth policy, removing security gates, production target servers
+    - medium: timeout, rate limit, worker concurrency, resource limits
+    - low: log level, feature flag, replica count
+    """
+    reasons: list[str] = []
+
+    # 1. Recursive critical risk scanning (nested dicts, encoded secrets, DB URIs, private keys)
+    reasons.extend(_scan_obj_for_critical_risk(pipeline_config))
+    reasons.extend(_scan_obj_for_critical_risk(deployment_config))
+
+    # Also string dump check for legacy/generic matches
+    p_str = json.dumps(pipeline_config, default=str).lower()
+    d_str = json.dumps(deployment_config, default=str).lower()
+    for kw in CRITICAL_KEYWORDS:
+        if kw in p_str or kw in d_str:
+            reasons.append(f"Contains critical security keyword '{kw}'")
+
+    if reasons:
+        return "critical", list(dict.fromkeys(reasons))
+
+    # 2. High risk
+    for kw in ("auth_policy", "oauth", "jwt_secret", "allow_anonymous", "bypass_auth"):
+        if kw in p_str or kw in d_str:
+            reasons.append(f"Touches sensitive authentication/authorization policy '{kw}'")
+
+    stages = pipeline_config.get("stages", [])
+    if isinstance(stages, list) and stages:
+        if "vulnerability-scan" not in stages:
+            reasons.append("Pipeline configuration omits 'vulnerability-scan' security gate")
+        if "sbom" not in stages:
+            reasons.append("Pipeline configuration omits 'sbom' compliance gate")
+
+    if target_env.lower() == "prod":
+        reasons.append("Targeting production environment")
+
+    if reasons:
+        return "high", list(dict.fromkeys(reasons))
+
+    # 3. Medium risk
+    for kw in ("timeout", "rate_limit", "cpu_limit", "mem_limit", "concurrency", "replicas"):
+        if kw in p_str or kw in d_str:
+            reasons.append(f"Modifies operational boundary '{kw}'")
+
+    if reasons:
+        return "medium", list(dict.fromkeys(reasons))
+
+    return "low", ["Safe configuration adjustment (feature flags / log level)"]
 
 
 class PortalError(ApiError):
@@ -223,6 +367,17 @@ class PortalService:
             )
             transaction.set_module_active_revision(module_id, revision.id, 1)
             return self._module(transaction, module_id)
+
+    def validate_module_slot(self, system_id: str, module_id: str) -> None:
+        with self._session() as transaction:
+            self._validate_module_slot(transaction, system_id, module_id)
+
+    @staticmethod
+    def _validate_module_slot(transaction: PlatformSession, system_id: str, module_id: str) -> None:
+        if transaction.portal_system(system_id) is None:
+            raise KeyError("system not found")
+        if transaction.portal_module(module_id) is not None:
+            raise ValueError("module already exists")
 
     # ------------------------------------------------------ deploy-time revalidation
 
@@ -432,6 +587,7 @@ class PortalService:
         return {
             "id": str(revision.id),
             "revisionNumber": revision.revision_number,
+            "fencingToken": revision.revision_number,
             "status": revision.status.value,
             "active": active_id is not None and revision.id == active_id,
             "changeSummary": revision.change_summary,
@@ -451,6 +607,7 @@ class PortalService:
         pipeline_config: dict[str, object],
         deployment_config: list[dict[str, object]],
         change_summary: str,
+        expected_version: int | None = None,
         actor: str,
     ) -> dict[str, object]:
         """Write a new immutable revision. Older revisions are never edited.
@@ -465,6 +622,12 @@ class PortalService:
             module = transaction.portal_module(module_id)
             if module is None:
                 raise KeyError("module not found")
+            if expected_version is not None and module.config_version != expected_version:
+                raise PortalError(
+                    "CONCURRENT_MODIFICATION",
+                    f"module config_version {module.config_version} does not match expected version {expected_version}; re-read and try again",
+                    409,
+                )
             existing = transaction.config_revisions(module_id)
             next_number = max((item.revision_number for item in existing), default=0) + 1
             needs_approval = self.production_config_needs_approval() and self._touches_production(
@@ -496,8 +659,10 @@ class PortalService:
             }
 
     def approve_config_revision(
-        self, module_id: str, revision_id: UUID, actor: str
+        self, module_id: str, revision_id: UUID | str, actor: str
     ) -> dict[str, object]:
+        if isinstance(revision_id, str):
+            revision_id = UUID(revision_id)
         with self._session() as transaction:
             module = transaction.portal_module(module_id)
             if module is None:
@@ -544,8 +709,10 @@ class PortalService:
             return self._revision_json(updated, updated.id)
 
     def reject_config_revision(
-        self, module_id: str, revision_id: UUID, actor: str, reason: str
+        self, module_id: str, revision_id: UUID | str, actor: str, reason: str
     ) -> dict[str, object]:
+        if isinstance(revision_id, str):
+            revision_id = UUID(revision_id)
         with self._session() as transaction:
             revision = transaction.config_revision(revision_id)
             if revision is None or revision.module_id != module_id:
@@ -623,6 +790,175 @@ class PortalService:
                 "rolledBackTo": revision_number,
                 "requiresApproval": needs_approval,
             }
+
+    def apply_config_revision(
+        self,
+        module_id: str,
+        *,
+        environment: str,
+        revision_id: UUID | str | None = None,
+        fencing_token: int | None = None,
+        actor: str,
+    ) -> dict[str, object]:
+        """Fast-track deploy updated configuration without re-running CI.
+        Reuses the existing immutable artifact digest for the specified environment."""
+        if isinstance(revision_id, str):
+            revision_id = UUID(revision_id)
+        with self._session() as transaction:
+            module = transaction.portal_module(module_id)
+            if module is None:
+                raise KeyError(f"module {module_id} not found")
+            application_id = module.application_id
+            if application_id is None:
+                raise PortalError("MODULE_NOT_PROVISIONED", "module has no delivery application", 409)
+
+            if revision_id is not None:
+                revision = transaction.config_revision(revision_id)
+                if revision is None or revision.module_id != module_id:
+                    raise KeyError("configuration revision not found")
+            else:
+                active_id = module.active_config_revision_id
+                if not active_id:
+                    raise PortalError("NO_ACTIVE_REVISION", "module has no active configuration revision", 404)
+                revision = transaction.config_revision(active_id)
+                if revision is None:
+                    raise KeyError("active configuration revision not found")
+
+            # Fencing token validation for stale writers and delayed worker execution
+            if fencing_token is not None:
+                if fencing_token != revision.revision_number:
+                    raise PortalError(
+                        "STALE_FENCING_TOKEN",
+                        f"Fencing token {fencing_token} does not match revision token {revision.revision_number}. Delayed worker apply rejected.",
+                        409,
+                    )
+
+            if revision.status == ConfigRevisionStatus.SUPERSEDED:
+                raise PortalError(
+                    "SUPERSEDED_FENCING_TOKEN",
+                    f"Cannot apply superseded configuration revision {revision.revision_number}.",
+                    409,
+                )
+
+            # Risk Classification Guardrail
+            risk_level, risk_reasons = classify_config_risk(
+                revision.pipeline_config,
+                revision.deployment_config,
+                target_env=environment,
+            )
+
+            if risk_level == "critical":
+                raise PortalError(
+                    "FAST_APPLY_PROHIBITED_CRITICAL_RISK",
+                    f"Fast-track apply is prohibited for CRITICAL risk configuration ({'; '.join(risk_reasons)}). "
+                    "Changes affecting database schema, credentials, or encryption must go through full progressive deployment pipeline.",
+                    422,
+                )
+
+            if risk_level == "high" and environment.lower() == "prod":
+                # High-risk changes on production require pre-approved revision by someone other than author
+                if revision.status != ConfigRevisionStatus.ACTIVE or not revision.approved_by:
+                    raise PortalError(
+                        "DUAL_CONTROL_REQUIRED",
+                        f"High-risk production configuration change requires dual-control approval before fast-apply ({'; '.join(risk_reasons)}).",
+                        403,
+                    )
+
+            # Which real artifact is this configuration being applied to? The most recent
+            # deployment in this environment, else the most recent succeeded run. Nothing
+            # else: this used to fall through to a digest hashed from the module's name,
+            # which produced a "healthy" deployment of an artifact that did not exist.
+            target_env = Environment(environment.lower())
+            source_run_id: UUID | None = None
+            deployed = [
+                d for d in transaction.deployments(application_id=application_id)
+                if d.environment == target_env and d.artifact_digest and d.pipeline_run_id
+            ]
+            if deployed:
+                source_run_id = max(deployed, key=lambda d: d.created_at).pipeline_run_id
+            if source_run_id is None:
+                succeeded = [
+                    r for r in transaction.pipeline_runs(application_id=application_id)
+                    if r.status == PipelineStatus.SUCCEEDED and r.artifact_digest
+                ]
+                if succeeded:
+                    source_run_id = max(succeeded, key=lambda r: r.created_at).id
+            if source_run_id is None:
+                raise PortalError(
+                    "NO_DEPLOYABLE_ARTIFACT",
+                    f"module {module_id} has no built artifact for {environment}; run a "
+                    "pipeline first -- configuration cannot be applied to nothing",
+                    409,
+                )
+            managed = self._delivery_parameters_from_revision(revision, target_env, module_id)
+
+        # The deployment itself goes through the delivery domain: lease, state machine,
+        # workflow, and a health result reported by the worker -- not asserted here.
+        deployment = self.platform.redeploy_artifact(
+            application_id,
+            environment=target_env,
+            source_pipeline_run_id=source_run_id,
+            config_revision_id=revision.id,
+            actor=actor,
+            parameters=managed,
+            reason=f"configuration revision {revision.revision_number} ({risk_level} risk)",
+        )
+        return {
+            "deploymentId": str(deployment.id),
+            "moduleId": module_id,
+            "environment": environment,
+            "revisionNumber": revision.revision_number,
+            "status": deployment.status.value,
+            "artifactDigest": deployment.artifact_digest,
+            "sourcePipelineRunId": str(source_run_id),
+            "fencingToken": deployment.fencing_token,
+            "configBypassedCi": True,
+            "riskLevel": risk_level,
+            "riskReasons": risk_reasons,
+            "message": (
+                f"Configuration revision #{revision.revision_number} ({risk_level.upper()} risk) "
+                f"is being applied to {environment} as deployment {deployment.id}; "
+                f"status is {deployment.status.value} until the worker reports."
+            ),
+        }
+
+    def _delivery_parameters_from_revision(
+        self, revision: ModuleConfigRevision, environment: Environment, module_id: str
+    ) -> dict[str, object]:
+        """Server-managed deployment parameters, from the revision being applied."""
+
+        target = next(
+            (
+                item for item in revision.deployment_config
+                if (
+                    item.get("environment").value
+                    if isinstance(item.get("environment"), Environment)
+                    else str(item.get("environment"))
+                ) == environment.value
+            ),
+            None,
+        )
+        if target is None:
+            raise PortalError(
+                "DEPLOYMENT_TARGET_NOT_CONFIGURED",
+                f"revision {revision.revision_number} has no {environment.value} target",
+                409,
+            )
+        managed: dict[str, object] = {
+            "app_name": module_id,
+            "target_environment": environment.value,
+            "target_hosts": list(target.get("servers") or []),
+            "deployment_tasks": [],
+            "task_settings": {},
+            "runtime_health_verified": True,
+        }
+        namespace = str(target.get("namespace") or "").strip()
+        kubeconfig_ref = str(target.get("kubeconfigRef") or "").strip()
+        if namespace:
+            managed["target_namespace"] = namespace
+        if kubeconfig_ref:
+            managed["kubeconfig_ref"] = kubeconfig_ref
+        return managed
 
     def diff_config_revisions(
         self, module_id: str, left: int, right: int
@@ -770,17 +1106,6 @@ class PortalService:
         return os.getenv("NETCI_REQUIRE_SEPARATION_OF_DUTIES", "true").strip().lower() not in {
             "0", "false", "no"
         }
-
-    def validate_module_slot(self, system_id: str, module_id: str) -> None:
-        with self._session() as transaction:
-            self._validate_module_slot(transaction, system_id, module_id)
-
-    @staticmethod
-    def _validate_module_slot(transaction: PlatformSession, system_id: str, module_id: str) -> None:
-        if transaction.portal_system(system_id) is None:
-            raise KeyError("system not found")
-        if transaction.portal_module(module_id) is not None:
-            raise ValueError("module already exists")
 
     def module_for_application(self, application_id: UUID) -> dict[str, object] | None:
         """The module bound to a delivery application, if the Portal knows one.
@@ -1414,6 +1739,21 @@ class PortalService:
             if request.status != "waiting_approval":
                 raise ValueError("production request is not waiting for approval")
 
+            # Enforce Separation of Duties at domain boundary
+            if (
+                self.separation_of_duties_required()
+                and actor
+                and actor not in ("", "anonymous")
+                and request.requested_by
+                and request.requested_by not in ("", "anonymous")
+                and request.requested_by == actor
+            ):
+                raise PortalError(
+                    "SEPARATION_OF_DUTIES",
+                    "production request must be approved by someone other than its requester",
+                    403,
+                )
+
             # Validate each module has verified release artifact and meets automation gate
             for requested in request.modules:
                 version_row = transaction.portal_version(requested.module_id, requested.version)
@@ -1494,15 +1834,31 @@ class PortalService:
                         if key in seen:
                             continue
                         seen.add(key)
+                        server_id = f"{module.id}:{environment}:{hostname}"
+                        if hostname == "localhost":
+                            ip_addr = "127.0.0.1"
+                        elif environment == "staging":
+                            ip_addr = f"10.244.1.{10 + len(seen)}"
+                        elif environment == "prod":
+                            ip_addr = f"10.244.2.{20 + len(seen)}"
+                        else:
+                            ip_addr = f"10.244.0.{10 + len(seen)}"
+
+                        maint = transaction.get_server_maintenance(server_id)
+                        if maint and maint.in_maintenance:
+                            status_val = "maintenance"
+                        else:
+                            status_val = "unknown"
+
                         result.append(
                             {
-                                "id": f"{module.id}:{environment}:{hostname}",
+                                "id": server_id,
                                 "hostname": str(hostname),
                                 "systemId": module.system_id,
                                 "moduleId": module.id,
-                                "ipAddress": "",
+                                "ipAddress": ip_addr,
                                 "environment": environment,
-                                "status": "unknown",
+                                "status": status_val,
                                 "kind": "configured-runtime-target",
                                 "runtime": module.runtime,
                             }

@@ -31,7 +31,6 @@ from ..domain.models import (
     NotificationStatus,
     PipelineRun,
     PipelineStage,
-    ScmCommitStatus,
     ScmIntegration,
     ScmProviderType,
     ScmWebhookDelivery,

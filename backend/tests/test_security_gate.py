@@ -7,6 +7,7 @@ for the digest actually being deployed.
 
 from __future__ import annotations
 
+from uuid import UUID
 import pytest
 from fastapi.testclient import TestClient
 
@@ -159,7 +160,7 @@ def test_a_vulnerable_artifact_is_refused_and_the_run_fails():
     assert response.json()["code"] == "ARTIFACT_POLICY_DENIED"
     assert client.get(f"/pipeline-runs/{run_id}").json()["status"] == "failed"
     # No deployment may exist for an artifact that failed policy.
-    assert main.platform.list_deployments() == ()
+    assert main.platform.list_deployments(UUID(application_id)) == ()
 
 
 def test_evidence_for_a_different_digest_does_not_authorise_this_artifact():

@@ -179,15 +179,16 @@ class JenkinsHttpAdapter:
                 except urllib.error.URLError as retry_exc:
                     raise JenkinsHttpError(503, f"Jenkins unavailable: {retry_exc.reason}") from retry_exc
             raise JenkinsHttpError(exc.code, f"Jenkins {method} {path} failed: {detail}") from exc
-        except urllib.error.URLError as exc:
-            raise JenkinsHttpError(503, f"Jenkins unavailable: {exc.reason}") from exc
+        except (urllib.error.URLError, OSError) as exc:
+            reason = getattr(exc, "reason", str(exc))
+            raise JenkinsHttpError(503, f"Jenkins unavailable: {reason}") from exc
 
     def _crumb_header(self) -> tuple[str, str] | None:
         if self._crumb is not None:
             return self._crumb
         try:
             _, _, body = self._request("GET", "/crumbIssuer/api/json", use_crumb=False)
-        except JenkinsHttpError:
+        except (JenkinsHttpError, OSError):
             return None  # CSRF protection disabled, or API-token auth is exempt
         try:
             payload = json.loads(body or b"{}")
@@ -200,14 +201,14 @@ class JenkinsHttpAdapter:
         try:
             status, _, _ = self._request("GET", "/api/json?tree=mode", use_crumb=False)
             return 200 <= status < 300
-        except JenkinsHttpError:
+        except (JenkinsHttpError, OSError):
             return False
 
     def queue_depth(self) -> int:
         try:
             _, _, body = self._request("GET", "/queue/api/json?tree=items[id]", use_crumb=False)
             return len(json.loads(body or b"{}").get("items", []))
-        except (JenkinsHttpError, ValueError):
+        except (JenkinsHttpError, OSError, ValueError):
             return 0
 
     # ------------------------------------------------------------------- jobs

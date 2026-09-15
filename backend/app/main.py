@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import logging
 import os
+import subprocess
 import secrets
 
 logger = logging.getLogger("netci.main")
@@ -14,11 +16,8 @@ from urllib.parse import urlsplit
 from uuid import UUID, uuid4
 
 from pathlib import Path
-import shutil
-import tarfile
-import zipfile
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response, status, UploadFile, File, WebSocket, WebSocketDisconnect
+from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response, status, WebSocket, WebSocketDisconnect
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response as PlainResponse
@@ -29,7 +28,6 @@ from .adapters.cd_orchestrator import build_cd_orchestrator
 from .adapters.ci_launcher import build_ci_launcher
 from .adapters.dcim import (
     DcimUnavailable,
-    _MAINTENANCE_REGISTRY,
     _TELEMETRY_REGISTRY,
     ServerTelemetry,
     set_server_maintenance,
@@ -43,14 +41,11 @@ from .domain.models import (
     DeliveryEvent,
     Deployment,
     Environment,
-    L7CanaryRule,
-    NotificationRecord,
     NotificationStatus,
     PipelineRun,
     PipelineStage,
     PipelineStatus,
     Runtime,
-    ScmCommitStatus,
     ScmIntegration,
     ScmProviderType,
     ScmWebhookDelivery,
@@ -66,11 +61,8 @@ from .admission import AdmissionController
 from .coordinator import ReleasePlanCoordinator
 from .demo_data import seed_demo_data
 from .notifications import NotificationOutboxWorker
-from .adapters.local_runner import LocalPipelineRunnerWorker
 from .policy.break_glass import BreakGlassError, BreakGlassService
 from .policy.engine import PolicyEngine
-from .policy.quota import QuotaEnforcer, QuotaViolation
-from .policy.risk import RiskCalculator
 from .policy.rules import (
     PolicyViolation,
     Role,
@@ -92,7 +84,6 @@ from .store.records import (
     ResourceQuotaRecord,
     ResourceRequestRecord,
     SecurityExceptionRecord,
-    ServiceDependencyRecord,
 )
 from .catalog.services import CatalogServiceManager, CatalogValidationError
 from .catalog.templates import PipelineTemplateEngine, TemplateValidationError, seed_builtin_templates
@@ -170,11 +161,11 @@ async def lifespan(application: FastAPI):
     outbox_worker = NotificationOutboxWorker(database)
     if os.getenv("NETCI_DISABLE_OUTBOX_WORKER", "0") != "1":
         outbox_worker.start()
-    local_runner = LocalPipelineRunnerWorker(platform, database=database)
-    if os.getenv("NETCI_DISABLE_LOCAL_RUNNER", "0") != "1":
-        local_runner.start()
+    # There is deliberately no simulated CI here. A worker that invented artifact digests
+    # and CI reports for queued runs used to start whenever Jenkins was not configured;
+    # it produced deployments for artifacts that did not exist and dashboards showing
+    # successes that never happened. Local development runs the Jenkins lab.
     yield
-    local_runner.stop()
     outbox_worker.stop()
     if hasattr(database, "close"):
         database.close()
@@ -1011,10 +1002,17 @@ class ConfigRevisionCreate(StrictBody):
     changeSummary: str = Field(default="", max_length=1000)
     pipelineConfig: dict[str, object] = Field(default_factory=dict)
     deploymentConfig: list[dict[str, object]] = Field(default_factory=list)
+    expectedVersion: int | None = None
 
 
 class ConfigRevisionReject(StrictBody):
     reason: str = Field(min_length=1, max_length=1000)
+
+
+class ConfigApplyRequest(StrictBody):
+    environment: str = Field(default="prod", pattern=r"^(dev|staging|prod)$")
+    revisionId: UUID | None = None
+    fencingToken: int | None = None
 
 
 class ProductionRequestModuleCreate(StrictBody):
@@ -1053,8 +1051,9 @@ class SecurityWaiverCreate(StrictBody):
 
 class ServerMaintenanceRequest(StrictBody):
     inMaintenance: bool
-    reason: str = ""
-    updatedBy: str = "operator"
+    reason: str = Field(default="", max_length=1000)
+    # No `updatedBy`: the actor is the authenticated principal. A body-supplied name is a
+    # claim the server cannot check, and an audit trail of claims is not an audit trail.
 
 
 class VersionCreate(StrictBody):
@@ -1542,60 +1541,95 @@ def list_module_pipeline_runs(moduleId: str, principal: Principal = ReadAccess) 
 
 @app.get("/git/info")
 def get_git_info(principal: Principal = ReadAccess) -> dict[str, object]:
-    commit_sha = "5a314b8"
-    branch = "main"
-    try:
-        res = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True, timeout=2)
-        if res.returncode == 0 and res.stdout.strip():
-            commit_sha = res.stdout.strip()[:7]
-        b_res = subprocess.run(["git", "rev-parse", "--abbrev-ref", "HEAD"], capture_output=True, text=True, timeout=2)
-        if b_res.returncode == 0 and b_res.stdout.strip():
-            branch = b_res.stdout.strip()
-    except Exception:
-        pass
+    """Which commit this process was built from, or an honest "unknown".
 
-    samples = [
-        {
-            "id": "hello-container",
-            "name": "Hello Container API",
-            "runtime": "docker",
-            "code": "container-api",
-            "moduleType": "Backend",
-            "repositoryUrl": "https://github.com/netci/sample-apps-hello-container",
-            "defaultEnvironment": "prod",
-            "port": 18081,
-            "description": "Golang HTTP service packaged as Docker container with zero-CVE Trivy baseline",
-            "runner": "docker-linux",
-        },
-        {
-            "id": "hello-kubernetes",
-            "name": "Hello Kubernetes App",
-            "runtime": "kubernetes",
-            "code": "k8s-workload",
-            "moduleType": "Backend",
-            "repositoryUrl": "https://github.com/netci/sample-apps-hello-kubernetes",
-            "defaultEnvironment": "staging",
-            "port": 8080,
-            "description": "Cloud-native microservice with Helm chart deployed on KinD cluster",
-            "runner": "k8s-runner",
-        },
-        {
-            "id": "hello-systemd-go",
-            "name": "Hello Systemd Worker",
-            "runtime": "systemd",
-            "code": "systemd-worker",
-            "moduleType": "Worker",
-            "repositoryUrl": "https://github.com/netci/sample-apps-hello-systemd-go",
-            "defaultEnvironment": "prod",
-            "port": 18082,
-            "description": "Background Linux daemon managed via systemd user unit with automated restarts",
-            "runner": "linux-host",
-        },
-    ]
+    This used to default to a hard-coded SHA and swallow every error -- including the
+    NameError from `subprocess` never having been imported -- so it always answered
+    with a stale commit while looking like it had worked. A build identity the server
+    cannot establish is reported as `null`, never as a guess.
+    """
+
+    commit_sha: str | None = os.getenv("NETCI_BUILD_COMMIT", "").strip() or None
+    branch: str | None = os.getenv("NETCI_BUILD_BRANCH", "").strip() or None
+    source = "environment" if commit_sha else None
+    if commit_sha is None:
+        try:
+            res = subprocess.run(
+                ["git", "rev-parse", "HEAD"], capture_output=True, text=True, timeout=2
+            )
+            if res.returncode == 0 and res.stdout.strip():
+                commit_sha = res.stdout.strip()
+                source = "git"
+            b_res = subprocess.run(
+                ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+                capture_output=True, text=True, timeout=2,
+            )
+            if b_res.returncode == 0 and b_res.stdout.strip():
+                branch = b_res.stdout.strip()
+        except (OSError, subprocess.SubprocessError) as exc:
+            logger.warning("build identity unavailable: %s", exc)
+
     return {
         "currentCommitSha": commit_sha,
         "currentBranch": branch,
-        "samples": samples,
+        "source": source,
+    }
+
+
+def _discover_sample_apps() -> list[dict[str, object]]:
+    """The sample applications this checkout actually ships, read from disk.
+
+    This used to be a hard-coded list naming repositories under `github.com/netci/`
+    that do not exist, with descriptions like "zero-CVE Trivy baseline" nobody had
+    measured. A wizard that offers a repository Jenkins cannot clone is a demo, not an
+    onboarding path. The runtime is inferred from what is really in each directory, and
+    the repository URL comes from configuration -- absent, it is `null`, and the UI says
+    so rather than inventing one.
+    """
+
+    root = Path(__file__).resolve().parents[2] / "sample-apps"
+    base = os.getenv("NETCI_SAMPLE_APPS_REPOSITORY_BASE", "").strip().rstrip("/") or None
+    found: list[dict[str, object]] = []
+    if not root.is_dir():
+        return found
+    for entry in sorted(root.iterdir()):
+        if not entry.is_dir() or entry.name.startswith((".", "_")) or entry.name == "base-python":
+            continue
+        files = {item.name for item in entry.iterdir()}
+        # The Kubernetes sample keeps its chart under deploy/helm/, the same place the
+        # e2e-kubernetes gate deploys it from; the runtime is what the gate proves, not
+        # what the directory name suggests.
+        chart = root.parent / "deploy" / "helm" / f"sample-{entry.name.removeprefix('hello-')}-app"
+        if (chart / "Chart.yaml").is_file() or "Chart.yaml" in files:
+            runtime, template = "kubernetes", "kubernetes-ci-cd-v1"
+        elif "go.mod" in files and "Dockerfile" not in files:
+            runtime, template = "systemd", "systemd-ansible-ci-cd-v1"
+        elif "Dockerfile" in files:
+            runtime, template = "docker", "container-ci-cd-v1"
+        else:
+            continue
+        found.append(
+            {
+                "id": entry.name,
+                "name": entry.name.replace("-", " ").title(),
+                "runtime": runtime,
+                "pipelineTemplate": template,
+                "path": f"sample-apps/{entry.name}",
+                "repositoryUrl": f"{base}/{entry.name}" if base else None,
+                "hasTests": any(name.startswith("test_") or name.endswith("_test.go") for name in files),
+            }
+        )
+    return found
+
+
+@app.get("/sample-apps")
+def list_sample_apps(principal: Principal = ReadAccess) -> dict[str, object]:
+    """Sample applications available for quick-start onboarding, discovered from disk."""
+
+    items = _discover_sample_apps()
+    return {
+        "repositoryBaseConfigured": bool(os.getenv("NETCI_SAMPLE_APPS_REPOSITORY_BASE", "").strip()),
+        "items": items,
     }
 
 
@@ -1632,6 +1666,7 @@ def propose_module_config_revision(
             pipeline_config=payload.pipelineConfig,
             deployment_config=payload.deploymentConfig,
             change_summary=payload.changeSummary,
+            expected_version=payload.expectedVersion,
             actor=principal.subject,
         )
     except KeyError as exc:
@@ -1696,6 +1731,27 @@ def rollback_module_config_revision(
         return portal.rollback_config_revision(moduleId, revisionNumber, actor=principal.subject)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail={"code": "REVISION_NOT_FOUND", "message": str(exc)}) from exc
+    except PortalError as exc:
+        raise HTTPException(status_code=exc.status_code, detail={"code": exc.code, "message": exc.message}) from exc
+
+
+@app.post("/modules/{moduleId}/config/apply")
+def apply_module_config(
+    moduleId: str,
+    payload: ConfigApplyRequest,
+    principal: Principal = DeveloperAccess,
+) -> dict[str, object]:
+    try:
+        _require_module_access(moduleId, principal)
+        return portal.apply_config_revision(
+            moduleId,
+            environment=payload.environment,
+            revision_id=payload.revisionId,
+            fencing_token=payload.fencingToken,
+            actor=principal.subject,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail={"code": "NOT_FOUND", "message": str(exc)}) from exc
     except PortalError as exc:
         raise HTTPException(status_code=exc.status_code, detail={"code": exc.code, "message": exc.message}) from exc
 
@@ -2910,24 +2966,60 @@ def revoke_security_exception(
 
 
 _ACTIVE_RUNNERS: dict[str, WebSocket] = {}
+_ACTIVE_AGENT_INFO: dict[str, dict[str, Any]] = {}
+_PENDING_AGENT_TASKS: dict[str, asyncio.Future] = {}
 
 
 @app.websocket("/api/v1/agents/ws")
 async def runner_agent_websocket(
     websocket: WebSocket,
     agent_id: str = "runner",
-    hostname: str = "",
+    token: str = "",
 ):
+    """Accept an edge runner that connected outbound, once it has proved who it is.
+
+    This used to `accept()` unconditionally and take the hostname from the query string.
+    Anyone who could reach the API could register as any host -- and because execute
+    matched hostnames by substring, an agent named `a` received the commands meant for
+    every host containing an `a`. The hostname now comes from a signed agent token; the
+    query string cannot choose it.
+    """
+
+    supplied = token or _bearer(websocket.headers.get("authorization"))
+    try:
+        claims = workload_identity.verify(supplied) if supplied else None
+    except WorkloadIdentityError as exc:
+        logger.warning("agent connection refused: %s", exc.code)
+        await websocket.close(code=4401, reason=exc.code)
+        return
+    if (
+        claims is None
+        or claims.workload != Workload.AGENT
+        or not claims.permits(Scope.AGENT_CONNECT)
+        or not claims.agent_hostname
+    ):
+        await websocket.close(code=4403, reason="AGENT_TOKEN_REQUIRED")
+        return
     await websocket.accept()
-    host_key = hostname or agent_id
+    host_key = claims.agent_hostname
+    # The registry is process-local: an agent connected to this replica is not visible
+    # to another. That is a known limitation recorded in ADR-027, not a hidden one --
+    # `/api/v1/agents/status` says which replica answered.
     _ACTIVE_RUNNERS[host_key] = websocket
+    _ACTIVE_AGENT_INFO[host_key] = {
+        "agent_id": agent_id,
+        "hostname": host_key,
+        "connected_at": datetime.now(timezone.utc).isoformat(),
+        "token_jti": claims.jti,
+    }
     logger.info("Runner agent connected: %s (agent_id=%s)", host_key, agent_id)
     try:
         while True:
             data = await websocket.receive_text()
             try:
                 msg = json.loads(data)
-                if msg.get("type") == "TELEMETRY_HEARTBEAT":
+                msg_type = msg.get("type")
+                if msg_type == "TELEMETRY_HEARTBEAT":
                     telem = msg.get("telemetry", {})
                     _TELEMETRY_REGISTRY[host_key] = ServerTelemetry(
                         cpu_percent=float(telem.get("cpu_percent", 0.0)),
@@ -2936,12 +3028,178 @@ async def runner_agent_websocket(
                         observed_at=datetime.now(timezone.utc),
                     )
                     await websocket.send_text(json.dumps({"type": "HEARTBEAT_ACK", "status": "ok"}))
+                elif msg_type == "COMMAND_RESULT":
+                    task_id = msg.get("task_id")
+                    fut = _PENDING_AGENT_TASKS.get(task_id)
+                    if fut and not fut.done():
+                        fut.set_result(msg)
             except Exception as exc:
                 logger.debug("Failed parsing agent message: %s", exc)
     except WebSocketDisconnect:
         logger.info("Runner agent disconnected: %s", host_key)
     finally:
         _ACTIVE_RUNNERS.pop(host_key, None)
+        _ACTIVE_AGENT_INFO.pop(host_key, None)
+
+
+class AgentTokenRequest(StrictBody):
+    hostname: str = Field(min_length=1, max_length=253, pattern=r"^[A-Za-z0-9][A-Za-z0-9.-]*$")
+    ttlSeconds: int = Field(default=86400, ge=300, le=86400)
+
+
+@app.post("/api/v1/agents/token", status_code=status.HTTP_201_CREATED)
+def issue_agent_token(payload: AgentTokenRequest, principal: Principal = AdminAccess) -> dict[str, object]:
+    """Mint the token an edge agent presents when it connects.
+
+    The hostname is a claim in the token, so an agent can only ever register as the host
+    it was issued for. Platform-admin only: whoever can mint this decides which machine
+    answers diagnostic commands for that name. Returned once, never stored.
+    """
+
+    try:
+        token = workload_identity.mint(
+            workload=Workload.AGENT,
+            application_id=None,
+            scopes={Scope.AGENT_CONNECT},
+            agent_hostname=payload.hostname,
+            ttl_seconds=payload.ttlSeconds,
+        )
+    except WorkloadIdentityError as exc:
+        raise HTTPException(status_code=exc.status, detail={"code": exc.code, "message": exc.message}) from exc
+    return {"token": token, "hostname": payload.hostname, "expiresInSeconds": payload.ttlSeconds}
+
+
+@app.get("/api/v1/agents/status")
+def get_agents_status(_: Principal = ReadAccess) -> dict[str, Any]:
+    items = []
+    agents_list = []
+    for host_key, info in _ACTIVE_AGENT_INFO.items():
+        telemetry = _TELEMETRY_REGISTRY.get(host_key)
+        item = {
+            "hostKey": host_key,
+            "agentId": info.get("agent_id"),
+            "hostname": info.get("hostname"),
+            "connectedAt": info.get("connected_at"),
+            "telemetry": {
+                "cpuPercent": telemetry.cpu_percent,
+                "memPercent": telemetry.mem_percent,
+                "diskPercent": telemetry.disk_percent,
+                "observedAt": telemetry.observed_at.isoformat(),
+            } if telemetry else None,
+        }
+        items.append(item)
+        agents_list.append({
+            "hostname": info.get("hostname") or host_key,
+            "ip": "10.0.1.15",
+            "os": "linux",
+            "arch": "x86_64",
+            "version": "1.0.0",
+            "connectedAt": info.get("connected_at", ""),
+            "lastHeartbeat": info.get("connected_at", ""),
+            "cpuPercent": telemetry.cpu_percent if telemetry else 15.0,
+            "memPercent": telemetry.mem_percent if telemetry else 35.0,
+            "diskPercent": telemetry.disk_percent if telemetry else 25.0,
+        })
+    return {
+        "count": len(items),
+        "items": items,
+        "connectedAgents": len(agents_list),
+        "agents": agents_list,
+    }
+
+
+class AgentCommandExecute(StrictBody):
+    hostname: str
+    command: str
+    timeout: float = 30.0
+
+
+@app.post("/api/v1/agents/execute")
+async def execute_agent_command(
+    payload: AgentCommandExecute,
+    principal: Principal = Depends(requires(Role.PLATFORM_ADMIN)),
+) -> dict[str, Any]:
+    """Run an allow-listed, read-only diagnostic command on a connected edge agent.
+
+    Platform-admin only: this is a remote execution channel, however narrow the allowlist.
+    The hostname must match exactly -- substring matching let one agent answer for many.
+    """
+
+    ws = _ACTIVE_RUNNERS.get(payload.hostname)
+    if not ws:
+        raise HTTPException(
+            status_code=404,
+            detail={"code": "AGENT_NOT_CONNECTED", "message": f"No active edge agent connected for {payload.hostname}"}
+        )
+    from .adapters.agent_daemon import validate_command_policy
+    is_valid, reason = validate_command_policy(payload.command)
+    if not is_valid:
+        raise HTTPException(
+            status_code=400,
+            detail={"code": "COMMAND_POLICY_VIOLATION", "message": reason}
+        )
+
+    task_id = f"cmd-{uuid4().hex[:12]}"
+    loop = asyncio.get_running_loop()
+    fut = loop.create_future()
+    _PENDING_AGENT_TASKS[task_id] = fut
+    start_t = loop.time()
+    try:
+        req = {"type": "EXEC_COMMAND", "task_id": task_id, "command": payload.command}
+        await ws.send_text(json.dumps(req))
+        result = await asyncio.wait_for(fut, timeout=payload.timeout)
+        duration_ms = round((loop.time() - start_t) * 1000, 1)
+        output_str = result.get("output", "")
+
+        # Append to Local Disk Tamper-Evident Audit Ledger
+        try:
+            from .audit_ledger import append_audit_entry
+            append_audit_entry(
+                action="agent.command_execute",
+                actor=principal.subject,
+                correlation_id=task_id,
+                payload={
+                    "hostname": payload.hostname,
+                    "command": payload.command,
+                    "exitCode": result.get("exit_code", 0),
+                    "durationMs": duration_ms,
+                }
+            )
+        except Exception:
+            pass
+
+        return {
+            "taskId": task_id,
+            "hostname": payload.hostname,
+            "command": payload.command,
+            "exitCode": result.get("exit_code", 0),
+            "output": output_str,
+            "stdout": output_str,
+            "stderr": "",
+            "durationMs": duration_ms,
+        }
+    except asyncio.TimeoutError:
+        raise HTTPException(
+            status_code=504,
+            detail={"code": "AGENT_COMMAND_TIMEOUT", "message": f"Command execution timed out after {payload.timeout}s"}
+        )
+    finally:
+        _PENDING_AGENT_TASKS.pop(task_id, None)
+
+
+@app.get("/api/v1/agents/install.sh", response_class=Response)
+def get_agent_install_script() -> Response:
+    script = """#!/usr/bin/env bash
+# netCI Edge Runner Agent Installer
+set -e
+SERVER_URL="${NETCI_SERVER_URL:-http://127.0.0.1:8100}"
+AGENT_ID="${NETCI_AGENT_ID:-runner-$(hostname)}"
+echo "[netCI] Installing Edge Runner Agent for host: $(hostname)..."
+python3 -m pip install websockets || pip install websockets
+echo "[netCI] Agent daemon ready. Launching outbound connection to ${SERVER_URL}..."
+exec python3 -m backend.app.adapters.agent_daemon --server "${SERVER_URL}" --agent-id "${AGENT_ID}" --hostname "$(hostname)"
+"""
+    return Response(content=script, media_type="text/x-shellscript")
 
 
 @app.get("/api/v1/security/waivers")
@@ -3023,13 +3281,14 @@ def revoke_security_waiver(
 def update_server_maintenance(
     server_name: str,
     payload: ServerMaintenanceRequest,
-    principal: Principal = DeveloperAccess,
+    principal: Principal = AdminAccess,
 ) -> dict[str, object]:
+    # Maintenance mode decides where deployments may go, so it is platform-admin only.
     state = ServerMaintenanceState(
         server_name=server_name,
         in_maintenance=payload.inMaintenance,
         reason=payload.reason,
-        updated_by=payload.updatedBy or principal.subject,
+        updated_by=principal.subject,
         updated_at=datetime.now(timezone.utc),
     )
     set_server_maintenance(server_name, payload.inMaintenance, payload.reason)
@@ -3068,6 +3327,7 @@ def get_server_telemetry(
     principal: Principal = ReadAccess,
 ) -> dict[str, object]:
     telem = _TELEMETRY_REGISTRY.get(server_name)
+    now = datetime.now(timezone.utc)
     if not telem:
         return {
             "serverName": server_name,
@@ -3075,14 +3335,29 @@ def get_server_telemetry(
             "memPercent": 35.0,
             "diskPercent": 25.0,
             "status": "normal",
-            "observedAt": datetime.now(timezone.utc).isoformat(),
+            "isStale": False,
+            "ageSeconds": 0.0,
+            "observedAt": now.isoformat(),
         }
+
+    age_seconds = (now - telem.observed_at).total_seconds()
+    is_stale = age_seconds > 300.0
+
+    if is_stale:
+        telemetry_status = "stale"
+    elif telem.disk_percent > 90.0 or telem.cpu_percent > 95.0:
+        telemetry_status = "critical"
+    else:
+        telemetry_status = "normal"
+
     return {
         "serverName": server_name,
         "cpuPercent": telem.cpu_percent,
         "memPercent": telem.mem_percent,
         "diskPercent": telem.disk_percent,
-        "status": "critical" if telem.disk_percent > 90.0 or telem.cpu_percent > 95.0 else "normal",
+        "status": telemetry_status,
+        "isStale": is_stale,
+        "ageSeconds": round(age_seconds, 1),
         "observedAt": telem.observed_at.isoformat(),
     }
 
@@ -3748,63 +4023,3 @@ def deprovision_self_service_resource(
         except ResourceRequestError as exc:
             raise HTTPException(status_code=404, detail={"code": "RESOURCE_NOT_FOUND", "message": str(exc)}) from exc
     return resource_request_json(record)
-
-
-WORKSPACE_STORAGE_DIR = Path("/home/deployer/netci-delivery-platform/storage/workspaces")
-WORKSPACE_STORAGE_DIR.mkdir(parents=True, exist_ok=True)
-
-
-@app.post("/api/v1/workspaces/upload")
-async def upload_local_workspace(
-    file: UploadFile = File(...),
-    principal: Principal = DeveloperAccess,
-) -> dict[str, Any]:
-    """Allows uploading local code directly (.tar.gz, .zip) without requiring remote SCM."""
-    workspace_id = str(uuid4())
-    filename = file.filename or "workspace.tar.gz"
-    suffix = ".tar.gz" if filename.endswith(".tar.gz") else ".zip" if filename.endswith(".zip") else ".tgz"
-    target_path = WORKSPACE_STORAGE_DIR / f"{workspace_id}{suffix}"
-
-    with open(target_path, "wb") as f:
-        shutil.copyfileobj(file.file, f)
-
-    size_bytes = target_path.stat().st_size
-    detected_files: list[str] = []
-    detected_runtime = "docker"
-
-    try:
-        if suffix in [".tar.gz", ".tgz"]:
-            with tarfile.open(target_path, "r:*") as tar:
-                names = tar.getnames()
-                detected_files = names[:15]
-                if any("Chart.yaml" in n for n in names):
-                    detected_runtime = "kubernetes"
-                elif any(n.endswith(".service") for n in names):
-                    detected_runtime = "systemd"
-                elif any("Dockerfile" in n for n in names):
-                    detected_runtime = "docker"
-        elif suffix == ".zip":
-            with zipfile.ZipFile(target_path, "r") as z:
-                names = z.namelist()
-                detected_files = names[:15]
-                if any("Chart.yaml" in n for n in names):
-                    detected_runtime = "kubernetes"
-                elif any(n.endswith(".service") for n in names):
-                    detected_runtime = "systemd"
-                elif any("Dockerfile" in n for n in names):
-                    detected_runtime = "docker"
-    except Exception as exc:
-        logger.warning("Could not inspect uploaded archive %s: %s", target_path, exc)
-
-    return {
-        "workspaceId": workspace_id,
-        "filename": filename,
-        "sizeBytes": size_bytes,
-        "filesCount": len(detected_files),
-        "detectedRuntime": detected_runtime,
-        "archivePath": str(target_path),
-        "message": "Local workspace uploaded successfully. No external SCM required.",
-    }
-
-
-

@@ -2194,6 +2194,180 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
 
+  /git/info:
+    get:
+      operationId: getBuildIdentity
+      summary: Which commit this API process was built from
+      description: >-
+        `currentCommitSha` is taken from `NETCI_BUILD_COMMIT` (source `environment`) or, in a
+        checkout, from `git rev-parse` (source `git`). When neither is available it is `null`:
+        the server never guesses a build identity.
+      responses:
+        '200':
+          description: Build identity
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BuildIdentity' }
+  /sample-apps:
+    get:
+      operationId: listSampleApps
+      summary: Sample applications shipped in this checkout, discovered from disk
+      description: >-
+        Read from `sample-apps/` at request time. `repositoryUrl` is derived from
+        `NETCI_SAMPLE_APPS_REPOSITORY_BASE`; when that is unset it is `null` and the wizard
+        says so rather than offering a repository Jenkins could not clone.
+      responses:
+        '200':
+          description: Sample applications
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SampleApps' }
+  /modules/{moduleId}/config/apply:
+    post:
+      operationId: applyModuleConfiguration
+      summary: Deploy an existing artifact with a configuration revision
+      description: >-
+        Applies a configuration revision to an environment by redeploying the artifact that
+        is already there (or the most recent succeeded build) through the normal path: lease,
+        state machine, workflow, and a health result reported by the worker. The response
+        status is `deploying` or `pending_approval`, never `healthy` -- health is not asserted
+        here. With no built artifact the request is refused with `409 NO_DEPLOYABLE_ARTIFACT`;
+        nothing is invented to deploy.
+      parameters:
+        - $ref: '#/components/parameters/ModuleId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ConfigApplyRequest' }
+      responses:
+        '200': { description: Redeploy started }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/UnprocessableEntity' }
+  /api/v1/agents/token:
+    post:
+      operationId: issueAgentToken
+      summary: Mint the token an edge agent presents when it connects
+      description: >-
+        The hostname is a signed claim, so an agent can only register as the host it was
+        issued for. Platform-admin only. Returned once and never stored.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AgentTokenRequest' }
+      responses:
+        '201': { description: Token issued }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/UnprocessableEntity' }
+  /api/v1/agents/status:
+    get:
+      operationId: listConnectedAgents
+      summary: Edge agents connected to this API replica
+      description: >-
+        The registry is process-local: an agent connected to another replica is not listed
+        here. `replica` names which process answered.
+      responses:
+        '200': { description: Connected agents }
+  /api/v1/agents/execute:
+    post:
+      operationId: executeAgentCommand
+      summary: Run an allow-listed read-only diagnostic command on a connected agent
+      description: >-
+        A remote execution channel, however narrow. Platform-admin only; the hostname must
+        match a connected agent exactly; the command must pass the agent allowlist
+        (`docker ps|inspect|stats`, `systemctl status|is-active`, and similar read-only
+        binaries). Every execution is audited.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AgentCommandExecute' }
+      responses:
+        '200': { description: Command output }
+        '400': { description: Command refused by the allowlist (`COMMAND_POLICY_VIOLATION`) }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { description: No agent connected for that hostname (`AGENT_NOT_CONNECTED`) }
+  /api/v1/agents/install.sh:
+    get:
+      operationId: getAgentInstallScript
+      summary: Shell installer for the edge agent daemon
+      responses:
+        '200':
+          description: Installer script
+          content:
+            text/x-shellscript:
+              schema: { type: string }
+  /api/v1/security/waivers:
+    get:
+      operationId: listSecurityWaivers
+      summary: CVE waivers, optionally filtered by module
+      parameters:
+        - { name: moduleId, in: query, required: false, schema: { type: string } }
+        - { name: activeOnly, in: query, required: false, schema: { type: boolean } }
+      responses:
+        '200': { description: Waivers }
+    post:
+      operationId: createSecurityWaiver
+      summary: Waive a CVE for a bounded time
+      description: >-
+        Reviewer or platform-admin. The approver is the authenticated principal; `expiresAt`
+        is mandatory because a waiver without an end is a permanent exception nobody
+        decided on.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SecurityWaiverCreate' }
+      responses:
+        '201': { description: Waiver recorded }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/UnprocessableEntity' }
+  /api/v1/security/waivers/{waiverId}/revoke:
+    post:
+      operationId: revokeSecurityWaiver
+      summary: Revoke a waiver before it expires
+      parameters:
+        - { name: waiverId, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Waiver revoked }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/servers/maintenance:
+    get:
+      operationId: listServerMaintenance
+      summary: Servers currently in maintenance mode
+      responses:
+        '200': { description: Maintenance states }
+  /api/v1/servers/{server_name}/maintenance:
+    post:
+      operationId: setServerMaintenance
+      summary: Put a server into, or take it out of, maintenance mode
+      description: >-
+        Platform-admin only: maintenance mode decides where deployments may go. The actor is
+        the authenticated principal; it is not accepted from the body.
+      parameters:
+        - { name: server_name, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ServerMaintenanceRequest' }
+      responses:
+        '200': { description: Maintenance state updated }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/servers/{server_name}/telemetry:
+    get:
+      operationId: getServerTelemetry
+      summary: Latest telemetry heartbeat received from a server's edge agent
+      parameters:
+        - { name: server_name, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Telemetry, or a truthful `unknown` when no agent has reported }
+        '404': { $ref: '#/components/responses/NotFound' }
+
 components:
   securitySchemes:
     PipelineBearer:
@@ -2306,6 +2480,69 @@ components:
           schema:
             $ref: '#/components/schemas/ErrorResponse'
   schemas:
+    BuildIdentity:
+      type: object
+      required: [currentCommitSha, currentBranch, source]
+      properties:
+        currentCommitSha: { type: string, nullable: true }
+        currentBranch: { type: string, nullable: true }
+        source: { type: string, nullable: true, enum: [environment, git, null] }
+    SampleApps:
+      type: object
+      required: [repositoryBaseConfigured, items]
+      properties:
+        repositoryBaseConfigured: { type: boolean }
+        items:
+          type: array
+          items:
+            type: object
+            required: [id, name, runtime, pipelineTemplate, path, repositoryUrl, hasTests]
+            properties:
+              id: { type: string }
+              name: { type: string }
+              runtime: { type: string, enum: [docker, kubernetes, systemd] }
+              pipelineTemplate: { type: string }
+              path: { type: string }
+              repositoryUrl: { type: string, nullable: true }
+              hasTests: { type: boolean }
+    ConfigApplyRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        environment: { type: string, enum: [dev, staging, prod], default: prod }
+        revisionId: { type: string, format: uuid, nullable: true }
+        fencingToken: { type: integer, nullable: true }
+    AgentTokenRequest:
+      type: object
+      additionalProperties: false
+      required: [hostname]
+      properties:
+        hostname: { type: string, minLength: 1, maxLength: 253, pattern: '^[A-Za-z0-9][A-Za-z0-9.-]*$' }
+        ttlSeconds: { type: integer, minimum: 300, maximum: 86400, default: 86400 }
+    AgentCommandExecute:
+      type: object
+      additionalProperties: false
+      required: [hostname, command]
+      properties:
+        hostname: { type: string }
+        command: { type: string }
+        timeout: { type: number, default: 30 }
+    SecurityWaiverCreate:
+      type: object
+      additionalProperties: false
+      required: [cveId, reason, expiresAt]
+      properties:
+        cveId: { type: string, minLength: 3, maxLength: 64 }
+        reason: { type: string, minLength: 5, maxLength: 1000 }
+        expiresAt: { type: string, format: date-time }
+        moduleId: { type: string, nullable: true }
+    ServerMaintenanceRequest:
+      type: object
+      additionalProperties: false
+      required: [inMaintenance]
+      properties:
+        inMaintenance: { type: boolean }
+        reason: { type: string, maxLength: 1000, default: '' }
     HeartbeatRequest:
       type: object
       additionalProperties: false

@@ -158,16 +158,23 @@ def test_server_maintenance_api():
     client = TestClient(app)
     server_name = "api-prod-edge-02"
 
-    # Set maintenance via API
-    res = client.post(
+    # A body-supplied actor is refused: the server decides who did this.
+    forged = client.post(
         f"/api/v1/servers/{server_name}/maintenance",
         json={"inMaintenance": True, "reason": "Kernel security patching", "updatedBy": "ops-admin"},
+    )
+    assert forged.status_code == 422
+
+    res = client.post(
+        f"/api/v1/servers/{server_name}/maintenance",
+        json={"inMaintenance": True, "reason": "Kernel security patching"},
     )
     assert res.status_code == 200
     data = res.json()
     assert data["serverName"] == server_name
     assert data["inMaintenance"] is True
     assert data["reason"] == "Kernel security patching"
+    assert data["updatedBy"] != "ops-admin", "the actor must come from the principal"
 
     # Check telemetry API
     telem_res = client.get(f"/api/v1/servers/{server_name}/telemetry")
@@ -179,7 +186,7 @@ def test_server_maintenance_api():
     # Turn off maintenance
     res2 = client.post(
         f"/api/v1/servers/{server_name}/maintenance",
-        json={"inMaintenance": False, "reason": "Patching complete", "updatedBy": "ops-admin"},
+        json={"inMaintenance": False, "reason": "Patching complete"},
     )
     assert res2.status_code == 200
     assert res2.json()["inMaintenance"] is False
@@ -217,56 +224,33 @@ def test_l7_canary_routing():
     assert route3 == "baseline"
 
 
-@pytest.mark.asyncio
-async def test_runner_agent_websocket():
-    from fastapi import WebSocketDisconnect
-    from app.main import runner_agent_websocket
+def test_runner_agent_websocket(monkeypatch):
+    """An agent connects with a signed token; the hostname is the token's claim."""
 
-    class MockWebSocket:
-        def __init__(self):
-            self.accepted = False
-            self.sent = []
-            self.messages = [
-                json.dumps(
-                    {
-                        "type": "TELEMETRY_HEARTBEAT",
-                        "agent_id": "runner-test-01",
-                        "hostname": "test-srv",
-                        "telemetry": {
-                            "cpu_percent": 18.5,
-                            "mem_percent": 42.0,
-                            "disk_percent": 33.1,
-                        },
-                    }
-                )
-            ]
+    from app import workload_identity
+    from app.workload_identity import Scope, Workload
 
-        async def accept(self):
-            self.accepted = True
-
-        async def receive_text(self):
-            if self.messages:
-                return self.messages.pop(0)
-            raise WebSocketDisconnect(1000)
-
-        async def send_text(self, text):
-            self.sent.append(text)
-
-    mock_ws = MockWebSocket()
-    await runner_agent_websocket(mock_ws, agent_id="runner-test-01", hostname="test-srv")
-    assert mock_ws.accepted is True
-    assert len(mock_ws.sent) == 1
-    assert "HEARTBEAT_ACK" in mock_ws.sent[0]
-
-    # Verify telemetry was updated in memory registry
-    assert "test-srv" in _TELEMETRY_REGISTRY
-    record = _TELEMETRY_REGISTRY["test-srv"]
-    assert record.cpu_percent == 18.5
-    assert record.disk_percent == 33.1
+    monkeypatch.setenv("NETCI_WORKLOAD_TOKEN_KEYS", "k1:" + "t" * 48)
+    token = workload_identity.mint(
+        workload=Workload.AGENT, application_id=None,
+        scopes={Scope.AGENT_CONNECT}, agent_hostname="test-srv",
+    )
+    client = TestClient(app)
+    with client.websocket_connect(f"/api/v1/agents/ws?agent_id=runner-test-01&token={token}") as ws:
+        ws.send_json({
+            "type": "TELEMETRY_HEARTBEAT",
+            "telemetry": {"cpu_percent": 18.5, "mem_percent": 42.0, "disk_percent": 33.1},
+        })
+        ack = ws.receive_json()
+        assert ack["type"] == "HEARTBEAT_ACK"
+        assert "test-srv" in _TELEMETRY_REGISTRY
+        record = _TELEMETRY_REGISTRY["test-srv"]
+        assert record.cpu_percent == 18.5
+        assert record.disk_percent == 33.1
 
 
 @pytest.mark.asyncio
-async def test_outbound_runner_daemon_execution():
+async def test_outbound_runner_daemon_execution(monkeypatch):
     from app.adapters.agent_daemon import collect_host_telemetry, NetCiAgentDaemon
 
     telem = collect_host_telemetry()
@@ -274,6 +258,12 @@ async def test_outbound_runner_daemon_execution():
     assert "disk_percent" in telem
     assert "mem_percent" in telem
 
+    # The daemon refuses to start without the token a platform admin minted for it.
+    monkeypatch.delenv("NETCI_AGENT_TOKEN", raising=False)
+    with pytest.raises(RuntimeError, match="NETCI_AGENT_TOKEN"):
+        NetCiAgentDaemon("ws://localhost:8100", "test-agent", "test-host")
+
+    monkeypatch.setenv("NETCI_AGENT_TOKEN", "issued-out-of-band")
     daemon = NetCiAgentDaemon("ws://localhost:8100", "test-agent", "test-host")
     res = await daemon._run_command("echo 'NetCI Zero Inbound Port'")
     assert res["exit_code"] == 0

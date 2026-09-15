@@ -52,7 +52,6 @@ from .domain.models import (
     DeploymentStatus,
     Environment,
     NotificationRecord,
-    NotificationStatus,
     PipelineRun,
     PipelineStage,
     PipelineStatus,
@@ -1668,6 +1667,107 @@ class DeliveryPlatform:
         if deployment.status != DeploymentStatus.DEPLOYING:
             return _CiOutcome(CiResult(updated, deployment))
         return _CiOutcome(CiResult(updated, deployment), pending_cd=(application, updated, deployment))
+
+    def redeploy_artifact(
+        self,
+        application_id: UUID,
+        *,
+        environment: Environment,
+        source_pipeline_run_id: UUID,
+        config_revision_id: UUID | None,
+        actor: str,
+        parameters: dict[str, object],
+        reason: str,
+    ) -> Deployment:
+        """Deploy an artifact that already exists -- a configuration change, or a re-roll.
+
+        This is the honest form of "apply configuration without rebuilding". It used to
+        create a `Deployment` marked `healthy` directly, with a digest invented when no
+        real one existed, and emit a DORA deployment event for it -- a deployment that
+        had touched no runtime, reported as live. Here the artifact must be the output of
+        a real succeeded run, the deployment goes through the same lease, state machine
+        and workflow as any other, and health is whatever the worker reports.
+        """
+
+        with self._transaction() as transaction:
+            application = transaction.application(application_id)
+            if application is None:
+                raise DeliveryError("APPLICATION_NOT_FOUND", "application not found", 404)
+            source = transaction.pipeline_run(source_pipeline_run_id)
+            if source is None or source.application_id != application_id:
+                raise DeliveryError("PIPELINE_NOT_FOUND", "source pipeline run not found", 404)
+            if source.status not in {PipelineStatus.SUCCEEDED, PipelineStatus.RUNNING} or not source.artifact_digest:
+                raise DeliveryError(
+                    "NO_DEPLOYABLE_ARTIFACT",
+                    "the source run has no verified artifact digest; a configuration cannot be "
+                    "applied to an artifact that was never built",
+                    409,
+                )
+            evidence = transaction.security_evidence(source.id)
+            decision = evaluate_artifact_evidence(
+                evidence,
+                expected_digest=source.artifact_digest,
+                require_evidence=self.security_evidence_required(),
+            )
+            if not decision.allowed:
+                raise DeliveryError("ARTIFACT_POLICY_DENIED", decision.reason, 422)
+
+            requires_approval = environment == Environment.PROD
+            now = _now()
+            # The run is what carries the server-managed target for the lease and the
+            # workflow. A redeploy reuses the run that built the artifact, with the new
+            # configuration's parameters layered on -- the config revision is what changed.
+            carrier = replace(
+                source,
+                parameters={**dict(source.parameters), **dict(parameters)},
+                config_revision_id=config_revision_id,
+            )
+            deployment = Deployment(
+                application_id=application_id,
+                pipeline_run_id=source.id,
+                runtime=application.runtime,
+                environment=environment,
+                artifact_digest=source.artifact_digest,
+                config_revision_id=config_revision_id,
+                status=(
+                    DeploymentStatus.PENDING_APPROVAL
+                    if requires_approval
+                    else DeploymentStatus.DEPLOYING
+                ),
+                created_at=now,
+                updated_at=now,
+            )
+            unit = UnitOfWork()
+            if deployment.status == DeploymentStatus.DEPLOYING:
+                lease = self._acquire_lease(
+                    transaction, unit, deployment, carrier, owner=f"redeploy:{actor}"
+                )
+                deployment = replace(deployment, fencing_token=lease.fencing_token)
+            unit.deployments = [(deployment, None)]
+            unit.audit.append(
+                AuditRecord(
+                    "deployment.redeploy_requested",
+                    application_id=application_id,
+                    pipeline_run_id=source.id,
+                    deployment_id=deployment.id,
+                    actor=actor,
+                    correlation_id=source.correlation_id,
+                    payload={
+                        "environment": environment.value,
+                        "artifactDigest": source.artifact_digest,
+                        "configRevisionId": str(config_revision_id) if config_revision_id else None,
+                        "reason": reason,
+                        "requiresApproval": requires_approval,
+                    },
+                )
+            )
+            unit.logs.append((source.id, [f"redeploy requested by={actor} env={environment.value} reason={reason}"]))
+            self._apply(transaction, unit)
+
+        if deployment.status == DeploymentStatus.DEPLOYING:
+            # Outside the transaction: this reaches Temporal.
+            self._start_cd(application, carrier, deployment)
+        return self.get_deployment(deployment.id)
 
     def _start_cd(self, application: Application, run: PipelineRun, deployment: Deployment) -> Deployment:
         """Start the durable CD workflow for a deployment that is ready to move."""

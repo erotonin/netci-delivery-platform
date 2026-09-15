@@ -14,8 +14,6 @@ import logging
 import os
 import platform
 import shutil
-import subprocess
-import sys
 from datetime import datetime, timezone
 from typing import Any
 
@@ -71,6 +69,160 @@ def collect_host_telemetry() -> dict[str, Any]:
     }
 
 
+# Enterprise Edge Agent Command Allowlist Policy
+ALLOWED_COMMAND_PREFIXES = (
+    "uname",
+    "hostname",
+    "df",
+    "free",
+    "uptime",
+    "whoami",
+    "id",
+    "ps",
+    "top -b",
+    "netstat",
+    "ss",
+    "iostat",
+    "docker ps",
+    "docker inspect",
+    "docker stats",
+    "systemctl status",
+    "systemctl is-active",
+    "echo",
+    "date",
+    "ls",
+    "netci-deploy",
+)
+
+DISALLOWED_PATTERNS = (
+    "rm ",
+    "rmdir",
+    "mkfs",
+    "dd ",
+    "shutdown",
+    "reboot",
+    "wget",
+    "curl",
+    "nc ",
+    "chmod",
+    "chown",
+    "/etc/shadow",
+    "/etc/sudoers",
+    "python -c",
+    "perl -e",
+    "bash -i",
+    "sh -i",
+    "> /",
+    ">> /",
+)
+
+ALLOWED_BINARIES = {
+    "uname",
+    "hostname",
+    "df",
+    "free",
+    "uptime",
+    "whoami",
+    "id",
+    "ps",
+    "top",
+    "netstat",
+    "ss",
+    "iostat",
+    "docker",
+    "systemctl",
+    "echo",
+    "date",
+    "ls",
+    "netci-deploy",
+}
+
+ALLOWED_DOCKER_SUBCOMMANDS = {"ps", "inspect", "stats", "version", "info"}
+ALLOWED_SYSTEMCTL_SUBCOMMANDS = {"status", "is-active", "is-enabled"}
+
+import shlex
+import unicodedata
+
+
+def parse_and_validate_command(command: str) -> tuple[bool, str, list[list[str]]]:
+    """Parse command into argv segments and validate against strict security rules.
+    Prevents shell injection, newline injection, command substitution, and argument escalation.
+    Returns: (is_valid, reason, list_of_argv_segments)
+    """
+    cmd_clean = command.strip() if command else ""
+    if not cmd_clean:
+        return False, "SECURITY_POLICY_VIOLATION: Empty command not permitted", []
+
+    # Unicode normalization to prevent homograph / bypass attacks
+    normalized = unicodedata.normalize("NFKC", cmd_clean)
+    cmd_lower = normalized.lower()
+
+    # Reject shell control characters and metacharacters
+    for char in ("\n", "\r", "\x00", ";", "|", "<", ">", "$", "`"):
+        if char in normalized:
+            return False, f"SECURITY_POLICY_VIOLATION: Shell metacharacter or control char {repr(char)} is prohibited", []
+
+    # Check for prohibited dangerous patterns
+    for pattern in DISALLOWED_PATTERNS:
+        if pattern in cmd_lower:
+            return False, f"SECURITY_POLICY_VIOLATION: Command contains prohibited pattern '{pattern}'", []
+
+    # Check for path traversal / critical file patterns
+    for pat in ("/etc/shadow", "/etc/sudoers", "/proc/kcore", ".."):
+        if pat in normalized:
+            return False, f"SECURITY_POLICY_VIOLATION: Command contains prohibited pattern '{pat}'", []
+
+    # Handle composite commands (e.g. `echo ... && uname -s`) by verifying each segment
+    raw_segments = [s.strip() for s in normalized.split("&&")]
+    argv_segments: list[list[str]] = []
+
+    for seg in raw_segments:
+        if not seg:
+            return False, "SECURITY_POLICY_VIOLATION: Empty subcommand segment", []
+
+        if not any(seg.startswith(prefix) for prefix in ALLOWED_COMMAND_PREFIXES):
+            return False, f"SECURITY_POLICY_VIOLATION: Subcommand '{seg}' is not in the approved Edge Agent Allowlist", []
+
+        try:
+            tokens = shlex.split(seg)
+        except ValueError as exc:
+            return False, f"SECURITY_POLICY_VIOLATION: Malformed command syntax ({exc})", []
+
+        if not tokens:
+            return False, "SECURITY_POLICY_VIOLATION: Empty token list", []
+
+        binary = tokens[0]
+        if "/" in binary or "\\" in binary:
+            return False, f"SECURITY_POLICY_VIOLATION: Path-based binary invocation '{binary}' not allowed", []
+
+        if binary not in ALLOWED_BINARIES:
+            return False, f"SECURITY_POLICY_VIOLATION: Subcommand '{seg}' is not in the approved Edge Agent Allowlist", []
+
+        # Granular checks per binary
+        if binary == "docker":
+            if len(tokens) < 2 or tokens[1] not in ALLOWED_DOCKER_SUBCOMMANDS:
+                sub = tokens[1] if len(tokens) > 1 else "(none)"
+                return False, f"SECURITY_POLICY_VIOLATION: Docker subcommand '{sub}' is not permitted (only read-only telemetry/inspection allowed)", []
+            for t in tokens[2:]:
+                if t in ("--privileged", "-v", "--volume", "--cap-add"):
+                    return False, f"SECURITY_POLICY_VIOLATION: Docker flag '{t}' is prohibited", []
+
+        elif binary == "systemctl":
+            if len(tokens) < 2 or tokens[1] not in ALLOWED_SYSTEMCTL_SUBCOMMANDS:
+                sub = tokens[1] if len(tokens) > 1 else "(none)"
+                return False, f"SECURITY_POLICY_VIOLATION: systemctl subcommand '{sub}' is not permitted (only read-only status allowed)", []
+
+        argv_segments.append(tokens)
+
+    return True, "Approved", argv_segments
+
+
+def validate_command_policy(command: str) -> tuple[bool, str]:
+    """Validate that command complies with Edge Agent Allowlist policy."""
+    is_valid, reason, _ = parse_and_validate_command(command)
+    return is_valid, reason
+
+
 class NetCiAgentDaemon:
     """Outbound persistent runner agent connecting to NetCI Controller."""
 
@@ -85,6 +237,14 @@ class NetCiAgentDaemon:
         self.agent_id = agent_id
         self.hostname = hostname or platform.node() or agent_id
         self.heartbeat_interval = heartbeat_interval
+        # The agent token is minted by a platform admin for this hostname and handed to
+        # the daemon out of band. netCI takes the hostname from the token, never from
+        # here, so a daemon cannot register as a host it was not issued for.
+        self.token = os.getenv("NETCI_AGENT_TOKEN", "").strip()
+        if not self.token:
+            raise RuntimeError(
+                "NETCI_AGENT_TOKEN is required: mint one with POST /api/v1/agents/token"
+            )
         self._running = False
 
     async def run(self) -> None:
@@ -92,10 +252,7 @@ class NetCiAgentDaemon:
         import websockets  # lazy import
 
         self._running = True
-        ws_endpoint = (
-            f"{self.server_url}/api/v1/agents/ws"
-            f"?agent_id={self.agent_id}&hostname={self.hostname}"
-        )
+        ws_endpoint = f"{self.server_url}/api/v1/agents/ws?agent_id={self.agent_id}"
         if ws_endpoint.startswith("http://"):
             ws_endpoint = "ws://" + ws_endpoint[len("http://") :]
         elif ws_endpoint.startswith("https://"):
@@ -105,7 +262,9 @@ class NetCiAgentDaemon:
         while self._running:
             try:
                 logger.info("Connecting outbound to NetCI controller at %s", ws_endpoint)
-                async with websockets.connect(ws_endpoint) as ws:
+                async with websockets.connect(
+                    ws_endpoint, additional_headers={"Authorization": f"Bearer {self.token}"}
+                ) as ws:
                     logger.info("Connected to NetCI controller successfully")
                     backoff = 2.0  # reset on successful connection
 
@@ -152,7 +311,7 @@ class NetCiAgentDaemon:
             cmd = msg.get("command", "")
             logger.info("Executing remote task %s: %s", task_id, cmd)
 
-            # Run in subprocess
+            # Run in subprocess with security policy check
             result = await self._run_command(cmd)
             resp = {
                 "type": "COMMAND_RESULT",
@@ -163,17 +322,34 @@ class NetCiAgentDaemon:
             await ws.send(json.dumps(resp))
 
     async def _run_command(self, cmd: str) -> dict[str, Any]:
+        is_allowed, reason, argv_segments = parse_and_validate_command(cmd)
+        if not is_allowed:
+            logger.warning("Command rejected by security policy: %s (%s)", cmd, reason)
+            return {"exit_code": 126, "output": reason}
+
+        combined_output = []
+        last_exit_code = 0
+
         try:
-            proc = await asyncio.create_subprocess_shell(
-                cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.STDOUT,
-            )
-            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=300.0)
-            output = stdout.decode("utf-8", errors="replace") if stdout else ""
-            return {"exit_code": proc.returncode, "output": output}
+            for argv in argv_segments:
+                proc = await asyncio.create_subprocess_exec(
+                    argv[0],
+                    *argv[1:],
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.STDOUT,
+                )
+                stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=300.0)
+                out_str = stdout.decode("utf-8", errors="replace") if stdout else ""
+                combined_output.append(out_str)
+                last_exit_code = proc.returncode if proc.returncode is not None else 0
+                if last_exit_code != 0:
+                    break
+
+            return {"exit_code": last_exit_code, "output": "".join(combined_output)}
         except asyncio.TimeoutError:
             return {"exit_code": -1, "output": "Execution timed out (300s limit)"}
+        except FileNotFoundError as exc:
+            return {"exit_code": 127, "output": f"Executable not found: {exc}"}
         except Exception as exc:
             return {"exit_code": -1, "output": f"Subprocess error: {exc}"}
 

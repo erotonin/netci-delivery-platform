@@ -34,7 +34,6 @@ from ..domain.models import (
     PipelineStage,
     PipelineStatus,
     Runtime,
-    ScmCommitStatus,
     ScmIntegration,
     ScmProviderType,
     ScmWebhookDelivery,
@@ -1714,7 +1713,7 @@ class PostgresSession:
 
     def active_config_revision(self, module_id: str) -> ModuleConfigRevision | None:
         self._cursor.execute(
-            f"""
+            """
             SELECT r.* FROM module_config_revisions r
             JOIN modules m ON m.active_config_revision_id = r.id
             WHERE m.id = %s
@@ -2064,7 +2063,7 @@ class PostgresSession:
 
     def record_policy_decision(self, decision: PolicyDecisionRecord) -> None:
         self._cursor.execute(
-            f"""
+            """
             INSERT INTO policy_decisions (
                 id, scope, target_type, target_id, allowed, reason, risk_score,
                 checks, rules_evaluated, evaluator, evaluated_at, metadata
@@ -2123,7 +2122,7 @@ class PostgresSession:
 
     def insert_security_exception(self, exception: SecurityExceptionRecord) -> None:
         self._cursor.execute(
-            f"""
+            """
             INSERT INTO security_exceptions (
                 id, cve, artifact_digest, owner, reason, approved_by, status,
                 created_at, expires_at, revoked_at, revoked_by
@@ -2173,7 +2172,7 @@ class PostgresSession:
 
     def insert_security_waiver(self, waiver: SecurityWaiver) -> None:
         self._cursor.execute(
-            f"""
+            """
             INSERT INTO security_waivers (
                 id, cve_id, module_id, reason, approved_by, status, expires_at, created_at
             ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
@@ -2264,7 +2263,7 @@ class PostgresSession:
 
     def insert_break_glass_request(self, record: BreakGlassRecord) -> None:
         self._cursor.execute(
-            f"""
+            """
             INSERT INTO break_glass_requests (
                 id, target_type, target_id, requested_by, reason, incident_ticket,
                 status, approved_by, created_at, approved_at, expires_at

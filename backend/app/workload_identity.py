@@ -71,8 +71,12 @@ class Workload:
 
     JENKINS = "jenkins"
     TEMPORAL = "temporal"
+    # An edge runner that connects *outbound* to netCI over WebSocket so no inbound port
+    # has to be opened on the host. It holds no CI or CD scope: its token proves which
+    # host is on the other end of the socket, and nothing else.
+    AGENT = "agent"
 
-    ALL = frozenset({JENKINS, TEMPORAL})
+    ALL = frozenset({JENKINS, TEMPORAL, AGENT})
 
 
 class Scope:
@@ -85,9 +89,11 @@ class Scope:
     CI_STAGE = "ci:stage"
     DEPLOYMENT_RESULT = "deployment:result"
     DEPLOYMENT_READ = "deployment:read"
+    AGENT_CONNECT = "agent:connect"
 
     ALL = frozenset(
-        {CI_RESULT, CI_LOGS, CI_EVIDENCE, CI_REPORT, CI_STAGE, DEPLOYMENT_RESULT, DEPLOYMENT_READ}
+        {CI_RESULT, CI_LOGS, CI_EVIDENCE, CI_REPORT, CI_STAGE, DEPLOYMENT_RESULT,
+         DEPLOYMENT_READ, AGENT_CONNECT}
     )
 
 
@@ -101,6 +107,7 @@ WORKLOAD_SCOPES: dict[str, frozenset[str]] = {
     Workload.TEMPORAL: frozenset(
         {Scope.DEPLOYMENT_RESULT, Scope.DEPLOYMENT_READ, Scope.CI_EVIDENCE}
     ),
+    Workload.AGENT: frozenset({Scope.AGENT_CONNECT}),
 }
 
 #: Operations that end a piece of work. A token for one of these is single-use, so a
@@ -122,13 +129,15 @@ class CallbackClaims:
     issuer: str
     audience: str
     workload: str
-    application_id: UUID
+    # None only for agent tokens, which name a host rather than an application.
+    application_id: UUID | None
     scopes: frozenset[str]
     issued_at: int
     expires_at: int
     jti: str
     pipeline_run_id: UUID | None = None
     deployment_id: UUID | None = None
+    agent_hostname: str | None = None
     single_use: bool = False
 
     def permits(self, scope: str) -> bool:
@@ -139,7 +148,8 @@ class CallbackClaims:
 
         return {
             "workload": self.workload,
-            "applicationId": str(self.application_id),
+            "applicationId": str(self.application_id) if self.application_id else None,
+            "agentHostname": self.agent_hostname,
             "pipelineRunId": str(self.pipeline_run_id) if self.pipeline_run_id else None,
             "deploymentId": str(self.deployment_id) if self.deployment_id else None,
             "scopes": sorted(self.scopes),
@@ -240,10 +250,11 @@ def require_configured_workload_identity() -> None:
 def mint(
     *,
     workload: str,
-    application_id: UUID,
+    application_id: UUID | None,
     scopes: set[str] | frozenset[str],
     pipeline_run_id: UUID | None = None,
     deployment_id: UUID | None = None,
+    agent_hostname: str | None = None,
     ttl_seconds: int = DEFAULT_TTL_SECONDS,
     now: int | None = None,
 ) -> str:
@@ -275,7 +286,12 @@ def mint(
             f"{workload} may not hold: {', '.join(sorted(not_permitted))}",
             422,
         )
-    if (pipeline_run_id is None) == (deployment_id is None):
+    if workload == Workload.AGENT:
+        if not agent_hostname or pipeline_run_id or deployment_id:
+            raise WorkloadIdentityError(
+                "AMBIGUOUS_SUBJECT", "an agent token names exactly one hostname", 422
+            )
+    elif (pipeline_run_id is None) == (deployment_id is None):
         raise WorkloadIdentityError(
             "AMBIGUOUS_SUBJECT",
             "a callback token names exactly one of pipeline_run_id or deployment_id",
@@ -287,9 +303,10 @@ def mint(
         "iss": issuer(),
         "aud": audience(),
         "sub": workload,
-        "application_id": str(application_id),
+        "application_id": str(application_id) if application_id else None,
         "pipeline_run_id": str(pipeline_run_id) if pipeline_run_id else None,
         "deployment_id": str(deployment_id) if deployment_id else None,
+        "agent_hostname": agent_hostname,
         "scopes": sorted(requested),
         "iat": issued,
         "exp": issued + ttl,
@@ -368,12 +385,18 @@ def verify(token: str, *, now: int | None = None) -> CallbackClaims:
     scopes &= WORKLOAD_SCOPES[workload]
 
     try:
-        application_id = UUID(str(claims["application_id"]))
+        application_id = UUID(str(claims["application_id"])) if claims.get("application_id") else None
         pipeline_run_id = UUID(str(claims["pipeline_run_id"])) if claims.get("pipeline_run_id") else None
         deployment_id = UUID(str(claims["deployment_id"])) if claims.get("deployment_id") else None
     except (KeyError, ValueError) as exc:
         raise WorkloadIdentityError("MALFORMED_TOKEN", "callback token names no resource") from exc
-    if (pipeline_run_id is None) == (deployment_id is None):
+    agent_hostname = str(claims.get("agent_hostname") or "").strip() or None
+    if workload == Workload.AGENT:
+        if not agent_hostname or pipeline_run_id or deployment_id:
+            raise WorkloadIdentityError("MALFORMED_TOKEN", "agent token must name a hostname")
+    elif application_id is None:
+        raise WorkloadIdentityError("MALFORMED_TOKEN", "callback token names no application")
+    elif (pipeline_run_id is None) == (deployment_id is None):
         raise WorkloadIdentityError(
             "MALFORMED_TOKEN", "callback token must name exactly one resource"
         )
@@ -392,6 +415,7 @@ def verify(token: str, *, now: int | None = None) -> CallbackClaims:
         issued_at=issued_at,
         expires_at=expires_at,
         jti=jti,
+        agent_hostname=agent_hostname,
         single_use=bool(claims.get("single_use")),
     )
 

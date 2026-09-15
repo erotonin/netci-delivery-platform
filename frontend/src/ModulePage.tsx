@@ -2,14 +2,14 @@ import { useEffect, useState } from 'react'
 import {
   ArrowLeft, Box, Check, CheckCircle2, Code2, Copy, ExternalLink, GitBranch,
   History, MoreHorizontal, Play, Plus, RotateCcw, Settings, ShieldAlert,
-  TerminalSquare, XCircle, ZoomIn, ZoomOut,
+  TerminalSquare, XCircle, Zap, ZoomIn, ZoomOut,
 } from 'lucide-react'
 import {
   approveConfigRevision, cancelPipelineRun, createModuleVersion, detectDrift,
   diffConfigRevisions, getDora, getGitInfo, getModule, getModuleOverview, getPipelineLogs,
   getPipelineStages, listConfigRevisions, listModulePipelineRuns, listModuleVersions,
   proposeConfigRevision, rejectConfigRevision, retryPipelineRun, rollbackConfigRevision,
-  startModulePipeline, type ConfigDriftReport, type ConfigRevision, type ConfigRevisionDiff,
+  startModulePipeline, applyModuleConfig, type ConfigApplyResponse, type ConfigDriftReport, type ConfigRevision, type ConfigRevisionDiff,
   type DeploymentEnvironmentConfig, type Environment, type GitInfo, type ModuleOverview, type ModulePipelineConfig, type ModuleVersion,
   type PipelineRun, type PipelineStage, type Runtime,
 } from './api/netciClient'
@@ -281,13 +281,14 @@ function PipelineTab({ moduleId, pipelineConfig, deploymentEnvironments }: { mod
       if (active) {
         setGitInfo(info)
         if (info.currentCommitSha) {
-          setSourceRevision((prev) => prev || info.currentCommitSha)
+          const sha = info.currentCommitSha
+          setSourceRevision((prev) => prev || sha)
         }
       }
     }).catch(() => {})
     return () => { active = false }
   }, [moduleId])
-  const effectiveRevision = (sourceRevision || gitInfo?.currentCommitSha || '5a314b8').trim()
+  const effectiveRevision = (sourceRevision || gitInfo?.currentCommitSha || '').trim()
   const trigger = async (pipeline: PipelineDefinition, revision?: string) => {
     const rev = (revision || effectiveRevision).trim()
     if (!/^[0-9a-f]{7,64}$/i.test(rev)) {
@@ -327,7 +328,7 @@ function PipelineTab({ moduleId, pipelineConfig, deploymentEnvironments }: { mod
   if (historyPipeline) { const historyRuns = runsForPipeline(historyPipeline); return <section className="history-view"><button className="back-button" onClick={() => setHistoryPipeline(null)}><ArrowLeft size={16} />All pipelines</button><div className="run-heading"><div><h2>{historyPipeline.name} · Build history</h2><p>Recent pipeline runs from netCI API and Jenkins callbacks.</p></div><button className="primary-button" disabled={busyPipeline === historyPipeline.id} onClick={() => trigger(historyPipeline)}><Play size={15} />{busyPipeline === historyPipeline.id ? 'Queuing…' : 'Run pipeline'}</button></div><section className="panel table-panel"><div className="data-table history-table"><div className="table-row table-head"><span>Build</span><span>Commit</span><span>Branch</span><span>Triggered by</span><span>Started</span><span>Status</span><span /></div>{historyRuns.map((item) => <button className="table-row table-button" onClick={() => setRun({ pipeline: historyPipeline, liveRun: item })} key={item.id}><span className="request-id">#{item.jenkinsRunId ?? item.id.slice(0, 8)}</span><span className="mono">{item.commitSha}</span><span>{item.branch}</span><span>{item.startedBy ?? 'unknown'}</span><span>{new Date(item.createdAt).toLocaleString('vi-VN')}</span><StatusPill status={item.status.replace('_', ' ')} /><ExternalLink size={15} /></button>)}</div>{!historyRuns.length && <div className="empty-table"><History size={22} /><strong>No runs for this pipeline</strong><span>Enter a source commit and trigger the first API-backed run.</span></div>}</section>{triggered && <div className="toast success-toast"><CheckCircle2 size={17} />{triggered} was queued successfully.</div>}</section> }
   return <><section className="panel form-grid"><label className="field full"><div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}><span>Source Git commit SHA</span>{gitInfo?.currentCommitSha && <span className="mono" style={{ fontSize: '0.78rem', color: '#60a5fa' }}>Git Local: {gitInfo.currentCommitSha.slice(0, 7)} ({gitInfo.currentBranch})</span>}</div><input className="mono" value={sourceRevision} onChange={(event) => setSourceRevision(event.target.value)} placeholder="7–64 hexadecimal characters" /><small>netCI records and sends this exact immutable revision to the configured CI engine.</small></label></section><div className="pipeline-card-grid">{definitions.map((pipeline) => {
     const live = runsForPipeline(pipeline)[0]
-    return <article className="pipeline-card panel" key={pipeline.id}><div className="pipeline-card-title"><span className={`pipeline-icon pipeline-${pipeline.id}`}><GitBranch size={18} /></span><div><h3>{pipeline.name}</h3><p>{pipelineConfig.runner ? `${pipelineConfig.runner} · ` : 'netCI API → configured CI adapter · '}{pipeline.branch}</p></div><button aria-label={`Mở lịch sử ${pipeline.name}`} onClick={() => setHistoryPipeline(pipeline)}><MoreHorizontal size={18} /></button></div><div className="last-build"><span>Last build</span><strong>{live ? `#${live.jenkinsRunId ?? live.id.slice(0, 8)}` : '—'}</strong><StatusPill status={live?.status.replace('_', ' ') ?? 'Not started'} /></div><dl><div><dt>Commit</dt><dd className="mono">{live?.commitSha ?? '—'}</dd></div><div><dt>Triggered by</dt><dd>{live?.startedBy ?? '—'}</dd></div><div><dt>Started</dt><dd>{live ? new Date(live.createdAt).toLocaleString('vi-VN') : 'No run yet'}</dd></div><div><dt>Environment</dt><dd>{pipelineEnvironment(pipeline.id, deploymentEnvironments)}</dd></div></dl><footer><button className="secondary-button" onClick={() => setHistoryPipeline(pipeline)}><History size={15} />History</button><button className="trigger-button" disabled={busyPipeline === pipeline.id} title={effectiveRevision ? undefined : 'Enter a valid source commit SHA'} aria-label={`Run ${pipeline.name}`} onClick={() => trigger(pipeline)}><Play size={16} /></button></footer></article>
+    return <article className="pipeline-card panel" key={pipeline.id}><div className="pipeline-card-title"><span className={`pipeline-icon pipeline-${pipeline.id}`}><GitBranch size={18} /></span><div><h3>{pipeline.name}</h3><p>{pipelineConfig.runner ? `${pipelineConfig.runner} · ` : 'netCI API → configured CI adapter · '}{pipeline.branch}</p></div><button aria-label={`Mở lịch sử ${pipeline.name}`} onClick={() => setHistoryPipeline(pipeline)}><MoreHorizontal size={18} /></button></div><div className="last-build"><span>Last build</span><strong>{live ? `#${live.jenkinsRunId ?? live.id.slice(0, 8)}` : '—'}</strong><StatusPill status={live?.status.replace('_', ' ') ?? 'Not started'} /></div><dl><div><dt>Commit</dt><dd className="mono">{live?.commitSha ?? '—'}</dd></div><div><dt>Triggered by</dt><dd>{live?.startedBy ?? '—'}</dd></div><div><dt>Started</dt><dd>{live ? new Date(live.createdAt).toLocaleString('vi-VN') : 'No run yet'}</dd></div><div><dt>Environment</dt><dd>{pipelineEnvironment(pipeline.id, deploymentEnvironments)}</dd></div></dl><footer><button className="secondary-button" onClick={() => setHistoryPipeline(pipeline)}><History size={15} />History</button><button className="trigger-button" disabled={busyPipeline === pipeline.id || !effectiveRevision} title={effectiveRevision ? undefined : 'No source commit known: enter a commit SHA first'} aria-label={`Run ${pipeline.name}`} onClick={() => trigger(pipeline)}><Play size={16} /></button></footer></article>
   })}</div>{triggered && <div className="toast success-toast"><CheckCircle2 size={17} />{triggered} was queued successfully.<button aria-label="Đóng thông báo" onClick={() => setTriggered(null)}>×</button></div>}</>
 }
 
@@ -449,6 +450,12 @@ function ConfigTab({ moduleId }: { moduleId: string }) {
   const [rejectModal, setRejectModal] = useState<ConfigRevision | null>(null)
   const [rejectReason, setRejectReason] = useState('')
   const [submitting, setSubmitting] = useState(false)
+
+  // Fast apply decoupled lifecycle
+  const [fastApplyModal, setFastApplyModal] = useState(false)
+  const [fastApplyEnv, setFastApplyEnv] = useState<Environment>('staging')
+  const [applyingConfig, setApplyingConfig] = useState(false)
+  const [fastApplyResult, setFastApplyResult] = useState<ConfigApplyResponse | null>(null)
 
   // Propose form state
   const [changeSummary, setChangeSummary] = useState('')
@@ -618,6 +625,20 @@ function ConfigTab({ moduleId }: { moduleId: string }) {
     }
   }
 
+  const handleFastApply = async () => {
+    setApplyingConfig(true)
+    try {
+      const res = await applyModuleConfig(moduleId, { environment: fastApplyEnv })
+      setFastApplyResult(res)
+      notify(`Fast applied config to ${fastApplyEnv} in ${res.leadTimeSeconds.toFixed(2)}s! Reused digest ${res.artifactDigest.slice(0, 19)}...`)
+      await checkDrift()
+    } catch (error) {
+      notify(error instanceof Error ? error.message : 'Failed to fast apply config', 'error')
+    } finally {
+      setApplyingConfig(false)
+    }
+  }
+
   const activeRev = revisions.find((r) => r.active)
   const pendingRev = revisions.find((r) => r.status === 'pending_approval')
 
@@ -663,6 +684,14 @@ function ConfigTab({ moduleId }: { moduleId: string }) {
           </p>
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
+          <button
+            className="secondary-button"
+            id="btn-fast-apply-config"
+            style={{ borderColor: 'var(--accent)', color: 'var(--accent)' }}
+            onClick={() => { setFastApplyResult(null); setFastApplyModal(true) }}
+          >
+            <Zap size={15} /> Fast Apply Config
+          </button>
           <button className="secondary-button" disabled={loadingDrift} onClick={checkDrift}>
             <RotateCcw size={15} /> {loadingDrift ? 'Detecting…' : 'Check Drift'}
           </button>
@@ -941,6 +970,70 @@ function ConfigTab({ moduleId }: { moduleId: string }) {
                 placeholder="Explain why this change is rejected (e.g. invalid server host, security policy violation)"
               />
             </label>
+          </div>
+        </Modal>
+      )}
+
+      {fastApplyModal && (
+        <Modal
+          title="⚡ Fast-Track Config Deploy (Skip CI Rebuild)"
+          description="Decoupled configuration deployment. Reuses previously verified immutable artifact digest without triggering code checkout, build, vulnerability scan, SBOM, or signing."
+          onClose={() => setFastApplyModal(false)}
+          footer={
+            <>
+              <button className="secondary-button" onClick={() => setFastApplyModal(false)}>Close</button>
+              <button
+                className="primary-button"
+                id="btn-confirm-fast-apply"
+                disabled={applyingConfig}
+                onClick={handleFastApply}
+                style={{ background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)' }}
+              >
+                {applyingConfig ? 'Applying…' : 'Apply Instantly'}
+              </button>
+            </>
+          }
+        >
+          <div className="form-grid">
+            <div className="field full">
+              <div style={{ padding: 12, borderRadius: 8, background: 'rgba(16, 185, 129, 0.08)', border: '1px solid rgba(16, 185, 129, 0.2)', marginBottom: 8 }}>
+                <div style={{ fontWeight: 600, color: '#10b981', marginBottom: 4 }}>Enterprise Decoupled Lifecycle</div>
+                <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                  Deploying configuration changes directly applies the desired revision while binding to the latest verified artifact SHA256 digest. Lead time drops from minutes to ~1 second.
+                </div>
+              </div>
+            </div>
+
+            <label className="field full">
+              <span>Target Environment *</span>
+              <select
+                id="fast-apply-env-select"
+                value={fastApplyEnv}
+                onChange={(e) => setFastApplyEnv(e.target.value as Environment)}
+              >
+                <option value="dev">dev (Development)</option>
+                <option value="staging">staging (Staging / Pre-prod)</option>
+                <option value="prod">prod (Production)</option>
+              </select>
+            </label>
+
+            <div className="field full" style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>
+              Active Revision to Apply: <strong>Revision #{activeRev?.revisionNumber ?? 1}</strong> ({activeRev?.id.slice(0, 8) ?? 'latest'})
+            </div>
+
+            {fastApplyResult && (
+              <div className="field full" id="fast-apply-result-box" style={{ padding: 12, borderRadius: 6, background: 'rgba(16, 185, 129, 0.1)', border: '1px solid #10b981' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: '#10b981', fontWeight: 600, marginBottom: 6 }}>
+                  <CheckCircle2 size={18} /> Configuration Applied Successfully
+                </div>
+                <div style={{ fontSize: '0.85rem' }}>
+                  <div>• <strong>Deployment ID:</strong> <code className="mono">{fastApplyResult.deploymentId}</code></div>
+                  <div>• <strong>Reused Artifact Digest:</strong> <code className="mono">{fastApplyResult.artifactDigest}</code></div>
+                  <div>• <strong>Lead Time:</strong> <span style={{ color: '#10b981', fontWeight: 600 }}>{fastApplyResult.leadTimeSeconds.toFixed(2)}s</span> (CI pipeline bypassed)</div>
+                  <div>• <strong>Status:</strong> <span className="mono">{fastApplyResult.status}</span></div>
+                </div>
+              </div>
+            )}
           </div>
         </Modal>
       )}

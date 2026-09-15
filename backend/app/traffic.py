@@ -93,7 +93,6 @@ class InMemoryTrafficRoutingAdapter(TrafficRoutingAdapter):
         if active_color not in ("blue", "green"):
             raise ValueError(f"Invalid route color: {active_color}, must be 'blue' or 'green'")
         key = (str(application_id), str(environment))
-        existing = self._routes.get(key, {})
         status = {
             "applicationId": str(application_id),
             "environment": str(environment),

@@ -58,7 +58,7 @@ def auth_client(tmp_path, monkeypatch):
     monkeypatch.setenv("NETCI_AUTH_MODE", "token")
     monkeypatch.setenv("NETCI_AUTH_TOKENS_FILE", str(path))
     import app.auth as auth_mod
-    main.authenticator = auth_mod.build_authenticator()
+    monkeypatch.setattr(main, "authenticator", auth_mod.build_authenticator())
 
     client = TestClient(main.app)
 

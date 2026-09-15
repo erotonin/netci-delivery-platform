@@ -9,7 +9,6 @@ import json
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any, Protocol
-from uuid import UUID, uuid4
 
 import httpx
 

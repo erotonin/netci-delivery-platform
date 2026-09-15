@@ -881,9 +881,20 @@ export function ProductionRequestsPage({ systemId }: { systemId: string }) {
     }
   }, [systemId])
 
+  const [scopeFilter, setScopeFilter] = useState<'scoped' | 'all'>(systemId ? 'scoped' : 'all')
+
+  const scopedItems = useMemo(() => {
+    if (!systemId || scopeFilter === 'all' || availableModules.length === 0) return items
+    return items.filter((request) =>
+      request.modules.some((item) =>
+        availableModules.some((am) => am.id === item.moduleId || am.name === item.moduleName || am.id === item.moduleName)
+      )
+    )
+  }, [items, systemId, scopeFilter, availableModules])
+
   const filtered = useMemo(
     () =>
-      items.filter((request) => {
+      scopedItems.filter((request) => {
         const date = request.scheduledFor.slice(0, 10)
         return (
           displayRequestId(request).toLowerCase().includes(query.toLowerCase()) &&
@@ -893,7 +904,7 @@ export function ProductionRequestsPage({ systemId }: { systemId: string }) {
           (!toDate || date <= toDate)
         )
       }),
-    [items, query, moduleFilter, statusFilter, fromDate, toDate]
+    [scopedItems, query, moduleFilter, statusFilter, fromDate, toDate]
   )
 
   const create = async (payload: ProductionRequestCreate) => {
@@ -926,20 +937,38 @@ export function ProductionRequestsPage({ systemId }: { systemId: string }) {
   return (
     <>
       <PageHeader
-        title="Production Requests"
-        description="Create and track requests to deploy modules to production."
+        title={systemId && scopeFilter === 'scoped' ? `Production Requests (${systemId})` : "Production Requests"}
+        description={systemId && scopeFilter === 'scoped' ? `Quản lý và phê duyệt các đợt phát hành Production cho riêng hệ thống ${systemId}.` : "Tạo và theo dõi các yêu cầu phát hành lên môi trường Production trên toàn bộ hệ thống."}
         action={
-          <button className="primary-button" onClick={() => setCreating(true)}>
-            <Plus size={16} />New Request
-          </button>
+          <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+            {systemId && (
+              <div className="segmented compact" style={{ margin: 0 }}>
+                <button
+                  className={scopeFilter === 'scoped' ? 'active' : ''}
+                  onClick={() => setScopeFilter('scoped')}
+                >
+                  Chỉ {systemId}
+                </button>
+                <button
+                  className={scopeFilter === 'all' ? 'active' : ''}
+                  onClick={() => setScopeFilter('all')}
+                >
+                  Tất cả hệ thống
+                </button>
+              </div>
+            )}
+            <button className="primary-button" onClick={() => setCreating(true)}>
+              <Plus size={16} />New Request
+            </button>
+          </div>
         }
       />
       <div className="request-kpis">
         {[
-          ['Total Requests', String(items.length), 'neutral'],
-          ['Approved', String(items.filter((item) => item.status === 'approved').length), 'green'],
-          ['Blocked / Rejected', String(items.filter((item) => ['blocked', 'rejected'].includes(item.status)).length), 'red'],
-          ['Pending', String(items.filter((item) => item.status === 'waiting_approval').length), 'amber'],
+          ['Total Requests', String(scopedItems.length), 'neutral'],
+          ['Approved', String(scopedItems.filter((item) => item.status === 'approved').length), 'green'],
+          ['Blocked / Rejected', String(scopedItems.filter((item) => ['blocked', 'rejected'].includes(item.status)).length), 'red'],
+          ['Pending', String(scopedItems.filter((item) => item.status === 'waiting_approval').length), 'amber'],
         ].map(([label, value, tone]) => (
           <article key={label}>
             <i className={`request-kpi-dot ${tone}`} />

@@ -6,7 +6,7 @@ import {
 } from 'lucide-react'
 import { Modal } from './PortalShell'
 import { usePortalFeedback } from './PortalFeedback'
-import { listDcimModules, listDcimServers, getGitInfo, type DcimModule, type DeploymentEnvironmentConfig, type Environment, type GitInfo, type GitSample, type ModulePipelineConfig, type ModulePipelineTabConfig, type Runtime } from './api/netciClient'
+import { listDcimModules, listDcimServers, getGitInfo, listSampleApps, type DcimModule, type DeploymentEnvironmentConfig, type Environment, type GitInfo, type GitSample, type SampleApps, type ModulePipelineConfig, type ModulePipelineTabConfig, type Runtime } from './api/netciClient'
 
 type DeploymentEnvironment = 'Dev' | 'Staging' | 'Production'
 type DeploymentTarget = 'Systemd' | 'Docker' | 'Kubernetes'
@@ -84,6 +84,7 @@ function GeneralStep({
   customModule,
   onCustomModuleChange,
   gitInfo,
+  sampleApps,
   onSelectSample,
 }: {
   modules?: DcimModule[]
@@ -97,11 +98,9 @@ function GeneralStep({
   customModule: DcimModule
   onCustomModuleChange: (mod: DcimModule) => void
   gitInfo?: GitInfo | null
+  sampleApps?: SampleApps | null
   onSelectSample?: (sample: GitSample) => void
 }) {
-  const [sourceMode, setSourceMode] = useState<'git' | 'local'>('git')
-  const [uploading, setUploading] = useState(false)
-  const [uploadMsg, setUploadMsg] = useState<string | null>(null)
   const module = source === 'local' ? customModule : modules.find((item) => item.id === selected)
   return <div className="wizard-content">
     <div className="wizard-section-title">
@@ -130,23 +129,28 @@ function GeneralStep({
       </>
     ) : (
       <>
-        {gitInfo && (
+        {sampleApps && (
           <div className="panel" style={{ marginBottom: '16px', padding: '14px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
               <div>
-                <strong style={{ fontSize: '0.92rem' }}>Ứng dụng mẫu Git Local (3 Runtime hỗ trợ)</strong>
+                <strong style={{ fontSize: '0.92rem' }}>Sample applications ({sampleApps.items.length} shipped in this checkout)</strong>
                 <p style={{ margin: '2px 0 0', fontSize: '0.78rem', color: 'var(--text-muted)' }}>
-                  Bấm chọn để tự động điền cấu hình pipeline &amp; runtime tương ứng.
+                  {sampleApps.repositoryBaseConfigured
+                    ? 'Select one to prefill runtime and pipeline template.'
+                    : 'Repository base is not configured (NETCI_SAMPLE_APPS_REPOSITORY_BASE); selecting a sample prefills runtime only — enter the repository URL yourself.'}
                 </p>
               </div>
-              {gitInfo.currentCommitSha && (
+              {gitInfo?.currentCommitSha && (
                 <span className="mono" style={{ fontSize: '0.75rem', background: 'rgba(59, 130, 246, 0.1)', color: '#60a5fa', padding: '3px 8px', borderRadius: '4px', border: '1px solid rgba(59, 130, 246, 0.25)' }}>
-                  Git Local: {gitInfo.currentCommitSha.slice(0, 7)} ({gitInfo.currentBranch})
+                  Build: {gitInfo.currentCommitSha.slice(0, 7)}{gitInfo.currentBranch ? ` (${gitInfo.currentBranch})` : ''}
                 </span>
               )}
             </div>
+            {sampleApps.items.length === 0 ? (
+              <div className="inline-empty"><Box size={23} /><span>No sample applications found in this checkout.</span></div>
+            ) : (
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '10px' }}>
-              {gitInfo.samples.map((sample) => {
+              {sampleApps.items.map((sample) => {
                 const isSelected = customModule.code === sample.id
                 return (
                   <button
@@ -169,15 +173,17 @@ function GeneralStep({
                       {sample.runtime === 'docker' ? <Container size={15} /> : sample.runtime === 'kubernetes' ? <Layers3 size={15} /> : <Server size={15} />}
                       <span style={{ fontSize: '0.85rem' }}>{sample.name}</span>
                     </div>
-                    <span style={{ color: 'var(--text-muted)', fontSize: '0.75rem', lineHeight: '1.2' }}>{sample.description}</span>
-                    <div style={{ marginTop: '4px', display: 'flex', gap: '6px', fontSize: '0.72rem' }}>
+                    <span className="mono" style={{ color: 'var(--text-muted)', fontSize: '0.72rem' }}>{sample.path}</span>
+                    <div style={{ marginTop: '4px', display: 'flex', gap: '6px', fontSize: '0.72rem', flexWrap: 'wrap' }}>
                       <span style={{ background: 'rgba(255,255,255,0.06)', padding: '1px 5px', borderRadius: '3px' }}>Runtime: <b>{sample.runtime}</b></span>
-                      <span style={{ background: 'rgba(255,255,255,0.06)', padding: '1px 5px', borderRadius: '3px' }}>Port: <b>{sample.port}</b></span>
+                      <span style={{ background: 'rgba(255,255,255,0.06)', padding: '1px 5px', borderRadius: '3px' }}>{sample.hasTests ? 'has tests' : 'no tests'}</span>
+                      {!sample.repositoryUrl && <span style={{ background: 'rgba(245,158,11,0.15)', color: '#f59e0b', padding: '1px 5px', borderRadius: '3px' }}>repository not configured</span>}
                     </div>
                   </button>
                 )
               })}
             </div>
+            )}
           </div>
         )}
         <div className="panel wizard-form" style={{ marginBottom: '20px' }}>
@@ -221,74 +227,19 @@ function GeneralStep({
             </select>
           </label>
           <div className="field full">
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-              <span style={{ fontWeight: 600 }}>Nguồn mã nguồn (Source Origin) *</span>
-              <div className="segmented compact" style={{ margin: 0 }}>
-                <button type="button" className={sourceMode === 'git' ? 'active' : ''} onClick={() => setSourceMode('git')}>Git Remote URL</button>
-                <button type="button" className={sourceMode === 'local' ? 'active' : ''} onClick={() => setSourceMode('local')}>Tải Thư Mục Local (Không cần SCM)</button>
-              </div>
-            </div>
-
-            {sourceMode === 'git' ? (
+            <span style={{ fontWeight: 600, display: 'block', marginBottom: '8px' }}>Repository URL *</span>
               <input
                 value={customModule.repositoryUrl}
                 onChange={(e) => onCustomModuleChange({ ...customModule, repositoryUrl: e.target.value })}
                 placeholder="https://github.com/my-org/core-api hoặc file:///path/to/local/git"
               />
-            ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                <input
-                  type="file"
-                  accept=".tar.gz,.tgz,.zip"
-                  onChange={async (e) => {
-                    const file = e.target.files?.[0]
-                    if (!file) return
-                    setUploading(true)
-                    setUploadMsg(null)
-                    try {
-                      const formData = new FormData()
-                      formData.append('file', file)
-                      const res = await fetch('/api/v1/workspaces/upload', {
-                        method: 'POST',
-                        headers: {
-                          Authorization: 'Bearer ' + (localStorage.getItem('netci_token') || 'dev'),
-                        },
-                        body: formData,
-                      })
-                      const data = await res.json()
-                      if (res.ok) {
-                        setUploadMsg(`✓ Đã nhận mã nguồn: ${data.filename} (${Math.round(data.sizeBytes / 1024)} KB) · Gợi ý: ${data.detectedRuntime} (bạn có toàn quyền chọn ở Bước 3)`)
-                        onCustomModuleChange({
-                          ...customModule,
-                          repositoryUrl: `local://workspace/${data.workspaceId}/${data.filename}`,
-                        })
-                      } else {
-                        setUploadMsg(`⚠️ Lỗi: ${data.message || 'Không thể tải file'}`)
-                      }
-                    } catch (err: any) {
-                      setUploadMsg(`⚠️ Lỗi kết nối: ${err.message}`)
-                    } finally {
-                      setUploading(false)
-                    }
-                  }}
-                  disabled={uploading}
-                  style={{ padding: '8px 12px', background: 'rgba(255,255,255,0.03)', borderRadius: '6px', border: '1px dashed rgba(255,255,255,0.2)' }}
-                />
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.8rem', color: '#94a3b8' }}>
-                  <span>{uploading ? 'Đang tải lên và phân tích mã nguồn...' : uploadMsg || 'Nén thư mục dự án: tar -czf myapp.tar.gz . và chọn file ở trên.'}</span>
-                  {customModule.repositoryUrl.startsWith('local://') && (
-                    <span style={{ color: '#34d399', fontWeight: 600 }}>Ready</span>
-                  )}
-                </div>
-              </div>
-            )}
 
             <div style={{ marginTop: '10px', padding: '10px 14px', background: 'rgba(59, 130, 246, 0.08)', borderRadius: '8px', border: '1px solid rgba(59, 130, 246, 0.2)' }}>
               <div style={{ fontWeight: 600, color: '#60a5fa', fontSize: '0.84rem', marginBottom: '3px' }}>
                 💡 Phân biệt giữa Mã Nguồn (Code) và Cấu hình Pipeline (netci.yaml):
               </div>
               <p style={{ margin: 0, fontSize: '0.78rem', color: '#cbd5e1', lineHeight: 1.5 }}>
-                • <strong>Mã nguồn (Code)</strong>: Chứa logic nghiệp vụ (.py, .ts, .go, Dockerfile...). Bạn có thể liên kết Git URL hoặc tải trực tiếp file nén local mà <em>không bắt buộc phải có GitHub/GitLab</em>.<br />
+                • <strong>Mã nguồn (Code)</strong>: Chứa logic nghiệp vụ (.py, .ts, .go, Dockerfile...). Liên kết Git URL mà Jenkins có thể checkout được.<br />
                 • <strong>netci.yaml</strong>: Chỉ là file cấu hình các bước CI/CD (Test, Build, Scan, Deploy), được xem trước và tuỳ biến ở Bước 2.
               </p>
             </div>
@@ -550,6 +501,7 @@ export function NewModuleWizard({ systemId, ownerTeams = [], onCancel, onCreate 
   const [dcimStatus, setDcimStatus] = useState('loading')
   const [moduleSource, setModuleSource] = useState<'local' | 'dcim'>('local')
   const [gitInfo, setGitInfo] = useState<GitInfo | null>(null)
+  const [sampleApps, setSampleApps] = useState<SampleApps | null>(null)
   const [selectedTarget, setSelectedTarget] = useState<DeploymentTarget>('Docker')
   const [customModule, setCustomModule] = useState<DcimModule>({
     id: 'core-api',
@@ -567,7 +519,8 @@ export function NewModuleWizard({ systemId, ownerTeams = [], onCancel, onCreate 
   const [creating, setCreating] = useState(false)
 
   useEffect(() => {
-    getGitInfo().then((info) => setGitInfo(info)).catch(() => {})
+    getGitInfo().then((info) => setGitInfo(info)).catch(() => setGitInfo(null))
+    listSampleApps().then((result) => setSampleApps(result)).catch(() => setSampleApps(null))
   }, [])
 
   const handleSelectSample = (sample: GitSample) => {
@@ -582,15 +535,15 @@ export function NewModuleWizard({ systemId, ownerTeams = [], onCancel, onCreate 
       id: sample.id,
       code: sample.id,
       name: sample.name,
-      type: sample.moduleType || 'Backend',
-      repositoryUrl: sample.repositoryUrl,
+      type: 'Backend',
+      repositoryUrl: sample.repositoryUrl ?? '',
       registered: false,
     })
     setSelected(sample.id)
     setPortalInformation({
       displayName: sample.name,
-      moduleType: sample.moduleType || 'Backend',
-      description: sample.description,
+      moduleType: 'Backend',
+      description: `Sample application from ${sample.path}`,
     })
   }
 
@@ -660,5 +613,5 @@ export function NewModuleWizard({ systemId, ownerTeams = [], onCancel, onCreate 
       setCreating(false)
     }
   }
-  return <div className="new-module-page"><div className="wizard-header"><button className="back-button" onClick={onCancel}><ArrowLeft size={16} />Back to System</button><div><h1>New Module</h1><p>Add a module and configure its delivery lifecycle.</p></div><WizardSteps step={step} /></div><section className="wizard-shell">{step === 1 && <><GeneralStep modules={dcimModules} integrationStatus={dcimStatus} selected={selected} onSelect={selectModule} information={portalInformation} onInformationChange={setPortalInformation} source={moduleSource} onSourceChange={setModuleSource} customModule={customModule} onCustomModuleChange={setCustomModule} gitInfo={gitInfo} onSelectSample={handleSelectSample} />{ownerTeams.length > 0 && <div className="wizard-content"><label className="field"><span>Owning team</span><select value={ownerTeam} onChange={(event) => setOwnerTeam(event.target.value)}>{ownerTeams.map((team) => <option key={team}>{team}</option>)}</select><small>Only members of this verified identity team can access the module.</small></label></div>}</>}{step === 2 && <CicdStep config={pipelineConfig} onConfigChange={setPipelineConfig} />}{step === 3 && <DeploymentStep systemId={systemId} moduleId={selected} initialTarget={selectedTarget} onValidityChange={setDeploymentReady} onConfigurationChange={setDeploymentConfig} />}</section><footer className="wizard-footer"><button className="secondary-button" disabled={creating} onClick={step === 1 ? onCancel : () => setStep(step - 1)}>{step === 1 ? 'Cancel' : 'Back'}</button>{step < 3 ? <button className="primary-button" disabled={step === 1 && (!selected || !portalInformation.displayName.trim() || !portalInformation.moduleType || ownerTeams.length > 0 && !ownerTeam) || step === 2 && !pipelineConfig.runner.trim()} onClick={() => setStep(step + 1)}>Next <ArrowRight size={16} /></button> : <button className="primary-button" disabled={!deploymentReady || creating} title={deploymentReady ? undefined : 'Complete an environment and its target connection'} onClick={finish}><Check size={16} />{creating ? 'Creating…' : 'Create Module'}</button>}</footer></div>
+  return <div className="new-module-page"><div className="wizard-header"><button className="back-button" onClick={onCancel}><ArrowLeft size={16} />Back to System</button><div><h1>New Module</h1><p>Add a module and configure its delivery lifecycle.</p></div><WizardSteps step={step} /></div><section className="wizard-shell">{step === 1 && <><GeneralStep modules={dcimModules} integrationStatus={dcimStatus} selected={selected} onSelect={selectModule} information={portalInformation} onInformationChange={setPortalInformation} source={moduleSource} onSourceChange={setModuleSource} customModule={customModule} onCustomModuleChange={setCustomModule} gitInfo={gitInfo} sampleApps={sampleApps} onSelectSample={handleSelectSample} />{ownerTeams.length > 0 && <div className="wizard-content"><label className="field"><span>Owning team</span><select value={ownerTeam} onChange={(event) => setOwnerTeam(event.target.value)}>{ownerTeams.map((team) => <option key={team}>{team}</option>)}</select><small>Only members of this verified identity team can access the module.</small></label></div>}</>}{step === 2 && <CicdStep config={pipelineConfig} onConfigChange={setPipelineConfig} />}{step === 3 && <DeploymentStep systemId={systemId} moduleId={selected} initialTarget={selectedTarget} onValidityChange={setDeploymentReady} onConfigurationChange={setDeploymentConfig} />}</section><footer className="wizard-footer"><button className="secondary-button" disabled={creating} onClick={step === 1 ? onCancel : () => setStep(step - 1)}>{step === 1 ? 'Cancel' : 'Back'}</button>{step < 3 ? <button className="primary-button" disabled={step === 1 && (!selected || !portalInformation.displayName.trim() || !portalInformation.moduleType || ownerTeams.length > 0 && !ownerTeam) || step === 2 && !pipelineConfig.runner.trim()} onClick={() => setStep(step + 1)}>Next <ArrowRight size={16} /></button> : <button className="primary-button" disabled={!deploymentReady || creating} title={deploymentReady ? undefined : 'Complete an environment and its target connection'} onClick={finish}><Check size={16} />{creating ? 'Creating…' : 'Create Module'}</button>}</footer></div>
 }

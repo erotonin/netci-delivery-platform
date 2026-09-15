@@ -66,6 +66,9 @@ ALLOWED_BUILD_INPUT_KEYS: frozenset[str] = frozenset(
         "notes",
         "commitTimestamp",   # used for the DORA lead-time origin
         "sourceBranchRef",
+        "portalPipeline",    # frontend portal UI pipeline identifier (e.g. ci, cd-dev, cd-staging, cd-prod)
+        "NETCI_APP_DIR",     # relative path to the application directory in monorepo
+        "agentLabel",        # Jenkins agent label override (e.g. ephemeral vs shared baseline)
     }
 )
 

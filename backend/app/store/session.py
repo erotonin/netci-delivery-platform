@@ -12,6 +12,8 @@ from typing import Any, Protocol
 from uuid import UUID
 
 from ..domain.models import (
+    NotificationRecord,
+    NotificationStatus,
     Application,
     ConfigRevisionStatus,
     DeliveryEvent,
@@ -19,7 +21,6 @@ from ..domain.models import (
     ModuleConfigRevision,
     PipelineRun,
     PipelineStage,
-    ScmCommitStatus,
     ScmIntegration,
     ScmProviderType,
     ScmWebhookDelivery,

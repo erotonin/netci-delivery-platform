@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import re
 from typing import Any
-from uuid import UUID
 
 from .policy.engine import PolicyEngine
 from .store.session import PlatformSession

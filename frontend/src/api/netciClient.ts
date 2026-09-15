@@ -575,23 +575,31 @@ export type GitSample = {
   id: string
   name: string
   runtime: Runtime
-  code: string
-  moduleType: string
-  repositoryUrl: string
-  defaultEnvironment: string
-  port: number
-  description: string
-  runner: string
+  pipelineTemplate: string
+  path: string
+  // null when NETCI_SAMPLE_APPS_REPOSITORY_BASE is not configured. The server does not
+  // invent a URL Jenkins could not clone; the wizard says so instead.
+  repositoryUrl: string | null
+  hasTests: boolean
+}
+
+export type SampleApps = {
+  repositoryBaseConfigured: boolean
+  items: GitSample[]
 }
 
 export type GitInfo = {
-  currentCommitSha: string
-  currentBranch: string
-  samples: GitSample[]
+  currentCommitSha: string | null
+  currentBranch: string | null
+  source: 'environment' | 'git' | null
 }
 
 export function getGitInfo(): Promise<GitInfo> {
   return request<GitInfo>('/git/info')
+}
+
+export function listSampleApps(): Promise<SampleApps> {
+  return request<SampleApps>('/sample-apps')
 }
 
 export function cancelPipelineRun(pipelineRunId: string, reason = ''): Promise<PipelineRun> {
@@ -1343,18 +1351,93 @@ export function listServersMaintenance(): Promise<ServerMaintenanceState[]> {
 export function toggleServerMaintenance(
   serverName: string,
   inMaintenance: boolean,
-  reason: string = '',
-  updatedBy: string = 'operator'
+  reason: string = ''
 ): Promise<ServerMaintenanceState> {
+  // The actor is the authenticated principal; the server decides, never the browser.
   return request<ServerMaintenanceState>(`/api/v1/servers/${encodeURIComponent(serverName)}/maintenance`, {
     method: 'POST',
     headers: { 'X-Correlation-Id': requestId() },
-    body: JSON.stringify({ inMaintenance, reason, updatedBy }),
+    body: JSON.stringify({ inMaintenance, reason }),
   })
 }
 
 export function getServerTelemetry(serverName: string): Promise<ServerTelemetry> {
   return request<ServerTelemetry>(`/api/v1/servers/${encodeURIComponent(serverName)}/telemetry`)
+}
+
+export type ConfigApplyRequest = {
+  environment: Environment
+  revisionId?: string
+}
+
+export type ConfigApplyResponse = {
+  deploymentId: string
+  moduleId: string
+  environment: Environment
+  revisionId: string
+  status: string
+  artifactDigest: string
+  leadTimeSeconds: number
+  message: string
+}
+
+export function applyModuleConfig(
+  moduleId: string,
+  payload: ConfigApplyRequest
+): Promise<ConfigApplyResponse> {
+  return request<ConfigApplyResponse>(`/modules/${encodeURIComponent(moduleId)}/config/apply`, {
+    method: 'POST',
+    headers: { 'X-Correlation-Id': requestId() },
+    body: JSON.stringify(payload),
+  })
+}
+
+export type AgentStatusItem = {
+  hostname: string
+  ip: string
+  os: string
+  arch: string
+  version: string
+  connectedAt: string
+  lastHeartbeat: string
+  cpuPercent: number
+  memPercent: number
+  diskPercent: number
+}
+
+export type AgentStatusResponse = {
+  connectedAgents: number
+  agents: AgentStatusItem[]
+}
+
+export function getAgentStatus(): Promise<AgentStatusResponse> {
+  return request<AgentStatusResponse>('/api/v1/agents/status')
+}
+
+export type AgentExecuteRequest = {
+  hostname: string
+  command: string
+  timeout?: number
+}
+
+export type AgentExecuteResponse = {
+  taskId: string
+  hostname: string
+  command: string
+  exitCode: number
+  stdout: string
+  stderr: string
+  durationMs: number
+}
+
+export function executeAgentCommand(
+  payload: AgentExecuteRequest
+): Promise<AgentExecuteResponse> {
+  return request<AgentExecuteResponse>('/api/v1/agents/execute', {
+    method: 'POST',
+    headers: { 'X-Correlation-Id': requestId() },
+    body: JSON.stringify(payload),
+  })
 }
 
 
