@@ -33,7 +33,15 @@ two of them could not run at all, and that a third class of state was not durabl
    environment was serving a verified digest. The UI called the result "Configuration
    Applied Successfully" with a lead time the API no longer returned.
 
+6. **Nothing ever invoked the reconciler.** A Jenkins build that fails at checkout never
+   reaches the pipeline's report stages; its run stayed `queued` until an operator called
+   `POST /reconciler/reconcile` by hand -- which, on the live stack, is what happened.
+
 ## Decision
+
+**Reconciliation runs on a schedule.** The API's lifespan runs `Reconciler.reconcile`
+every `NETCI_RECONCILE_INTERVAL_SECONDS` (default 60; 0 disables) in a thread, logs what
+it settled, and survives a failing pass. The endpoint stays for on-demand use.
 
 **One artifact store.** Every artifact netCI deploys is an OCI object in the registry,
 identified by its manifest digest and signed with the same key:

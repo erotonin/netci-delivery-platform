@@ -1,3 +1,4 @@
+import pytest
 import os
 import subprocess
 import sys
@@ -189,3 +190,46 @@ def test_cd_readiness_refuses_a_queue_nobody_polls():
     live = readiness.judge_cd_pollers(base, 2, 11.5)
     assert live["status"] == "ready" and live["ready"] is True
     assert live["pollers"] == 2 and live["youngestPollSecondsAgo"] == 11.5
+
+
+# ------------------------------------------------------- periodic reconciliation
+
+
+def test_reconcile_interval_is_read_from_the_environment(monkeypatch):
+    from app import main as main_module
+
+    monkeypatch.setenv("NETCI_RECONCILE_INTERVAL_SECONDS", "15")
+    assert main_module._reconcile_interval_seconds() == 15.0
+    monkeypatch.setenv("NETCI_RECONCILE_INTERVAL_SECONDS", "0")
+    assert main_module._reconcile_interval_seconds() == 0.0
+    monkeypatch.setenv("NETCI_RECONCILE_INTERVAL_SECONDS", "nonsense")
+    assert main_module._reconcile_interval_seconds() == 60.0
+
+
+@pytest.mark.asyncio
+async def test_the_periodic_loop_calls_the_reconciler_and_survives_a_failing_pass(monkeypatch):
+    """A lost Jenkins callback left a run `queued` forever on the live stack because
+    nothing ever invoked the reconciler. The loop must call it, and one bad pass must
+    not end it."""
+    import asyncio
+    from app import main as main_module
+
+    calls: list[int] = []
+
+    def fake_reconcile(**_):
+        calls.append(1)
+        if len(calls) == 1:
+            raise RuntimeError("jenkins unreachable")
+        return {"reconciledRuns": [{"pipelineRunId": "r1", "action": "reconciled_failed"}], "reconciledDeployments": []}
+
+    monkeypatch.setenv("NETCI_RECONCILE_INTERVAL_SECONDS", "0.01")
+    monkeypatch.setattr(main_module.reconciler, "reconcile", fake_reconcile)
+    task = asyncio.create_task(main_module._reconcile_periodically())
+    for _ in range(200):
+        await asyncio.sleep(0.01)
+        if len(calls) >= 3:
+            break
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert len(calls) >= 3, "the loop stopped after the failing pass"

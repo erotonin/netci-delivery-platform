@@ -75,10 +75,17 @@ identifiers below).
 | 8 | deployment_failure_and_rollback | `POST /deployments/{id}/rollback` to the previous digest; `RollbackWorkflow` ran on the worker (verify → playbook → health) and reported; the platform recorded `rolled_back` with the older digest, and the host served it. | PASS |
 | 9 | backup_and_restore_verification | `scripts/netci_backup.py drill`: dump, restore into a scratch database, 34 tables / row counts / checksums / migrations compared, injected failure detected. | PASS |
 
-Final run: `evidence/production_acceptance_20260915T082746Z.json` — **9 PASS, 0 FAIL,
-0 BLOCKED**, started 2026-09-15T08:27:46Z, total wall time ≈ 6 minutes (three real
-Jenkins builds, one worker restart drill, one rollback, one backup drill). The evidence
-file is the authority for the verdict; this table describes what each gate does.
+Runs on 2026-09-15, each 9 PASS / 0 FAIL / 0 BLOCKED, ≈ 6 minutes each (three real
+Jenkins builds, one worker restart drill, one rollback, one backup drill):
+
+- `evidence/production_acceptance_20260915T082746Z.json` — code at `592855f` + the
+  working tree that became `9c69aa6`.
+- `evidence/production_acceptance_20260915T094415Z.json` — code at `d16a6c7` (all three
+  runtimes, durable server state, redeploy fix, periodic reconciliation), `commitSha`
+  stamped from `NETCI_BUILD_COMMIT`.
+
+The evidence file is the authority for the verdict; this table describes what each gate
+does.
 
 ---
 
@@ -124,12 +131,15 @@ And one more, found by the rollback proof: `POST /deployments/{id}/rollback` wro
 `rollback_in_progress` and started nothing — no worker ever executed a manual rollback.
 `RollbackWorkflow` now runs it (ADR-028, decision section).
 
-Running the other two runtimes found five more (ADR-029): the systemd path had no
+Running the other two runtimes found seven more (ADR-029): the systemd path had no
 artifact store at all; Kubernetes targets were passed as Ansible `--limit` hosts and the
 worker used the wrong Ansible collections; maintenance mode and telemetry were
 process-local dicts (forgotten on restart, invisible to a second replica, and the
 heartbeat's objects would have crashed the gate); the telemetry endpoint invented
-"normal" numbers; an unconfigured DCIM called every target healthy.
+"normal" numbers; an unconfigured DCIM called every target healthy; redeploy-with-configuration
+acquired its lease before the deployment row existed and picked the wrong source run after a
+rollback; nothing ever invoked the reconciler, so a run whose Jenkins build failed at checkout
+stayed `queued` (now reconciled on a schedule).
 
 ---
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import hashlib
 import json
 import logging
@@ -171,10 +172,50 @@ async def lifespan(application: FastAPI):
     # and CI reports for queued runs used to start whenever Jenkins was not configured;
     # it produced deployments for artifacts that did not exist and dashboards showing
     # successes that never happened. Local development runs the Jenkins lab.
+    # A callback can be lost: a Jenkins build that fails at checkout never reaches the
+    # pipeline's own report stages, and its run stayed `queued` forever on the live stack
+    # until an operator called /reconciler/reconcile by hand. The reconciler compares
+    # every active run and deployment with what Jenkins and Temporal actually say; it
+    # runs on a schedule here so that the comparison does not depend on someone
+    # remembering to make it.
+    reconcile_task = asyncio.create_task(_reconcile_periodically())
     yield
+    reconcile_task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await reconcile_task
     outbox_worker.stop()
     if hasattr(database, "close"):
         database.close()
+
+
+def _reconcile_interval_seconds() -> float:
+    raw = os.getenv("NETCI_RECONCILE_INTERVAL_SECONDS", "60").strip()
+    try:
+        return max(0.0, float(raw))
+    except ValueError:
+        return 60.0
+
+
+async def _reconcile_periodically() -> None:
+    interval = _reconcile_interval_seconds()
+    if interval <= 0:
+        logger.info("periodic reconciliation disabled (NETCI_RECONCILE_INTERVAL_SECONDS=0)")
+        return
+    logger.info("periodic reconciliation every %.0fs", interval)
+    while True:
+        await asyncio.sleep(interval)
+        try:
+            outcome = await asyncio.to_thread(reconciler.reconcile)
+        except Exception:  # noqa: BLE001 - the loop must outlive one bad pass
+            logger.exception("reconciliation pass failed; will retry after %.0fs", interval)
+            continue
+        runs = outcome.get("reconciledRuns") or []
+        deployments = outcome.get("reconciledDeployments") or []
+        if runs or deployments:
+            logger.warning(
+                "reconciled %d run(s) and %d deployment(s) whose callbacks never arrived: %s",
+                len(runs), len(deployments), [(r.get("pipelineRunId"), r.get("action")) for r in runs][:10],
+            )
 
 
 app = FastAPI(title="netCI Delivery API", version="0.1.0", lifespan=lifespan)
