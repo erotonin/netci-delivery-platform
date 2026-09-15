@@ -74,6 +74,7 @@ identifiers below).
 | 7 | ansible_host_and_target_namespace | `parameters.target_hosts` / `target_namespace` on a run → 422 naming the key (`DEPLOYMENT_PARAMETER_NOT_ACCEPTED`), never silently dropped. A revision pointing dev at `netci-retired-01` was activated and dispatch was refused 422 `DCIM_TARGET_UNAVAILABLE`; the original target was restored. | PASS (the first run of the day FAILED here on the harness's own expectation of the error code — the server's refusal was right — and was corrected; `evidence/production_acceptance_20260915T082156Z.json` keeps that run) |
 | 8 | deployment_failure_and_rollback | `POST /deployments/{id}/rollback` to the previous digest; `RollbackWorkflow` ran on the worker (verify → playbook → health) and reported; the platform recorded `rolled_back` with the older digest, and the host served it. | PASS |
 | 9 | backup_and_restore_verification | `scripts/netci_backup.py drill`: dump, restore into a scratch database, 34 tables / row counts / checksums / migrations compared, injected failure detected. | PASS |
+| 10 | multi_controller_failover_mttr | A controller is stopped (`docker stop`); readiness must report it; a build must be routed to the survivor and complete; the controller is restarted and must rejoin. Detection time and MTTR are recorded. | PASS (11.1 s / 88.4 s) |
 
 Runs on 2026-09-15, each 9 PASS / 0 FAIL / 0 BLOCKED, ≈ 6 minutes each (three real
 Jenkins builds, one worker restart drill, one rollback, one backup drill):
@@ -83,6 +84,9 @@ Jenkins builds, one worker restart drill, one rollback, one backup drill):
 - `evidence/production_acceptance_20260915T094415Z.json` — code at `d16a6c7` (all three
   runtimes, durable server state, redeploy fix, periodic reconciliation), `commitSha`
   stamped from `NETCI_BUILD_COMMIT`.
+- `evidence/production_acceptance_20260915T154813Z.json` — code at `2f18952`, **ten**
+  gates (the failover/MTTR gate added), 10 PASS; builds ran in the project's isolated
+  namespace with the `lint` custom stage.
 
 The evidence file is the authority for the verdict; this table describes what each gate
 does.
@@ -152,7 +156,9 @@ stayed `queued` (now reconciled on a schedule).
 | Benchmark, three modes × 5 runs on the lab (`evidence/benchmarks/report.json`, `samples.csv`): reusable-pod baseline 48.2 s, plain ephemeral pod 50.0 s, isolated pod with project cache 51.9 s (warm 52.2 s). Isolation costs ≈ +3.6 s pod/PVC provisioning and ≈ +2 s layered image storage per build (+8 % on this 50 s workload); the cache hits on every warm run (`cacheHitRate 1.0`) but this sample application has nothing expensive to cache, so the measurement establishes **no regression beyond the provisioning cost**, not a gain. A workload with dependencies to download would show the cache's benefit; this one does not, and the number is reported as measured. | `conclusion: acceptable` |
 | Lab git server switched from dumb to smart HTTP because a dumb fetch of an up-to-date repository cost ~6 s per fetch and would have been read as agent cost (`scripts/lab/git_smart_http.py`) | clone 0.57 s, up-to-date fetch 0.04 s |
 | Stage catalog from the database: developer refused to register (403), a shell string refused (`INVALID_STAGE_SCRIPT`), `lint` registered by the admin after `unit-test`, a module dropping `sbom` refused (`REQUIRED_STAGE_REMOVED`), a valid selection stored | live API calls, 2026-09-15 |
-| Controller drift endpoint `GET /api/v1/ci/controllers/drift` | see §4b notes below |
+| Controller drift endpoint `GET /api/v1/ci/controllers/drift`: after both controllers were recreated from the repository's JCasC → `drift: false`; before normalisation was tuned it reported the expected per-controller differences (system message, transient pod label atoms) | observed |
+| **Harness, 10 gates** at commit `2f18952` (`evidence/production_acceptance_20260915T154813Z.json`): 10 PASS. Gate 10 `multi_controller_failover_mttr`: `jenkins-a` stopped, `/readyz` reported it down after **11.1 s**, the next build was routed to `jenkins-b` and published a digest at **MTTR 88.4 s**, `jenkins-a` rejoined at 103.6 s | PASS |
+| Custom stage `lint` (registered in the catalog, selected by the module in the portal) ran on a real build after `unit-test`, inside the project namespace; the deployment that followed was `healthy` | Jenkins A `netci-8c7dc688…#1`, 2026-09-15 15:33 UTC |
 
 ## 5. Test suites at this commit
 
