@@ -146,13 +146,22 @@ def _require_env(name: str) -> str:
 
 
 def git_commit_sha() -> str:
+    """The code under test. The repository's own HEAD wins over an environment value:
+    a profile that pinned NETCI_BUILD_COMMIT once stamped three later runs with a
+    commit that was two days old. The environment is the fallback for a checkout
+    without .git (a release tarball), and the working tree's dirtiness is recorded
+    alongside so "at commit X" is never read as "exactly commit X" when it was not."""
+
+    try:
+        sha = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, stderr=subprocess.DEVNULL).decode().strip()
+        dirty = bool(subprocess.check_output(["git", "status", "--porcelain", "--untracked-files=no"], cwd=ROOT).decode().strip())
+        return f"{sha}{'-dirty' if dirty else ''}"
+    except Exception:  # noqa: BLE001 - no git here; fall back to what the environment says
+        pass
     for candidate in (os.getenv("NETCI_BUILD_COMMIT", "").strip(), os.getenv("GIT_COMMIT_SHA", "").strip()):
         if candidate:
             return candidate
-    try:
-        return subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT).decode().strip()
-    except Exception:  # noqa: BLE001
-        return "unknown"
+    return "unknown"
 
 
 def wait_until(describe: str, probe, *, timeout: float, interval: float = 5.0):

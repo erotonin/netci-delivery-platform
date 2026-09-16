@@ -31,9 +31,10 @@ against real external infrastructure, and every claim below names that run.
 | Jenkins ×2 | controllers `jenkins-a`, `jenkins-b`, building on ephemeral pods in a `kind` cluster with the pinned toolbox image (syft 1.51.0, trivy 0.73.0, cosign 3.1.2) | 172.17.0.50:8080, 172.17.0.51:8080 |
 | Git server | the module's repository, cloned by Jenkins | http://172.17.0.52/netci.git |
 | OCI registry | `registry:2`; reachable as `172.17.0.1:55000` from the build cluster and `localhost:55000` from the host | :55000 |
-| Temporal 1.8.2 | CD orchestration, task queue `netci-delivery`; one worker process on the host | 127.0.0.1:7233 |
+| Temporal 1.8.2 | CD orchestration, task queue `netci-delivery`; one worker process on the host (two since §4g) | 127.0.0.1:7233 |
 | NetBox 4.1 | DCIM: tenants = systems, device roles = modules, devices = servers, sites = environments; 13 lab devices incl. `netci-retired-01` (decommissioning) | http://127.0.0.1:8080 |
 | Ansible + Docker | deploy target = this host, `deploy/ansible/inventories/localhost.ini`, six logical hosts named as in NetBox | local |
+| Since 2026-09-16 | ingress-nginx v1.12.1 on the kind worker (canary), a separate SSH production host (`netci-prod-01`, 172.17.0.60), two API replicas (:8100 `api-a`, :8101 `api-b`), Prometheus 3.5 + Alertmanager 0.28, user-systemd timers (backup, DR drill, Jenkins token rotation); `scripts/bootstrap.sh --check` lists all of it | see §4f–§4j |
 | cosign 3.1.2 | on the worker host (`NETCI_COSIGN_EXECUTABLE`), same binary as the toolbox; readiness reports the version | — |
 
 No adapter in the stack above was a fake. `NETCI_DEMO_DATA` is unset. The only
