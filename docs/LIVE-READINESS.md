@@ -206,7 +206,7 @@ Say these plainly rather than let the table above imply them.
 | Password-grant OIDC in the harness is a lab convenience; the browser login flow was not exercised by automation today. | Platform: Playwright login test against Keycloak. |
 | Single host for every environment. Nothing was proven about network reachability, SSH, or privilege escalation to a separate target. | Infra: a second VM in `local.ini`. |
 | `production_readiness_audit.py` is a code self-check; its verdict is now `SELF_CHECK_PASSED` / `SELF_CHECK_FAILED`, never "certified". | Done. |
-| The per-build pod's remaining cost is the fresh-workspace checkout (≈ 17 s for a 4 MB, 446-file repository on kind's emptyDir) plus provisioning; the project cache does not address it. A warm-workspace strategy that keeps isolation (e.g. a per-project workspace PVC with `git clean -fdx` on entry) would, and would need measuring. | Platform. |
+| The per-build pod's remaining cost is the fresh-workspace checkout (≈ 17 s for a 4 MB, 446-file repository on kind's emptyDir) plus provisioning; the project cache does not address it. A per-project *workspace* PVC would recover most of it, but a workspace that survives a build is what ADR-007 rejects on purpose: `git clean -fdx` + `reset --hard` does not undo a tampered `.git/hooks`, so a compromised build could seed the next one. The cost stays until a design that reuses a workspace *and* re-verifies it (e.g. a fresh clone from the project mirror into an emptyDir, which is what the cache already gives, or a content-addressed workspace snapshot) is measured. | Platform. |
 | A ReadWriteOnce cache claim serialises a project's concurrent builds on one node; multi-node needs RWX or a registry layer cache. | Infra. |
 
 ---
