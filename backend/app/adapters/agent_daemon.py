@@ -21,17 +21,23 @@ logger = logging.getLogger("netci.agent")
 
 
 def collect_host_telemetry() -> dict[str, Any]:
-    """Gather real-time CPU, RAM, and Disk metrics using standard Linux facilities."""
+    """Gather CPU, RAM and disk figures from the kernel's own facilities.
+
+    A figure that could not be read is `None`, never a plausible number: the server's
+    pre-flight gate decides where a release may go from these, and an invented 25 %
+    disk would let a full host take a deployment.
+    """
     now_iso = datetime.now(timezone.utc).isoformat()
     # Disk usage
+    disk_pct: float | None = None
     try:
         total, used, free = shutil.disk_usage("/")
-        disk_pct = round((used / total) * 100.0, 1) if total > 0 else 0.0
+        disk_pct = round((used / total) * 100.0, 1) if total > 0 else None
     except Exception:
-        disk_pct = 25.0
+        pass
 
     # CPU load average (1m, 5m, 15m)
-    cpu_pct = 15.0
+    cpu_pct: float | None = None
     try:
         load1, _, _ = os.getloadavg()
         cpu_count = os.cpu_count() or 1
@@ -40,7 +46,7 @@ def collect_host_telemetry() -> dict[str, Any]:
         pass
 
     # RAM from /proc/meminfo
-    mem_pct = 35.0
+    mem_pct: float | None = None
     try:
         if os.path.exists("/proc/meminfo"):
             meminfo: dict[str, int] = {}
@@ -258,12 +264,18 @@ class NetCiAgentDaemon:
         elif ws_endpoint.startswith("https://"):
             ws_endpoint = "wss://" + ws_endpoint[len("https://") :]
 
+        # The header keyword was renamed in websockets 14 (`extra_headers` before). A
+        # distribution's python3-websockets on an air-gapped host is often the older one.
+        import inspect
+
+        header_kw = "additional_headers" if "additional_headers" in str(inspect.signature(websockets.connect)) else "extra_headers"
+
         backoff = 2.0
         while self._running:
             try:
                 logger.info("Connecting outbound to NetCI controller at %s", ws_endpoint)
                 async with websockets.connect(
-                    ws_endpoint, additional_headers={"Authorization": f"Bearer {self.token}"}
+                    ws_endpoint, **{header_kw: {"Authorization": f"Bearer {self.token}"}}
                 ) as ws:
                     logger.info("Connected to NetCI controller successfully")
                     backoff = 2.0  # reset on successful connection

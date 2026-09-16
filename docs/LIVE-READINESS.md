@@ -242,6 +242,14 @@ stayed `queued` (now reconciled on a schedule).
 | Header/cookie steering: `X-Canary: always` → **200/200** canary; `Cookie: canary=always` → 200/200; `X-Canary: other` → split by weight (45.5 % at 50 %); no header → 51.5 % | `evidence/canary-nginx-rules.json` |
 | Retention on a schedule (daily, first pass 5 min after start, advisory lock): spent callback tokens, delivered notifications, delivery events, console lines of runs finished > 90 days ago. Audit events are deliberately never thinned. `POST /admin/retention/purge` runs the same pass (409 if another replica holds it); `netci_retention_purged_total{kind}` | tests |
 
+## 4l. 2026-09-16 (night): the docker runtime on the separate host, agents on the host
+
+| Proof | Result |
+|---|---|
+| `netci-prod-host` rebuilt with Docker 29 + compose; NetBox device `netci-prod-02` (tenant/role `hello-container`) for the same machine; revision approved by `rae`; **two releases failed** (inner Docker on the outer overlay — whiteout files; then the containerd snapshotter's store still on it) and were rolled back by the playbook's rescue; with overlay2 on a volume: **healthy**, `docker ps` on the host shows `hello-container-prod`, health answers the release's digest; second release healthy; **rollback** → host serves the first digest again | `evidence/docker-prod-host.json` |
+| Edge agents now run **on the host** (`netci-agent@netci-prod-01/02`, systemd, DynamicUser + docker group) and report the host's own figures. The daemon no longer invents 25/15/35 % on a failed reading; the server records nothing for an unknown one. `docker ps` through `execute` via the LB: requested on `api-a`, claimed by `api-b`, exit 0 | same |
+| The pre-flight gate then **refused** a prod release (`resource_exhausted`: disk 92.3 % > 90 %) — the lab disk is genuinely that full. Recreatable caches were cleared (89.8 %) and `hello-systemd-go` prod re-released healthy. | same; the 48 GB of reclaimable Docker volumes on this host are OpenStack data, not netCI's, and were not touched |
+
 ## 4c. Host reboot (2026-09-16 08:06 UTC)
 
 The lab host rebooted overnight. Every container without a restart policy stopped
@@ -277,7 +285,6 @@ Say these plainly rather than let the table above imply them.
 | Rekor / transparency log is off (`--tlog-upload=false`, `--insecure-ignore-tlog`). Signatures are key-based only. | Security: decide on a Rekor instance; set `NETCI_SIGNATURE_REQUIRE_TLOG=true`. |
 | `scripts/bootstrap.sh --up` has not been exercised on a clean host; the lab it inventories was built step by step. | Platform: a throwaway VM run. |
 | The Portal's static files are still served by one Vite/preview process; the API is balanced, the UI is not. | Infra: serve the build from the balancer or a CDN. |
-| Production on a separate host is proven for systemd (§4e); the docker runtime was exercised on the worker's own Docker socket only. | Infra: a docker host with a remote socket in the inventory. |
 | `production_readiness_audit.py` is a code self-check; its verdict is now `SELF_CHECK_PASSED` / `SELF_CHECK_FAILED`, never "certified". | Done. |
 | The per-build pod's remaining cost, on a workload the compiler cache does not dominate, is provisioning + the mirror checkout + cleanup (≈ +17 s on the 5-second container build, §4f). The Go workload shows the cache recovers the build; nothing recovers the pod. | Platform: measured, accepted (ADR-030). |
 | Canary is Kubernetes + ingress-nginx only; blue/green has no router (`switch_route` → 501). | Platform. |

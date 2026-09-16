@@ -1,0 +1,21 @@
+# The netCI edge agent, on the host it reports about. One instance per DCIM device name
+# (the token is minted for that name); /etc/netci-agent/<name>.env carries
+# NETCI_AGENT_TOKEN and NETCI_SERVER_URL.
+[Unit]
+Description=netCI edge agent (%i)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+EnvironmentFile=/etc/netci-agent/%i.env
+ExecStart=/usr/bin/python3 /opt/netci-agent/agent_daemon.py --server ${NETCI_SERVER_URL} --agent-id %i --hostname %i --heartbeat 10
+Restart=always
+RestartSec=5
+DynamicUser=yes
+# The allow-listed diagnostics include `docker ps|inspect|stats`; the socket needs the
+# docker group. That group is root-equivalent on a Docker host -- the command allowlist
+# in the daemon (and netCI's platform-admin-only execute) is the control, not this line.
+SupplementaryGroups=docker
+
+[Install]
+WantedBy=multi-user.target

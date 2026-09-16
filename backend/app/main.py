@@ -3562,14 +3562,12 @@ async def runner_agent_websocket(
                 msg = json.loads(data)
                 msg_type = msg.get("type")
                 if msg_type == "TELEMETRY_HEARTBEAT":
-                    telem = msg.get("telemetry", {})
-                    await asyncio.to_thread(
-                        update_server_telemetry,
-                        host_key,
-                        float(telem.get("cpu_percent", 0.0)),
-                        float(telem.get("mem_percent", 0.0)),
-                        float(telem.get("disk_percent", 0.0)),
-                    )
+                    telem = msg.get("telemetry") or {}
+                    figures = [telem.get(key) for key in ("cpu_percent", "mem_percent", "disk_percent")]
+                    # A heartbeat without figures keeps the connection fresh and records
+                    # nothing: an unknown reading must not become "0 % used".
+                    if all(isinstance(value, (int, float)) for value in figures):
+                        await asyncio.to_thread(update_server_telemetry, host_key, *(float(v) for v in figures))
                     await asyncio.to_thread(fleet.touch, host_key)
                     await websocket.send_text(json.dumps({"type": "HEARTBEAT_ACK", "status": "ok"}))
                 elif msg_type == "COMMAND_RESULT":

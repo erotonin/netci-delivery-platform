@@ -105,6 +105,11 @@ for node in nodes:
 # A separate production host (scripts/lab/prod_host.sh): reached over SSH, system-scope
 # systemd, privilege escalation -- the way a real production machine is.
 prod_host = device("netci-prod-01", "hello-systemd-go", "hello-systemd-go", "prod", dtype_host)
+# A NetBox device belongs to one tenant and one role, so the same machine serving a second
+# module is a second device record. In the lab both records are the one container at
+# 172.17.0.60 (the inventory names the same address twice); on real hardware they would
+# more likely be two hosts, which is the model this encodes.
+device("netci-prod-02", "hello-container", "hello-container", "prod", dtype_host)
 st, ip = call("POST", "/ipam/ip-addresses/", {"address": "172.17.0.60/16", "status": "active",
              "assigned_object_type": None})
 if st == 201 or st == 400:

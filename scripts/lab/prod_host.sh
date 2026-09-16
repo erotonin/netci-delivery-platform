@@ -7,21 +7,31 @@
 #
 #   scripts/lab/prod_host.sh up     # create/start, install sshd+python3, print inventory line
 #   scripts/lab/prod_host.sh down
+#   scripts/lab/prod_host.sh agents # (re)mint agent tokens and (re)start the agents on the host
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 NAME="${NETCI_PROD_HOST_NAME:-netci-prod-host}"
 IP="${NETCI_PROD_HOST_IP:-172.17.0.60}"
-IMAGE="${NETCI_PROD_HOST_IMAGE:-netci/lab-prod-host:0.1.0}"
+IMAGE="${NETCI_PROD_HOST_IMAGE:-netci/lab-prod-host:0.2.0}"
 SECRETS="${NETCI_ANSIBLE_SECRET_DIR:-$PWD/.netci-gate/ansible}"
 
 up() {
   mkdir -p "$SECRETS/ssh" && chmod 700 "$SECRETS" "$SECRETS/ssh"
   [[ -f "$SECRETS/ssh/id_ed25519" ]] || ssh-keygen -q -t ed25519 -N "" -C netci-worker -f "$SECRETS/ssh/id_ed25519"
   docker rm -f "$NAME" >/dev/null 2>&1 || true
+  # The agent daemon is copied into the image from the backend tree (no package to
+  # install on an offline host; the file has no dependency beyond python3-websockets).
+  cp backend/app/adapters/agent_daemon.py infra/lab-prod-host/agent_daemon.py
   # Privileged because systemd needs cgroups; this is a lab stand-in for a VM.
   [[ "$(docker images -q "$IMAGE")" ]] || docker build --network=host -q -t "$IMAGE" infra/lab-prod-host >/dev/null
+  # /var/lib/docker on a volume: the host's own Docker daemon cannot lay overlay2 on
+  # top of the outer container's overlay ("failed to convert whiteout file ... operation
+  # not permitted" on the first pull); a real filesystem underneath fixes that. The image
+  # also turns the containerd snapshotter off (its store lives in /var/lib/containerd,
+  # which was still on the outer overlay: same error on the second attempt).
   docker run -d --name "$NAME" --network kind --ip "$IP" --privileged --cgroupns=host \
-    --tmpfs /run --tmpfs /run/lock -v /sys/fs/cgroup:/sys/fs/cgroup:rw "$IMAGE" >/dev/null
+    --tmpfs /run --tmpfs /run/lock -v /sys/fs/cgroup:/sys/fs/cgroup:rw \
+    -v "${NAME}-docker:/var/lib/docker" "$IMAGE" >/dev/null
   # The image (infra/lab-prod-host) carries sshd, python3, sudo and the netci user;
   # the lab network is offline, so nothing can be installed after start.
   [[ "$(docker images -q "$IMAGE")" ]] || docker build --network=host -q -t "$IMAGE" infra/lab-prod-host >/dev/null
@@ -31,10 +41,29 @@ up() {
   # Pin the host key: netCI passes this file with StrictHostKeyChecking=yes.
   for _ in $(seq 1 20); do ssh-keyscan -t ed25519 "$IP" 2>/dev/null > "$SECRETS/ssh/known_hosts.tmp" && [[ -s "$SECRETS/ssh/known_hosts.tmp" ]] && break; sleep 1; done
   mv "$SECRETS/ssh/known_hosts.tmp" "$SECRETS/ssh/known_hosts"
-  ssh -i "$SECRETS/ssh/id_ed25519" -o UserKnownHostsFile="$SECRETS/ssh/known_hosts" -o StrictHostKeyChecking=yes netci@"$IP" 'echo ssh-ok; sudo -n true && echo become-ok; systemctl is-system-running || true'
+  ssh -i "$SECRETS/ssh/id_ed25519" -o UserKnownHostsFile="$SECRETS/ssh/known_hosts" -o StrictHostKeyChecking=yes netci@"$IP" 'echo ssh-ok; sudo -n true && echo become-ok; systemctl is-system-running || true; sudo docker version --format "docker {{.Server.Version}}" 2>/dev/null || echo "docker: not running"'
   echo "inventory: netci-prod-01 ansible_host=$IP ansible_user=netci"
+  agents
+}
+
+agents() {
+  # One agent instance per DCIM device name this container stands in for. Tokens are
+  # minted by a platform admin (kc-token.sh pat) through the API and never leave the
+  # host except inside the container's /etc/netci-agent.
+  local api="${NETCI_API_URL:-http://127.0.0.1:8000}" ws="${NETCI_AGENT_SERVER_URL:-ws://172.17.0.1:8000}"
+  local admin; admin="$(scripts/lab/kc-token.sh pat 2>/dev/null || true)"
+  [[ -n "$admin" ]] || { echo "  (no admin token: agents not started; run 'prod_host.sh agents' once the API is up)"; return 0; }
+  docker exec "$NAME" mkdir -p /etc/netci-agent
+  for host in ${NETCI_PROD_HOST_DEVICES:-netci-prod-01 netci-prod-02}; do
+    local token; token="$(curl -sf -X POST -H "Authorization: Bearer $admin" -H "Content-Type: application/json" \
+      "$api/api/v1/agents/token" -d "{\"hostname\":\"$host\",\"ttlSeconds\":86400}" | python3 -c 'import json,sys;print(json.load(sys.stdin)["token"])')"
+    printf 'NETCI_AGENT_TOKEN=%s\nNETCI_SERVER_URL=%s\n' "$token" "$ws" | docker exec -i "$NAME" sh -c "umask 077; cat > /etc/netci-agent/$host.env"
+    docker exec "$NAME" systemctl enable --now --no-block "netci-agent@$host" >/dev/null
+  done
+  sleep 4
+  docker exec "$NAME" sh -c 'systemctl is-active netci-agent@netci-prod-01 netci-agent@netci-prod-02' | paste -sd' '
 }
 
 down() { docker rm -f "$NAME" >/dev/null 2>&1 || true; }
 
-case "${1:-up}" in up) up ;; down) down ;; *) echo "usage: $0 up|down" >&2; exit 2 ;; esac
+case "${1:-up}" in up) up ;; down) down ;; agents) agents ;; *) echo "usage: $0 up|down" >&2; exit 2 ;; esac

@@ -37,3 +37,4 @@ deploy/ansible/netci-delivery-*.tar.gz
 frontend/test-results/
 frontend/playwright-report/
 frontend/blob-report/
+infra/lab-prod-host/agent_daemon.py
