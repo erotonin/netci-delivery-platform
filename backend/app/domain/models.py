@@ -388,6 +388,35 @@ class ServerTelemetry:
 
 
 @dataclass(frozen=True)
+class AgentConnection:
+    """An edge agent's websocket, held by one API replica (ADR-032)."""
+
+    hostname: str
+    agent_id: str
+    replica_id: str
+    token_jti: str
+    connected_at: datetime = field(default_factory=utc_now)
+    last_seen_at: datetime = field(default_factory=utc_now)
+
+
+@dataclass(frozen=True)
+class AgentCommand:
+    """A diagnostic command for an agent, durable so any replica can dispatch or answer it."""
+
+    id: UUID
+    hostname: str
+    command: str
+    requested_by: str
+    status: str = "pending"
+    result: dict[str, Any] | None = None
+    created_at: datetime = field(default_factory=utc_now)
+    expires_at: datetime = field(default_factory=utc_now)
+    claimed_by: str | None = None
+    claimed_at: datetime | None = None
+    completed_at: datetime | None = None
+
+
+@dataclass(frozen=True)
 class L7CanaryRule:
     header_name: str | None = None
     header_value: str | None = None

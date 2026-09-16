@@ -144,9 +144,15 @@ class NotificationOutboxWorker:
         return processed
 
     async def _loop(self) -> None:
+        from .agent_fleet import LOCK_OUTBOX
+
         while self._running:
             try:
-                await self.run_once()
+                # One replica drains the outbox at a time (advisory lock held for the
+                # pass): two workers taking the same pending row would deliver it twice.
+                with self.database.transaction() as guard:
+                    if guard.try_advisory_lock(LOCK_OUTBOX):
+                        await self.run_once()
             except Exception as exc:
                 logger.error("Outbox worker loop error: %s", exc)
             await asyncio.sleep(self.poll_interval_seconds)

@@ -2395,12 +2395,44 @@ paths:
   /api/v1/agents/status:
     get:
       operationId: listConnectedAgents
-      summary: Edge agents connected to this API replica
+      summary: Edge agents connected to any API replica
       description: >-
-        The registry is process-local: an agent connected to another replica is not listed
-        here. `replica` names which process answered.
+        Connections are rows in the platform database (ADR-032): every replica lists every
+        agent, with the replica that holds its socket, and marks `stale` an agent whose
+        replica stopped refreshing it. Only reported facts appear; `telemetry` is null until
+        the agent has sent a heartbeat.
       responses:
-        '200': { description: Connected agents }
+        '200':
+          description: Connected agents
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  replicaId: { type: string }
+                  count: { type: integer }
+                  connectedAgents: { type: integer }
+                  staleAgents: { type: integer }
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        hostname: { type: string }
+                        agentId: { type: string }
+                        replicaId: { type: string }
+                        connectedAt: { type: string, format: date-time }
+                        lastSeenAt: { type: string, format: date-time }
+                        stale: { type: boolean }
+                        local: { type: boolean }
+                        telemetry:
+                          type: object
+                          nullable: true
+                          properties:
+                            cpuPercent: { type: number }
+                            memPercent: { type: number }
+                            diskPercent: { type: number }
+                            observedAt: { type: string, format: date-time }
   /api/v1/agents/execute:
     post:
       operationId: executeAgentCommand
@@ -2409,14 +2441,30 @@ paths:
         A remote execution channel, however narrow. Platform-admin only; the hostname must
         match a connected agent exactly; the command must pass the agent allowlist
         (`docker ps|inspect|stats`, `systemctl status|is-active`, and similar read-only
-        binaries). Every execution is audited.
+        binaries). Every execution is audited. The agent may be held by another replica:
+        the command is a durable row that the holding replica claims exactly once and
+        answers; `claimedBy` names it, `requestedOn` names the replica that answered you.
       requestBody:
         required: true
         content:
           application/json:
             schema: { $ref: '#/components/schemas/AgentCommandExecute' }
       responses:
-        '200': { description: Command output }
+        '200':
+          description: Command output
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  taskId: { type: string, format: uuid }
+                  hostname: { type: string }
+                  command: { type: string }
+                  exitCode: { type: integer }
+                  output: { type: string }
+                  durationMs: { type: number }
+                  requestedOn: { type: string }
+                  claimedBy: { type: string }
         '400': { description: Command refused by the allowlist (`COMMAND_POLICY_VIOLATION`) }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { description: No agent connected for that hostname (`AGENT_NOT_CONNECTED`) }

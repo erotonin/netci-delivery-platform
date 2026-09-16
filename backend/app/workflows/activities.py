@@ -302,6 +302,18 @@ class DeliveryActivities:
         await self.deployment_reporter.report_rollback(result)
 
 
+def _heartbeat(detail: str) -> None:
+    """Report progress to Temporal when running inside an activity; a no-op elsewhere."""
+
+    try:
+        from temporalio import activity
+
+        if activity.in_activity():
+            activity.heartbeat(detail)
+    except Exception:  # noqa: BLE001 - heartbeating is best effort; the work itself is what matters
+        pass
+
+
 class AnsibleRuntimeRunner:
     """Invoke the checked-in Ansible adapters without exposing command details to workflows."""
 
@@ -315,6 +327,7 @@ class AnsibleRuntimeRunner:
         self.project_root = project_root.resolve()
         self.inventory = inventory.resolve()
         self.executable = executable
+        self.heartbeat_interval_seconds = 10.0
 
     def command_for(self, action: str, delivery: DeliveryInput) -> list[str]:
         try:
@@ -450,7 +463,17 @@ class AnsibleRuntimeRunner:
             stderr=asyncio.subprocess.PIPE,
             env=self.environment(),
         )
-        stdout, stderr = await process.communicate()
+        # Heartbeat while the playbook runs. Without it, a worker that dies mid-deploy is
+        # noticed only at start_to_close (10 min); with it, Temporal hands the activity to
+        # another worker within the heartbeat timeout (ADR-032). Playbooks are idempotent,
+        # so a re-run on the surviving worker converges rather than doubles.
+        communicate = asyncio.ensure_future(process.communicate())
+        while True:
+            done, _ = await asyncio.wait({communicate}, timeout=self.heartbeat_interval_seconds)
+            if done:
+                break
+            _heartbeat(f"{Path(command[-2]).name if len(command) > 1 else 'runtime'} running")
+        stdout, stderr = communicate.result()
         if process.returncode != 0:
             # Both streams: ansible-playbook writes the failing task to stdout and only
             # warnings to stderr, so "stderr, else stdout" reported a harmless compose

@@ -25,10 +25,8 @@ KEYS = "k1:" + "w" * 48
 def keys(monkeypatch):
     monkeypatch.setenv("NETCI_WORKLOAD_TOKEN_KEYS", KEYS)
     main._ACTIVE_RUNNERS.clear()
-    main._ACTIVE_AGENT_INFO.clear()
     yield
     main._ACTIVE_RUNNERS.clear()
-    main._ACTIVE_AGENT_INFO.clear()
 
 
 def agent_token(hostname: str) -> str:
@@ -130,3 +128,49 @@ def test_a_command_outside_the_allowlist_is_refused_before_reaching_the_agent():
         )
     assert refused.status_code == 400
     assert refused.json()["code"] == "COMMAND_POLICY_VIOLATION"
+
+
+def test_execute_goes_through_the_durable_command_row_and_reports_who_claimed_it():
+    """The agent's answer comes back with the replica that held its socket (ADR-032)."""
+
+    import threading
+
+    token = agent_token("edge-04")
+    outcome = {}
+    with client.websocket_connect(f"/api/v1/agents/ws?token={token}") as ws:
+        def operator():
+            outcome["response"] = client.post(
+                "/api/v1/agents/execute", json={"hostname": "edge-04", "command": "uptime", "timeout": 10},
+            )
+
+        thread = threading.Thread(target=operator)
+        thread.start()
+        request = ws.receive_json()
+        assert request["type"] == "EXEC_COMMAND" and request["command"] == "uptime"
+        ws.send_json({"type": "COMMAND_RESULT", "task_id": request["task_id"], "exit_code": 0, "output": "up 1 day"})
+        thread.join(15)
+    response = outcome["response"]
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["output"] == "up 1 day" and body["exitCode"] == 0
+    assert body["taskId"] == request["task_id"]
+    assert body["claimedBy"] == main.fleet.replica_id == body["requestedOn"]
+    stored = main.fleet.get(__import__("uuid").UUID(body["taskId"]))
+    assert stored.status == "completed" and stored.requested_by
+
+
+def test_a_disconnected_agent_is_no_longer_listed_anywhere():
+    token = agent_token("edge-05")
+    with client.websocket_connect(f"/api/v1/agents/ws?token={token}"):
+        listed = client.get("/api/v1/agents/status").json()
+        assert any(item["hostname"] == "edge-05" and not item["stale"] for item in listed["items"])
+        assert listed["replicaId"] == main.fleet.replica_id
+        # No invented facts about the host: only what the agent reported.
+        item = next(i for i in listed["items"] if i["hostname"] == "edge-05")
+        assert "ip" not in item and "os" not in item and item["telemetry"] is None
+    import time
+    for _ in range(50):
+        if not any(item["hostname"] == "edge-05" for item in client.get("/api/v1/agents/status").json()["items"]):
+            break
+        time.sleep(0.05)
+    assert not any(item["hostname"] == "edge-05" for item in client.get("/api/v1/agents/status").json()["items"])

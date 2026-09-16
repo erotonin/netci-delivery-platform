@@ -95,6 +95,7 @@ from .catalog.previews import PreviewEnvironmentManager, PreviewEnvironmentError
 from .catalog.resources import SelfServiceResourceManager, ResourceRequestError
 
 from .traffic import TrafficRoutingUnavailable, default_traffic_router
+from .agent_fleet import LOCK_RECONCILE, AgentFleet, run_exclusively
 from . import workload_identity
 from .workload_identity import (
     CallbackClaims,
@@ -158,6 +159,9 @@ configure_server_state(DatabaseServerState(database))
 platform = DeliveryPlatform(build_ci_launcher(), build_cd_orchestrator(), database=database)
 portal = PortalService(platform, database=database)
 reconciler = Reconciler(platform, platform.ci_launcher, platform.cd_orchestrator)
+# Which replica holds which edge agent, and the commands waiting for them, are rows in
+# the same database (ADR-032); only the sockets themselves are process-local.
+fleet = AgentFleet(database)
 seed_demo_data(platform, portal)
 authenticator = build_authenticator()
 rate_limiter = build_rate_limiter()
@@ -205,9 +209,16 @@ async def _reconcile_periodically() -> None:
     while True:
         await asyncio.sleep(interval)
         try:
-            outcome = await asyncio.to_thread(reconciler.reconcile)
+            # With several API replicas, exactly one runs each pass (advisory lock); the
+            # others skip it. Two reconcilers correcting the same run would each report
+            # the correction and could race a callback that arrived between them.
+            outcome = await asyncio.to_thread(
+                run_exclusively, database, LOCK_RECONCILE, reconciler.reconcile, describe="reconciliation"
+            )
         except Exception:  # noqa: BLE001 - the loop must outlive one bad pass
             logger.exception("reconciliation pass failed; will retry after %.0fs", interval)
+            continue
+        if outcome is None:
             continue
         runs = outcome.get("reconciledRuns") or []
         deployments = outcome.get("reconciledDeployments") or []
@@ -3262,8 +3273,35 @@ def revoke_security_exception(
 
 
 _ACTIVE_RUNNERS: dict[str, WebSocket] = {}
-_ACTIVE_AGENT_INFO: dict[str, dict[str, Any]] = {}
-_PENDING_AGENT_TASKS: dict[str, asyncio.Future] = {}
+
+
+def _agent_dispatch_interval_seconds() -> float:
+    raw = os.getenv("NETCI_AGENT_DISPATCH_INTERVAL_SECONDS", "0.5").strip()
+    try:
+        return max(0.1, float(raw))
+    except ValueError:
+        return 0.5
+
+
+async def _dispatch_agent_commands(hostname: str, websocket: WebSocket) -> None:
+    """Forward commands claimed from the database down this agent's socket.
+
+    Runs for as long as the socket lives. A command submitted on any replica lands in
+    `agent_commands`; this replica, holding the socket, is the only one that can claim
+    it for this hostname, and the claim is exactly-once by construction.
+    """
+
+    interval = _agent_dispatch_interval_seconds()
+    while True:
+        try:
+            claimed = await asyncio.to_thread(fleet.claim, [hostname])
+            for command in claimed:
+                await websocket.send_text(json.dumps({"type": "EXEC_COMMAND", "task_id": str(command.id), "command": command.command}))
+        except (WebSocketDisconnect, RuntimeError):
+            return
+        except Exception:  # noqa: BLE001 - a transient database error must not end the socket
+            logger.exception("agent command dispatch for %s failed; retrying", hostname)
+        await asyncio.sleep(interval)
 
 
 @app.websocket("/api/v1/agents/ws")
@@ -3296,19 +3334,20 @@ async def runner_agent_websocket(
     ):
         await websocket.close(code=4403, reason="AGENT_TOKEN_REQUIRED")
         return
-    await websocket.accept()
     host_key = claims.agent_hostname
-    # The registry is process-local: an agent connected to this replica is not visible
-    # to another. That is a known limitation recorded in ADR-027, not a hidden one --
-    # `/api/v1/agents/status` says which replica answered.
+    # The connection is a row every replica can read; the socket stays here. The row is
+    # written before the socket is accepted: an agent that cannot be recorded is refused
+    # (and retries), never connected-but-invisible.
+    try:
+        await asyncio.to_thread(fleet.register, host_key, agent_id, claims.jti)
+    except Exception:  # noqa: BLE001 - the database is the failure to report here
+        logger.exception("agent %s could not be registered; refusing the connection", host_key)
+        await websocket.close(code=1013, reason="AGENT_REGISTRY_UNAVAILABLE")
+        return
+    await websocket.accept()
     _ACTIVE_RUNNERS[host_key] = websocket
-    _ACTIVE_AGENT_INFO[host_key] = {
-        "agent_id": agent_id,
-        "hostname": host_key,
-        "connected_at": datetime.now(timezone.utc).isoformat(),
-        "token_jti": claims.jti,
-    }
-    logger.info("Runner agent connected: %s (agent_id=%s)", host_key, agent_id)
+    dispatcher = asyncio.create_task(_dispatch_agent_commands(host_key, websocket))
+    logger.info("Runner agent connected: %s (agent_id=%s, replica=%s)", host_key, agent_id, fleet.replica_id)
     try:
         while True:
             data = await websocket.receive_text()
@@ -3324,19 +3363,29 @@ async def runner_agent_websocket(
                         float(telem.get("mem_percent", 0.0)),
                         float(telem.get("disk_percent", 0.0)),
                     )
+                    await asyncio.to_thread(fleet.touch, host_key)
                     await websocket.send_text(json.dumps({"type": "HEARTBEAT_ACK", "status": "ok"}))
                 elif msg_type == "COMMAND_RESULT":
-                    task_id = msg.get("task_id")
-                    fut = _PENDING_AGENT_TASKS.get(task_id)
-                    if fut and not fut.done():
-                        fut.set_result(msg)
+                    try:
+                        command_id = UUID(str(msg.get("task_id")))
+                    except ValueError:
+                        continue
+                    result = {
+                        "output": str(msg.get("output", ""))[:65536],
+                        "exitCode": int(msg.get("exit_code", 0) or 0),
+                        "answeredBy": fleet.replica_id,
+                    }
+                    await asyncio.to_thread(fleet.complete, command_id, result)
             except Exception as exc:
                 logger.debug("Failed parsing agent message: %s", exc)
     except WebSocketDisconnect:
         logger.info("Runner agent disconnected: %s", host_key)
     finally:
+        dispatcher.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await dispatcher
         _ACTIVE_RUNNERS.pop(host_key, None)
-        _ACTIVE_AGENT_INFO.pop(host_key, None)
+        await asyncio.to_thread(fleet.unregister, host_key)
 
 
 class AgentTokenRequest(StrictBody):
@@ -3368,40 +3417,30 @@ def issue_agent_token(payload: AgentTokenRequest, principal: Principal = AdminAc
 
 @app.get("/api/v1/agents/status")
 def get_agents_status(_: Principal = ReadAccess) -> dict[str, Any]:
+    """Every agent any replica holds. Only what is known: no placeholder addresses or
+    versions -- an agent that has not reported telemetry has `telemetry: null`."""
+
     items = []
-    agents_list = []
-    for host_key, info in _ACTIVE_AGENT_INFO.items():
-        telemetry = stored_server_telemetry(host_key)
-        item = {
-            "hostKey": host_key,
-            "agentId": info.get("agent_id"),
-            "hostname": info.get("hostname"),
-            "connectedAt": info.get("connected_at"),
+    for connection in fleet.connections():
+        telemetry = stored_server_telemetry(connection["hostname"])
+        items.append({
+            **connection,
+            "hostKey": connection["hostname"],
             "telemetry": {
                 "cpuPercent": telemetry.cpu_percent,
                 "memPercent": telemetry.mem_percent,
                 "diskPercent": telemetry.disk_percent,
                 "observedAt": telemetry.observed_at.isoformat(),
             } if telemetry else None,
-        }
-        items.append(item)
-        agents_list.append({
-            "hostname": info.get("hostname") or host_key,
-            "ip": "10.0.1.15",
-            "os": "linux",
-            "arch": "x86_64",
-            "version": "1.0.0",
-            "connectedAt": info.get("connected_at", ""),
-            "lastHeartbeat": info.get("connected_at", ""),
-            "cpuPercent": telemetry.cpu_percent if telemetry else 15.0,
-            "memPercent": telemetry.mem_percent if telemetry else 35.0,
-            "diskPercent": telemetry.disk_percent if telemetry else 25.0,
         })
+    live = [item for item in items if not item["stale"]]
     return {
+        "replicaId": fleet.replica_id,
         "count": len(items),
+        "connectedAgents": len(live),
+        "staleAgents": len(items) - len(live),
         "items": items,
-        "connectedAgents": len(agents_list),
-        "agents": agents_list,
+        "agents": items,
     }
 
 
@@ -3420,10 +3459,11 @@ async def execute_agent_command(
 
     Platform-admin only: this is a remote execution channel, however narrow the allowlist.
     The hostname must match exactly -- substring matching let one agent answer for many.
+    The agent may be held by another replica: the command is a row that replica claims.
     """
 
-    ws = _ACTIVE_RUNNERS.get(payload.hostname)
-    if not ws:
+    connection = next((c for c in fleet.connections() if c["hostname"] == payload.hostname), None)
+    if connection is None or connection["stale"]:
         raise HTTPException(
             status_code=404,
             detail={"code": "AGENT_NOT_CONNECTED", "message": f"No active edge agent connected for {payload.hostname}"}
@@ -3436,52 +3476,53 @@ async def execute_agent_command(
             detail={"code": "COMMAND_POLICY_VIOLATION", "message": reason}
         )
 
-    task_id = f"cmd-{uuid4().hex[:12]}"
     loop = asyncio.get_running_loop()
-    fut = loop.create_future()
-    _PENDING_AGENT_TASKS[task_id] = fut
     start_t = loop.time()
-    try:
-        req = {"type": "EXEC_COMMAND", "task_id": task_id, "command": payload.command}
-        await ws.send_text(json.dumps(req))
-        result = await asyncio.wait_for(fut, timeout=payload.timeout)
-        duration_ms = round((loop.time() - start_t) * 1000, 1)
-        output_str = result.get("output", "")
-
-        # Append to Local Disk Tamper-Evident Audit Ledger
-        try:
-            from .audit_ledger import append_audit_entry
-            append_audit_entry(
-                action="agent.command_execute",
-                actor=principal.subject,
-                correlation_id=task_id,
-                payload={
-                    "hostname": payload.hostname,
-                    "command": payload.command,
-                    "exitCode": result.get("exit_code", 0),
-                    "durationMs": duration_ms,
-                }
-            )
-        except Exception:
-            pass
-
-        return {
-            "taskId": task_id,
-            "hostname": payload.hostname,
-            "command": payload.command,
-            "exitCode": result.get("exit_code", 0),
-            "output": output_str,
-            "stdout": output_str,
-            "stderr": "",
-            "durationMs": duration_ms,
-        }
-    except asyncio.TimeoutError:
+    command = await asyncio.to_thread(fleet.submit, payload.hostname, payload.command, principal.subject, payload.timeout)
+    answered = await fleet.wait(command.id, payload.timeout)
+    duration_ms = round((loop.time() - start_t) * 1000, 1)
+    if answered is None or answered.status not in ("completed", "failed"):
         raise HTTPException(
             status_code=504,
-            detail={"code": "AGENT_COMMAND_TIMEOUT", "message": f"Command execution timed out after {payload.timeout}s"}
+            detail={
+                "code": "AGENT_COMMAND_TIMEOUT",
+                "message": f"Command execution timed out after {payload.timeout}s "
+                           f"(status {answered.status if answered else 'unknown'}; agent held by {connection['replicaId']})",
+            }
         )
-    finally:
-        _PENDING_AGENT_TASKS.pop(task_id, None)
+    result = answered.result or {}
+    output_str = str(result.get("output", ""))
+
+    # Append to Local Disk Tamper-Evident Audit Ledger
+    try:
+        from .audit_ledger import append_audit_entry
+        append_audit_entry(
+            action="agent.command_execute",
+            actor=principal.subject,
+            correlation_id=str(command.id),
+            payload={
+                "hostname": payload.hostname,
+                "command": payload.command,
+                "exitCode": result.get("exitCode", 0),
+                "durationMs": duration_ms,
+                "claimedBy": answered.claimed_by,
+            }
+        )
+    except Exception:
+        pass
+
+    return {
+        "taskId": str(command.id),
+        "hostname": payload.hostname,
+        "command": payload.command,
+        "exitCode": result.get("exitCode", 0),
+        "output": output_str,
+        "stdout": output_str,
+        "stderr": "",
+        "durationMs": duration_ms,
+        "requestedOn": fleet.replica_id,
+        "claimedBy": answered.claimed_by,
+    }
 
 
 @app.get("/api/v1/agents/install.sh", response_class=Response)

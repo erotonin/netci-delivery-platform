@@ -44,6 +44,7 @@ from ..domain.models import (
     StageDefinition,
     WaiverStatus,
 )
+from ..domain.models import AgentCommand, AgentConnection
 from ..persistence import (
     AuditRecord,
     ConcurrentModification,
@@ -164,6 +165,20 @@ RESOURCE_REQUEST_COLUMNS = (
 SECURITY_WAIVER_COLUMNS = (
     "id, cve_id, module_id, reason, approved_by, status, expires_at, created_at"
 )
+AGENT_COMMAND_COLUMNS = "id, hostname, command, requested_by, status, result, created_at, expires_at, claimed_by, claimed_at, completed_at"
+
+
+def _agent_command(row: dict[str, Any]) -> AgentCommand:
+    result = row["result"]
+    if isinstance(result, str):
+        result = json.loads(result)
+    return AgentCommand(
+        id=row["id"], hostname=row["hostname"], command=row["command"], requested_by=row["requested_by"],
+        status=row["status"], result=result, created_at=row["created_at"], expires_at=row["expires_at"],
+        claimed_by=row["claimed_by"], claimed_at=row["claimed_at"], completed_at=row["completed_at"],
+    )
+
+
 STAGE_CATALOG_COLUMNS = (
     "id, name, category, description, kind, script, after_stage, required, enabled_by_default,"
     " position, created_by, created_at, updated_at, status, approved_by, parameters"
@@ -2327,6 +2342,101 @@ class PostgresSession:
     def delete_stage_definition(self, stage_id: str) -> bool:
         self._cursor.execute("DELETE FROM stage_catalog WHERE id = %s AND kind = 'custom'", (stage_id,))
         return self._cursor.rowcount > 0
+
+    # ------------------------------------------------------------ agent fleet
+
+    def upsert_agent_connection(self, connection: AgentConnection) -> None:
+        self._cursor.execute(
+            """
+            INSERT INTO agent_connections (hostname, agent_id, replica_id, token_jti, connected_at, last_seen_at)
+            VALUES (%s, %s, %s, %s, %s, %s)
+            ON CONFLICT (hostname) DO UPDATE SET
+                agent_id = EXCLUDED.agent_id, replica_id = EXCLUDED.replica_id, token_jti = EXCLUDED.token_jti,
+                connected_at = EXCLUDED.connected_at, last_seen_at = EXCLUDED.last_seen_at
+            """,
+            (connection.hostname, connection.agent_id, connection.replica_id, connection.token_jti,
+             connection.connected_at, connection.last_seen_at),
+        )
+
+    def touch_agent_connection(self, hostname: str, replica_id: str, seen_at: datetime) -> bool:
+        self._cursor.execute(
+            "UPDATE agent_connections SET last_seen_at = %s WHERE hostname = %s AND replica_id = %s",
+            (seen_at, hostname, replica_id),
+        )
+        return self._cursor.rowcount > 0
+
+    def delete_agent_connection(self, hostname: str, replica_id: str) -> bool:
+        # Only the replica that holds the socket may remove the row: a late disconnect on
+        # replica A must not erase the agent's fresh reconnection to replica B.
+        self._cursor.execute(
+            "DELETE FROM agent_connections WHERE hostname = %s AND replica_id = %s", (hostname, replica_id)
+        )
+        return self._cursor.rowcount > 0
+
+    def list_agent_connections(self) -> tuple[AgentConnection, ...]:
+        self._cursor.execute(
+            "SELECT hostname, agent_id, replica_id, token_jti, connected_at, last_seen_at FROM agent_connections ORDER BY hostname"
+        )
+        return tuple(AgentConnection(**row) for row in self._cursor.fetchall())
+
+    def insert_agent_command(self, command: AgentCommand) -> None:
+        self._cursor.execute(
+            """
+            INSERT INTO agent_commands (id, hostname, command, requested_by, status, result, created_at, expires_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            """,
+            (command.id, command.hostname, command.command, command.requested_by, command.status,
+             json.dumps(command.result) if command.result is not None else None, command.created_at, command.expires_at),
+        )
+
+    def claim_agent_commands(self, replica_id: str, hostnames: list[str], now: datetime) -> tuple[AgentCommand, ...]:
+        """Take every pending command for these hosts, exactly once across replicas."""
+
+        if not hostnames:
+            return ()
+        self._cursor.execute(
+            f"""
+            UPDATE agent_commands SET status = 'sent', claimed_by = %s, claimed_at = %s
+            WHERE id IN (
+                SELECT id FROM agent_commands
+                WHERE status = 'pending' AND hostname = ANY(%s) AND expires_at > %s
+                ORDER BY created_at FOR UPDATE SKIP LOCKED
+            )
+            RETURNING {AGENT_COMMAND_COLUMNS}
+            """,
+            (replica_id, now, list(hostnames), now),
+        )
+        return tuple(_agent_command(row) for row in self._cursor.fetchall())
+
+    def complete_agent_command(self, command_id: UUID, status: str, result: dict[str, Any], completed_at: datetime) -> bool:
+        self._cursor.execute(
+            "UPDATE agent_commands SET status = %s, result = %s, completed_at = %s WHERE id = %s AND status IN ('pending', 'sent')",
+            (status, json.dumps(result), completed_at, command_id),
+        )
+        return self._cursor.rowcount > 0
+
+    def agent_command(self, command_id: UUID) -> AgentCommand | None:
+        self._cursor.execute(f"SELECT {AGENT_COMMAND_COLUMNS} FROM agent_commands WHERE id = %s", (command_id,))
+        row = self._cursor.fetchone()
+        return _agent_command(row) if row else None
+
+    def expire_agent_commands(self, now: datetime) -> int:
+        self._cursor.execute(
+            "UPDATE agent_commands SET status = 'expired', completed_at = %s WHERE status IN ('pending', 'sent') AND expires_at <= %s",
+            (now, now),
+        )
+        return self._cursor.rowcount
+
+    def try_advisory_lock(self, key: int) -> bool:
+        """A transaction-scoped advisory lock: held until this session commits or rolls back.
+
+        Background loops (reconciler, outbox) take one per pass so that with several API
+        replicas exactly one runs the pass; the others skip it instead of racing.
+        """
+
+        self._cursor.execute("SELECT pg_try_advisory_xact_lock(%s) AS locked", (key,))
+        row = self._cursor.fetchone()
+        return bool(row and row["locked"])
 
     def get_server_telemetry(self, server_name: str) -> ServerTelemetry | None:
         self._cursor.execute(

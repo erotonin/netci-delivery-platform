@@ -1469,19 +1469,21 @@ export function applyModuleConfig(
 
 export type AgentStatusItem = {
   hostname: string
-  ip: string
-  os: string
-  arch: string
-  version: string
+  agentId: string
+  replicaId: string
   connectedAt: string
-  lastHeartbeat: string
-  cpuPercent: number
-  memPercent: number
-  diskPercent: number
+  lastSeenAt: string
+  stale: boolean
+  local: boolean
+  telemetry: { cpuPercent: number; memPercent: number; diskPercent: number; observedAt: string } | null
 }
 
 export type AgentStatusResponse = {
+  replicaId: string
+  count: number
   connectedAgents: number
+  staleAgents: number
+  items: AgentStatusItem[]
   agents: AgentStatusItem[]
 }
 

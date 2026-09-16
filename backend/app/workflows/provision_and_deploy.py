@@ -125,6 +125,7 @@ class ProvisionAndDeployWorkflow:
                 delivery,
                 result_type=DeliveryResult,
                 start_to_close_timeout=timedelta(minutes=10),
+                heartbeat_timeout=timedelta(seconds=45),
                 retry_policy=RetryPolicy(maximum_attempts=3),
             )
             result = replace(
@@ -137,6 +138,7 @@ class ProvisionAndDeployWorkflow:
                 delivery,
                 result_type=bool,
                 start_to_close_timeout=timedelta(minutes=5),
+                heartbeat_timeout=timedelta(seconds=45),
                 retry_policy=RetryPolicy(maximum_attempts=3),
             )
             if not healthy:
@@ -145,6 +147,7 @@ class ProvisionAndDeployWorkflow:
                         "rollback",
                         delivery,
                         start_to_close_timeout=timedelta(minutes=10),
+                        heartbeat_timeout=timedelta(seconds=45),
                         retry_policy=RetryPolicy(maximum_attempts=3),
                     )
                     result = replace(
@@ -218,6 +221,7 @@ class RollbackWorkflow:
                 "rollback",
                 delivery,
                 start_to_close_timeout=timedelta(minutes=10),
+                heartbeat_timeout=timedelta(seconds=45),
                 retry_policy=RetryPolicy(maximum_attempts=3),
             )
             healthy = await workflow.execute_activity(
@@ -225,6 +229,7 @@ class RollbackWorkflow:
                 delivery,
                 result_type=bool,
                 start_to_close_timeout=timedelta(minutes=5),
+                heartbeat_timeout=timedelta(seconds=45),
                 retry_policy=RetryPolicy(maximum_attempts=3),
             )
             result = replace(

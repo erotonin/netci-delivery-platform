@@ -23,6 +23,8 @@ from uuid import UUID, uuid4
 
 from ..stage_catalog import BUILTIN_STAGES
 from ..domain.models import (
+    AgentCommand,
+    AgentConnection,
     Application,
     ConfigRevisionStatus,
     DeliveryEvent,
@@ -105,6 +107,8 @@ class _State:
     security_waivers: dict[UUID, SecurityWaiver] = field(default_factory=dict)
     server_maintenance: dict[str, ServerMaintenanceState] = field(default_factory=dict)
     server_telemetry: dict[str, ServerTelemetry] = field(default_factory=dict)
+    agent_connections: dict[str, AgentConnection] = field(default_factory=dict)
+    agent_commands: dict[UUID, AgentCommand] = field(default_factory=dict)
     stage_catalog: dict[str, StageDefinition] = field(default_factory=lambda: {s.id: s for s in BUILTIN_STAGES})
 
     def copy(self) -> "_State":
@@ -144,6 +148,8 @@ class _State:
             security_waivers=dict(self.security_waivers),
             server_maintenance=dict(self.server_maintenance),
             server_telemetry=dict(self.server_telemetry),
+            agent_connections=dict(self.agent_connections),
+            agent_commands=dict(self.agent_commands),
             stage_catalog=dict(self.stage_catalog),
         )
 
@@ -981,6 +987,62 @@ class InMemorySession:
 
     def get_server_telemetry(self, server_name: str) -> ServerTelemetry | None:
         return self._state.server_telemetry.get(server_name)
+
+    # ------------------------------------------------------------ agent fleet
+
+    def upsert_agent_connection(self, connection: AgentConnection) -> None:
+        self._state.agent_connections[connection.hostname] = connection
+
+    def touch_agent_connection(self, hostname: str, replica_id: str, seen_at: datetime) -> bool:
+        current = self._state.agent_connections.get(hostname)
+        if current is None or current.replica_id != replica_id:
+            return False
+        self._state.agent_connections[hostname] = replace(current, last_seen_at=seen_at)
+        return True
+
+    def delete_agent_connection(self, hostname: str, replica_id: str) -> bool:
+        current = self._state.agent_connections.get(hostname)
+        if current is None or current.replica_id != replica_id:
+            return False
+        del self._state.agent_connections[hostname]
+        return True
+
+    def list_agent_connections(self) -> tuple[AgentConnection, ...]:
+        return tuple(sorted(self._state.agent_connections.values(), key=lambda c: c.hostname))
+
+    def insert_agent_command(self, command: AgentCommand) -> None:
+        self._state.agent_commands[command.id] = command
+
+    def claim_agent_commands(self, replica_id: str, hostnames: list[str], now: datetime) -> tuple[AgentCommand, ...]:
+        claimed = []
+        for command in sorted(self._state.agent_commands.values(), key=lambda c: c.created_at):
+            if command.status == "pending" and command.hostname in hostnames and command.expires_at > now:
+                updated = replace(command, status="sent", claimed_by=replica_id, claimed_at=now)
+                self._state.agent_commands[command.id] = updated
+                claimed.append(updated)
+        return tuple(claimed)
+
+    def complete_agent_command(self, command_id: UUID, status: str, result: dict[str, Any], completed_at: datetime) -> bool:
+        current = self._state.agent_commands.get(command_id)
+        if current is None or current.status not in ("pending", "sent"):
+            return False
+        self._state.agent_commands[command_id] = replace(current, status=status, result=result, completed_at=completed_at)
+        return True
+
+    def agent_command(self, command_id: UUID) -> AgentCommand | None:
+        return self._state.agent_commands.get(command_id)
+
+    def expire_agent_commands(self, now: datetime) -> int:
+        count = 0
+        for command in list(self._state.agent_commands.values()):
+            if command.status in ("pending", "sent") and command.expires_at <= now:
+                self._state.agent_commands[command.id] = replace(command, status="expired", completed_at=now)
+                count += 1
+        return count
+
+    def try_advisory_lock(self, key: int) -> bool:
+        # One process, one loop: there is nobody to lose the race against.
+        return True
 
     def stage_catalog(self) -> tuple[StageDefinition, ...]:
         return tuple(sorted(self._state.stage_catalog.values(), key=lambda s: (s.position, s.id)))

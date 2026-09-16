@@ -1,0 +1,37 @@
+{
+  "schemaVersion": "1.0",
+  "startedAt": "2026-09-16T07:21:41.841230+00:00",
+  "module": "hello-kubernetes",
+  "environment": "dev",
+  "workersBefore": [
+    310466,
+    310513
+  ],
+  "pipelineRunId": "b262d07a-0553-4397-b13a-97d6592f2635",
+  "deploymentId": "656915d7-f9d9-4d00-ad19-40e866127ff0",
+  "killedWorker": {
+    "pid": 310466,
+    "at": "2026-09-16T07:22:35.489453+00:00",
+    "signal": "SIGKILL"
+  },
+  "finalStatus": "healthy",
+  "message": null,
+  "secondsFromKillToTerminal": 48.2,
+  "workersAfter": [
+    310513
+  ],
+  "survivorFinished": true,
+  "finishedAt": "2026-09-16T07:23:23.809132+00:00",
+  "result": "passed",
+  "temporalHistory": {
+    "workflowId": "netci-deploy-656915d7-f9d9-4d00-ad19-40e866127ff0",
+    "deployScheduledAt": "07:22:32Z",
+    "deployStartedAttempt2": {
+      "at": "07:23:18Z",
+      "identity": "310513@openstack-aio",
+      "note": "attempt 1 ran on pid 310466 (killed); Temporal records the started event only for the attempt that completed"
+    },
+    "deployCompletedAt": "07:23:22Z",
+    "heartbeatTimeoutSeconds": 45
+  }
+}

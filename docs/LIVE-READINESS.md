@@ -191,6 +191,15 @@ stayed `queued` (now reconciled on a schedule).
 | Benchmark, **Go template** (cold `GOCACHE` ≈ 58 s, warm ≈ 2 s; 5 × 3, checkout by `git archive` from the mirror): baseline 24.0 s, ephemeral 87.9 s, **isolated + cache 24.3 s (+1.4 % total, −4.8 % warm; build 1.8 s vs 13.2 s)**. On a workload whose cost is the compiler cache, the per-project cache recovers all of it. | `evidence/benchmarks/report-go.json` |
 | Benchmark, **container template** (same run): baseline 15.4 s, ephemeral 42.5 s, isolated 33.0 s (+114 %). The 5-second buildah build gains little from a cache; provisioning (3.7 s), the mirror checkout (8.2 vs 4.0 s) and cleanup (2.5 s) are the cost of a fresh pod and are reported as such. | `evidence/benchmarks/report.json` |
 
+## 4g. 2026-09-16 (afternoon): two API replicas, two workers
+
+| Proof | Result |
+|---|---|
+| API `api-a` (:8100) and `api-b` (:8101) on the same `netci_live`; an edge agent connected to `api-a` (token minted for `netci-prod-01`); `GET /api/v1/agents/status` on **`api-b`** lists it with `replicaId: api-a`, `stale: false`, real telemetry, and no invented `ip`/`os`/`version` | migration 0023, `agent_fleet.py` |
+| `POST /api/v1/agents/execute` on **`api-b`** for that agent → `uptime` output in **270 ms**, `requestedOn: api-b`, `claimedBy: api-a` (the command is a row the holding replica claimed) | command `842ff40e…` |
+| Reconciler and outbox passes take a PostgreSQL advisory lock per pass; the second replica skips a pass the first is inside | `test_agent_fleet.py` (PostgreSQL) |
+| Two Temporal workers; `worker_failover_drill.py` **SIGKILLed the worker running the playbook** of a dev deployment; Temporal (heartbeat timeout 45 s, activities now heartbeat every 10 s) started attempt 2 on the survivor 46 s later; deployment `healthy` **48.2 s after the kill** | `evidence/worker-failover.json`, workflow `netci-deploy-656915d7…` |
+
 ## 4c. Host reboot (2026-09-16 08:06 UTC)
 
 The lab host rebooted overnight. Every container without a restart policy stopped
@@ -209,10 +218,10 @@ not prove: recovery on a fresh machine (see §6).
 
 | Suite | Command | Result |
 |---|---|---|
-| Backend + contract (PostgreSQL-backed) | `NETCI_TEST_DATABASE_URL=…/netci .venv/bin/python -m pytest backend/tests tests/contract -o addopts="" -q` (run in two halves; see CLAUDE.md) | 609 passed, 4 skipped (opt-in Temporal tests, run separately below) + 41 passed |
+| Backend + contract (PostgreSQL-backed) | `NETCI_TEST_DATABASE_URL=…/netci .venv/bin/python -m pytest backend/tests tests/contract -o addopts="" -q` (run in two halves; see CLAUDE.md) | 622 passed, 4 skipped (opt-in Temporal tests, run separately below) + 41 passed |
 | Temporal workflow tests against the time-skipping test server | `NETCI_RUN_TEMPORAL_TEST=1 .venv/bin/python -m pytest backend/tests/test_temporal_workflow.py` | 4 passed |
 | Frontend | `cd frontend && npm test && npm run build` | 27 passed, build OK |
-| Static | `pyflakes backend/app/`, `scripts/migrate.py --check-schema` | clean; schema matches 22 migrations |
+| Static | `pyflakes backend/app/`, `scripts/migrate.py --check-schema` | clean; schema matches 23 migrations |
 
 ---
 
@@ -224,7 +233,7 @@ Say these plainly rather than let the table above imply them.
 |---|---|
 | The registry is plaintext HTTP; `imagePullHost` is how the host reaches it. A real deployment needs TLS and one name. | Infra. |
 | Rekor / transparency log is off (`--tlog-upload=false`, `--insecure-ignore-tlog`). Signatures are key-based only. | Security: decide on a Rekor instance; set `NETCI_SIGNATURE_REQUIRE_TLOG=true`. |
-| The edge-agent *socket* registry (`_ACTIVE_RUNNERS`) is process-local by nature; command dispatch to an agent connected to another replica is not supported. Maintenance mode and telemetry are now in PostgreSQL (ADR-029). | Platform: route agent commands through the database (a command table the owning replica polls) if multi-replica dispatch is needed. |
+| Two API replicas run behind two ports on the lab; there is no load balancer in front of them and the frontend is served by one process. | Infra: an L7 balancer with websocket support. |
 | Password-grant OIDC in the harness is a lab convenience; the browser login flow was not exercised by automation today. | Platform: Playwright login test against Keycloak. |
 | Production on a separate host is proven for systemd (§4e); the docker runtime was exercised on the worker's own Docker socket only. | Infra: a docker host with a remote socket in the inventory. |
 | `production_readiness_audit.py` is a code self-check; its verdict is now `SELF_CHECK_PASSED` / `SELF_CHECK_FAILED`, never "certified". | Done. |
