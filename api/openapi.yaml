@@ -117,6 +117,20 @@ paths:
               schema: { $ref: '#/components/schemas/StageDefinition' }
         '409': { $ref: '#/components/responses/Conflict' }
         '422': { $ref: '#/components/responses/UnprocessableEntity' }
+  /stage-catalog/{stageId}/approve:
+    post:
+      operationId: approveCustomStage
+      summary: Approve a proposed custom stage (a platform-admin other than the proposer)
+      parameters:
+        - { name: stageId, in: path, required: true, schema: { type: string } }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StageDefinition' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
   /stage-catalog/{stageId}:
     delete:
       operationId: removeCustomStage
@@ -159,6 +173,10 @@ paths:
               required: [stages]
               properties:
                 stages: { type: array, minItems: 1, maxItems: 64, items: { type: string } }
+                stageParameters:
+                  type: object
+                  description: Values for declared parameters of the custom stages in `stages`
+                  additionalProperties: { type: object, additionalProperties: { type: string, maxLength: 256 } }
       responses:
         '200':
           content:
@@ -170,6 +188,7 @@ paths:
                   moduleId: { type: string }
                   applicationId: { type: string, format: uuid }
                   stages: { type: array, items: { type: string } }
+                  stageParameters: { type: object, additionalProperties: { type: object, additionalProperties: { type: string } } }
         '404': { $ref: '#/components/responses/NotFound' }
         '422': { $ref: '#/components/responses/UnprocessableEntity' }
   /portal/dashboard:
@@ -3004,6 +3023,11 @@ components:
         createdBy: { type: string }
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
+        status: { type: string, enum: [proposed, active, rejected], description: Custom stages run only when active }
+        approvedBy: { type: string, nullable: true }
+        parameters:
+          type: array
+          items: { type: object, properties: { name: { type: string }, default: { type: string }, description: { type: string } } }
     CustomStageCreate:
       type: object
       additionalProperties: false
@@ -3015,6 +3039,17 @@ components:
         category: { type: string, enum: [source, test, build, security, publish, deploy, verify, custom], default: custom }
         script: { type: string, minLength: 4, maxLength: 255, description: Repository-relative path ending in .sh; never a command }
         afterStage: { type: string, enum: [checkout, unit-test, build, sbom, vulnerability-scan, sign, publish] }
+        parameters:
+          type: array
+          maxItems: 16
+          items:
+            type: object
+            additionalProperties: false
+            required: [name]
+            properties:
+              name: { type: string, pattern: '^[A-Z][A-Z0-9_]{0,63}$' }
+              default: { type: string, maxLength: 256 }
+              description: { type: string, maxLength: 500 }
     TemplateDefinition:
       type: object
       required: [id, name, runtime, stageIds]

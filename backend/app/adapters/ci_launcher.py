@@ -50,7 +50,7 @@ class CiLaunchRequest:
     # isolation provisioner; None only when isolation is explicitly `none`.
     isolation: BuildIsolation | None = None
     # Custom catalog stages in this run's list: id, name, repository script, anchor.
-    custom_stages: list[dict[str, str]] = field(default_factory=list)
+    custom_stages: list[dict[str, object]] = field(default_factory=list)
 
 
 @dataclass(frozen=True)

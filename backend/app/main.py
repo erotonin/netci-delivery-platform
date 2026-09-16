@@ -94,7 +94,7 @@ from .catalog.templates import PipelineTemplateEngine, TemplateValidationError, 
 from .catalog.previews import PreviewEnvironmentManager, PreviewEnvironmentError
 from .catalog.resources import SelfServiceResourceManager, ResourceRequestError
 
-from .traffic import default_traffic_router
+from .traffic import TrafficRoutingUnavailable, default_traffic_router
 from . import workload_identity
 from .workload_identity import (
     CallbackClaims,
@@ -1330,6 +1330,12 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
     return error("VALIDATION_ERROR", "request validation failed", request.state.correlation_id, 422)
 
 
+@app.exception_handler(TrafficRoutingUnavailable)
+async def traffic_router_unavailable_handler(request: Request, exc: TrafficRoutingUnavailable) -> JSONResponse:
+    # 501, not 200 with a stored number: a canary weight that routes nothing is a false green.
+    return error("TRAFFIC_ROUTER_NOT_CONFIGURED", str(exc), request.state.correlation_id, 501)
+
+
 @app.exception_handler(DeliveryError)
 async def delivery_exception_handler(request: Request, exc: DeliveryError) -> JSONResponse:
     return error(exc.code, exc.message, request.state.correlation_id, exc.status_code)
@@ -1450,16 +1456,38 @@ class CustomStageCreate(StrictBody):
     # `afterStage`. Never a command: the portal is not a place to type shell.
     script: str = Field(min_length=4, max_length=255)
     afterStage: str = Field(min_length=1, max_length=64)
+    # Parameters a module may set for this stage; each reaches the script as an
+    # environment variable. Declared here, valued per module in PUT /modules/{id}/stages.
+    parameters: list[StageParameterDeclaration] = Field(default_factory=list, max_length=16)
+
+
+class StageParameterDeclaration(StrictBody):
+    name: str = Field(pattern=r"^[A-Z][A-Z0-9_]{0,63}$")
+    default: str = Field(default="", max_length=256)
+    description: str = Field(default="", max_length=500)
+
+
+CustomStageCreate.model_rebuild()
 
 
 @app.post("/stage-catalog", status_code=status.HTTP_201_CREATED)
 def register_custom_stage(payload: CustomStageCreate, principal: Principal = AdminAccess) -> dict[str, object]:
-    """Register a custom stage. Platform-admin only: a stage runs code on every build
-    agent of every module that selects it."""
+    """Propose a custom stage. Platform-admin only, and -- with separation of duties on --
+    it runs nowhere until a different administrator approves it: a stage is code on
+    every build agent of every module that selects it."""
 
     return platform.register_custom_stage(
-        actor=principal.subject, stage_id=payload.id, name=payload.name, description=payload.description,
+        actor=principal.subject, requires_approval=separation_of_duties_enabled(principal),
+        stage_id=payload.id, name=payload.name, description=payload.description,
         category=payload.category, script=payload.script, after_stage=payload.afterStage,
+        parameters=[p.model_dump() for p in payload.parameters],
+    )
+
+
+@app.post("/stage-catalog/{stageId}/approve")
+def approve_custom_stage(stageId: str, principal: Principal = AdminAccess) -> dict[str, object]:
+    return platform.approve_custom_stage(
+        stageId, actor=principal.subject, separation_of_duties=separation_of_duties_enabled(principal)
     )
 
 
@@ -1471,6 +1499,8 @@ def remove_custom_stage(stageId: str, principal: Principal = AdminAccess) -> Res
 
 class ModuleStagesUpdate(StrictBody):
     stages: list[str] = Field(min_length=1, max_length=64)
+    # {"<custom stage id>": {"<PARAM>": "<value>"}}; only declared names, safe values.
+    stageParameters: dict[str, dict[str, str]] = Field(default_factory=dict)
 
 
 @app.get("/modules/{moduleId}/stages")
@@ -1484,7 +1514,7 @@ def get_module_stages(moduleId: str, principal: Principal = ReadAccess) -> dict[
         raise HTTPException(status_code=409, detail={"code": "MODULE_NOT_PROVISIONED", "message": "module has no delivery application"})
     application = platform.get_application(UUID(str(application_id)))
     return {"moduleId": moduleId, "applicationId": str(application.id), "stages": list(application.stages),
-            "pipelineTemplate": application.pipeline_template}
+            "stageParameters": dict(application.stage_parameters), "pipelineTemplate": application.pipeline_template}
 
 
 @app.put("/modules/{moduleId}/stages")
@@ -1502,8 +1532,11 @@ def set_module_stages(moduleId: str, payload: ModuleStagesUpdate, principal: Pri
     application_id = module.get("applicationId")
     if not application_id:
         raise HTTPException(status_code=409, detail={"code": "MODULE_NOT_PROVISIONED", "message": "module has no delivery application"})
-    application = platform.set_application_stages(UUID(str(application_id)), payload.stages, actor=principal.subject)
-    return {"moduleId": moduleId, "applicationId": str(application.id), "stages": list(application.stages)}
+    application = platform.set_application_stages(
+        UUID(str(application_id)), payload.stages, actor=principal.subject, stage_parameters=payload.stageParameters
+    )
+    return {"moduleId": moduleId, "applicationId": str(application.id), "stages": list(application.stages),
+            "stageParameters": dict(application.stage_parameters)}
 
 
 @app.get("/portal/dashboard")
@@ -2162,11 +2195,15 @@ def advance_canary_step(
                     app_id = mod.get("applicationId")
                     if app_id:
                         default_traffic_router.set_canary_rules(str(app_id), "prod", payload.canaryRules)
+                except TrafficRoutingUnavailable:
+                    raise
                 except Exception:
                     pass
     coordinator = ReleasePlanCoordinator(portal, platform)
     try:
         return coordinator.advance_canary(requestId, UUID(str(deployment_id)), metrics_data)
+    except TrafficRoutingUnavailable:
+        raise
     except Exception as exc:
         raise HTTPException(status_code=400, detail={"code": "CANARY_ERROR", "message": str(exc)}) from exc
 
@@ -2195,6 +2232,8 @@ def abort_canary_step(
     coordinator = ReleasePlanCoordinator(portal, platform)
     try:
         return coordinator.abort_canary(requestId, UUID(str(deployment_id)), reason)
+    except TrafficRoutingUnavailable:
+        raise
     except Exception as exc:
         raise HTTPException(status_code=400, detail={"code": "CANARY_ERROR", "message": str(exc)}) from exc
 

@@ -22,8 +22,14 @@ export type StageDefinition = {
   required: boolean
   enabledByDefault: boolean
   position: number
-  parameters?: Record<string, unknown>
+  // Custom stages: `proposed` until a second administrator approves; only `active` ones run.
+  status?: 'proposed' | 'active' | 'rejected'
+  approvedBy?: string | null
+  createdBy?: string
+  parameters?: StageParameterDeclaration[]
 }
+
+export type StageParameterDeclaration = { name: string; default?: string; description?: string }
 
 export type CustomStageCreate = {
   id: string
@@ -32,9 +38,16 @@ export type CustomStageCreate = {
   category?: StageDefinition['category']
   script: string
   afterStage: 'checkout' | 'unit-test' | 'build' | 'sbom' | 'vulnerability-scan' | 'sign' | 'publish'
+  parameters?: StageParameterDeclaration[]
 }
 
-export type ModuleStages = { moduleId: string; applicationId: string; stages: string[]; pipelineTemplate?: string }
+export type ModuleStages = {
+  moduleId: string
+  applicationId: string
+  stages: string[]
+  stageParameters?: Record<string, Record<string, string>>
+  pipelineTemplate?: string
+}
 
 export type TemplateDefinition = {
   id: string
@@ -327,8 +340,12 @@ export function getModuleStages(moduleId: string): Promise<ModuleStages> {
   return request<ModuleStages>(`/modules/${encodeURIComponent(moduleId)}/stages`)
 }
 
-export function setModuleStages(moduleId: string, stages: string[]): Promise<ModuleStages> {
-  return request<ModuleStages>(`/modules/${encodeURIComponent(moduleId)}/stages`, { method: 'PUT', body: JSON.stringify({ stages }) })
+export function setModuleStages(moduleId: string, stages: string[], stageParameters: Record<string, Record<string, string>> = {}): Promise<ModuleStages> {
+  return request<ModuleStages>(`/modules/${encodeURIComponent(moduleId)}/stages`, { method: 'PUT', body: JSON.stringify({ stages, stageParameters }) })
+}
+
+export function approveCustomStage(stageId: string): Promise<StageDefinition> {
+  return request<StageDefinition>(`/stage-catalog/${encodeURIComponent(stageId)}/approve`, { method: 'POST' })
 }
 
 export function createApplication(payload: ApplicationCreate, idempotencyKey = requestId()): Promise<Application> {

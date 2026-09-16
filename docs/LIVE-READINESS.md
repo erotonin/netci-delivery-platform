@@ -169,6 +169,16 @@ stayed `queued` (now reconciled on a schedule).
 | Defect found: the systemd playbook named the unit after the application only, so the staging release **restarted dev's service on staging's port** and dev stopped answering — the same class of fault the docker container name had. Fixed: the unit carries the environment. | ADR-030 consequences |
 | Benchmark with a *real* long-lived baseline (the reusable pod now keeps `label netci-shared` + `idleMinutes 120`, so consecutive builds land on the same pod: warm checkout 1.5 s): baseline 20.1 s (warm ≈ 13 s), ephemeral 40.0 s, isolated+cache 47.2 s (warm 45.0 s); the OCI tarball is no longer archived, which cut post-build time from ≈ 12 s to ≈ 1.3 s in every mode. **Honest reading:** a fresh pod costs ≈ +26 s on this 13-second workload (fresh-workspace checkout ≈ 17 s, provisioning ≈ 4 s); the project cache hits on every warm run but recovers none of it, because what a warm agent really has is a warm *workspace*, and a per-build pod by design does not. Isolation is a security decision paid for in wall time; the number is reported as measured. | `evidence/benchmarks/report.json` (5 × 3, threshold 400 %, `acceptable`) |
 
+## 4e. 2026-09-16 (later): a separate production host, catalog governance, fail-closed canary
+
+| Proof | Result |
+|---|---|
+| `scripts/lab/prod_host.sh`: a systemd container on the lab network as a stand-in for a production VM (offline like the build farm: the image is built with `--network=host`); the worker reaches it over SSH with a generated key and a **pinned host key** (`StrictHostKeyChecking=yes`), escalates with `become`, installs a **system-scope** unit under `/opt/hello-systemd` | `netci-prod-01` in NetBox (tenant `hello-systemd-go`, site `prod`) and in the inventory |
+| `hello-systemd-go` prod re-targeted to that host through a config revision (prod change → `pending_approval` → reviewer approved); release → `healthy`; second release; rollback → host serves the previous binary | deployments `5694f8bf…`, and the second |
+| Defect found: the worker probed the health URL (`127.0.0.1:<port>`) on **itself**, so a release that was healthy on the remote host was reported failed and **rolled back**. Fixed: the probe is aimed at the inventory's `ansible_host` | first attempt `f5f5f985…` (failed, wrongly), regression test |
+| Custom stages now need a second administrator (`proposed` → `approve` by someone else → `active`); a module cannot select a proposed stage; parameters declared per stage, valued per module, validated, passed as environment | unit + API tests; live registration path unchanged for the admin UI |
+| `POST /deployments/{id}/traffic` and canary advance/abort answer **501 `TRAFFIC_ROUTER_NOT_CONFIGURED`** unless a real router is configured; the in-memory router is refused outside local mode | `traffic.build_traffic_router` tests |
+
 ## 4c. Host reboot (2026-09-16 08:06 UTC)
 
 The lab host rebooted overnight. Every container without a restart policy stopped

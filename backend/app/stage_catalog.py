@@ -56,9 +56,68 @@ class StageCatalogError(ValueError):
         self.status_code = status_code
 
 
+PARAMETER_NAME = re.compile(r"^[A-Z][A-Z0-9_]{0,63}$")
+# A value reaches the stage script as an environment variable. Shell metacharacters are
+# refused not because the pipeline would evaluate them (it does not: `withEnv`), but so
+# a value can never become a command if a script author interpolates it carelessly.
+PARAMETER_VALUE = re.compile(r"^[A-Za-z0-9._:/@=,+ -]{0,256}$")
+MAX_PARAMETERS = 16
+
+
+def validate_parameter_declarations(declared: list[dict] | tuple[dict, ...] | None) -> tuple[dict[str, str], ...]:
+    """The parameters a custom stage declares: name, default, description."""
+
+    out: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for item in declared or ():
+        if not isinstance(item, dict):
+            raise StageCatalogError("INVALID_STAGE_PARAMETER", "a parameter is an object with name, default, description")
+        name = str(item.get("name") or "")
+        if not PARAMETER_NAME.fullmatch(name):
+            raise StageCatalogError("INVALID_STAGE_PARAMETER", f"parameter name {name!r} must be UPPER_SNAKE (max 64 chars)")
+        if name in seen:
+            raise StageCatalogError("INVALID_STAGE_PARAMETER", f"parameter {name} declared twice")
+        seen.add(name)
+        default = str(item.get("default") or "")
+        if not PARAMETER_VALUE.fullmatch(default):
+            raise StageCatalogError("INVALID_STAGE_PARAMETER", f"default for {name} contains characters a value may not carry")
+        out.append({"name": name, "default": default, "description": str(item.get("description") or "")[:500]})
+        if len(out) > MAX_PARAMETERS:
+            raise StageCatalogError("INVALID_STAGE_PARAMETER", f"at most {MAX_PARAMETERS} parameters per stage")
+    return tuple(out)
+
+
+def validate_stage_parameters(
+    stage_ids: tuple[str, ...], values: dict[str, dict[str, str]] | None, catalog: dict[str, StageDefinition]
+) -> dict[str, dict[str, str]]:
+    """A module's values for its custom stages: only declared names, only safe values."""
+
+    out: dict[str, dict[str, str]] = {}
+    for stage_id, given in (values or {}).items():
+        if stage_id not in stage_ids:
+            raise StageCatalogError("INVALID_STAGE_PARAMETER", f"parameters given for {stage_id}, which is not in the pipeline")
+        stage = catalog.get(stage_id)
+        if stage is None or stage.kind != "custom":
+            raise StageCatalogError("INVALID_STAGE_PARAMETER", f"{stage_id} takes no parameters")
+        declared = {p["name"] for p in stage.parameters}
+        if not isinstance(given, dict):
+            raise StageCatalogError("INVALID_STAGE_PARAMETER", f"parameters for {stage_id} must be an object")
+        clean: dict[str, str] = {}
+        for name, value in given.items():
+            if name not in declared:
+                raise StageCatalogError("INVALID_STAGE_PARAMETER", f"{stage_id} declares no parameter {name}")
+            if not isinstance(value, str) or not PARAMETER_VALUE.fullmatch(value):
+                raise StageCatalogError("INVALID_STAGE_PARAMETER", f"value for {stage_id}.{name} contains characters a value may not carry")
+            clean[name] = value
+        if clean:
+            out[stage_id] = clean
+    return out
+
+
 def custom_stage(
     *, stage_id: str, name: str, script: str, after_stage: str, description: str = "",
-    category: str = "custom", created_by: str,
+    category: str = "custom", created_by: str, parameters: list[dict] | None = None,
+    status: str = "proposed",
 ) -> StageDefinition:
     """Validate an administrator's registration; the result is what the store keeps."""
 
@@ -86,6 +145,7 @@ def custom_stage(
         position=anchor.position + 5, description=description.strip(), script=script,
         after_stage=after_stage, required=False, enabled_by_default=False,
         created_by=created_by, created_at=now, updated_at=now,
+        status=status, parameters=validate_parameter_declarations(parameters),
     )
 
 
@@ -123,6 +183,10 @@ def resolve_pipeline_stages(
             f"these stages cannot be removed, they are what makes an artifact deployable: {', '.join(missing_required)}",
         )
     customs = [catalog[stage_id] for stage_id in chosen if catalog[stage_id].kind == "custom"]
+    # A stage another administrator has not yet approved is not part of any pipeline.
+    inactive = [c.id for c in customs if c.status != "active"]
+    if inactive:
+        raise StageCatalogError("STAGE_NOT_ACTIVE", f"not approved for use: {', '.join(inactive)}")
     orphaned = [c.id for c in customs if c.after_stage not in builtins_chosen]
     if orphaned:
         raise StageCatalogError("STAGE_ANCHOR_DISABLED", f"anchored after a stage that is not enabled: {', '.join(orphaned)}")
@@ -135,14 +199,25 @@ def resolve_pipeline_stages(
     return tuple(resolved)
 
 
-def custom_stage_parameters(stage_ids: tuple[str, ...], catalog: dict[str, StageDefinition]) -> list[dict[str, str]]:
-    """What the pipeline needs to run the custom stages in a run's list."""
+def custom_stage_parameters(
+    stage_ids: tuple[str, ...], catalog: dict[str, StageDefinition],
+    values: dict[str, dict[str, str]] | None = None,
+) -> list[dict[str, object]]:
+    """What the pipeline needs to run the custom stages in a run's list.
 
-    return [
-        {"id": s.id, "name": s.name, "script": s.script or "", "after": s.after_stage or ""}
-        for stage_id in stage_ids
-        if (s := catalog.get(stage_id)) is not None and s.kind == "custom"
-    ]
+    `env` is the stage's declared parameters with the module's values over the defaults,
+    handed to the script as environment variables (`withEnv`), never interpolated.
+    """
+
+    out: list[dict[str, object]] = []
+    for stage_id in stage_ids:
+        s = catalog.get(stage_id)
+        if s is None or s.kind != "custom":
+            continue
+        env = {p["name"]: p.get("default", "") for p in s.parameters}
+        env.update((values or {}).get(stage_id, {}))
+        out.append({"id": s.id, "name": s.name, "script": s.script or "", "after": s.after_stage or "", "env": env})
+    return out
 
 
 def touch(stage: StageDefinition) -> StageDefinition:
@@ -164,4 +239,7 @@ def stage_json(stage: StageDefinition) -> dict[str, object]:
         "createdBy": stage.created_by,
         "createdAt": stage.created_at.isoformat(),
         "updatedAt": stage.updated_at.isoformat(),
+        "status": stage.status,
+        "approvedBy": stage.approved_by,
+        "parameters": [dict(p) for p in stage.parameters],
     }

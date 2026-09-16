@@ -102,6 +102,14 @@ for node in nodes:
     for env in ("dev", "staging", "prod"):
         device(f"{node}-{env}", "hello-kubernetes", "hello-kubernetes", env, dtype_node)
 
+# A separate production host (scripts/lab/prod_host.sh): reached over SSH, system-scope
+# systemd, privilege escalation -- the way a real production machine is.
+prod_host = device("netci-prod-01", "hello-systemd-go", "hello-systemd-go", "prod", dtype_host)
+st, ip = call("POST", "/ipam/ip-addresses/", {"address": "172.17.0.60/16", "status": "active",
+             "assigned_object_type": None})
+if st == 201 or st == 400:
+    pass  # primary IP is informational for netCI; the inventory names the address
+
 # One decommissioned device, so "refuse a retired target" is testable against real data.
 device("netci-retired-01", "hello-container", "hello-container", "prod", dtype_host, status="decommissioning")
 

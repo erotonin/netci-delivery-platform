@@ -337,3 +337,35 @@ async def test_a_binary_the_registry_cannot_serve_fails_the_deploy_before_ansibl
             parameters={"artifact_ref": "localhost:55000/x@sha256:" + "c" * 64, "target_hosts": ["h"]},
         ))
     assert ran == []
+
+
+@pytest.mark.asyncio
+async def test_the_health_probe_is_aimed_at_the_host_the_playbook_deployed_to(tmp_path, monkeypatch):
+    """Found on the first deployment to a separate host: the release was healthy on the
+    host, the worker probed 127.0.0.1 on itself, reported failed, and rolled it back."""
+    import http.server, threading
+
+    hits: list[str] = []
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            hits.append(self.path); self.send_response(200); self.end_headers(); self.wfile.write(b"{}")
+        def log_message(self, *_): pass
+
+    server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    port = server.server_port
+    inventory = tmp_path / "inventory.ini"
+    inventory.write_text(f"[systemd_targets]\nprod-01 ansible_host=127.0.0.1\nlocal-01 ansible_connection=local\n")
+    runner = AnsibleRuntimeRunner(tmp_path, inventory)
+    # A URL written for the target with a port the worker's own loopback does not serve
+    # on that path would fail; resolving the host makes it the target's address.
+    assert runner.target_address("prod-01") == "127.0.0.1"
+    assert runner.target_address("local-01") is None
+    assert runner.target_address("ghost") is None
+    ok = await runner.health_check(DeliveryInput(
+        application_id="a", pipeline_run_id="r", runtime="systemd", environment="prod", artifact_digest="sha256:" + "a" * 64,
+        parameters={"health_url": f"http://127.0.0.1:{port}/healthz", "target_hosts": ["prod-01"]},
+    ))
+    server.shutdown()
+    assert ok is True and hits == ["/healthz"]

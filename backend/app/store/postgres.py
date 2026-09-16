@@ -82,7 +82,7 @@ logger = logging.getLogger(__name__)
 
 APPLICATION_COLUMNS = (
     "id, name, repository_url, pipeline_template, runtime, default_environment,"
-    " stages, owner_team, created_at"
+    " stages, owner_team, created_at, stage_parameters"
 )
 RUN_COLUMNS = (
     "id, application_id, status, commit_sha, branch, environment, parameters, correlation_id,"
@@ -166,7 +166,7 @@ SECURITY_WAIVER_COLUMNS = (
 )
 STAGE_CATALOG_COLUMNS = (
     "id, name, category, description, kind, script, after_stage, required, enabled_by_default,"
-    " position, created_by, created_at, updated_at"
+    " position, created_by, created_at, updated_at, status, approved_by, parameters"
 )
 SERVER_MAINTENANCE_COLUMNS = (
     "server_name, in_maintenance, reason, updated_by, updated_at"
@@ -261,6 +261,8 @@ def _stage_definition(row: dict[str, Any]) -> StageDefinition:
         required=bool(row["required"]), enabled_by_default=bool(row["enabled_by_default"]),
         position=int(row["position"]), created_by=row.get("created_by") or "netci",
         created_at=row["created_at"], updated_at=row["updated_at"],
+        status=row.get("status") or "active", approved_by=row.get("approved_by"),
+        parameters=tuple(row.get("parameters") or ()),
     )
 
 
@@ -392,6 +394,7 @@ def _application(row: dict[str, Any]) -> Application:
         default_environment=Environment(row["default_environment"]),
         stages=tuple(row["stages"] or []),
         owner_team=row["owner_team"],
+        stage_parameters=dict(row.get("stage_parameters") or {}),
         id=row["id"],
         created_at=row["created_at"],
     )
@@ -902,10 +905,11 @@ class PostgresSession:
             cursor.execute(
                 """
                 INSERT INTO applications (id, name, repository_url, pipeline_template, runtime,
-                                          default_environment, stages, owner_team, created_at)
-                VALUES (%s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s)
+                                          default_environment, stages, owner_team, created_at, stage_parameters)
+                VALUES (%s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s::jsonb)
                 ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, stages = EXCLUDED.stages,
-                                               owner_team = EXCLUDED.owner_team
+                                               owner_team = EXCLUDED.owner_team,
+                                               stage_parameters = EXCLUDED.stage_parameters
                 """,
                 (
                     application.id,
@@ -917,6 +921,7 @@ class PostgresSession:
                     json.dumps(list(application.stages)),
                     application.owner_team,
                     application.created_at,
+                    json.dumps(application.stage_parameters),
                 ),
             )
         for run, expected_version in unit.runs:
@@ -2304,16 +2309,19 @@ class PostgresSession:
         self._cursor.execute(
             """
             INSERT INTO stage_catalog (id, name, category, description, kind, script, after_stage,
-                                       required, enabled_by_default, position, created_by, created_at, updated_at)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                                       required, enabled_by_default, position, created_by, created_at, updated_at,
+                                       status, approved_by, parameters)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb)
             ON CONFLICT (id) DO UPDATE SET
                 name = EXCLUDED.name, category = EXCLUDED.category, description = EXCLUDED.description,
                 script = EXCLUDED.script, after_stage = EXCLUDED.after_stage, required = EXCLUDED.required,
                 enabled_by_default = EXCLUDED.enabled_by_default, position = EXCLUDED.position,
-                updated_at = EXCLUDED.updated_at
+                updated_at = EXCLUDED.updated_at, status = EXCLUDED.status, approved_by = EXCLUDED.approved_by,
+                parameters = EXCLUDED.parameters
             """,
             (stage.id, stage.name, stage.category, stage.description, stage.kind, stage.script, stage.after_stage,
-             stage.required, stage.enabled_by_default, stage.position, stage.created_by, stage.created_at, stage.updated_at),
+             stage.required, stage.enabled_by_default, stage.position, stage.created_by, stage.created_at, stage.updated_at,
+             stage.status, stage.approved_by, json.dumps(list(stage.parameters))),
         )
 
     def delete_stage_definition(self, stage_id: str) -> bool:

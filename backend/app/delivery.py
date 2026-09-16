@@ -48,6 +48,7 @@ from .stage_catalog import (
     custom_stage_parameters,
     resolve_pipeline_stages,
     stage_json,
+    validate_stage_parameters,
 )
 from .runtime_environment import is_local_runtime
 from .policy.rules import PolicyDecision, evaluate_artifact_evidence
@@ -571,21 +572,55 @@ class DeliveryPlatform:
             stages = [stage_json(item) for item in transaction.stage_catalog()]
         return {"stages": stages, "templates": templates}
 
-    def register_custom_stage(self, *, actor: str, **fields: object) -> dict[str, object]:
+    def register_custom_stage(self, *, actor: str, requires_approval: bool = True, **fields: object) -> dict[str, object]:
+        """Propose a custom stage. It runs code on every agent of every module that
+        selects it, so it becomes usable only when a *different* administrator approves
+        (`approve_custom_stage`); with separation of duties off it is active at once."""
+
         try:
-            stage = custom_stage(created_by=actor, **fields)  # type: ignore[arg-type]
+            stage = custom_stage(created_by=actor, status="proposed" if requires_approval else "active", **fields)  # type: ignore[arg-type]
         except StageCatalogError as exc:
             raise DeliveryError(exc.code, exc.message, exc.status_code) from exc
         with self._transaction() as transaction:
             existing = transaction.stage_definition(stage.id)
             if existing is not None and existing.kind == "builtin":
                 raise DeliveryError("STAGE_ID_RESERVED", f"{stage.id!r} is a built-in stage", 409)
+            if existing is not None and existing.status == "active":
+                # Editing an approved stage is a new proposal: the script other modules
+                # run must not change under them without a second person seeing it.
+                users = [a.name for a in transaction.applications() if stage.id in a.stages]
+                if users and requires_approval:
+                    raise DeliveryError(
+                        "STAGE_IN_USE",
+                        f"stage {stage.id!r} is used by {', '.join(sorted(users))}; register the change under a new id",
+                        409,
+                    )
             transaction.upsert_stage_definition(stage)
             self._apply(transaction, UnitOfWork(audit=[AuditRecord(
-                "stage_catalog.registered", actor=actor,
-                payload={"stageId": stage.id, "script": stage.script, "afterStage": stage.after_stage},
+                "stage_catalog.proposed" if stage.status == "proposed" else "stage_catalog.registered", actor=actor,
+                payload={"stageId": stage.id, "script": stage.script, "afterStage": stage.after_stage, "status": stage.status},
             )]))
         return stage_json(stage)
+
+    def approve_custom_stage(self, stage_id: str, *, actor: str, separation_of_duties: bool = True) -> dict[str, object]:
+        with self._transaction() as transaction:
+            stage = transaction.stage_definition(stage_id)
+            if stage is None:
+                raise DeliveryError("STAGE_NOT_FOUND", "no such stage", 404)
+            if stage.kind != "custom" or stage.status != "proposed":
+                raise DeliveryError("INVALID_STAGE_STATE", f"stage {stage_id!r} is {stage.status}, not waiting for approval", 409)
+            if separation_of_duties and stage.created_by == actor:
+                raise DeliveryError(
+                    "SEPARATION_OF_DUTIES",
+                    "a custom stage must be approved by an administrator other than the one who proposed it",
+                    403,
+                )
+            approved = replace(stage, status="active", approved_by=actor, updated_at=_now())
+            transaction.upsert_stage_definition(approved)
+            self._apply(transaction, UnitOfWork(audit=[AuditRecord(
+                "stage_catalog.approved", actor=actor, payload={"stageId": stage_id, "proposedBy": stage.created_by},
+            )]))
+        return stage_json(approved)
 
     def remove_custom_stage(self, stage_id: str, *, actor: str) -> None:
         with self._transaction() as transaction:
@@ -604,7 +639,10 @@ class DeliveryPlatform:
                 "stage_catalog.removed", actor=actor, payload={"stageId": stage_id},
             )]))
 
-    def set_application_stages(self, application_id: UUID, stages: list[str], *, actor: str) -> Application:
+    def set_application_stages(
+        self, application_id: UUID, stages: list[str], *, actor: str,
+        stage_parameters: dict[str, dict[str, str]] | None = None,
+    ) -> Application:
         """Change which catalog stages an application's pipeline runs.
 
         Validated the same way as at creation, against the catalog as it is now. Takes
@@ -616,14 +654,17 @@ class DeliveryPlatform:
             if application is None:
                 raise DeliveryError("APPLICATION_NOT_FOUND", "application not found", 404)
             template = TEMPLATES[application.pipeline_template]
-            resolved = self._validate_stages(
-                template, stages, {item.id: item for item in transaction.stage_catalog()}
-            )
-            updated = replace(application, stages=resolved)
+            catalog = {item.id: item for item in transaction.stage_catalog()}
+            resolved = self._validate_stages(template, stages, catalog)
+            try:
+                values = validate_stage_parameters(resolved, stage_parameters, catalog)
+            except StageCatalogError as exc:
+                raise DeliveryError(exc.code, exc.message, exc.status_code) from exc
+            updated = replace(application, stages=resolved, stage_parameters=values)
             unit = UnitOfWork(applications=[updated])
             unit.audit.append(AuditRecord(
                 "application.stages_updated", application_id=application.id, actor=actor,
-                payload={"before": list(application.stages), "after": list(resolved)},
+                payload={"before": list(application.stages), "after": list(resolved), "parameters": values},
             ))
             self._apply(transaction, unit)
         return updated
@@ -912,10 +953,10 @@ class DeliveryPlatform:
         self._apply(transaction, unit)
         return run
 
-    def _custom_stages_for(self, stage_ids: tuple[str, ...]) -> list[dict[str, str]]:
+    def _custom_stages_for(self, application: Application) -> list[dict[str, object]]:
         with self._transaction() as transaction:
             catalog = {item.id: item for item in transaction.stage_catalog()}
-        return custom_stage_parameters(stage_ids, catalog)
+        return custom_stage_parameters(application.stages, catalog, application.stage_parameters)
 
     def _launch_ci(self, application: Application, run: PipelineRun) -> PipelineRun:
         """Hand the queued run to the configured CI engine and record its identity."""
@@ -933,7 +974,7 @@ class DeliveryPlatform:
             environment=run.environment.value,
             correlation_id=run.correlation_id or "",
             parameters=dict(run.parameters),
-            custom_stages=self._custom_stages_for(application.stages),
+            custom_stages=self._custom_stages_for(application),
         )
         try:
             launched = self.ci_launcher.launch(request)

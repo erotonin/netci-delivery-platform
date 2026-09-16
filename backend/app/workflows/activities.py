@@ -5,10 +5,12 @@ from dataclasses import replace
 import json
 import os
 import re
+import shutil
 import subprocess
 import tempfile
 import urllib.error
 import urllib.request
+from urllib.parse import urlsplit, urlunsplit
 from pathlib import Path
 from typing import Protocol
 
@@ -496,6 +498,27 @@ class AnsibleRuntimeRunner:
         await self._run(self.command_for("deploy", delivery))
         return f"deployment-{delivery.pipeline_run_id}"
 
+    def target_address(self, host: str) -> str | None:
+        """Where a named inventory host is reached: its `ansible_host`, or None when it
+        is this machine (`ansible_connection=local`) or unknown."""
+
+        # Beside ansible-playbook: the worker may run it from a virtualenv not on PATH.
+        playbook_tool = Path(shutil.which(self.executable) or self.executable).resolve()
+        inventory_tool = shutil.which("ansible-inventory", path=str(playbook_tool.parent)) \
+            or shutil.which("ansible-inventory") or "ansible-inventory"
+        try:
+            listing = subprocess.run(
+                [inventory_tool, "-i", str(self.inventory), "--host", host],
+                capture_output=True, text=True, timeout=30, env=self.environment(), cwd=self.project_root,
+            )
+            variables = json.loads(listing.stdout or "{}") if listing.returncode == 0 else {}
+        except (OSError, ValueError, subprocess.TimeoutExpired):
+            return None
+        if variables.get("ansible_connection") == "local":
+            return None
+        address = str(variables.get("ansible_host") or "").strip()
+        return address or None
+
     async def health_check(self, delivery: DeliveryInput) -> bool:
         health_url = delivery.parameters.get("health_url")
         if health_url is None and delivery.parameters.get("runtime_health_verified") is True:
@@ -504,6 +527,17 @@ class AnsibleRuntimeRunner:
             return True
         if not isinstance(health_url, str) or not health_url.startswith(("http://", "https://")):
             return False
+        # The health URL is written for the target ("127.0.0.1:<port>"). Probing it from
+        # the worker reaches the worker, not the target: the first deployment to a
+        # separate host was healthy on the host and reported failed here, and was rolled
+        # back for it. Aim the probe at the host the playbook actually deployed to.
+        hosts = delivery.parameters.get("target_hosts")
+        if isinstance(hosts, list) and hosts:
+            address = await asyncio.to_thread(self.target_address, str(hosts[0]))
+            if address:
+                parts = urlsplit(health_url)
+                port = f":{parts.port}" if parts.port else ""
+                health_url = urlunsplit((parts.scheme, f"{address}{port}", parts.path, parts.query, parts.fragment))
 
         def request() -> bool:
             try:

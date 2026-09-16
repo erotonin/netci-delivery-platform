@@ -212,3 +212,25 @@ def test_normalization_masks_per_controller_and_runtime_noise_but_not_configurat
     assert normalize(a) == normalize(b)
     c = b.replace('credentialsId: "netci-kind-token"', 'credentialsId: "someone-elses-token"')
     assert normalize(c) != normalize(b)
+
+
+# ------------------------------------------------------- traffic router fail-closed
+
+
+def test_canary_weights_are_refused_when_no_router_can_apply_them(monkeypatch):
+    """The in-memory router used to be the production default: a 200 with a weight that
+    routed nothing. Outside local mode the choice must be explicit, and `none` refuses."""
+    from app import traffic
+
+    monkeypatch.setenv("NETCI_ENVIRONMENT", "production")
+    monkeypatch.delenv("NETCI_TRAFFIC_ROUTER", raising=False)
+    router = traffic.build_traffic_router()
+    assert isinstance(router, traffic.UnconfiguredTrafficRouter)
+    with pytest.raises(traffic.TrafficRoutingUnavailable):
+        router.set_traffic_weight("app", "prod", 10)
+    assert router.get_routing_status("app", "prod")["status"] == "not_configured"
+    monkeypatch.setenv("NETCI_TRAFFIC_ROUTER", "memory")
+    with pytest.raises(ValueError, match="local-only"):
+        traffic.build_traffic_router()
+    monkeypatch.setenv("NETCI_ENVIRONMENT", "local")
+    assert isinstance(traffic.build_traffic_router(), traffic.InMemoryTrafficRoutingAdapter)

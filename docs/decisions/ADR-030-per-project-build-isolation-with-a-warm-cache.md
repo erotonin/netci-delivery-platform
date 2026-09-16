@@ -72,6 +72,33 @@ compares each controller's normalized JCasC export, plugin set and non-netCI job
 say so, starts a build, requires it to land on the survivor and finish, restarts the
 controller and waits for it to rejoin; detection time and MTTR are recorded.
 
+## Additions (2026-09-16)
+
+- **Checkout from the mirror with one `git archive`.** When the project cache is
+  mounted and netCI names a full commit, the source is materialised by
+  `git archive <commit> | tar -x` from the bare mirror: no `.git`, no hooks or config a
+  previous build could plant, and none of the git plugin's ~30 invocations. The build
+  fails if the commit is not in the mirror after a refresh.
+- **The Go template is the cache-sensitive workload.** Its build compiles the standard
+  library on a cold `GOCACHE` (~60 s) and reuses it warm (~2 s); the container sample
+  had nothing comparable. `scripts/jenkins_build.py --template` and
+  `evidence/benchmarks/report-go.json` carry that measurement.
+- **A custom stage takes two administrators.** Registration produces a `proposed` stage
+  (migration 0022); a different platform-admin approves it; only `active` stages may be
+  selected. Stages may declare parameters (`NAME`, default, description); a module sets
+  values in `PUT /modules/{id}/stages`; netCI validates names and values (no shell
+  metacharacters) and the pipeline passes them with `withEnv`, never interpolated.
+- **The wizard reads the catalog**: required stages cannot be removed there either, and
+  approved custom stages can be added after their anchor.
+- **Health is probed on the deployed host.** The worker resolves the target's
+  `ansible_host` from the inventory and aims the health URL there; the first
+  deployment to a separate host (`scripts/lab/prod_host.sh`: sshd, `become`, system-scope
+  unit) was healthy on the host, failed the worker's loopback probe, and was rolled
+  back for it.
+- **Canary weights fail closed.** `NETCI_TRAFFIC_ROUTER` must be chosen outside local
+  mode; the in-memory router (the former production default, a dict that routed
+  nothing) is local-only, and an unconfigured router answers 501.
+
 ## Consequences
 
 - Per-project namespaces need the build cluster's RBAC to allow netCI to create

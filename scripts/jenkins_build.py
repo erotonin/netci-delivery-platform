@@ -117,9 +117,19 @@ def main() -> int:
     parser.add_argument("--isolation-namespace", default="")
     parser.add_argument("--cache-claim", default="")
     parser.add_argument("--service-account", default="jenkins-agent")
+    parser.add_argument("--commit", default="", help="full commit sha to build (default: resolve --branch via git ls-remote)")
+    # The Go template compiles the standard library on a cold GOCACHE, which is the
+    # kind of work a warm project cache is for; the container template's sample has
+    # nothing comparable.
+    parser.add_argument("--template", default=os.getenv("NETCI_BENCHMARK_TEMPLATE", "container-ci-cd-v1"))
     arguments = parser.parse_args()
     if arguments.isolation_namespace:
         arguments.namespace = arguments.isolation_namespace
+    if not arguments.commit and arguments.git_url:
+        # netCI always names a full sha; the benchmark must too, or the pipeline takes
+        # the git-plugin path instead of the one netCI's builds use.
+        listed = subprocess.run(["git", "ls-remote", arguments.git_url, f"refs/heads/{arguments.branch}"], capture_output=True, text=True, timeout=30)
+        arguments.commit = listed.stdout.split()[0] if listed.returncode == 0 and listed.stdout.strip() else ""
 
     if not arguments.url:
         print("set --url or JENKINS_A_URL", file=sys.stderr)
@@ -140,8 +150,8 @@ def main() -> int:
             "NETCI_BUILD_CACHE_CLAIM": arguments.cache_claim if arguments.isolation_namespace else "",
             "GIT_URL": arguments.git_url,
             "GIT_BRANCH": arguments.branch,
-            "COMMIT_SHA": arguments.branch,
-            "NETCI_TEMPLATE": "container-ci-cd-v1",
+            "COMMIT_SHA": arguments.commit or arguments.branch,
+            "NETCI_TEMPLATE": arguments.template,
             "NETCI_STAGES": arguments.stages,
             "NETCI_BASE_IMAGE": os.getenv("NETCI_BUILD_BASE_IMAGE", ""),
             "REGISTRY_PUSH_HOST": os.getenv("NETCI_REGISTRY_PUSH_HOST", ""),

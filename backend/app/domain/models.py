@@ -65,6 +65,8 @@ class Application:
     owner_team: str | None = None
     id: UUID = field(default_factory=uuid4)
     created_at: datetime = field(default_factory=utc_now)
+    # Per-stage parameter values for the custom stages in `stages`.
+    stage_parameters: dict[str, dict[str, str]] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -367,6 +369,11 @@ class StageDefinition:
     created_by: str = "netci"
     created_at: datetime = field(default_factory=utc_now)
     updated_at: datetime = field(default_factory=utc_now)
+    # Custom stages start `proposed` and run only once a second administrator approved.
+    status: str = "active"
+    approved_by: str | None = None
+    # Declared parameters: ({"name": "LEVEL", "default": "strict", "description": ...}, ...)
+    parameters: tuple[dict[str, Any], ...] = ()
 
 
 @dataclass(frozen=True)

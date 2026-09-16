@@ -233,5 +233,59 @@ class CanaryAnalyzer:
         )
 
 
-# Global default traffic routing adapter
-default_traffic_router = InMemoryTrafficRoutingAdapter()
+class TrafficRoutingUnavailable(RuntimeError):
+    """No real traffic router is configured. Weights would be recorded and route nothing."""
+
+
+class UnconfiguredTrafficRouter(TrafficRoutingAdapter):
+    """Fail closed: outside local mode, canary weights need something that moves traffic.
+
+    The in-memory adapter used to be the runtime default. A production API then answered
+    `POST /deployments/{id}/traffic` with 200, stored the weight in a dict, and routed
+    nothing -- a canary that reported 10 % while every request still hit the old release.
+    """
+
+    mode = "none"
+
+    def _refuse(self) -> None:
+        raise TrafficRoutingUnavailable(
+            "no traffic router is configured (NETCI_TRAFFIC_ROUTER); canary and blue/green "
+            "weights cannot be applied, so they are refused rather than recorded"
+        )
+
+    def set_traffic_weight(self, application_id, environment, canary_weight, baseline_weight=None):
+        self._refuse()
+
+    def switch_route(self, application_id, environment, active_color):
+        self._refuse()
+
+    def get_routing_status(self, application_id, environment):
+        return {"applicationId": application_id, "environment": environment, "status": "not_configured", "router": "none"}
+
+    def set_canary_rules(self, application_id, environment, rules):
+        self._refuse()
+
+
+def build_traffic_router() -> TrafficRoutingAdapter:
+    """`memory` is local-only; unset outside local mode fails closed."""
+
+    import os
+
+    from .runtime_environment import is_local_runtime
+
+    mode = os.getenv("NETCI_TRAFFIC_ROUTER", "").strip().lower()
+    if mode == "memory":
+        if not is_local_runtime():
+            raise ValueError("NETCI_TRAFFIC_ROUTER=memory records weights without routing traffic; it is local-only")
+        return InMemoryTrafficRoutingAdapter()
+    if mode == "nginx-ingress":
+        from .adapters.nginx_ingress_traffic import build_nginx_ingress_router
+
+        return build_nginx_ingress_router()
+    if mode in {"", "none"}:
+        return InMemoryTrafficRoutingAdapter() if (mode == "" and is_local_runtime()) else UnconfiguredTrafficRouter()
+    raise ValueError(f"NETCI_TRAFFIC_ROUTER must be memory, nginx-ingress or none (got {mode!r})")
+
+
+# The runtime router. Built once, from configuration; never a fake outside local mode.
+default_traffic_router = build_traffic_router()

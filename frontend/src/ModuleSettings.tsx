@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Activity, ArrowLeft, Check, History, ListChecks, Settings as Cog } from 'lucide-react'
-import { deleteModule, getModule, getModuleStages, getStageCatalog, listAuditEvents, registerCustomStage, removeCustomStage, setModuleStages, updateModule, whoami, type AuditEvent, type CustomStageCreate, type StageDefinition } from './api/netciClient'
+import { approveCustomStage, deleteModule, getModule, getModuleStages, getStageCatalog, listAuditEvents, registerCustomStage, removeCustomStage, setModuleStages, updateModule, whoami, type AuditEvent, type CustomStageCreate, type StageDefinition } from './api/netciClient'
 import { usePortalFeedback } from './PortalFeedback'
 import { Modal } from './PortalShell'
 import type { SettingsTab } from './portalTypes'
@@ -70,10 +70,14 @@ function PipelineStagesSettings({ moduleId }: { moduleId: string }) {
   const [templateStages, setTemplateStages] = useState<string[]>([])
   const [chosen, setChosen] = useState<string[]>([])
   const [saved, setSaved] = useState<string[]>([])
+  const [values, setValues] = useState<Record<string, Record<string, string>>>({})
+  const [savedValues, setSavedValues] = useState<Record<string, Record<string, string>>>({})
+  const [me, setMe] = useState<string>('')
   const [isAdmin, setIsAdmin] = useState(false)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
-  const [draft, setDraft] = useState<CustomStageCreate>({ id: '', name: '', script: '', afterStage: 'unit-test', description: '' })
+  const [draft, setDraft] = useState<CustomStageCreate>({ id: '', name: '', script: '', afterStage: 'unit-test', description: '', parameters: [] })
+  const [draftParams, setDraftParams] = useState('')
 
   const load = () => {
     setLoading(true)
@@ -84,6 +88,9 @@ function PipelineStagesSettings({ moduleId }: { moduleId: string }) {
         setTemplateStages(template ? template.stageIds : cat.stages.filter((s) => s.kind === 'builtin').map((s) => s.id))
         setChosen(mine.stages)
         setSaved(mine.stages)
+        setValues(mine.stageParameters ?? {})
+        setSavedValues(mine.stageParameters ?? {})
+        setMe(me?.principal.subject ?? '')
         setIsAdmin(Boolean(me?.principal.roles.includes('platform-admin')))
       })
       .catch((error) => notify(error instanceof Error ? error.message : 'Could not load the stage catalog', 'error'))
@@ -94,7 +101,8 @@ function PipelineStagesSettings({ moduleId }: { moduleId: string }) {
   const byId = Object.fromEntries(catalog.map((s) => [s.id, s]))
   const builtins = templateStages.map((id) => byId[id]).filter(Boolean)
   const customs = catalog.filter((s) => s.kind === 'custom')
-  const dirty = JSON.stringify(chosen) !== JSON.stringify(saved)
+  const dirty = JSON.stringify(chosen) !== JSON.stringify(saved) || JSON.stringify(values) !== JSON.stringify(savedValues)
+  const setValue = (stageId: string, name: string, value: string) => setValues((cur) => ({ ...cur, [stageId]: { ...(cur[stageId] ?? {}), [name]: value } }))
 
   const toggle = (stage: StageDefinition) => {
     if (stage.required) return
@@ -111,9 +119,13 @@ function PipelineStagesSettings({ moduleId }: { moduleId: string }) {
   const save = async () => {
     setSaving(true)
     try {
-      const result = await setModuleStages(moduleId, chosen)
+      // Only values for stages in the pipeline are sent; the server refuses the rest.
+      const sent = Object.fromEntries(Object.entries(values).filter(([id]) => chosen.includes(id)))
+      const result = await setModuleStages(moduleId, chosen, sent)
       setChosen(result.stages)
       setSaved(result.stages)
+      setValues(result.stageParameters ?? {})
+      setSavedValues(result.stageParameters ?? {})
       notify('Pipeline stages saved; the next run uses them')
     } catch (error) {
       notify(error instanceof Error ? error.message : 'Could not save the stages', 'error')
@@ -124,12 +136,29 @@ function PipelineStagesSettings({ moduleId }: { moduleId: string }) {
 
   const register = async () => {
     try {
-      await registerCustomStage({ ...draft, description: draft.description || undefined })
-      notify(`Stage ${draft.id} registered`)
-      setDraft({ id: '', name: '', script: '', afterStage: 'unit-test', description: '' })
+      // "NAME=default:description" per line; the server validates names and values.
+      const parameters = draftParams.split('\n').map((l) => l.trim()).filter(Boolean).map((line) => {
+        const [head, ...desc] = line.split(':')
+        const [name, def = ''] = head.split('=')
+        return { name: name.trim(), default: def.trim(), description: desc.join(':').trim() }
+      })
+      const created = await registerCustomStage({ ...draft, description: draft.description || undefined, parameters })
+      notify(created.status === 'proposed' ? `Stage ${draft.id} proposed; a second administrator must approve it` : `Stage ${draft.id} registered`)
+      setDraft({ id: '', name: '', script: '', afterStage: 'unit-test', description: '', parameters: [] })
+      setDraftParams('')
       load()
     } catch (error) {
       notify(error instanceof Error ? error.message : 'Could not register the stage', 'error')
+    }
+  }
+
+  const approve = async (stage: StageDefinition) => {
+    try {
+      await approveCustomStage(stage.id)
+      notify(`Stage ${stage.id} approved`)
+      load()
+    } catch (error) {
+      notify(error instanceof Error ? error.message : 'Could not approve the stage', 'error')
     }
   }
 
@@ -160,13 +189,23 @@ function PipelineStagesSettings({ moduleId }: { moduleId: string }) {
             {stage.required && <span className="badge" title="Required by netCI's supply-chain policy">required</span>}
             <span style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>{stage.description}</span>
           </label>
-          {customs.filter((c) => c.afterStage === stage.id).map((custom) => <label key={custom.id} style={{ display: 'flex', alignItems: 'center', gap: 8, marginLeft: 28 }}>
-            <input type="checkbox" checked={chosen.includes(custom.id)} disabled={!chosen.includes(stage.id)} onChange={() => setChosen((cur) => cur.includes(custom.id) ? cur.filter((id) => id !== custom.id) : [...cur, custom.id])} aria-label={custom.name} />
-            <span>↳ {custom.name}</span>
-            <code className="mono">{custom.script}</code>
-            <span className="badge">custom</span>
-            {isAdmin && <button className="secondary-button" onClick={() => remove(custom)} title="Remove from the catalog (refused while any module uses it)">Remove</button>}
-          </label>)}
+          {customs.filter((c) => c.afterStage === stage.id).map((custom) => <div key={custom.id} style={{ marginLeft: 28, display: 'grid', gap: 4 }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <input type="checkbox" checked={chosen.includes(custom.id)} disabled={!chosen.includes(stage.id) || custom.status !== 'active'} onChange={() => setChosen((cur) => cur.includes(custom.id) ? cur.filter((id) => id !== custom.id) : [...cur, custom.id])} aria-label={custom.name} />
+              <span>↳ {custom.name}</span>
+              <code className="mono">{custom.script}</code>
+              <span className="badge">{custom.status === 'active' ? 'custom' : `custom · ${custom.status}`}</span>
+              {custom.status === 'proposed' && <span style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>proposed by {custom.createdBy ?? '?'}; needs a second administrator</span>}
+              {isAdmin && custom.status === 'proposed' && custom.createdBy !== me && <button className="primary-button" onClick={() => approve(custom)} aria-label={`Approve ${custom.name}`}>Approve</button>}
+              {isAdmin && <button className="secondary-button" onClick={() => remove(custom)} title="Remove from the catalog (refused while any module uses it)">Remove</button>}
+            </label>
+            {chosen.includes(custom.id) && (custom.parameters ?? []).length > 0 && <div style={{ marginLeft: 28, display: 'grid', gap: 4 }}>
+              {(custom.parameters ?? []).map((param) => <label key={param.name} className="field" style={{ maxWidth: 420 }}>
+                <span><code className="mono">{param.name}</code>{param.description ? ` — ${param.description}` : ''}</span>
+                <input value={values[custom.id]?.[param.name] ?? param.default ?? ''} onChange={(e) => setValue(custom.id, param.name, e.target.value)} aria-label={`${custom.id} ${param.name}`} />
+              </label>)}
+            </div>}
+          </div>)}
         </li>)}
       </ul>
       <div style={{ marginTop: 12, fontSize: '0.85rem', color: 'var(--text-muted)' }}>Next run will execute: <code className="mono">{preview.join(' → ')}</code></div>
@@ -183,7 +222,9 @@ function PipelineStagesSettings({ moduleId }: { moduleId: string }) {
         <label className="field"><span>Script (repository path)</span><input value={draft.script} onChange={(e) => setDraft({ ...draft, script: e.target.value })} placeholder="ci/lint.sh" /></label>
         <label className="field"><span>Runs after</span><select value={draft.afterStage} onChange={(e) => setDraft({ ...draft, afterStage: e.target.value as CustomStageCreate['afterStage'] })}>{['checkout', 'unit-test', 'build', 'sbom', 'vulnerability-scan', 'sign', 'publish'].map((id) => <option key={id} value={id}>{id}</option>)}</select></label>
         <label className="field full"><span>Description</span><input value={draft.description ?? ''} onChange={(e) => setDraft({ ...draft, description: e.target.value })} /></label>
+        <label className="field full"><span>Parameters (one per line: <code className="mono">NAME=default:description</code>; reach the script as environment variables)</span><textarea rows={3} value={draftParams} onChange={(e) => setDraftParams(e.target.value)} placeholder={'LEVEL=basic:lint strictness'} /></label>
       </div>
+      <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>A proposed stage runs nowhere until a different platform administrator approves it.</p>
       <button className="primary-button" id="btn-register-stage" disabled={!draft.id || !draft.name || !draft.script} onClick={register}>Register stage</button>
     </section>}
   </>

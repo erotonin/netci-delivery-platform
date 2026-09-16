@@ -6,7 +6,7 @@ import {
 } from 'lucide-react'
 import { Modal } from './PortalShell'
 import { usePortalFeedback } from './PortalFeedback'
-import { listDcimModules, listDcimServers, getGitInfo, listSampleApps, type DcimModule, type DeploymentEnvironmentConfig, type Environment, type GitInfo, type GitSample, type SampleApps, type ModulePipelineConfig, type ModulePipelineTabConfig, type Runtime } from './api/netciClient'
+import { getStageCatalog, listDcimModules, listDcimServers, getGitInfo, listSampleApps, type DcimModule, type StageDefinition, type DeploymentEnvironmentConfig, type Environment, type GitInfo, type GitSample, type SampleApps, type ModulePipelineConfig, type ModulePipelineTabConfig, type Runtime } from './api/netciClient'
 
 type DeploymentEnvironment = 'Dev' | 'Staging' | 'Production'
 type DeploymentTarget = 'Systemd' | 'Docker' | 'Kubernetes'
@@ -285,8 +285,22 @@ function PipelineDesigner({ initialConfig, onCancel, onSave }: { initialConfig: 
   const [mode, setMode] = useState<'visual' | 'code'>('visual')
   const [config, setConfig] = useState<ModulePipelineConfig>(() => ({ ...initialConfig, pipelines: Object.fromEntries(Object.entries(initialConfig.pipelines).map(([key, value]) => [key, { ...value, stages: [...value.stages] }])) }))
   const [validated, setValidated] = useState(false)
+  // The catalog is the source of what a pipeline may contain: names, which stages are
+  // required, and the custom stages an administrator has approved.
+  const [catalog, setCatalog] = useState<StageDefinition[]>([])
+  const [picking, setPicking] = useState(false)
+  useEffect(() => { getStageCatalog().then((c) => setCatalog(c.stages)).catch(() => setCatalog([])) }, [])
+  const catalogById = Object.fromEntries(catalog.map((s) => [s.id, s]))
   const current = config.pipelines[tab]
   const updateCurrent = (changes: Partial<ModulePipelineTabConfig>) => setConfig({ ...config, pipelines: { ...config.pipelines, [tab]: { ...current, ...changes } } })
+  const addable = catalog.filter((s) => s.kind === 'custom' && s.status === 'active' && !current.stages.includes(s.id) && current.stages.includes(s.afterStage ?? ''))
+  const addCustom = (stage: StageDefinition) => {
+    const anchorIndex = current.stages.indexOf(stage.afterStage ?? '')
+    const next = [...current.stages]
+    next.splice(anchorIndex + 1, 0, stage.id)
+    updateCurrent({ stages: next })
+    setPicking(false)
+  }
   const yaml = ['pipeline:', `  name: ${tab.toLowerCase().replace(/\s+/g, '-')}`, `  runner: ${config.runner}`, `  strategy: ${config.strategy.toLowerCase()}`, '  branches:', `    - ${current.branch}`, `  coverageReportPath: ${current.coverageReportPath}`, '  stages:', ...current.stages.map((stage) => `    - ${stage}`)].join('\n')
   const valid = Boolean(config.runner.trim() && current.branch.trim() && current.coverageReportPath.trim() && current.stages.length)
   return <div className="pipeline-designer">
@@ -302,8 +316,14 @@ function PipelineDesigner({ initialConfig, onCancel, onSave }: { initialConfig: 
         <label className="field full"><span>Coverage report path</span><input value={current.coverageReportPath} onChange={(event) => updateCurrent({ coverageReportPath: event.target.value })} /></label>
       </div>
       <div className="stage-list">
-        <div className="section-heading"><h3>{tab} stages</h3><button className="secondary-button" disabled title="Register custom stages in the stage catalog first"><Plus size={15} />Add custom stage</button></div>
-        {current.stages.map((stage, index) => <div key={`${stage}-${index}`}><span className="drag-handle">⠿</span><span className="stage-number">{index + 1}</span><strong>{stageLabels[stage] ?? stage}</strong><small>Catalog stage</small><button aria-label={`Configure ${stageLabels[stage] ?? stage}`} disabled title="Stage parameters are managed by the catalog"><Settings2 size={15} /></button><button aria-label={`Remove ${stageLabels[stage] ?? stage}`} onClick={() => updateCurrent({ stages: current.stages.filter((_, itemIndex) => itemIndex !== index) })}><X size={15} /></button></div>)}
+        <div className="section-heading"><h3>{tab} stages</h3><button className="secondary-button" disabled={!addable.length} title={addable.length ? 'Add an approved custom stage from the catalog' : 'No approved custom stage fits this pipeline (register one in Module Settings → Pipeline stages)'} onClick={() => setPicking(true)}><Plus size={15} />Add custom stage</button></div>
+        {picking && addable.length > 0 && <div className="panel" style={{ padding: 8, marginBottom: 8, display: 'grid', gap: 6 }}>{addable.map((stage) => <button key={stage.id} className="secondary-button" onClick={() => addCustom(stage)}>{stage.name} <code className="mono">{stage.script}</code> · after {stage.afterStage}</button>)}</div>}
+        {current.stages.map((stage, index) => {
+          const def = catalogById[stage]
+          const label = def?.name ?? stageLabels[stage] ?? stage
+          const required = Boolean(def?.required)
+          return <div key={`${stage}-${index}`}><span className="drag-handle">⠿</span><span className="stage-number">{index + 1}</span><strong>{label}</strong><small>{def?.kind === 'custom' ? `custom · ${def.script}` : required ? 'required by policy' : 'Catalog stage'}</small><button aria-label={`Configure ${label}`} disabled title="Parameters are set per module in Module Settings → Pipeline stages"><Settings2 size={15} /></button><button aria-label={`Remove ${label}`} disabled={required} title={required ? 'Required: an artifact without this stage cannot be deployed' : undefined} onClick={() => updateCurrent({ stages: current.stages.filter((_, itemIndex) => itemIndex !== index && catalogById[current.stages[itemIndex]]?.afterStage !== stage) })}><X size={15} /></button></div>
+        })}
       </div>
     </> : <div className="code-editor"><div><span>pipeline.yml · read-only projection</span><button onClick={() => setValidated(valid)}><Code2 size={15} />Validate</button>{validated && <small role="status">Required catalog fields are present</small>}</div><pre>{yaml}</pre></div>}
     <div className="designer-footer"><button className="primary-button" disabled={!valid} onClick={() => onSave(config)}><Check size={16} />Save configuration</button></div>
