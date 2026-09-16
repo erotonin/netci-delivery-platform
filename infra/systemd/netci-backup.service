@@ -1,0 +1,19 @@
+# Encrypted backup of the netCI database, verified before it is called a backup.
+# Install: cp infra/systemd/netci-backup.* /etc/systemd/system/ && systemctl enable --now netci-backup.timer
+# Environment (/etc/netci/backup.env, root:root 0600):
+#   DATABASE_URL=postgresql://...           the live database
+#   NETCI_BACKUP_ENCRYPTION_KEY=...         AES-256-GCM passphrase; losing it loses the backups
+#   NETCI_BACKUP_DIR=/var/backups/netci     where dated backup folders land
+#   NETCI_BACKUP_KEEP=14                    how many dated folders to keep
+[Unit]
+Description=netCI encrypted database backup (create + verify)
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=/etc/netci/backup.env
+WorkingDirectory=/opt/netci
+ExecStart=/opt/netci/scripts/netci_backup_run.sh
+Nice=10
+IOSchedulingClass=idle

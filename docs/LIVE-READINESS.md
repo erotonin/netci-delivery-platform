@@ -200,6 +200,14 @@ stayed `queued` (now reconciled on a schedule).
 | Reconciler and outbox passes take a PostgreSQL advisory lock per pass; the second replica skips a pass the first is inside | `test_agent_fleet.py` (PostgreSQL) |
 | Two Temporal workers; `worker_failover_drill.py` **SIGKILLed the worker running the playbook** of a dev deployment; Temporal (heartbeat timeout 45 s, activities now heartbeat every 10 s) started attempt 2 on the survivor 46 s later; deployment `healthy` **48.2 s after the kill** | `evidence/worker-failover.json`, workflow `netci-deploy-656915d7…` |
 
+## 4h. 2026-09-16 (afternoon): scheduled backups, alerting
+
+| Proof | Result |
+|---|---|
+| `infra/systemd/netci-backup.{service,timer}` (nightly 02:00, create → verify → prune) and `netci-dr-drill.{service,timer}` (weekly restore drill); installed in the lab's user systemd by `scripts/lab/backup_timer.sh`; **both services run once through systemd**: `Result=success`, backup of `netci_live` encrypted (AES-256-GCM), restored into a scratch database, 34 tables / row counts / checksums / FKs / 23 migrations compared | `evidence/dr_drill_20260916T074042Z.json` (`PASSED`), `.netci-gate/backups/` (local) |
+| `/metrics` publishes the readiness verdict (`netci_ready`, `netci_dependency_ready{dependency}`), `netci_cd_pollers`, `netci_ci_controllers_healthy`, `netci_agents{state}`, `netci_reconciler_corrections_total`, `netci_replica_info{replica}` | test in `test_observability_and_notifications.py` |
+| Prometheus v3.5.0 + Alertmanager v0.28.1 (`infra/monitoring/`, `scripts/lab/monitoring.sh`) scraping both replicas; rules for replica down, not ready, dependency lost, no/one worker, controller lost, stale agent, reconciler correcting, outbox backlog, 5xx rate. **Drill: `docker stop jenkins-b`** → `NetciJenkinsControllerLost` active 2 m 47 s later (scrape + `for: 2m`), delivered to the webhook receiver, **resolved** 60 s after `docker start` | `evidence/alerting-drill.json` (`passed`; the first delivery attempt failed on a port collision in the lab receiver, noted there) |
+
 ## 4c. Host reboot (2026-09-16 08:06 UTC)
 
 The lab host rebooted overnight. Every container without a restart policy stopped

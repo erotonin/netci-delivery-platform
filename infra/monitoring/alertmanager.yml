@@ -1,0 +1,15 @@
+# Alertmanager for netCI. One receiver: a webhook. Point NETCI_ALERT_WEBHOOK_URL at the
+# on-call system (Slack/Teams bridge, Opsgenie, ...); the lab points it at a receiver
+# that writes each alert to a file so the proof can read it back.
+route:
+  receiver: netci-webhook
+  group_by: [alertname, replica]
+  group_wait: 10s
+  group_interval: 1m
+  repeat_interval: 4h
+
+receivers:
+  - name: netci-webhook
+    webhook_configs:
+      - url: ${NETCI_ALERT_WEBHOOK_URL}
+        send_resolved: true

@@ -170,6 +170,19 @@ metrics.register_gauge(
 metrics.register_gauge(
     "netci_database_pool_connections", "Number of database connections by state (active, idle, total)"
 )
+# Readiness as numbers, so an alert can fire on what /readyz says instead of on a probe
+# that only tells a load balancer. 1 = ready. `netci_ready` is the overall verdict.
+metrics.register_gauge("netci_ready", "1 when this replica would accept and execute work (/readyz), else 0")
+metrics.register_gauge(
+    "netci_dependency_ready", "1 when the named dependency (database, ci, cd, dcim, cosign, traffic) is ready"
+)
+metrics.register_gauge("netci_cd_pollers", "Temporal workers polling the delivery task queue, as the server reports them")
+metrics.register_gauge("netci_ci_controllers_healthy", "Jenkins controllers the router considers healthy")
+metrics.register_gauge("netci_agents", "Edge agents by state (connected, stale) across all replicas")
+metrics.register_counter(
+    "netci_reconciler_corrections_total", "Runs and deployments the reconciler had to correct because a callback was lost"
+)
+metrics.register_gauge("netci_replica_info", "Constant 1, labelled with the replica id")
 
 
 class PrometheusMetricsMiddleware(BaseHTTPMiddleware):

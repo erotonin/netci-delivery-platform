@@ -1,0 +1,71 @@
+groups:
+  - name: netci
+    rules:
+      - alert: NetciReplicaDown
+        expr: up{job="netci-api"} == 0
+        for: 30s
+        labels: {severity: critical}
+        annotations:
+          summary: "netCI API replica {{ $labels.replica }} is not answering /metrics"
+
+      - alert: NetciNotReady
+        expr: netci_ready == 0
+        for: 1m
+        labels: {severity: critical}
+        annotations:
+          summary: "netCI replica {{ $labels.replica }} reports not ready (it refuses work)"
+
+      - alert: NetciDependencyNotReady
+        expr: netci_dependency_ready == 0
+        for: 1m
+        labels: {severity: warning}
+        annotations:
+          summary: "netCI dependency {{ $labels.dependency }} is not ready on {{ $labels.replica }}"
+
+      - alert: NetciNoWorkers
+        expr: max(netci_cd_pollers) == 0
+        for: 1m
+        labels: {severity: critical}
+        annotations:
+          summary: "no Temporal worker is polling the delivery queue: approved deployments will not run"
+
+      - alert: NetciSingleWorker
+        expr: max(netci_cd_pollers) == 1
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: "only one Temporal worker is polling; a worker loss would stall deployments"
+
+      - alert: NetciJenkinsControllerLost
+        expr: min(netci_ci_controllers_healthy) < 2
+        for: 2m
+        labels: {severity: warning}
+        annotations:
+          summary: "fewer than two Jenkins controllers are healthy; builds route to the remainder"
+
+      - alert: NetciAgentStale
+        expr: max(netci_agents{state="stale"}) > 0
+        for: 2m
+        labels: {severity: warning}
+        annotations:
+          summary: "an edge agent's replica stopped refreshing it (stale connection row)"
+
+      - alert: NetciReconcilerCorrecting
+        expr: increase(netci_reconciler_corrections_total[30m]) > 0
+        labels: {severity: warning}
+        annotations:
+          summary: "the reconciler corrected {{ $value }} run(s)/deployment(s): callbacks are being lost"
+
+      - alert: NetciOutboxBacklog
+        expr: max(netci_notification_outbox_queue_depth{status="pending"}) > 50
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: "notification outbox is not draining"
+
+      - alert: NetciHttp5xx
+        expr: sum(rate(netci_http_requests_total{status=~"5.."}[5m])) > 0.1
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: "netCI is answering 5xx at {{ $value }} req/s"

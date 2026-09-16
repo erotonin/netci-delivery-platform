@@ -222,6 +222,10 @@ async def _reconcile_periodically() -> None:
             continue
         runs = outcome.get("reconciledRuns") or []
         deployments = outcome.get("reconciledDeployments") or []
+        if runs:
+            metrics.counter_inc("netci_reconciler_corrections_total", {"kind": "run"}, float(len(runs)))
+        if deployments:
+            metrics.counter_inc("netci_reconciler_corrections_total", {"kind": "deployment"}, float(len(deployments)))
         if runs or deployments:
             logger.warning(
                 "reconciled %d run(s) and %d deployment(s) whose callbacks never arrived: %s",
@@ -1431,6 +1435,19 @@ def metrics_endpoint() -> PlainResponse:
         stats = database.pool_stats()
         metrics.gauge_set("netci_database_pool_connections", {"state": "active"}, float(stats.get("active", 0)))
         metrics.gauge_set("netci_database_pool_connections", {"state": "idle"}, float(stats.get("idle", 0)))
+    # The same probe /readyz runs, published as gauges: a scrape is how the alerting
+    # side learns that Jenkins, Temporal or the router went away.
+    ready, details = probe_readiness(platform, portal, authenticator)
+    metrics.gauge_set("netci_ready", {}, 1.0 if ready else 0.0)
+    for dependency in ("database", "ci", "cd", "dcim", "cosign", "traffic"):
+        section = details.get(dependency) or {}
+        metrics.gauge_set("netci_dependency_ready", {"dependency": dependency}, 1.0 if section.get("ready") else 0.0)
+    metrics.gauge_set("netci_cd_pollers", {}, float((details.get("cd") or {}).get("pollers") or 0))
+    metrics.gauge_set("netci_ci_controllers_healthy", {}, float((details.get("ci") or {}).get("healthyControllers") or 0))
+    agents = fleet.connections()
+    metrics.gauge_set("netci_agents", {"state": "connected"}, float(sum(1 for a in agents if not a["stale"])))
+    metrics.gauge_set("netci_agents", {"state": "stale"}, float(sum(1 for a in agents if a["stale"])))
+    metrics.gauge_set("netci_replica_info", {"replica": fleet.replica_id}, 1.0)
     return PlainResponse(
         content=metrics.generate_prometheus_text(),
         media_type="text/plain; version=0.0.4; charset=utf-8",

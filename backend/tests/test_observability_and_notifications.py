@@ -170,6 +170,25 @@ def test_metrics_endpoint_http_response():
     assert "netci_database_pool_connections" in response.text
 
 
+def test_metrics_publish_the_readiness_verdict_and_replica_facts():
+    """What /readyz says is what an alert rule can read: the verdict, each dependency,
+    the worker pollers and the agents, labelled with the replica that answered."""
+
+    import re
+
+    client = TestClient(app)
+    text = client.get("/metrics").text
+    ready = client.get("/readyz")
+    verdict = 1.0 if ready.status_code == 200 else 0.0
+    assert re.search(rf"^netci_ready {verdict}$", text, re.M), text
+    for dependency in ("database", "ci", "cd", "dcim", "cosign", "traffic"):
+        assert re.search(rf'^netci_dependency_ready\{{dependency="{dependency}"\}} [01]\.0$', text, re.M), dependency
+    assert re.search(r'^netci_agents\{state="connected"\} \d+\.0$', text, re.M)
+    assert re.search(r'^netci_agents\{state="stale"\} \d+\.0$', text, re.M)
+    assert re.search(r'^netci_replica_info\{replica=".+"\} 1\.0$', text, re.M)
+    assert "netci_cd_pollers" in text and "netci_reconciler_corrections_total" in text
+
+
 # ==============================================================================
 # 4. Transactional Notification Outbox & Worker
 # ==============================================================================

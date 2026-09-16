@@ -1,0 +1,13 @@
+# Weekly restore drill: the latest backup is restored into a scratch database and audited
+# (tables, row counts, checksums, foreign keys, migrations). A backup that was never
+# restored is a hope, not a backup. Evidence lands in $NETCI_BACKUP_DIR/drills/.
+[Unit]
+Description=netCI disaster-recovery drill (restore + audit)
+After=network-online.target docker.service
+
+[Service]
+Type=oneshot
+EnvironmentFile=/etc/netci/backup.env
+WorkingDirectory=/opt/netci
+ExecStart=/opt/netci/.venv/bin/python /opt/netci/scripts/netci_dr_drill.py --evidence-dir ${NETCI_BACKUP_DIR}/drills
+Nice=10
