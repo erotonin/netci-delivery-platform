@@ -11,6 +11,7 @@ import re
 import subprocess
 import secrets
 import time
+import urllib.request
 
 logger = logging.getLogger("netci.main")
 from datetime import datetime, timezone
@@ -1490,6 +1491,59 @@ def metrics_endpoint() -> PlainResponse:
         content=metrics.generate_prometheus_text(),
         media_type="text/plain; version=0.0.4; charset=utf-8",
     )
+
+
+_oidc_discovery: dict[str, object] = {"at": 0.0, "value": None}
+
+
+def _oidc_browser_config() -> dict[str, object] | None:
+    """What the browser needs to start an Authorization Code + PKCE login, or None.
+
+    Server-decided (ADR-015 applies to configuration too): the Portal build carries no
+    issuer or client id, so the same bundle serves every installation and a browser
+    cannot be pointed at another identity provider by editing a config file. The
+    endpoints come from the issuer's discovery document, fetched lazily and kept for
+    ten minutes -- identity-provider metadata, not durable state.
+    """
+
+    if getattr(authenticator, "mode", "none") != "oidc":
+        return None
+    client_id = os.getenv("NETCI_OIDC_BROWSER_CLIENT_ID", "").strip()
+    issuer = os.getenv("NETCI_OIDC_ISSUER", "").strip().rstrip("/")
+    if not client_id or not issuer:
+        return None
+    now = time.monotonic()
+    discovery = _oidc_discovery["value"]
+    if discovery is None or now - float(_oidc_discovery["at"]) > 600:
+        try:
+            with urllib.request.urlopen(f"{issuer}/.well-known/openid-configuration", timeout=5) as response:
+                discovery = json.loads(response.read())
+        except (OSError, ValueError) as exc:
+            logger.warning("OIDC discovery at %s failed: %s", issuer, exc)
+            return {"issuer": issuer, "clientId": client_id, "error": "discovery_unavailable"}
+        _oidc_discovery.update(at=now, value=discovery)
+    assert isinstance(discovery, dict)
+    return {
+        "issuer": issuer,
+        "clientId": client_id,
+        "authorizationEndpoint": discovery.get("authorization_endpoint"),
+        "tokenEndpoint": discovery.get("token_endpoint"),
+        "endSessionEndpoint": discovery.get("end_session_endpoint"),
+        "scopes": os.getenv("NETCI_OIDC_BROWSER_SCOPES", "openid profile email").split(),
+        "pkce": "S256",
+    }
+
+
+@app.get("/auth/config")
+def auth_config() -> dict[str, object]:
+    """How a browser signs in: the mode, and for OIDC the public client and endpoints.
+
+    Unauthenticated by necessity -- it is what the login page reads before anyone has
+    logged in -- and it reveals nothing secret: a public client has no secret, and the
+    issuer's endpoints are published by the issuer itself.
+    """
+
+    return {"authMode": getattr(authenticator, "mode", "unknown"), "oidc": _oidc_browser_config()}
 
 
 @app.get("/me")
@@ -3487,10 +3541,15 @@ async def runner_agent_websocket(
         logger.info("Runner agent disconnected: %s", host_key)
     finally:
         dispatcher.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await dispatcher
         _ACTIVE_RUNNERS.pop(host_key, None)
-        await asyncio.to_thread(fleet.unregister, host_key)
+        # Synchronous on purpose. A shutdown (and the test client) delivers the
+        # disconnect together with a cancellation; an `await` here is where the
+        # CancelledError would land, and the row would outlive the socket. One DELETE
+        # on the event loop is a few milliseconds; a stale row is a false "connected".
+        try:
+            fleet.unregister(host_key)
+        except Exception:  # noqa: BLE001 - the socket is gone either way; say why the row is not
+            logger.exception("agent %s disconnected but its connection row could not be removed", host_key)
 
 
 class AgentTokenRequest(StrictBody):

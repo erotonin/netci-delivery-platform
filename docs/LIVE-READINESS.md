@@ -218,6 +218,13 @@ stayed `queued` (now reconciled on a schedule).
 | `netci_ci_controllers_drift` metric + `NetciControllerDrift` rule loaded in Prometheus | `curl :8100/metrics`, `:9090/api/v1/rules` |
 | `scripts/bootstrap.sh --check` inventories 30 components and reports **everything present** on this host; `--up` is composed of the same ensure-steps. **Not run on a fresh machine.** | ADR-033 consequences |
 
+## 4j. 2026-09-16 (evening): a person signs in through Keycloak in a real browser
+
+| Proof | Result |
+|---|---|
+| `GET /auth/config` names the public PKCE client and the provider's discovered endpoints; the Portal offers **Đăng nhập bằng SSO**, sends Chromium to Keycloak's login form, the password is typed **there**, the code is exchanged with the PKCE verifier, and `GET /me` accepts the id_token (`method: oidc`, roles from groups) | `frontend/e2e/oidc-login.spec.ts`: 2 passed against the live lab (`evidence/oidc-browser-login.json`) |
+| A forged callback (`?code=stolen&state=not-ours`) → "state mismatch", no token-endpoint call | same |
+
 ## 4c. Host reboot (2026-09-16 08:06 UTC)
 
 The lab host rebooted overnight. Every container without a restart policy stopped
@@ -236,9 +243,9 @@ not prove: recovery on a fresh machine (see §6).
 
 | Suite | Command | Result |
 |---|---|---|
-| Backend + contract (PostgreSQL-backed) | `NETCI_TEST_DATABASE_URL=…/netci .venv/bin/python -m pytest backend/tests tests/contract -o addopts="" -q` (run in two halves; see CLAUDE.md) | 626 passed, 4 skipped (opt-in Temporal tests, run separately below) + 41 passed |
+| Backend + contract (PostgreSQL-backed) | `NETCI_TEST_DATABASE_URL=…/netci .venv/bin/python -m pytest backend/tests tests/contract -o addopts="" -q` (run in two halves; see CLAUDE.md) | 627 passed, 4 skipped (opt-in Temporal tests, run separately below) + 41 passed |
 | Temporal workflow tests against the time-skipping test server | `NETCI_RUN_TEMPORAL_TEST=1 .venv/bin/python -m pytest backend/tests/test_temporal_workflow.py` | 4 passed |
-| Frontend | `cd frontend && npm test && npm run build` | 27 passed, build OK |
+| Frontend | `cd frontend && npm test && npm run build` | 29 passed, build OK; Playwright OIDC spec 2 passed against the lab |
 | Static | `pyflakes backend/app/`, `scripts/migrate.py --check-schema` | clean; schema matches 23 migrations |
 
 ---
@@ -253,7 +260,7 @@ Say these plainly rather than let the table above imply them.
 | Rekor / transparency log is off (`--tlog-upload=false`, `--insecure-ignore-tlog`). Signatures are key-based only. | Security: decide on a Rekor instance; set `NETCI_SIGNATURE_REQUIRE_TLOG=true`. |
 | `scripts/bootstrap.sh --up` has not been exercised on a clean host; the lab it inventories was built step by step. | Platform: a throwaway VM run. |
 | Two API replicas run behind two ports on the lab; there is no load balancer in front of them and the frontend is served by one process. | Infra: an L7 balancer with websocket support. |
-| Password-grant OIDC in the harness is a lab convenience; the browser login flow was not exercised by automation today. | Platform: Playwright login test against Keycloak. |
+| Logout forgets the token in the tab only; the provider session is not ended (`endSessionEndpoint` published, not called). | Platform. |
 | Production on a separate host is proven for systemd (§4e); the docker runtime was exercised on the worker's own Docker socket only. | Infra: a docker host with a remote socket in the inventory. |
 | `production_readiness_audit.py` is a code self-check; its verdict is now `SELF_CHECK_PASSED` / `SELF_CHECK_FAILED`, never "certified". | Done. |
 | The per-build pod's remaining cost, on a workload the compiler cache does not dominate, is provisioning + the mirror checkout + cleanup (≈ +17 s on the 5-second container build, §4f). The Go workload shows the cache recovers the build; nothing recovers the pod. | Platform: measured, accepted (ADR-030). |

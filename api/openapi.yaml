@@ -686,6 +686,36 @@ paths:
         - { name: moduleId, in: query, required: false, schema: { type: string } }
       responses:
         '200': { description: Audit events }
+  /auth/config:
+    get:
+      operationId: getAuthConfig
+      summary: How a browser signs in
+      description: >-
+        Unauthenticated by necessity: the login page reads it first. `authMode` is the
+        server's; for `oidc`, `oidc` carries the public (PKCE) client id and the provider's
+        endpoints from its discovery document, or `error: discovery_unavailable`. Null when
+        no browser client is configured (NETCI_OIDC_BROWSER_CLIENT_ID): paste-a-token only.
+      responses:
+        '200':
+          description: Sign-in configuration
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  authMode: { type: string }
+                  oidc:
+                    type: object
+                    nullable: true
+                    properties:
+                      issuer: { type: string }
+                      clientId: { type: string }
+                      authorizationEndpoint: { type: string }
+                      tokenEndpoint: { type: string }
+                      endSessionEndpoint: { type: string }
+                      scopes: { type: array, items: { type: string } }
+                      pkce: { type: string, enum: [S256] }
+                      error: { type: string }
   /me:
     get:
       operationId: getCurrentUser

@@ -168,9 +168,36 @@ def test_a_disconnected_agent_is_no_longer_listed_anywhere():
         # No invented facts about the host: only what the agent reported.
         item = next(i for i in listed["items"] if i["hostname"] == "edge-05")
         assert "ip" not in item and "os" not in item and item["telemetry"] is None
+    # The goodbye is asynchronous: the handler cancels its dispatcher and deletes the row
+    # after the socket closes. Under a loaded suite that takes longer than a blink.
     import time
-    for _ in range(50):
+    for _ in range(200):
         if not any(item["hostname"] == "edge-05" for item in client.get("/api/v1/agents/status").json()["items"]):
             break
         time.sleep(0.05)
-    assert not any(item["hostname"] == "edge-05" for item in client.get("/api/v1/agents/status").json()["items"])
+    leftover = [item for item in client.get("/api/v1/agents/status").json()["items"] if item["hostname"] == "edge-05"]
+    assert not leftover, (leftover, main.fleet.replica_id, type(main.database).__name__)
+
+
+def test_auth_config_names_the_browser_client_only_in_oidc_mode(monkeypatch):
+    """The login page asks the server how to sign in; with no OIDC there is nothing to
+    redirect to, and the Portal bundle must not carry an issuer of its own."""
+
+    body = client.get("/auth/config").json()
+    assert body["authMode"] == main.authenticator.mode
+    assert body["oidc"] is None  # the test runtime is not in oidc mode
+
+    class OidcLike:
+        mode = "oidc"
+
+    monkeypatch.setattr(main, "authenticator", OidcLike())
+    monkeypatch.setenv("NETCI_OIDC_ISSUER", "http://idp.invalid/realms/netci")
+    monkeypatch.delenv("NETCI_OIDC_BROWSER_CLIENT_ID", raising=False)
+    assert client.get("/auth/config").json()["oidc"] is None  # no public client configured: paste-a-token only
+
+    monkeypatch.setenv("NETCI_OIDC_BROWSER_CLIENT_ID", "netci-portal")
+    main._oidc_discovery.update(at=0.0, value=None)
+    body = client.get("/auth/config").json()
+    # Discovery is unreachable here; the answer says so instead of inventing endpoints.
+    assert body["oidc"]["clientId"] == "netci-portal" and body["oidc"]["error"] == "discovery_unavailable"
+    assert "authorizationEndpoint" not in body["oidc"]

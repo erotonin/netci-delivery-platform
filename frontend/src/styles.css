@@ -80,6 +80,8 @@ svg { flex: 0 0 auto; }
 .login-error { border: 1px solid #f2b5bd; border-radius: 6px; background: #fff1f3; color: #a9293a; padding: 9px 11px; font-size: 11px; line-height: 1.5; }
 .login-preview-note { margin-top: 25px; border-radius: 7px; background: #f7f8fa; color: var(--muted); display: flex; align-items: flex-start; gap: 8px; padding: 10px 11px; font-size: 10px; line-height: 1.45; }
 .login-preview-note svg { margin-top: 1px; color: var(--green); }
+.login-sso { display: grid; gap: 8px; margin-bottom: 18px; padding-bottom: 18px; border-bottom: 1px solid #e6e8ec; }
+.login-sso small { color: var(--muted); font-size: 11px; line-height: 1.45; }
 .login-copyright { display: block; margin-top: 24px; color: #a0a5ae; font-size: 10px; text-align: center; }
 
 .portal-shell { min-height: 100vh; }

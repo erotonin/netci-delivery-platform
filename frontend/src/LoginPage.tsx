@@ -1,6 +1,7 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { KeyRound, Loader2, LogIn, ShieldAlert, ShieldCheck, UserCheck, UserCog } from 'lucide-react'
 import { NetciApiError, whoami, type Identity } from './api/netciClient'
+import { beginOidcLogin, completeOidcLogin, fetchAuthConfig, isOidcCallback, type OidcBrowserConfig } from './auth/oidc'
 
 /** The signed-in user, as the *server* described them. The browser never decides this. */
 export type AuthSession = {
@@ -20,6 +21,7 @@ export function LoginPage({ onLogin }: { onLogin: (session: AuthSession) => void
   const [busy, setBusy] = useState(false)
   const [authMode, setAuthMode] = useState<string | null>(null)
   const [manualMode, setManualMode] = useState(() => window.sessionStorage.getItem('netci.manual_login') === 'true')
+  const [oidc, setOidc] = useState<OidcBrowserConfig | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -34,14 +36,55 @@ export function LoginPage({ onLogin }: { onLogin: (session: AuthSession) => void
       })
       .catch((cause) => {
         if (cancelled) return
-        if (cause instanceof NetciApiError && cause.status === 401) setAuthMode('token')
+        // A 401 says only "a credential is needed"; /auth/config says which kind, and
+        // may already have answered -- never downgrade its answer to the generic one.
+        if (cause instanceof NetciApiError && cause.status === 401) setAuthMode((current) => current ?? 'token')
         else if (cause instanceof NetciApiError && cause.code === 'AUTH_NOT_CONFIGURED') setAuthMode('auth-required')
         else setAuthMode('unreachable')
       })
+    // How to sign in is the server's to say: the mode, and for OIDC the public client
+    // and the provider's endpoints. The Portal bundle carries none of it.
+    fetchAuthConfig()
+      .then((config) => {
+        if (cancelled) return
+        if (config.authMode === 'token' || config.authMode === 'oidc') setAuthMode(config.authMode)
+        setOidc(config.oidc)
+      })
+      .catch(() => { /* /me already told us whether the API is reachable */ })
     return () => {
       cancelled = true
     }
   }, [onLogin, manualMode])
+
+  // Back from the identity provider: finish the code exchange, then log in with the
+  // id_token exactly as a pasted token would -- netCI verifies it, not the Portal.
+  useEffect(() => {
+    if (!oidc || !isOidcCallback()) return
+    let cancelled = false
+    setBusy(true)
+    completeOidcLogin(oidc)
+      .then(async (idToken) => {
+        const identity = await whoami(idToken)
+        if (!cancelled) onLogin({ token: idToken, identity })
+      })
+      .catch((cause) => {
+        if (cancelled) return
+        if (cause instanceof NetciApiError && cause.status === 403) setError('Đăng nhập SSO thành công nhưng tài khoản chưa được cấp quyền nào trên netCI.')
+        else setError(`Đăng nhập SSO thất bại: ${cause instanceof Error ? cause.message : String(cause)}`)
+      })
+      .finally(() => { if (!cancelled) setBusy(false) })
+    return () => { cancelled = true }
+  }, [oidc, onLogin])
+
+  const signInWithProvider = async () => {
+    if (!oidc) return
+    setError('')
+    try {
+      await beginOidcLogin(oidc)
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause))
+    }
+  }
 
   const loginWithPersona = async (credential: string) => {
     setBusy(true)
@@ -220,8 +263,21 @@ export function LoginPage({ onLogin }: { onLogin: (session: AuthSession) => void
           </>
         )}
 
+        {authMode === 'oidc' && oidc && !oidc.error && (
+          <div className="login-sso">
+            <button className="login-primary" type="button" onClick={signInWithProvider} disabled={busy} data-testid="sso-login">
+              {busy ? <Loader2 size={18} className="spin" /> : <LogIn size={18} />}
+              {busy ? 'Đang xác thực…' : 'Đăng nhập bằng SSO'}
+            </button>
+            <small>Chuyển tới <code>{oidc.issuer}</code> để xác thực; netCI kiểm tra token trả về và quyết định quyền.</small>
+          </div>
+        )}
+        {authMode === 'oidc' && oidc?.error && <div className="login-error" role="alert">
+          <ShieldAlert size={16} />Identity provider <code>{oidc.issuer}</code> không phản hồi discovery; dán token bên dưới.
+        </div>}
+
         {(authMode === 'token' || authMode === 'oidc') && <>
-          <p>Dán access token do platform team cấp. Quyền của bạn do netCI quyết định, không do Portal.</p>
+          <p>{authMode === 'oidc' ? 'Hoặc dán một token từ identity provider.' : 'Dán access token do platform team cấp.'} Quyền của bạn do netCI quyết định, không do Portal.</p>
           <form className="login-form" onSubmit={signInToken} noValidate>
             <div className="login-field">
               <label htmlFor="login-token">Access token</label>
