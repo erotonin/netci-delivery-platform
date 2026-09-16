@@ -160,6 +160,29 @@ stayed `queued` (now reconciled on a schedule).
 | **Harness, 10 gates** at commit `2f18952` (`evidence/production_acceptance_20260915T154813Z.json`): 10 PASS. Gate 10 `multi_controller_failover_mttr`: `jenkins-a` stopped, `/readyz` reported it down after **11.1 s**, the next build was routed to `jenkins-b` and published a digest at **MTTR 88.4 s**, `jenkins-a` rejoined at 103.6 s | PASS |
 | Custom stage `lint` (registered in the catalog, selected by the module in the portal) ran on a real build after `unit-test`, inside the project namespace; the deployment that followed was `healthy` | Jenkins A `netci-8c7dc688…#1`, 2026-09-15 15:33 UTC |
 
+## 4d. 2026-09-16: every runtime through every environment, and a truthful baseline
+
+| Proof | Result |
+|---|---|
+| `hello-kubernetes` staging (Helm, namespace `staging`) → prod: `pending_approval`, requester's approval → 403 `SEPARATION_OF_DUTIES`, reviewer approves → `healthy`; second release; rollback to the previous digest → `rolled_back`, cluster serving `c37d3617…` again | deployments `bf65f440…`, `df1ce5a8…` |
+| `hello-systemd-go` dev + staging + prod as **three separate units** (`hello-systemd-go-{dev,staging,prod}`, ports 18191–18193); prod approval gated the same way; the Go build is reproducible (same commit → same digest, so the second release had nothing to roll back to — recorded as such), a third release from a new commit → rollback → the unit serves the previous commit's binary, `current` → `rel-2704a1c2…` | deployments `5b57c1f4…`, `47d18372…`, and the third |
+| Defect found: the systemd playbook named the unit after the application only, so the staging release **restarted dev's service on staging's port** and dev stopped answering — the same class of fault the docker container name had. Fixed: the unit carries the environment. | ADR-030 consequences |
+| Benchmark with a *real* long-lived baseline (the reusable pod now keeps `label netci-shared` + `idleMinutes 120`, so consecutive builds land on the same pod: warm checkout 1.5 s): baseline 20.1 s (warm ≈ 13 s), ephemeral 40.0 s, isolated+cache 47.2 s (warm 45.0 s); the OCI tarball is no longer archived, which cut post-build time from ≈ 12 s to ≈ 1.3 s in every mode. **Honest reading:** a fresh pod costs ≈ +26 s on this 13-second workload (fresh-workspace checkout ≈ 17 s, provisioning ≈ 4 s); the project cache hits on every warm run but recovers none of it, because what a warm agent really has is a warm *workspace*, and a per-build pod by design does not. Isolation is a security decision paid for in wall time; the number is reported as measured. | `evidence/benchmarks/report.json` (5 × 3, threshold 400 %, `acceptable`) |
+
+## 4c. Host reboot (2026-09-16 08:06 UTC)
+
+The lab host rebooted overnight. Every container without a restart policy stopped
+(both Jenkins controllers, Keycloak, NetBox, Temporal, PostgreSQL, the git server, the
+lab registry); the kind cluster and the deployed `hello-container-*` containers came
+back on their own. After `docker start` of the stopped containers and relaunching the
+API and worker (`scripts/lab/api.sh`, `scripts/lab/worker.sh`), `/readyz` reported every
+section ready with no data lost: `netci_live` still held every run, deployment,
+revision and the stage catalog; the Jenkins controllers' cluster token (24 h) was still
+valid; the per-project namespaces and cache claims were intact on the cluster. Nothing
+had to be recreated from git this time -- state volumes survived -- but the controllers
+*can* be, and were on 2026-09-15 (`scripts/jenkins_lab.sh recreate a|b`). What this does
+not prove: recovery on a fresh machine (see §6).
+
 ## 5. Test suites at this commit
 
 | Suite | Command | Result |
@@ -177,14 +200,13 @@ Say these plainly rather than let the table above imply them.
 
 | Gap | Owner / next step |
 |---|---|
-| All three runtimes were deployed through the live control plane to `dev` only; staging/prod for kubernetes and systemd were not exercised (the docker path was, including approval and rollback). | Platform: run the approval + rollback proofs for the other two runtimes. |
 | The registry is plaintext HTTP; `imagePullHost` is how the host reaches it. A real deployment needs TLS and one name. | Infra. |
 | Rekor / transparency log is off (`--tlog-upload=false`, `--insecure-ignore-tlog`). Signatures are key-based only. | Security: decide on a Rekor instance; set `NETCI_SIGNATURE_REQUIRE_TLOG=true`. |
 | The edge-agent *socket* registry (`_ACTIVE_RUNNERS`) is process-local by nature; command dispatch to an agent connected to another replica is not supported. Maintenance mode and telemetry are now in PostgreSQL (ADR-029). | Platform: route agent commands through the database (a command table the owning replica polls) if multi-replica dispatch is needed. |
 | Password-grant OIDC in the harness is a lab convenience; the browser login flow was not exercised by automation today. | Platform: Playwright login test against Keycloak. |
 | Single host for every environment. Nothing was proven about network reachability, SSH, or privilege escalation to a separate target. | Infra: a second VM in `local.ini`. |
 | `production_readiness_audit.py` is a code self-check; its verdict is now `SELF_CHECK_PASSED` / `SELF_CHECK_FAILED`, never "certified". | Done. |
-| The benchmark's "shared" baseline is a reusable pod template (`netci-shared`, `idleMinutes: 120`); the kubernetes plugin did not reuse it between builds in this run, so the baseline measured is closer to an ephemeral pod without a cache than to a long-lived agent. The ephemeral-vs-isolated comparison stands on its own. | Platform: confirm pod reuse semantics or bring back a permanent agent for the baseline. |
+| The per-build pod's remaining cost is the fresh-workspace checkout (≈ 17 s for a 4 MB, 446-file repository on kind's emptyDir) plus provisioning; the project cache does not address it. A warm-workspace strategy that keeps isolation (e.g. a per-project workspace PVC with `git clean -fdx` on entry) would, and would need measuring. | Platform. |
 | A ReadWriteOnce cache claim serialises a project's concurrent builds on one node; multi-node needs RWX or a registry layer cache. | Infra. |
 
 ---
@@ -200,4 +222,7 @@ Say these plainly rather than let the table above imply them.
 3. `curl /readyz` — every section must be `ready` before anything else is attempted.
 4. Onboard the module with `runtimeSettings` for each environment (§1 of ADR-028 explains
    why these are reviewed configuration and not run parameters).
-5. Run the harness (§2). Read the evidence file, not this document, for the verdict.
+5. Run the harness (§2): `scripts/lab/harness.sh` wraps it for the lab, reading the
+   identities and OIDC client from `.netci-gate/real-local.env`. `scripts/lab/benchmark.sh N`
+   runs the three-mode benchmark. Read the evidence file, not this document, for the
+   verdict.

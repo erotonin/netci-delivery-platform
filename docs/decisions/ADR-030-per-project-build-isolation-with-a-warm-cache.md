@@ -43,11 +43,14 @@ share a cache; the same project's builds do, across both controllers.
 (`netci-shared`, a reusable pod with `idleMinutes`, defined from the same pod spec by a
 YAML anchor), the plain ephemeral pod, and the isolated pod with its cache. The first
 run of each mode is its cold start and is reported separately from the warm figures.
-On 2026-09-15, 5 runs each: baseline 48.2 s, ephemeral 50.0 s, isolated 51.9 s -- the
-isolated pod costs ≈ 4 s (pod + PVC provisioning, layered storage) and the cache hits on
-every warm run, but the sample application has nothing expensive to cache, so what is
-established is *no regression beyond the provisioning cost*, not a gain
-(`evidence/benchmarks/report.json`). Two lab facts had to be fixed before the number
+On 2026-09-16, 5 runs each, with the baseline pod actually reused between builds
+(`label netci-shared` + `idleMinutes 120`): baseline 20.1 s (warm ≈ 13 s), ephemeral
+40.0 s, isolated 47.2 s. A per-build pod costs ≈ +26 s on this workload -- almost all of
+it a fresh-workspace checkout (≈ 17 s) and pod provisioning (≈ 4 s); the project cache
+hits on every warm run and recovers none of it, because a warm agent's advantage is a
+warm *workspace*, which a per-build pod does not have by design. The first measurement
+that day (baseline not reused, all modes ≈ 50 s) was wrong about the baseline and is
+superseded (`evidence/benchmarks/report.json`). Two lab facts had to be fixed before the number
 meant anything: the lab git server spoke the dumb protocol (~6 s per fetch of an
 up-to-date repository) and the checkout ran through `container()`, whose per-command
 exec round trip made 30 git invocations cost 18 s.
@@ -76,6 +79,8 @@ controller and waits for it to rejoin; detection time and MTTR are recorded.
 - A ReadWriteOnce cache claim serialises concurrent builds of one project on one node;
   the lab has one node. Multi-node clusters need RWX storage or a per-node cache.
 - `scripts/jenkins_lab.sh` no longer starts a JNLP shared agent; the baseline is a pod.
+- The systemd unit, like the docker container, is named per environment
+  (`<app>-<environment>`): one host serving dev and staging otherwise shares one unit.
 - The nine built-ins are seeded by the migration; the in-memory store seeds them from
   `stage_catalog.BUILTIN_STAGES`. Both must change together.
 

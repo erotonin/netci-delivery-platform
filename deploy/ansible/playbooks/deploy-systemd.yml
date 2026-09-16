@@ -4,6 +4,12 @@
   become: "{{ netci_become | default(true) }}"
   vars:
     netci_app_name: "{{ app_name | default('hello-systemd') }}"
+    # One host may serve several environments (the lab does). A unit named only after
+    # the application is *the same unit* for dev and staging: the staging release
+    # restarted dev's service on staging's port and dev stopped answering. The unit,
+    # like the release directory, carries the environment.
+    netci_unit_name: >-
+      {{ unit_name | default(netci_app_name ~ ('-' ~ target_environment if (target_environment | default('')) else '')) }}
     netci_app_user: "{{ app_user | default('netci') }}"
     netci_app_root: "{{ app_root | default('/opt/netci-demo') }}"
     netci_release_version: "{{ release_version | default('v0.1.0') }}"
@@ -22,7 +28,7 @@
          else (ansible_env.HOME ~ '/.config/systemd/user') }}
     netci_journal_command: >-
       journalctl {{ '' if netci_systemd_scope == 'system' else '--user' }}
-      -u {{ netci_app_name }} -n 100 --no-pager
+      -u {{ netci_unit_name }} -n 100 --no-pager
 
   pre_tasks:
     - name: Validate immutable Systemd release input
@@ -125,14 +131,14 @@
         - name: Install systemd unit
           ansible.builtin.template:
             src: hello-systemd.service.j2
-            dest: "{{ netci_unit_dir }}/{{ netci_app_name }}.service"
+            dest: "{{ netci_unit_dir }}/{{ netci_unit_name }}.service"
             mode: "0644"
 
         # Restart is deliberately synchronous and before the health check. A
         # deferred handler would allow the check to observe the old process.
         - name: Reload systemd and restart new release
           ansible.builtin.systemd:
-            name: "{{ netci_app_name }}"
+            name: "{{ netci_unit_name }}"
             scope: "{{ netci_systemd_scope }}"
             daemon_reload: true
             enabled: true
@@ -176,7 +182,7 @@
 
         - name: Restart previous healthy release
           ansible.builtin.systemd:
-            name: "{{ netci_app_name }}"
+            name: "{{ netci_unit_name }}"
             scope: "{{ netci_systemd_scope }}"
             daemon_reload: true
             state: restarted
@@ -184,7 +190,7 @@
 
         - name: Stop failed first deployment
           ansible.builtin.systemd:
-            name: "{{ netci_app_name }}"
+            name: "{{ netci_unit_name }}"
             scope: "{{ netci_systemd_scope }}"
             daemon_reload: true
             state: stopped
@@ -208,7 +214,7 @@
         - name: Collect service status for evidence
           ansible.builtin.command: >-
             systemctl {{ '' if netci_systemd_scope == 'system' else '--user' }}
-            status {{ netci_app_name }} --no-pager
+            status {{ netci_unit_name }} --no-pager
           register: service_status
           changed_when: false
           failed_when: false

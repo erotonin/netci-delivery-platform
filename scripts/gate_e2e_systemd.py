@@ -284,7 +284,8 @@ def gate(recorder: EvidenceRecorder) -> None:
 
     status = recorder.run(
         "collect-unit-status",
-        ["systemctl", "--user" if context["scope"] == "user" else "--system", "status", context["appName"], "--no-pager"],
+        # The unit carries the environment (deploy-systemd.yml): app_name-<target_environment>.
+        ["systemctl", "--user" if context["scope"] == "user" else "--system", "status", f"{context['appName']}-staging", "--no-pager"],
         expect_success=False,
     )
     recorder.record("unit-status", {"stdout": status.stdout[-3000:]})

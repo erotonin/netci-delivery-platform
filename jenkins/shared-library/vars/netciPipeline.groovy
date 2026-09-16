@@ -27,11 +27,19 @@ def call(Map config = [:]) {
     def cacheClaim = isolatedNamespace ? (params.NETCI_BUILD_CACHE_CLAIM?.trim() ?: '') : ''
     def agentTemplate = params.NETCI_AGENT_LABEL?.trim() ?: config.get('agentLabel', 'netci-ephemeral')
     def podYaml = netciCachePodYaml(agentServiceAccount, cacheClaim)
+    // The benchmark baseline keeps its pod between builds (a fixed label plus an idle
+    // window is what lets the plugin hand the same pod to the next build). Everything
+    // netCI dispatches gets a fresh pod: label generated, idle 0, retention never.
+    def reusablePod = (agentTemplate == 'netci-shared')
+    def podLabel = reusablePod ? 'netci-shared' : "netci-${env.JOB_NAME}-${env.BUILD_NUMBER}".replaceAll('[^A-Za-z0-9_-]', '-')
+    def podIdleMinutes = reusablePod ? 120 : 0
 
     pipeline {
         agent {
             kubernetes {
                 inheritFrom agentTemplate
+                label podLabel
+                idleMinutes podIdleMinutes
                 namespace isolatedNamespace
                 serviceAccount agentServiceAccount
                 yaml podYaml
@@ -231,8 +239,12 @@ def call(Map config = [:]) {
                     // over the agent channel, .git included, to find a handful of evidence
                     // files. On an ephemeral agent that walk measured ~11s per build --
                     // more than pod provisioning and the build itself combined.
+                    // The OCI archive is a build intermediate (syft/trivy read it); the
+                    // registry holds the artifact, by digest. Shipping tens of MB over
+                    // the agent channel to keep a copy Jenkins never serves was most of
+                    // the post-build time on an ephemeral agent.
                     dir("${env.NETCI_OUTPUT_DIR}") {
-                        archiveArtifacts(artifacts: '**', allowEmptyArchive: true)
+                        archiveArtifacts(artifacts: '**', excludes: '*.oci.tar', allowEmptyArchive: true)
                     }
                 }
             }
