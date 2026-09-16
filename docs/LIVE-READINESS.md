@@ -233,6 +233,15 @@ stayed `queued` (now reconciled on a schedule).
 | `GET /auth/config` names the public PKCE client and the provider's discovered endpoints; the Portal offers **Đăng nhập bằng SSO**, sends Chromium to Keycloak's login form, the password is typed **there**, the code is exchanged with the PKCE verifier, and `GET /me` accepts the id_token (`method: oidc`, roles from groups) | `frontend/e2e/oidc-login.spec.ts`: 2 passed against the live lab (`evidence/oidc-browser-login.json`) |
 | A forged callback (`?code=stolen&state=not-ours`) → "state mismatch", no token-endpoint call | same |
 
+## 4k. 2026-09-16 (night): review follow-ups — balancer, single sign-out, steering rules, scheduled retention
+
+| Proof | Result |
+|---|---|
+| HAProxy 3.0 (`infra/lb/haproxy.cfg`, `scripts/lab/lb.sh`) on :8000 in front of `api-a`/`api-b`: round robin, `httpchk /healthz`, `retries 3` + `redispatch`, websocket tunnel. Portal, workers and Jenkins callbacks now go through it (`NETCI_CALLBACK_URL=…:8000`). Agent connected through the LB; `execute` via the LB answered by the other replica (268 ms). **`kill -9 api-a`** (held the agent): 37/40 requests in the next 10 s ok (before redispatch), agent reconnected via the LB 2 s later; **`kill -9 api-b`** with redispatch: **40/40 ok**. A build+deploy ran with every callback through the LB | `evidence/lb-failover.json` |
+| Sign-out ends the provider session: Playwright control — a second tab signed in **without a password** while the session lived; after the Portal's logout (browser sent to `end_session_endpoint` with `id_token_hint`), the next SSO click shows Keycloak's password form again | `e2e/oidc-login.spec.ts` 3 passed |
+| Header/cookie steering: `X-Canary: always` → **200/200** canary; `Cookie: canary=always` → 200/200; `X-Canary: other` → split by weight (45.5 % at 50 %); no header → 51.5 % | `evidence/canary-nginx-rules.json` |
+| Retention on a schedule (daily, first pass 5 min after start, advisory lock): spent callback tokens, delivered notifications, delivery events, console lines of runs finished > 90 days ago. Audit events are deliberately never thinned. `POST /admin/retention/purge` runs the same pass (409 if another replica holds it); `netci_retention_purged_total{kind}` | tests |
+
 ## 4c. Host reboot (2026-09-16 08:06 UTC)
 
 The lab host rebooted overnight. Every container without a restart policy stopped
@@ -251,7 +260,7 @@ not prove: recovery on a fresh machine (see §6).
 
 | Suite | Command | Result |
 |---|---|---|
-| Backend + contract (PostgreSQL-backed) | `NETCI_TEST_DATABASE_URL=…/netci .venv/bin/python -m pytest backend/tests tests/contract -o addopts="" -q` (run in two halves; see CLAUDE.md) | 627 passed, 4 skipped (opt-in Temporal tests, run separately below) + 41 passed |
+| Backend + contract (PostgreSQL-backed) | `NETCI_TEST_DATABASE_URL=…/netci .venv/bin/python -m pytest backend/tests tests/contract -o addopts="" -q` (run in two halves; see CLAUDE.md) | 629 passed, 4 skipped (opt-in Temporal tests, run separately below) + 41 passed |
 | Temporal workflow tests against the time-skipping test server | `NETCI_RUN_TEMPORAL_TEST=1 .venv/bin/python -m pytest backend/tests/test_temporal_workflow.py` | 4 passed |
 | Frontend | `cd frontend && npm test && npm run build` | 29 passed, build OK; Playwright OIDC spec 2 passed against the lab |
 | Static | `pyflakes backend/app/`, `scripts/migrate.py --check-schema` | clean; schema matches 23 migrations |
@@ -267,12 +276,11 @@ Say these plainly rather than let the table above imply them.
 | The registry is plaintext HTTP; `imagePullHost` is how the host reaches it. A real deployment needs TLS and one name. | Infra. |
 | Rekor / transparency log is off (`--tlog-upload=false`, `--insecure-ignore-tlog`). Signatures are key-based only. | Security: decide on a Rekor instance; set `NETCI_SIGNATURE_REQUIRE_TLOG=true`. |
 | `scripts/bootstrap.sh --up` has not been exercised on a clean host; the lab it inventories was built step by step. | Platform: a throwaway VM run. |
-| Two API replicas run behind two ports on the lab; there is no load balancer in front of them and the frontend is served by one process. | Infra: an L7 balancer with websocket support. |
-| Logout forgets the token in the tab only; the provider session is not ended (`endSessionEndpoint` published, not called). | Platform. |
+| The Portal's static files are still served by one Vite/preview process; the API is balanced, the UI is not. | Infra: serve the build from the balancer or a CDN. |
 | Production on a separate host is proven for systemd (§4e); the docker runtime was exercised on the worker's own Docker socket only. | Infra: a docker host with a remote socket in the inventory. |
 | `production_readiness_audit.py` is a code self-check; its verdict is now `SELF_CHECK_PASSED` / `SELF_CHECK_FAILED`, never "certified". | Done. |
 | The per-build pod's remaining cost, on a workload the compiler cache does not dominate, is provisioning + the mirror checkout + cleanup (≈ +17 s on the 5-second container build, §4f). The Go workload shows the cache recovers the build; nothing recovers the pod. | Platform: measured, accepted (ADR-030). |
-| Canary is Kubernetes + ingress-nginx only; blue/green has no router (`switch_route` → 501). Header/cookie steering rules are applied to the ingress but were not sampled in the proof. | Platform. |
+| Canary is Kubernetes + ingress-nginx only; blue/green has no router (`switch_route` → 501). | Platform. |
 | A ReadWriteOnce cache claim serialises a project's concurrent builds on one node; multi-node needs RWX or a registry layer cache. | Infra. |
 
 ---

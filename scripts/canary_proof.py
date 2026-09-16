@@ -42,7 +42,7 @@ from production_acceptance_harness import Api, _password_grant, wait_until  # no
 TERMINAL = {"healthy", "failed", "rolled_back", "rollback_failed", "cancelled"}
 
 
-def sample(ingress: str, host: str, count: int) -> tuple[Counter, int]:
+def sample(ingress: str, host: str, count: int, extra_headers: dict[str, str] | None = None) -> tuple[Counter, int]:
     """Send `count` requests through the ingress; count answers by the digest they report."""
 
     context = ssl.create_default_context()
@@ -51,7 +51,7 @@ def sample(ingress: str, host: str, count: int) -> tuple[Counter, int]:
     seen: Counter = Counter()
     errors = 0
     for _ in range(count):
-        request = urllib.request.Request(f"{ingress}/", headers={"Host": host})
+        request = urllib.request.Request(f"{ingress}/", headers={"Host": host, **(extra_headers or {})})
         try:
             with urllib.request.urlopen(request, timeout=5, context=context) as response:
                 seen[json.loads(response.read())["version"]] += 1
@@ -80,6 +80,7 @@ def main() -> int:
     parser.add_argument("--tolerance", type=float, default=12.0, help="percentage points a sampled share may differ from the weight")
     parser.add_argument("--namespace", default="prod")
     parser.add_argument("--out", default="evidence/canary-nginx.json")
+    parser.add_argument("--skip-rules", action="store_true", help="do not exercise header/cookie steering")
     parser.add_argument("--abort-after-first-step", action="store_true",
                         help="prove the abort path instead: after the first weight, abort and check stable is untouched")
     args = parser.parse_args()
@@ -100,13 +101,15 @@ def main() -> int:
     }
     failures: list[str] = []
 
-    def observe(label: str, expected_weight: int, digest: str, host: str, extra: dict[str, Any] | None = None) -> None:
-        seen, errors = sample(ingress, host, args.samples)
+    def observe(label: str, expected_weight: int, digest: str, host: str, extra: dict[str, Any] | None = None,
+                headers: dict[str, str] | None = None, tolerance: float | None = None) -> None:
+        seen, errors = sample(ingress, host, args.samples, headers)
         observed = share(seen, digest)
-        ok = abs(observed - expected_weight) <= args.tolerance and errors == 0
+        allowed = args.tolerance if tolerance is None else tolerance
+        ok = abs(observed - expected_weight) <= allowed and errors == 0
         evidence["observations"].append({
             "label": label, "expectedCanaryPercent": expected_weight, "observedCanaryPercent": observed,
-            "answersByDigest": dict(seen), "errors": errors, "matched": ok, **(extra or {}),
+            "answersByDigest": dict(seen), "errors": errors, "matched": ok, "requestHeaders": headers or {}, **(extra or {}),
         })
         print(f"[{label}] expected {expected_weight}% canary, observed {observed}% ({dict(seen)}, errors={errors}) -> {'ok' if ok else 'MISMATCH'}")
         if not ok:
@@ -209,8 +212,38 @@ def main() -> int:
         print(f"{evidence['result']}: {args.out}")
         return 0 if not failures else 1
 
+    # ---- header and cookie steering (ADR-031): a request that names the canary reaches
+    # it regardless of weight; one that does not is still split by weight.
+    if not args.skip_rules:
+        status, ruled = api.call("POST", f"/production-requests/{request_id}/canary/advance", tokens["reviewer"], {
+            "metrics": {"errorRate": 0.0, "p95LatencyMs": 20.0},
+            "canaryRules": {"headerName": "X-Canary", "headerValue": "always", "cookie": "canary"},
+        })
+        # This advance also moved the weight to the next step; the rules are what the
+        # next three observations are about.
+        if status != 200 or not ruled.get("allowed"):
+            print(f"setting canary rules failed: {status} {ruled}", file=sys.stderr)
+            failures.append("rules")
+        else:
+            weight_now = ruled["trafficWeight"]
+            _, traffic = api.call("GET", f"/deployments/{deployment_id}/traffic", tokens["admin"])
+            evidence["rulesApplied"] = traffic["routerStatus"].get("canaryRules")
+            time.sleep(2)
+            observe("header X-Canary: always -> canary regardless of weight", 100, canary_digest, host,
+                    {"weightAtTheTime": weight_now}, headers={"X-Canary": "always"}, tolerance=0)
+            observe("cookie canary=always -> canary regardless of weight", 100, canary_digest, host,
+                    {"weightAtTheTime": weight_now}, headers={"Cookie": "canary=always"}, tolerance=0)
+            # With a header *value* configured, any other value is ignored by ingress-nginx and
+            # the request falls back to the weight -- not to the baseline.
+            observe(f"header X-Canary: other -> split by weight ({weight_now} %)", weight_now, canary_digest, host,
+                    {"weightAtTheTime": weight_now}, headers={"X-Canary": "other"})
+            observe(f"no header -> split by weight ({weight_now} %)", weight_now, canary_digest, host, {"routerStatus": traffic["routerStatus"]})
+            steps_done = [w for w in steps if w <= weight_now]
+            steps = steps_done + [w for w in steps if w > weight_now]
+
     # ---- middle steps
-    for index, weight in enumerate(steps[1:-1], start=2):
+    consumed = 1 if args.skip_rules else 2  # steps already at: first, plus the one the rules advance took
+    for index, weight in enumerate(steps[consumed:-1], start=consumed + 1):
         status, advanced = api.call("POST", f"/production-requests/{request_id}/canary/advance", tokens["reviewer"],
                                     {"metrics": {"errorRate": 0.0, "p95LatencyMs": 20.0}})
         if status != 200 or advanced.get("trafficWeight") != weight:

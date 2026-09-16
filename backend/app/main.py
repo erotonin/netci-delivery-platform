@@ -99,7 +99,7 @@ from .catalog.previews import PreviewEnvironmentManager, PreviewEnvironmentError
 from .catalog.resources import SelfServiceResourceManager, ResourceRequestError
 
 from .traffic import TrafficRoutingUnavailable, default_traffic_router
-from .agent_fleet import LOCK_RECONCILE, AgentFleet, run_exclusively
+from .agent_fleet import LOCK_RECONCILE, LOCK_RETENTION, AgentFleet, run_exclusively
 from . import workload_identity
 from .workload_identity import (
     CallbackClaims,
@@ -187,13 +187,59 @@ async def lifespan(application: FastAPI):
     # runs on a schedule here so that the comparison does not depend on someone
     # remembering to make it.
     reconcile_task = asyncio.create_task(_reconcile_periodically())
+    # Retention used to be an endpoint an operator had to remember; the tables that
+    # only ever grow (console lines, delivery events, delivered notifications, spent
+    # callback tokens) are now thinned on a schedule, one replica per pass.
+    retention_task = asyncio.create_task(_purge_retention_periodically())
     yield
-    reconcile_task.cancel()
-    with contextlib.suppress(asyncio.CancelledError):
-        await reconcile_task
+    for task in (reconcile_task, retention_task):
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
     outbox_worker.stop()
     if hasattr(database, "close"):
         database.close()
+
+
+def _retention_interval_seconds() -> float:
+    raw = os.getenv("NETCI_RETENTION_INTERVAL_SECONDS", "86400").strip()
+    try:
+        return max(0.0, float(raw))
+    except ValueError:
+        return 86400.0
+
+
+def run_retention_pass() -> dict[str, int] | None:
+    """One purge under the advisory lock; None when another replica holds it."""
+
+    manager = RetentionManager.from_environment(database)
+    outcome = run_exclusively(database, LOCK_RETENTION, manager.purge_all, describe="retention")
+    if outcome:
+        for kind, count in outcome.items():
+            if count:
+                metrics.counter_inc("netci_retention_purged_total", {"kind": kind}, float(count))
+    return outcome
+
+
+async def _purge_retention_periodically() -> None:
+    interval = _retention_interval_seconds()
+    if interval <= 0:
+        logger.info("scheduled retention disabled (NETCI_RETENTION_INTERVAL_SECONDS=0)")
+        return
+    # The first pass soon after start (a restarted platform should not wait a day to
+    # thin its tables), then every interval.
+    delay = min(interval, 300.0)
+    logger.info("scheduled retention every %.0fs (first pass in %.0fs)", interval, delay)
+    while True:
+        await asyncio.sleep(delay)
+        delay = interval
+        try:
+            outcome = await asyncio.to_thread(run_retention_pass)
+        except Exception:  # noqa: BLE001 - the loop must outlive one bad pass
+            logger.exception("retention pass failed; will retry after %.0fs", interval)
+            continue
+        if outcome and any(outcome.values()):
+            logger.info("retention pass purged %s", outcome)
 
 
 def _reconcile_interval_seconds() -> float:
@@ -2634,8 +2680,10 @@ def list_deployments(
 def trigger_retention_purge(
     principal: Principal = AdminAccess,
 ) -> dict[str, Any]:
-    manager = RetentionManager(database=database)
-    return manager.purge_all()
+    outcome = run_retention_pass()
+    if outcome is None:
+        raise HTTPException(status_code=409, detail={"code": "RETENTION_PASS_IN_PROGRESS", "message": "another replica is running the retention pass"})
+    return outcome
 
 
 

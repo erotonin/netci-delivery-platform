@@ -5,7 +5,7 @@ set -euo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
 cd "$here/../.."
 set -a; source .netci-gate/real-local.env; set +a
-export NETCI_ACCEPTANCE_API_URL="${NETCI_ACCEPTANCE_API_URL:-http://127.0.0.1:8100}"
+export NETCI_ACCEPTANCE_API_URL="${NETCI_ACCEPTANCE_API_URL:-${NETCI_API_URL:-http://127.0.0.1:8100}}"
 export NETCI_ACCEPTANCE_MODULE="${NETCI_ACCEPTANCE_MODULE:-hello-container}"
 export NETCI_ACCEPTANCE_COMMIT="${NETCI_ACCEPTANCE_COMMIT:-$(git -C .netci-gate/git/netci.git rev-parse HEAD)}"
 export NETCI_ACCEPTANCE_RETIRED_SERVER="${NETCI_ACCEPTANCE_RETIRED_SERVER:-netci-retired-01}"

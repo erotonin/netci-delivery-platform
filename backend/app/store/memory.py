@@ -33,6 +33,7 @@ from ..domain.models import (
     NotificationRecord,
     NotificationStatus,
     PipelineRun,
+    PipelineStatus,
     PipelineStage,
     ScmIntegration,
     ScmProviderType,
@@ -890,6 +891,15 @@ class InMemorySession:
         for k in to_del:
             del self._state.notifications[k]
         return len(to_del)
+
+    def purge_old_pipeline_logs(self, cutoff: datetime) -> int:
+        terminal = {PipelineStatus.SUCCEEDED, PipelineStatus.FAILED, PipelineStatus.CANCELLED, PipelineStatus.ROLLED_BACK}
+        purged = 0
+        for run_id, run in self._state.runs.items():
+            if run.status in terminal and run.updated_at < cutoff and self._state.logs.get(run_id):
+                purged += len(self._state.logs[run_id])
+                self._state.logs[run_id] = []
+        return purged
 
     def purge_old_delivery_events(self, cutoff: datetime) -> int:
         orig_len = len(self._state.events)

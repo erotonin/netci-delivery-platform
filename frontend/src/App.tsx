@@ -6,6 +6,7 @@ import { ArchitectureRoadmapPage } from './ArchitectureRoadmapPage'
 import { CatalogPage } from './CatalogPage'
 import { ErrorBoundary } from './AsyncState'
 import { LoginPage, type AuthSession } from './LoginPage'
+import { endOidcSession } from './auth/oidc'
 import { ModulePage } from './ModulePage'
 import { ModuleSettings } from './ModuleSettings'
 import { NewModuleWizard } from './NewModuleWizard'
@@ -188,26 +189,34 @@ function App() {
     setSession(nextSession)
     if (!window.location.hash || window.location.hash === '#/login') window.history.replaceState(null, '', '#/dashboard')
   }, [])
-  const logout = useCallback(() => {
+  // `user`: the person chose to sign out -- end the provider's session as well, or the
+  // next click on "sign in" on this browser is them again, without a password.
+  // `unauthenticated`: the API stopped accepting the token (expired, revoked); the tab
+  // forgets it and the login page decides what comes next.
+  const logout = useCallback((reason: 'user' | 'unauthenticated' = 'user') => {
+    const current = session
     window.sessionStorage.removeItem(AUTH_SESSION_KEY)
     window.sessionStorage.setItem('netci.manual_login', 'true')
     setAuthToken(null)
     setSession(null)
     window.location.hash = '#/login'
-  }, [])
+    if (reason === 'user' && current?.endSessionEndpoint && current.token) {
+      endOidcSession(current.endSessionEndpoint, current.token)
+    }
+  }, [session])
 
   // Any request answered with 401 -- a revoked or expired token -- returns the whole
   // shell to the login screen, instead of leaving a signed-out user looking at a page
   // where every panel has failed for its own apparent reason.
   useEffect(() => {
-    setUnauthenticatedHandler(logout)
+    setUnauthenticatedHandler(() => logout('unauthenticated'))
     return () => setUnauthenticatedHandler(null)
   }, [logout])
   // The boundary is outside the session split on purpose: a render error in the login
   // screen would otherwise blank the page with no way back, which is the one place a
   // user has no navigation to fall back on.
   return <ErrorBoundary>
-    <PortalFeedbackProvider>{session ? <PortalApp session={session} onLogout={logout} /> : <LoginPage onLogin={login} />}</PortalFeedbackProvider>
+    <PortalFeedbackProvider>{session ? <PortalApp session={session} onLogout={() => logout('user')} /> : <LoginPage onLogin={login} />}</PortalFeedbackProvider>
   </ErrorBoundary>
 }
 

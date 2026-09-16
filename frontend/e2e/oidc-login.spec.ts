@@ -72,3 +72,40 @@ test('a forged callback is refused before any token exchange', async ({ page, re
   await expect(page.getByRole('button', { name: /Dashboard/i })).toHaveCount(0)
   expect(tokenEndpointCalls).toBe(0)
 })
+
+test('signing out ends the session at the provider: the next sign-in asks for the password again', async ({ page, request }) => {
+  const config = await (await request.get(`${apiUrl}/auth/config`)).json()
+  test.skip(config.authMode !== 'oidc' || !config.oidc, `API auth mode is ${config.authMode}; this test needs oidc`)
+  test.skip(!user || !password, 'set NETCI_E2E_OIDC_USER and NETCI_E2E_OIDC_PASSWORD')
+
+  await page.goto('/')
+  await page.getByTestId('sso-login').click()
+  await page.waitForURL((url) => url.href.startsWith(config.oidc.issuer))
+  await page.locator('#username').fill(user)
+  await page.locator('#password').fill(password)
+  await page.locator('#kc-login').click()
+  await expect(page.getByRole('button', { name: /Dashboard/i })).toBeVisible({ timeout: 20_000 })
+
+  // Control: with the provider session alive, a second sign-in needs no password.
+  // (A fresh tab in the same context shares the provider's cookie.)
+  const second = await page.context().newPage()
+  await second.goto('/')
+  await second.getByTestId('sso-login').click()
+  await expect(second.getByRole('button', { name: /Dashboard/i })).toBeVisible({ timeout: 20_000 })
+  expect(second.url().startsWith(config.oidc.issuer)).toBe(false)
+  await second.close()
+
+  // Sign out from the Portal: the browser is sent to the provider's end-session
+  // endpoint and comes back to the login page.
+  const endSession = page.waitForRequest((req) => req.url().startsWith(config.oidc.endSessionEndpoint))
+  await page.getByTitle(/Đăng xuất/).first().click()
+  const logoutRequest = await endSession
+  expect(new URL(logoutRequest.url()).searchParams.get('id_token_hint')).toBeTruthy()
+  await expect(page.getByTestId('sso-login')).toBeVisible({ timeout: 20_000 })
+  expect(await page.evaluate(() => window.sessionStorage.getItem('netci.auth.token'))).toBeNull()
+
+  // Now the provider asks for the password again: the session there is gone.
+  await page.getByTestId('sso-login').click()
+  await page.waitForURL((url) => url.href.startsWith(config.oidc.issuer))
+  await expect(page.locator('#kc-login')).toBeVisible()
+})

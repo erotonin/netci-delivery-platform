@@ -408,3 +408,47 @@ def test_retention_purge_api_endpoint():
     )
     # Regardless of auth mode in local test, endpoint returns 200 or 401/403
     assert res.status_code in (200, 401, 403)
+
+
+def test_retention_thins_old_console_lines_but_keeps_the_run_and_recent_logs():
+    """The run, its digest and its audit stay; console output past the window goes."""
+
+    from uuid import UUID
+
+    from backend.app.domain.models import Environment, PipelineRun, PipelineStatus
+    from backend.app.persistence import UnitOfWork
+    from backend.app.store.memory import InMemoryDatabase
+
+    db = InMemoryDatabase()
+    now = datetime.now(timezone.utc)
+    app_id = UUID(int=1)
+
+    def run(days_old: int, status: PipelineStatus) -> PipelineRun:
+        stamp = now - timedelta(days=days_old)
+        return PipelineRun(
+            id=uuid4(), application_id=app_id, commit_sha="a" * 40, branch="main", environment=Environment.DEV,
+            parameters={}, correlation_id=f"c-{days_old}", status=status, started_by="t",
+            created_at=stamp, updated_at=stamp,
+        )
+
+    old, recent, still_running = run(120, PipelineStatus.SUCCEEDED), run(3, PipelineStatus.SUCCEEDED), run(120, PipelineStatus.RUNNING)
+    with db.transaction() as session:
+        session.apply(UnitOfWork(runs=[(old, None), (recent, None), (still_running, None)],
+                                 logs=[(old.id, ["l1", "l2"]), (recent.id, ["r1"]), (still_running.id, ["s1"])]))
+
+    outcome = RetentionManager(db, pipeline_log_retention_days=90).purge_all(now)
+    assert outcome["aged_pipeline_log_lines"] == 2
+    with db.transaction() as session:
+        assert session.pipeline_run(old.id) is not None  # the run itself is kept
+        assert session.pipeline_logs(old.id) == ()
+        assert session.pipeline_logs(recent.id) == ("r1",)
+        assert session.pipeline_logs(still_running.id) == ("s1",)  # never thin a run that has not finished
+
+
+def test_scheduled_retention_runs_under_the_advisory_lock_and_counts_what_it_purged():
+    import app.main as main
+
+    outcome = main.run_retention_pass()
+    assert outcome is not None and set(outcome) >= {"aged_pipeline_log_lines", "aged_delivery_events"}
+    text = TestClient(app).get("/metrics").text
+    assert "netci_retention_purged_total" in text

@@ -7,6 +7,8 @@ import { beginOidcLogin, completeOidcLogin, fetchAuthConfig, isOidcCallback, typ
 export type AuthSession = {
   token: string | null
   identity: Identity
+  // Set when the session came from a browser login at the provider: where to end it.
+  endSessionEndpoint?: string
 }
 
 export const displayNameOf = (session: AuthSession) => session.identity.principal.displayName
@@ -65,7 +67,7 @@ export function LoginPage({ onLogin }: { onLogin: (session: AuthSession) => void
     completeOidcLogin(oidc)
       .then(async (idToken) => {
         const identity = await whoami(idToken)
-        if (!cancelled) onLogin({ token: idToken, identity })
+        if (!cancelled) onLogin({ token: idToken, identity, endSessionEndpoint: oidc.endSessionEndpoint })
       })
       .catch((cause) => {
         if (cancelled) return

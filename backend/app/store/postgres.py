@@ -2089,6 +2089,25 @@ class PostgresSession:
         )
         return self._cursor.rowcount
 
+    def purge_old_pipeline_logs(self, cutoff: datetime) -> int:
+        """Console lines of runs that reached a terminal state before `cutoff`.
+
+        The run row, its digest, evidence and audit trail stay: they are what a later
+        question about a release is answered from. The console output is the bulk and
+        the least asked-for part; it is what a retention window is for.
+        """
+
+        self._cursor.execute(
+            """
+            DELETE FROM pipeline_logs WHERE pipeline_run_id IN (
+                SELECT id FROM pipeline_runs
+                WHERE updated_at < %s AND status IN ('succeeded', 'failed', 'cancelled', 'rolled_back')
+            )
+            """,
+            (cutoff,),
+        )
+        return self._cursor.rowcount
+
     def purge_old_delivery_events(self, cutoff: datetime) -> int:
         self._cursor.execute(
             "DELETE FROM delivery_events WHERE occurred_at < %s", (cutoff,)

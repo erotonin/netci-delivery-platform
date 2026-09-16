@@ -33,6 +33,7 @@ logger = logging.getLogger(__name__)
 # Keys for pg_try_advisory_xact_lock: arbitrary but fixed, one per singleton loop.
 LOCK_RECONCILE = 0x6E65_7463_0001
 LOCK_OUTBOX = 0x6E65_7463_0002
+LOCK_RETENTION = 0x6E65_7463_0003
 
 
 def replica_identity() -> str:

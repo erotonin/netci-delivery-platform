@@ -1,0 +1,63 @@
+{
+  "schemaVersion": "1.0",
+  "date": "2026-09-16",
+  "balancer": "HAProxy 3.0 (infra/lb/haproxy.cfg), 127.0.0.1:8000 -> api-a :8100 / api-b :8101, leastconn, httpchk GET /healthz inter 5s fall 2 rise 2, retries 3 + option redispatch, tunnel timeout 1h for websockets",
+  "roundRobinObserved": [
+    "api-b",
+    "api-a",
+    "api-b",
+    "api-a"
+  ],
+  "agentThroughLb": {
+    "connected": "ws://127.0.0.1:8000/api/v1/agents/ws",
+    "heldBy": "api-a",
+    "executeViaLb": [
+      {
+        "requestedOn": "api-b",
+        "claimedBy": "api-a",
+        "ms": 268
+      },
+      {
+        "requestedOn": "api-b",
+        "claimedBy": "api-a",
+        "ms": 523
+      },
+      {
+        "requestedOn": "api-b",
+        "claimedBy": "api-a",
+        "ms": 521
+      }
+    ]
+  },
+  "drills": [
+    {
+      "killed": "api-a (SIGKILL, held the agent's socket)",
+      "requests10sAfter": {
+        "ok": 37,
+        "failed": 3
+      },
+      "note": "before `option redispatch`: 3 requests hit the dead replica in the window before the health check pulled it",
+      "agentReconnected": "2 s later through the LB, now held by api-b",
+      "executeAfter": {
+        "requestedOn": "api-b",
+        "claimedBy": "api-b",
+        "ms": 508
+      }
+    },
+    {
+      "killed": "api-b (SIGKILL)",
+      "requests10sAfter": {
+        "ok": 40,
+        "failed": 0
+      },
+      "note": "with retries 3 + option redispatch: a refused connection is retried on the survivor",
+      "agentHeldBy": "api-a",
+      "executeAfter": {
+        "requestedOn": "api-a",
+        "claimedBy": "api-a",
+        "ms": 525
+      }
+    }
+  ],
+  "result": "passed"
+}

@@ -125,3 +125,18 @@ export async function completeOidcLogin(config: OidcBrowserConfig): Promise<stri
   window.history.replaceState(null, '', `${redirectUri()}${returnTo}`)
   return payload.id_token
 }
+
+/**
+ * End the session at the provider too. Forgetting the token in this tab is not a
+ * logout: the provider's session cookie survives, and the next person to click
+ * "sign in" on this browser is signed in as the previous one without a password.
+ * Keycloak identifies the session from `id_token_hint` and sends the browser back to
+ * `post_logout_redirect_uri` (registered on the client).
+ */
+export function endOidcSession(endSessionEndpoint: string, idToken: string): void {
+  const params = new URLSearchParams({
+    id_token_hint: idToken,
+    post_logout_redirect_uri: redirectUri(),
+  })
+  window.location.assign(`${endSessionEndpoint}?${params.toString()}`)
+}
