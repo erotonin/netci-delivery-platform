@@ -58,8 +58,13 @@ class TrafficRoutingAdapter(ABC):
 class InMemoryTrafficRoutingAdapter(TrafficRoutingAdapter):
     """Thread-safe in-memory traffic router for testing and local operation."""
 
+    mode = "memory"
+
     def __init__(self) -> None:
         self._routes: dict[tuple[str, str], dict[str, Any]] = {}
+
+    def describe(self) -> dict[str, Any]:
+        return {"mode": "memory", "status": "local_only", "ready": True, "routesNothing": True}
 
     def set_traffic_weight(
         self,
@@ -264,6 +269,9 @@ class UnconfiguredTrafficRouter(TrafficRoutingAdapter):
 
     def set_canary_rules(self, application_id, environment, rules):
         self._refuse()
+
+    def describe(self) -> dict[str, Any]:
+        return {"mode": "none", "status": "not_configured", "ready": False, "error": "NETCI_TRAFFIC_ROUTER is unset or none"}
 
 
 def build_traffic_router() -> TrafficRoutingAdapter:

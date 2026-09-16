@@ -83,31 +83,40 @@ def call(Map config = [:]) {
                     // workspace volume is shared, so the builder sees the result.
                     script {
                         if (params.GIT_URL?.trim()) {
-                                // With a project cache, keep a bare mirror in it and clone
-                                // from that: the fetch is then the delta since the last
-                                // build instead of the whole history. The mirror is
-                                // refreshed first so a stale cache can never pin a commit.
-                                def extensions = []
-                                if (params.NETCI_BUILD_CACHE_CLAIM?.trim() && fileExists('/netci-cache')) {
-                                    def mirror = '/netci-cache/git/mirror.git'
-                                    sh """
-                                      set -eu
-                                      if [ -d '${mirror}' ]; then
-                                        git -C '${mirror}' remote set-url origin '${params.GIT_URL}'
-                                        git -C '${mirror}' fetch --prune origin '+refs/heads/*:refs/heads/*' || { rm -rf '${mirror}'; git clone --mirror '${params.GIT_URL}' '${mirror}'; }
-                                      else
-                                        mkdir -p /netci-cache/git
-                                        git clone --mirror '${params.GIT_URL}' '${mirror}'
-                                      fi
-                                    """
-                                    extensions << [$class: 'CloneOption', reference: mirror, honorRefspec: true, noTags: false, shallow: false]
-                                }
+                            // netCI names the exact commit. With a project cache the source
+                            // is materialised from the project's bare mirror with one
+                            // `git archive` -- no working clone, no `.git`, therefore no
+                            // hooks or config a previous build could have planted, and none
+                            // of the ~30 git invocations the git plugin makes per checkout
+                            // (measured at 17 s of a 40 s build). The mirror is refreshed
+                            // first, so a stale cache can never pin an old commit; if the
+                            // commit is not in the mirror after the refresh, the build fails
+                            // rather than building something else.
+                            def commit = params.COMMIT_SHA?.trim() ?: ''
+                            if (params.NETCI_BUILD_CACHE_CLAIM?.trim() && fileExists('/netci-cache') && commit ==~ /[0-9a-f]{40}/) {
+                                def mirror = '/netci-cache/git/mirror.git'
+                                sh """
+                                  set -eu
+                                  if [ -d '${mirror}' ]; then
+                                    git -C '${mirror}' remote set-url origin '${params.GIT_URL}'
+                                    git -C '${mirror}' fetch --prune origin '+refs/heads/*:refs/heads/*' || { rm -rf '${mirror}'; git clone --mirror '${params.GIT_URL}' '${mirror}'; }
+                                  else
+                                    mkdir -p /netci-cache/git
+                                    git clone --mirror '${params.GIT_URL}' '${mirror}'
+                                  fi
+                                  git -C '${mirror}' cat-file -e '${commit}^{commit}' || { echo "commit ${commit} is not in ${params.GIT_URL}" >&2; exit 1; }
+                                  find . -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+                                  git -C '${mirror}' archive --format=tar '${commit}' | tar -x
+                                  printf '%s\n' '${commit}' > .netci-commit
+                                """
+                                env.GIT_COMMIT = commit
+                            } else {
                                 checkout([
                                     $class: 'GitSCM',
-                                    branches: [[name: params.COMMIT_SHA?.trim() ?: (params.GIT_BRANCH ?: 'main')]],
-                                    extensions: extensions,
+                                    branches: [[name: commit ?: (params.GIT_BRANCH ?: 'main')]],
                                     userRemoteConfigs: [[url: params.GIT_URL]]
                                 ])
+                            }
                         } else {
                             checkout scm
                         }
@@ -350,12 +359,17 @@ private void netciRunCustomStages(String anchor) {
         // The path was validated by netCI (repository-relative, no traversal, *.sh) and
         // must exist in the checked-out commit; a stage whose script is missing fails
         // the build rather than being skipped, because a skipped gate is a false green.
+        // Declared parameters arrive as environment variables; netCI validated the
+        // names and values (no shell metacharacters), and nothing here interpolates them.
+        def environment = (entry.env ?: [:]).collect { k, v -> "${k}=${v}" }
         stage(entry.name ?: entry.id) {
             netciInBuilder {
                 if (!fileExists(entry.script)) {
                     error("custom stage '${entry.id}' names ${entry.script}, which is not in this commit")
                 }
-                sh "bash '${entry.script}'"
+                withEnv(environment) {
+                    sh "bash '${entry.script}'"
+                }
             }
         }
     }

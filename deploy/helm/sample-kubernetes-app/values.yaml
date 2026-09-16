@@ -13,14 +13,38 @@ service:
 
 ingress:
   enabled: false
+  # Empty: <release>.<environment>.netci.local. A canary release shares the stable
+  # release's host, which is why the host derives from `netci.releaseName`, not from the
+  # Helm release name.
+  host: ""
+  # The namespace the ingress controller runs in; the zero-trust policy admits it.
+  controllerNamespace: ingress-nginx
+
+# Set by netCI's Kubernetes playbook. `releaseName` is the stable release even when this
+# chart is rendered for its canary; `applicationId` labels every object so the traffic
+# router can find the canary ingress without knowing the namespace layout.
+netci:
+  releaseName: ""
+  applicationId: ""
+
+# Progressive delivery (ADR-031). When enabled the ingress is an ingress-nginx canary
+# for the stable release's host: `weight` percent of requests reach this release, the
+# rest stay on stable. Header/cookie rules steer a request to the canary regardless of
+# weight. Only netCI's router changes these after installation.
+canary:
+  enabled: false
+  weight: 0
+  header: ""
+  headerValue: ""
+  cookie: ""
 
 # Pluggable Traits for netCI Delivery Platform
 traits:
   autoTlsIngress:
     enabled: true
-    host: hello-kubernetes.staging.netci.local
+    host: ""
     clusterIssuer: selfsigned-issuer
-    tlsSecretName: hello-kubernetes-tls
+    tlsSecretName: ""
   kedaAutoscaling:
     enabled: true
     minReplicas: 1

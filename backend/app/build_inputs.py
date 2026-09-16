@@ -49,6 +49,9 @@ DEPLOYMENT_CONTROLLED_KEYS: frozenset[str] = frozenset(
         "playbook", "playbook_path", "command", "cmd", "script", "shell", "entrypoint",
         "health_command", "healthcheck", "health_check", "post_deploy", "pre_deploy",
         "deployment_tasks", "task_settings", "tasks",
+        # How traffic reaches it (ADR-031): the release track and canary weight are the
+        # production request's, applied by the coordinator, never a build input.
+        "release_track", "releasetrack", "canary_weight", "canaryweight", "canary",
         # How it recovers
         "rollback", "rollback_strategy", "rollback_command", "runtime_health_verified",
         "require_approval", "approved_by", "actor", "owner", "owner_team", "app_name",

@@ -34,6 +34,9 @@
           - netci_artifact_digest != 'sha256:' ~ ('0' * 64)
           - netci_image_repository is not search('@')
           - netci_image_repository is not search(':[Ll][Aa][Tt][Ee][Ss][Tt]$')
+          # Canary tracks are Kubernetes-only (ADR-031): this runtime has no traffic
+          # router, so a canary here would be a full rollout under a canary label.
+          - release_track | default('stable') == 'stable'
         fail_msg: >-
           artifact_digest must be a verified non-zero sha256 digest and
           image_repository must not contain a mutable tag

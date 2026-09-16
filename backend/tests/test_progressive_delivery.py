@@ -32,7 +32,21 @@ def reviewer_headers():
     return {"Authorization": "Bearer release-manager-token"}
 
 
-def _setup_verified_module(client, auth_headers, system_id, module_name, version_tag):
+def _setup_verified_module(client, auth_headers, system_id, module_name, version_tag, runtime="kubernetes"):
+    if runtime == "kubernetes":
+        environments = [
+            {"displayName": "Dev", "environment": "dev", "runtime": "kubernetes", "servers": [],
+             "kubeconfigRef": "netci-kubeconfig", "namespace": "dev"},
+            {"displayName": "Prod", "environment": "prod", "runtime": "kubernetes", "servers": [],
+             "kubeconfigRef": "netci-kubeconfig", "namespace": "prod"},
+        ]
+        template = "kubernetes-ci-cd-v1"
+    else:
+        environments = [
+            {"displayName": "Dev", "environment": "dev", "runtime": runtime, "servers": ["dev-host"]},
+            {"displayName": "Prod", "environment": "prod", "runtime": runtime, "servers": ["prod-host"]},
+        ]
+        template = "container-ci-cd-v1"
     module_res = client.post(
         f"/systems/{system_id}/modules",
         headers=auth_headers,
@@ -40,14 +54,11 @@ def _setup_verified_module(client, auth_headers, system_id, module_name, version
             "name": module_name,
             "displayName": module_name,
             "repositoryUrl": f"https://git.example.com/team/{module_name}",
-            "pipelineTemplate": "container-ci-cd-v1",
-            "runtime": "docker",
+            "pipelineTemplate": template,
+            "runtime": runtime,
             "moduleType": "Backend",
             "description": f"Test module {module_name}",
-            "deploymentEnvironments": [
-                {"displayName": "Dev", "environment": "dev", "runtime": "docker", "servers": ["dev-host"]},
-                {"displayName": "Prod", "environment": "prod", "runtime": "docker", "servers": ["prod-host"]},
-            ],
+            "deploymentEnvironments": environments,
         },
     )
     assert module_res.status_code == 201, module_res.text
@@ -158,12 +169,26 @@ def test_canary_progressive_delivery_flow(client, auth_headers, dev_headers, rev
     assert appr_res.status_code == 202, appr_res.text
     dep_id = appr_res.json()["modules"][0]["deploymentId"]
 
-    # Verify initial traffic
+    # The intended weight is recorded with the deployment; the router has applied
+    # nothing yet, because the canary release does not exist until the worker reports.
     traffic_res = client.get(f"/deployments/{dep_id}/traffic", headers=auth_headers)
     assert traffic_res.status_code == 200, traffic_res.text
     traffic_data = traffic_res.json()
     assert traffic_data["strategy"] == "canary"
     assert traffic_data["trafficWeight"] == 10
+    assert traffic_data["routerStatus"]["canaryWeight"] == 0
+
+    # The deployment carries the canary track and its first weight for the playbook.
+    from backend.app.main import platform, portal
+    canary_dep = platform.get_deployment(UUID(dep_id))
+    canary_run = platform.get_pipeline(canary_dep.pipeline_run_id)
+    assert canary_run.parameters["release_track"] == "canary"
+    assert canary_run.parameters["canary_weight"] == 10
+
+    # Worker reports the canary release healthy -> the router confirms 10 %.
+    platform.record_deployment_result(UUID(dep_id), "healthy", "canary up", fencing_token=canary_dep.fencing_token)
+    portal.record_production_deployment_result(UUID(dep_id), "healthy", "canary up")
+    traffic_data = client.get(f"/deployments/{dep_id}/traffic", headers=auth_headers).json()
     assert traffic_data["routerStatus"]["canaryWeight"] == 10
     assert traffic_data["routerStatus"]["baselineWeight"] == 90
 
@@ -194,10 +219,63 @@ def test_canary_progressive_delivery_flow(client, auth_headers, dev_headers, rev
     assert fail_data["status"] == "aborted"
     assert not fail_data["allowed"]
 
-    # Verify traffic immediately rolled back to 0% in router
+    # Verify traffic immediately rolled back to 0% in router, and the canary release
+    # retired through the ordinary rollback path (it was healthy, so it was running).
+    assert fail_data["canaryReleaseRetired"] is True
     traffic_res3 = client.get(f"/deployments/{dep_id}/traffic", headers=auth_headers)
     assert traffic_res3.json()["trafficWeight"] == 0
     assert traffic_res3.json()["routerStatus"]["canaryWeight"] == 0
+    assert platform.get_deployment(UUID(dep_id)).status.value == "rollback_in_progress"
+
+
+def test_canary_last_step_promotes_the_stable_release(client, auth_headers, dev_headers, reviewer_headers):
+    sys_res = client.post(
+        "/systems",
+        headers=auth_headers,
+        json={"id": f"sys-{uuid4().hex[:8]}", "unit": "Search", "description": "Canary promotion"},
+    )
+    system_id = sys_res.json()["id"]
+    mod_id, app_id, _ = _setup_verified_module(client, auth_headers, system_id, "search-promote", "v2.1.0")
+    sched = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
+    req_id = client.post(
+        "/production-requests",
+        headers=dev_headers,
+        json={
+            "modules": [{"moduleId": mod_id, "version": "v2.1.0"}],
+            "scheduledFor": sched,
+            "rollbackStrategy": "automatic",
+            "runAutomationTests": True,
+            "strategy": "canary",
+            "strategyConfig": {"steps": [50, 100]},
+        },
+    ).json()["id"]
+    dep_id = client.post(
+        f"/production-requests/{req_id}/approve", headers=reviewer_headers, json={"comment": "go"}
+    ).json()["modules"][0]["deploymentId"]
+
+    from backend.app.main import platform, portal
+    canary_dep = platform.get_deployment(UUID(dep_id))
+    platform.record_deployment_result(UUID(dep_id), "healthy", "canary up", fencing_token=canary_dep.fencing_token)
+    portal.record_production_deployment_result(UUID(dep_id), "healthy", "canary up")
+
+    adv = client.post(
+        f"/production-requests/{req_id}/canary/advance",
+        headers=reviewer_headers,
+        json={"metrics": {"errorRate": 0.0, "p95LatencyMs": 50.0}},
+    )
+    assert adv.status_code == 200, adv.text
+    body = adv.json()
+    assert body["status"] == "promoting"
+    assert body["trafficWeight"] == 100
+    promotion = platform.get_deployment(UUID(body["promotionDeploymentId"]))
+    assert promotion.artifact_digest == canary_dep.artifact_digest
+    assert promotion.status.value == "deploying"
+    promotion_run = platform.get_pipeline(promotion.pipeline_run_id)
+    assert promotion_run.parameters["release_track"] == "promote"
+    # The reviewer who advanced the canary is the approver of the promotion.
+    plan = client.get(f"/production-requests/{req_id}/plan", headers=auth_headers).json()
+    assert plan["deploymentId"] == str(promotion.id)
+    assert "promoting" in plan["comment"]
 
 
 def test_blue_green_delivery_flow(client, auth_headers, dev_headers, reviewer_headers):
@@ -210,7 +288,7 @@ def test_blue_green_delivery_flow(client, auth_headers, dev_headers, reviewer_he
     assert sys_res.status_code == 201, sys_res.text
     system_id = sys_res.json()["id"]
 
-    mod_id, app_id, _ = _setup_verified_module(client, auth_headers, system_id, "checkout-ui", "v3.0.0")
+    mod_id, app_id, _ = _setup_verified_module(client, auth_headers, system_id, "checkout-ui", "v3.0.0", runtime="docker")
 
     sched = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
     req_res = client.post(
@@ -237,3 +315,33 @@ def test_blue_green_delivery_flow(client, auth_headers, dev_headers, reviewer_he
     assert traffic_res.status_code == 200, traffic_res.text
     assert traffic_res.json()["activeColor"] == "green"
     assert traffic_res.json()["routerStatus"]["activeColor"] == "green"
+
+
+def test_canary_is_refused_for_a_runtime_without_a_traffic_router(client, auth_headers, dev_headers, reviewer_headers):
+    """A docker host has nothing in front of it that splits traffic: a canary there would be
+    a full rollout reporting a weight."""
+
+    sys_res = client.post(
+        "/systems",
+        headers=auth_headers,
+        json={"id": f"sys-{uuid4().hex[:8]}", "unit": "Search", "description": "Canary on docker"},
+    )
+    system_id = sys_res.json()["id"]
+    mod_id, _, _ = _setup_verified_module(client, auth_headers, system_id, "search-docker", "v2.2.0", runtime="docker")
+    sched = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
+    req_id = client.post(
+        "/production-requests",
+        headers=dev_headers,
+        json={
+            "modules": [{"moduleId": mod_id, "version": "v2.2.0"}],
+            "scheduledFor": sched,
+            "rollbackStrategy": "automatic",
+            "runAutomationTests": True,
+            "strategy": "canary",
+        },
+    ).json()["id"]
+    approve = client.post(f"/production-requests/{req_id}/approve", headers=reviewer_headers, json={"comment": "go"})
+    assert approve.status_code != 202, approve.text
+    assert "kubernetes runtime" in approve.text
+    from backend.app.main import portal
+    assert portal.production_request(req_id)["status"] != "succeeded"

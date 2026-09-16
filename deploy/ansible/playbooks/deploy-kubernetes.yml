@@ -16,6 +16,29 @@
          | regex_replace('^[^/]+/', image_pull_host ~ '/') if (image_pull_host | default('')) else
          (image_repository | default('localhost:5000/hello-kubernetes')) }}
     netci_artifact_digest: "{{ artifact_digest | default('') }}"
+    # Progressive delivery (ADR-031). `stable` is the ordinary release. `canary` installs
+    # the digest as a second release, `<release>-canary`, behind an ingress-nginx canary
+    # ingress carrying `canary_weight`; stable is untouched. `promote` moves stable to the
+    # digest and removes the canary release. A rollback of a canary removes the canary
+    # release; stable never changed.
+    netci_release_track: "{{ release_track | default('stable') }}"
+    netci_canary_weight: "{{ canary_weight | default(0) }}"
+    netci_canary_release: "{{ netci_release_name }}-canary"
+    netci_helm_release: "{{ netci_canary_release if netci_release_track == 'canary' else netci_release_name }}"
+    netci_workload_name: "{{ netci_helm_release }}-sample-kubernetes-app"
+    netci_remove_canary: "{{ netci_release_track == 'promote' or (netci_release_track == 'canary' and netci_action | default('deploy') == 'rollback') }}"
+    # One expression that yields a dict: a value templated field by field arrives at
+    # Helm as strings ("got string, want integer" against the chart's schema).
+    netci_release_values: >-
+      {{ {
+        'environment': netci_target_namespace,
+        'image': {'repository': netci_image_repository, 'digest': netci_artifact_digest},
+        'netci': {'releaseName': netci_release_name, 'applicationId': application_id | default('')},
+        'canary': {
+          'enabled': netci_release_track == 'canary',
+          'weight': (netci_canary_weight | int) if netci_release_track == 'canary' else 0,
+        },
+      } }}
 
   pre_tasks:
     - name: Validate immutable Kubernetes release input
@@ -26,24 +49,23 @@
           - netci_image_repository is not search('@')
           - netci_image_repository is not search(':[Ll][Aa][Tt][Ee][Ss][Tt]$')
           - netci_target_namespace in ['dev', 'staging', 'prod']
+          - netci_release_track in ['stable', 'canary', 'promote']
+          - netci_canary_weight | int >= 0 and netci_canary_weight | int <= 100
         fail_msg: >-
           Kubernetes deployment requires a verified non-zero sha256 digest,
-          an untagged repository, and a managed target namespace
+          an untagged repository, a managed target namespace and a known release track
 
   tasks:
     - name: Deploy Helm release atomically
+      when: not (netci_release_track == 'canary' and netci_action | default('deploy') == 'rollback')
       kubernetes.core.helm:
-        name: "{{ netci_release_name }}"
+        name: "{{ netci_helm_release }}"
         chart_ref: "{{ netci_chart_path }}"
         release_namespace: "{{ netci_target_namespace }}"
         create_namespace: false
         kubeconfig: "{{ netci_kubeconfig if netci_kubeconfig | length > 0 else omit }}"
         kube_context: "{{ netci_kube_context }}"
-        release_values:
-          environment: "{{ netci_target_namespace }}"
-          image:
-            repository: "{{ netci_image_repository }}"
-            digest: "{{ netci_artifact_digest }}"
+        release_values: "{{ netci_release_values }}"
         wait: true
         wait_timeout: 180s
         atomic: true
@@ -51,19 +73,51 @@
         validate_certs: true
 
     - name: Read deployed workload after Helm health checks
+      when: not (netci_release_track == 'canary' and netci_action | default('deploy') == 'rollback')
       kubernetes.core.k8s_info:
         api_version: apps/v1
         kind: Deployment
-        name: "{{ netci_release_name }}-sample-kubernetes-app"
+        name: "{{ netci_workload_name }}"
         namespace: "{{ netci_target_namespace }}"
         kubeconfig: "{{ netci_kubeconfig if netci_kubeconfig | length > 0 else omit }}"
         context: "{{ netci_kube_context }}"
       register: deployed_workload
 
     - name: Verify the requested digest is running
+      when: not (netci_release_track == 'canary' and netci_action | default('deploy') == 'rollback')
       ansible.builtin.assert:
         that:
           - deployed_workload.resources | length == 1
           - deployed_workload.resources[0].status.availableReplicas | default(0) | int >= 1
           - deployed_workload.resources[0].spec.template.spec.containers[0].image == netci_image_repository ~ '@' ~ netci_artifact_digest
         fail_msg: "Helm completed but the requested immutable artifact is not available"
+
+    - name: Read the canary ingress the router will steer
+      when: netci_release_track == 'canary' and netci_action | default('deploy') != 'rollback'
+      kubernetes.core.k8s_info:
+        api_version: networking.k8s.io/v1
+        kind: Ingress
+        name: "{{ netci_workload_name }}-ingress"
+        namespace: "{{ netci_target_namespace }}"
+        kubeconfig: "{{ netci_kubeconfig if netci_kubeconfig | length > 0 else omit }}"
+        context: "{{ netci_kube_context }}"
+      register: canary_ingress
+
+    - name: Verify the canary ingress carries the requested weight
+      when: netci_release_track == 'canary' and netci_action | default('deploy') != 'rollback'
+      ansible.builtin.assert:
+        that:
+          - canary_ingress.resources | length == 1
+          - canary_ingress.resources[0].metadata.annotations['nginx.ingress.kubernetes.io/canary'] | default('') == 'true'
+          - canary_ingress.resources[0].metadata.annotations['nginx.ingress.kubernetes.io/canary-weight'] | default('') == netci_canary_weight | string
+        fail_msg: "the canary release is up but its ingress is not an ingress-nginx canary at the requested weight"
+
+    - name: Remove the canary release
+      when: netci_remove_canary | bool
+      kubernetes.core.helm:
+        name: "{{ netci_canary_release }}"
+        release_namespace: "{{ netci_target_namespace }}"
+        state: absent
+        wait: true
+        kubeconfig: "{{ netci_kubeconfig if netci_kubeconfig | length > 0 else omit }}"
+        kube_context: "{{ netci_kube_context }}"

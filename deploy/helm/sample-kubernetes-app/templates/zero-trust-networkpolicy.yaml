@@ -15,12 +15,15 @@ spec:
     - Ingress
     - Egress
   ingress:
-    # Allow ingress only from matching pods in current namespace or labeled ingress gateways
+    # Only this namespace and the ingress controller may open a connection to the app.
     - from:
         - podSelector: {}
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: {{ .Release.Namespace | quote }}
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.ingress.controllerNamespace | quote }}
       ports:
         - protocol: TCP
           port: {{ .Values.service.port }}

@@ -95,6 +95,10 @@ controller and waits for it to rejoin; detection time and MTTR are recorded.
   deployment to a separate host (`scripts/lab/prod_host.sh`: sshd, `become`, system-scope
   unit) was healthy on the host, failed the worker's loopback probe, and was rolled
   back for it.
+- **Measured again on 2026-09-16** (5 × 3 each, `git archive` checkout): Go template
+  baseline 24.0 s / ephemeral 87.9 s / isolated 24.3 s (build 1.8 s vs 13.2 s: the cache
+  recovers the compiler cache entirely); container template 15.4 / 42.5 / 33.0 s (the
+  build gains little, the pod costs ≈ 17 s). Both numbers stand as measured.
 - **Canary weights fail closed.** `NETCI_TRAFFIC_ROUTER` must be chosen outside local
   mode; the in-memory router (the former production default, a dict that routed
   nothing) is local-only, and an unconfigured router answers 501.

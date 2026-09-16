@@ -58,43 +58,64 @@ class ReleasePlanCoordinator:
             "dispatchedDeployments": [str(d.id) for d in dispatched_deployments],
         }
 
+    def _module_release_inputs(self, transaction: Any, request: Any, module_id: str) -> tuple[UUID, dict[str, Any]]:
+        """The verified run and the server-managed parameters a module's release uses.
+
+        Shared by the first dispatch and by the promotion of its canary: both must
+        deploy the run the version was verified from, with the reviewed target settings.
+        """
+
+        req_mod = next((m for m in request.modules if m.module_id == module_id), None)
+        if req_mod is None:
+            raise KeyError(f"Module {module_id} not part of request {request.id}")
+
+        version_row = transaction.portal_version(module_id, req_mod.version)
+        metadata = version_row.metadata if version_row is not None else {}
+        pipeline_run_id = metadata.get("pipelineRunId")
+        artifact_digest = metadata.get("artifactDigest")
+        if not pipeline_run_id or not artifact_digest:
+            raise ValueError(f"Module {module_id} version {req_mod.version} lacks verified pipelineRunId")
+
+        report = metadata.get("ciReport")
+        if request.run_automation_tests and (
+            not isinstance(report, dict) or report.get("autoTest") != "passed"
+        ):
+            raise ValueError(f"Module {module_id} requires passing automation-test evidence")
+
+        parameters = self.portal._delivery_parameters(transaction, module_id, Environment.PROD)
+        return UUID(str(pipeline_run_id)), parameters
+
     def _dispatch_module_deployment(self, request_id: str, module_id: str, actor: str) -> Any:
         with self.portal._session() as transaction:
             request = transaction.portal_request(request_id)
             assert request is not None
-            req_mod = next((m for m in request.modules if m.module_id == module_id), None)
-            if req_mod is None:
-                raise KeyError(f"Module {module_id} not part of request {request_id}")
-
-            version_row = transaction.portal_version(module_id, req_mod.version)
-            metadata = version_row.metadata if version_row is not None else {}
-            pipeline_run_id = metadata.get("pipelineRunId")
-            artifact_digest = metadata.get("artifactDigest")
-            if not pipeline_run_id or not artifact_digest:
-                raise ValueError(f"Module {module_id} version {req_mod.version} lacks verified pipelineRunId")
-
-            report = metadata.get("ciReport")
-            if request.run_automation_tests and (
-                not isinstance(report, dict) or report.get("autoTest") != "passed"
-            ):
-                raise ValueError(f"Module {module_id} requires passing automation-test evidence")
-
-            deployment_parameters = self.portal._delivery_parameters(
-                transaction, module_id, Environment.PROD
-            )
+            pipeline_run_id, deployment_parameters = self._module_release_inputs(transaction, request, module_id)
 
             # Determine initial traffic parameters based on strategy
             strategy = request.strategy or "rolling"
             traffic_weight = 100
             active_color = None
             if strategy == "canary":
+                # Only the Kubernetes runtime has a release track and a router in front
+                # of it (ADR-031); for the others a canary would be a full rollout that
+                # merely reports a weight.
+                runtime = str(self.portal.module(module_id).get("runtime") or "")
+                if runtime != "kubernetes":
+                    raise ValueError(f"canary delivery needs the kubernetes runtime; module {module_id} runs on {runtime or 'unknown'}")
                 steps = request.strategy_config.get("steps", [10, 25, 50, 100])
                 traffic_weight = steps[0] if steps else 10
+                # The canary is a second release beside stable (ADR-031). The track and
+                # the first weight travel with the deployment: the playbook installs the
+                # canary ingress already carrying the weight, and the router confirms it
+                # once the release is healthy -- there is nothing to steer before then.
+                deployment_parameters = {
+                    **deployment_parameters, "release_track": "canary", "canary_weight": int(traffic_weight),
+                }
             elif strategy == "blue_green":
                 active_color = "green"
 
         deployment = self.platform.create_production_promotion(
-            UUID(str(pipeline_run_id)),
+            pipeline_run_id,
             requested_by=request.requested_by,
             correlation_id=f"production-request:{request.id}:{module_id}",
             production_request_id=f"{request.id}:{module_id}",
@@ -130,10 +151,7 @@ class ReleasePlanCoordinator:
                 deployment_id=deployment.id,
             )
 
-        # Route initial traffic if progressive
-        if strategy == "canary":
-            self.traffic_router.set_traffic_weight(str(deployment.application_id), "prod", traffic_weight)
-        elif strategy == "blue_green":
+        if strategy == "blue_green":
             self.traffic_router.switch_route(str(deployment.application_id), "prod", "green")
 
         try:
@@ -194,8 +212,25 @@ class ReleasePlanCoordinator:
             self._handle_wave_failure(request_id, module_row.module_id, message or "Deployment failed")
             return
 
+        if (request.strategy or "rolling") == "canary":
+            self._confirm_canary_weight(deployment_id)
+
         # Check wave completion
         self._check_and_advance_waves(request_id)
+
+    def _confirm_canary_weight(self, deployment_id: UUID) -> None:
+        """The canary release is healthy: the router applies (and reads back) its weight.
+
+        For ingress-nginx the canary ingress now exists with the weight the playbook set,
+        so this is a confirmation; a router that cannot see it raises, and the callback
+        fails loudly instead of a healthy canary silently receiving no traffic.
+        """
+
+        with self.portal._session() as transaction:
+            deployment = transaction.deployment(deployment_id)
+        if deployment is None or deployment.strategy != "canary" or deployment.traffic_weight <= 0:
+            return
+        self.traffic_router.set_traffic_weight(str(deployment.application_id), "prod", deployment.traffic_weight)
 
     def _check_and_advance_waves(self, request_id: str) -> None:
         with self.portal._session() as transaction:
@@ -329,8 +364,15 @@ class ReleasePlanCoordinator:
         request_id: str,
         deployment_id: UUID,
         metrics: dict[str, float] | None = None,
+        actor: str = "coordinator",
     ) -> dict[str, Any]:
-        """Evaluate canary metrics and advance to the next traffic step."""
+        """Evaluate canary metrics and advance to the next traffic step.
+
+        The last step is a promotion: every request already reaches the canary at
+        100 %, and a `promote` deployment then moves the stable release to the same
+        digest and removes the canary release, so the environment is left with one
+        release -- the new one -- rather than a canary that carries prod forever.
+        """
         with self.portal._session() as transaction:
             request = transaction.portal_request(request_id)
             if request is None:
@@ -347,11 +389,12 @@ class ReleasePlanCoordinator:
         decision = CanaryAnalyzer.evaluate(metrics, thresholds)
         if not decision.allowed:
             # Metrics threshold breached! Auto-abort canary
-            self.abort_canary(request_id, deployment_id, reason=decision.reason)
+            aborted = self.abort_canary(request_id, deployment_id, reason=decision.reason)
             return {
                 "allowed": False,
                 "status": "aborted",
                 "reason": decision.reason,
+                "canaryReleaseRetired": aborted.get("canaryReleaseRetired", False),
                 "metrics": {
                     "errorRate": decision.error_rate,
                     "p95LatencyMs": decision.p95_latency_ms,
@@ -385,13 +428,50 @@ class ReleasePlanCoordinator:
                 canary_step=next_step_num,
             )
 
-        return {
+        result: dict[str, Any] = {
             "allowed": True,
             "status": "advanced",
             "trafficWeight": next_weight,
             "canaryStep": next_step_num,
             "reason": decision.reason,
         }
+        if next_weight >= 100:
+            promotion = self._promote_canary(request_id, deployment_id, actor)
+            if promotion is not None:
+                result["status"] = "promoting"
+                result["promotionDeploymentId"] = str(promotion.id)
+        return result
+
+    def _promote_canary(self, request_id: str, deployment_id: UUID, actor: str) -> Any:
+        """Move the stable release to the canary's digest and retire the canary release."""
+
+        with self.portal._session() as transaction:
+            request = transaction.portal_request(request_id)
+            assert request is not None
+            module_row = next((m for m in request.modules if m.deployment_id == deployment_id), None)
+            if module_row is None:
+                return None
+            pipeline_run_id, parameters = self._module_release_inputs(transaction, request, module_row.module_id)
+        promotion = self.platform.create_production_promotion(
+            pipeline_run_id,
+            requested_by=request.requested_by,
+            correlation_id=f"production-request:{request.id}:{module_row.module_id}:promote",
+            production_request_id=f"{request.id}:{module_row.module_id}:promote",
+            scheduled_for=request.scheduled_for,
+            rollback_strategy=request.rollback_strategy,
+            run_automation_tests=request.run_automation_tests,
+            deployment_parameters={**parameters, "release_track": "promote"},
+        )
+        with self.portal._session() as transaction:
+            transaction.update_deployment_traffic(promotion.id, strategy="rolling", traffic_weight=100)
+            transaction.update_portal_request(
+                request_id,
+                status="approved",
+                comment=f"canary at 100 %; promoting stable release as deployment {promotion.id}",
+                deployment_id=promotion.id,
+            )
+        self.platform.approve_deployment(promotion.id, actor)
+        return promotion
 
     def abort_canary(self, request_id: str, deployment_id: UUID, reason: str) -> dict[str, Any]:
         """Abort canary delivery and immediately revert traffic weight to 0%."""
@@ -401,7 +481,24 @@ class ReleasePlanCoordinator:
                 raise KeyError(f"deployment {deployment_id} not found")
             app_id = str(deployment.application_id)
 
-        self.traffic_router.set_traffic_weight(app_id, "prod", 0, baseline_weight=100)
+        # Weight first: it is immediate. The release is retired afterwards, through the
+        # ordinary rollback (the canary track's rollback removes the canary release and
+        # leaves stable, which never changed, as it is); a canary that never became
+        # healthy has nothing running to retire.
+        retired = False
+        if deployment.status == DeploymentStatus.HEALTHY:
+            self.traffic_router.set_traffic_weight(app_id, "prod", 0, baseline_weight=100)
+            self.platform.rollback_deployment(
+                deployment_id,
+                target_artifact_digest=deployment.previous_artifact_digest or deployment.artifact_digest,
+            )
+            retired = True
+        else:
+            try:
+                self.traffic_router.set_traffic_weight(app_id, "prod", 0, baseline_weight=100)
+            except RuntimeError as exc:
+                # No canary ingress yet: there is no traffic to withdraw.
+                logger.info("canary %s aborted before it took traffic: %s", deployment_id, exc)
 
         with self.portal._session() as transaction:
             transaction.update_deployment_traffic(deployment_id, traffic_weight=0)
@@ -415,4 +512,5 @@ class ReleasePlanCoordinator:
             "status": "aborted",
             "trafficWeight": 0,
             "reason": reason,
+            "canaryReleaseRetired": retired,
         }

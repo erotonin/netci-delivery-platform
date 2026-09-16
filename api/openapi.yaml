@@ -610,13 +610,36 @@ paths:
                   type: object
                   additionalProperties:
                     type: number
+                canaryRules:
+                  type: object
+                  description: Header/cookie steering rules (headerName, headerValue, cookie) applied to the canary ingress
+                  additionalProperties: true
       responses:
         '200':
-          description: Canary traffic step advanced
+          description: >-
+            Canary traffic step advanced. `status` is `advanced`, `promoting` (the last step:
+            the canary takes 100 % and a `promote` deployment moves the stable release to the
+            same digest and retires the canary release), `completed`, or `aborted` when the
+            metrics breached the thresholds (then `canaryReleaseRetired` says whether a healthy
+            canary release was rolled back).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  allowed: { type: boolean }
+                  status: { type: string, enum: [advanced, promoting, completed, aborted] }
+                  trafficWeight: { type: integer, minimum: 0, maximum: 100 }
+                  canaryStep: { type: integer }
+                  reason: { type: string }
+                  promotionDeploymentId: { type: string, format: uuid }
+                  canaryReleaseRetired: { type: boolean }
         '400':
           $ref: '#/components/responses/BadRequest'
         '404':
           $ref: '#/components/responses/NotFound'
+        '501':
+          description: No traffic router is configured (NETCI_TRAFFIC_ROUTER); the weight is refused, not recorded
   /production-requests/{requestId}/canary/abort:
     post:
       operationId: abort_canary_step
@@ -634,11 +657,22 @@ paths:
                   type: string
       responses:
         '200':
-          description: Canary aborted
+          description: Canary aborted; weight 0 on the router and, for a healthy canary, its release rolled back
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, enum: [aborted] }
+                  trafficWeight: { type: integer }
+                  reason: { type: string }
+                  canaryReleaseRetired: { type: boolean }
         '400':
           $ref: '#/components/responses/BadRequest'
         '404':
           $ref: '#/components/responses/NotFound'
+        '501':
+          description: No traffic router is configured (NETCI_TRAFFIC_ROUTER)
   /servers:
     get:
       operationId: listServers

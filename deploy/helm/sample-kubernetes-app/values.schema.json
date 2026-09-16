@@ -27,7 +27,30 @@
     "ingress": {
       "type": "object",
       "additionalProperties": false,
-      "properties": {"enabled": {"type": "boolean"}}
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "host": {"type": "string", "pattern": "^$|^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$"},
+        "controllerNamespace": {"type": "string", "pattern": "^[a-z0-9]([a-z0-9-]*[a-z0-9])?$"}
+      }
+    },
+    "netci": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "releaseName": {"type": "string", "pattern": "^$|^[a-z0-9]([a-z0-9-]*[a-z0-9])?$"},
+        "applicationId": {"type": "string", "pattern": "^$|^[0-9a-f-]{36}$"}
+      }
+    },
+    "canary": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "weight": {"type": "integer", "minimum": 0, "maximum": 100},
+        "header": {"type": "string", "pattern": "^$|^[A-Za-z0-9-]+$"},
+        "headerValue": {"type": "string", "pattern": "^[^\\r\\n\"]*$"},
+        "cookie": {"type": "string", "pattern": "^$|^[A-Za-z0-9_-]+$"}
+      }
     },
     "traits": {
       "type": "object",

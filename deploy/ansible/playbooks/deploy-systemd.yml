@@ -38,6 +38,9 @@
           - netci_artifact_sha256 is match('^[0-9a-f]{64}$')
           - netci_artifact_sha256 != '0' * 64
           - not (netci_artifact_url | length > 0 and artifact_path is defined)
+          # Canary tracks are Kubernetes-only (ADR-031): this runtime has no traffic
+          # router, so a canary here would be a full rollout under a canary label.
+          - release_track | default('stable') == 'stable'
         fail_msg: >-
           Provide artifact_sha256 and at most one of artifact_url or
           artifact_path; the checked-in sample path is the local default

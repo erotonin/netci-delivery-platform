@@ -179,6 +179,18 @@ stayed `queued` (now reconciled on a schedule).
 | Custom stages now need a second administrator (`proposed` → `approve` by someone else → `active`); a module cannot select a proposed stage; parameters declared per stage, valued per module, validated, passed as environment | unit + API tests; live registration path unchanged for the admin UI |
 | `POST /deployments/{id}/traffic` and canary advance/abort answer **501 `TRAFFIC_ROUTER_NOT_CONFIGURED`** unless a real router is configured; the in-memory router is refused outside local mode | `traffic.build_traffic_router` tests |
 
+## 4f. 2026-09-16 (afternoon): a real canary, and the benchmark re-measured on a cache-sensitive workload
+
+| Proof | Result |
+|---|---|
+| ingress-nginx v1.12.1 installed on the kind worker from the **lab registry** (`scripts/lab/ingress_nginx.sh`, digests re-pinned to the mirror) | `/readyz` → `traffic: {mode: nginx-ingress, status: ready}` |
+| Stable `hello-kubernetes` prod re-released with the canary-capable chart (per-environment host, zero-trust policy admitting the controller); the **first attempt failed** on Helm's schema (`/canary/weight: got string, want integer` — Ansible templated each value to a string); fixed by rendering the values as one dict expression | deployment `759085dd…` healthy; stable answers `e8bedb33…` through nginx |
+| Canary production request (developer `dana`, reviewer `rae`, steps 20/50/100): canary release `hello-kubernetes-canary` installed beside stable with the canary ingress at 20 %; **200 requests through the ingress at each step: 20.5 % / 52.0 % / 100 % answered with the canary digest**; the last step created a `promote` deployment (`0077f842…`, healthy) — stable now runs `e5fc8787…`, the canary release and ingress are gone, request `succeeded` | `evidence/canary-nginx.json` (`passed`) |
+| Abort path: a second canary at 30 % (observed 32.5 %), `POST …/canary/abort` → weight 0 within 2 s (200/200 answers from stable), the canary deployment `rolled_back` (its release removed), stable image unchanged | `evidence/canary-nginx-abort.json` (`passed`) |
+| Canary for a docker/systemd module is refused at approval (`canary delivery needs the kubernetes runtime`); the docker and systemd playbooks assert `release_track == stable` | API test + playbook pre_tasks |
+| Benchmark, **Go template** (cold `GOCACHE` ≈ 58 s, warm ≈ 2 s; 5 × 3, checkout by `git archive` from the mirror): baseline 24.0 s, ephemeral 87.9 s, **isolated + cache 24.3 s (+1.4 % total, −4.8 % warm; build 1.8 s vs 13.2 s)**. On a workload whose cost is the compiler cache, the per-project cache recovers all of it. | `evidence/benchmarks/report-go.json` |
+| Benchmark, **container template** (same run): baseline 15.4 s, ephemeral 42.5 s, isolated 33.0 s (+114 %). The 5-second buildah build gains little from a cache; provisioning (3.7 s), the mirror checkout (8.2 vs 4.0 s) and cleanup (2.5 s) are the cost of a fresh pod and are reported as such. | `evidence/benchmarks/report.json` |
+
 ## 4c. Host reboot (2026-09-16 08:06 UTC)
 
 The lab host rebooted overnight. Every container without a restart policy stopped
@@ -197,10 +209,10 @@ not prove: recovery on a fresh machine (see §6).
 
 | Suite | Command | Result |
 |---|---|---|
-| Backend + contract (PostgreSQL-backed) | `NETCI_TEST_DATABASE_URL=…/netci .venv/bin/python -m pytest backend/tests tests/contract -o addopts="" -q` (run in two halves; see CLAUDE.md) | 556 passed, 4 skipped (opt-in Temporal tests, run separately below) + 41 passed |
+| Backend + contract (PostgreSQL-backed) | `NETCI_TEST_DATABASE_URL=…/netci .venv/bin/python -m pytest backend/tests tests/contract -o addopts="" -q` (run in two halves; see CLAUDE.md) | 609 passed, 4 skipped (opt-in Temporal tests, run separately below) + 41 passed |
 | Temporal workflow tests against the time-skipping test server | `NETCI_RUN_TEMPORAL_TEST=1 .venv/bin/python -m pytest backend/tests/test_temporal_workflow.py` | 4 passed |
-| Frontend | `cd frontend && npm test && npm run build` | 26 passed, build OK |
-| Static | `pyflakes backend/app/`, `scripts/migrate.py --check-schema` | clean; schema matches 20 migrations |
+| Frontend | `cd frontend && npm test && npm run build` | 27 passed, build OK |
+| Static | `pyflakes backend/app/`, `scripts/migrate.py --check-schema` | clean; schema matches 22 migrations |
 
 ---
 
@@ -214,9 +226,10 @@ Say these plainly rather than let the table above imply them.
 | Rekor / transparency log is off (`--tlog-upload=false`, `--insecure-ignore-tlog`). Signatures are key-based only. | Security: decide on a Rekor instance; set `NETCI_SIGNATURE_REQUIRE_TLOG=true`. |
 | The edge-agent *socket* registry (`_ACTIVE_RUNNERS`) is process-local by nature; command dispatch to an agent connected to another replica is not supported. Maintenance mode and telemetry are now in PostgreSQL (ADR-029). | Platform: route agent commands through the database (a command table the owning replica polls) if multi-replica dispatch is needed. |
 | Password-grant OIDC in the harness is a lab convenience; the browser login flow was not exercised by automation today. | Platform: Playwright login test against Keycloak. |
-| Single host for every environment. Nothing was proven about network reachability, SSH, or privilege escalation to a separate target. | Infra: a second VM in `local.ini`. |
+| Production on a separate host is proven for systemd (§4e); the docker runtime was exercised on the worker's own Docker socket only. | Infra: a docker host with a remote socket in the inventory. |
 | `production_readiness_audit.py` is a code self-check; its verdict is now `SELF_CHECK_PASSED` / `SELF_CHECK_FAILED`, never "certified". | Done. |
-| The per-build pod's remaining cost is the fresh-workspace checkout (≈ 17 s for a 4 MB, 446-file repository on kind's emptyDir) plus provisioning; the project cache does not address it. A per-project *workspace* PVC would recover most of it, but a workspace that survives a build is what ADR-007 rejects on purpose: `git clean -fdx` + `reset --hard` does not undo a tampered `.git/hooks`, so a compromised build could seed the next one. The cost stays until a design that reuses a workspace *and* re-verifies it (e.g. a fresh clone from the project mirror into an emptyDir, which is what the cache already gives, or a content-addressed workspace snapshot) is measured. | Platform. |
+| The per-build pod's remaining cost, on a workload the compiler cache does not dominate, is provisioning + the mirror checkout + cleanup (≈ +17 s on the 5-second container build, §4f). The Go workload shows the cache recovers the build; nothing recovers the pod. | Platform: measured, accepted (ADR-030). |
+| Canary is Kubernetes + ingress-nginx only; blue/green has no router (`switch_route` → 501). Header/cookie steering rules are applied to the ingress but were not sampled in the proof. | Platform. |
 | A ReadWriteOnce cache claim serialises a project's concurrent builds on one node; multi-node needs RWX or a registry layer cache. | Infra. |
 
 ---

@@ -34,6 +34,7 @@ def setup_function():
         "artifact_url", "artifact_ref", "artifact_digest", "image_repository",
         "playbook", "health_command", "rollback_strategy", "runtime_health_verified",
         "deployment_tasks", "task_settings", "actor", "owner_team", "app_name",
+        "release_track", "releaseTrack", "canary_weight",
     ],
 )
 def test_a_deployment_controlled_key_is_refused_not_dropped(key):

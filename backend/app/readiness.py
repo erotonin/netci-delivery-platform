@@ -241,6 +241,7 @@ def probe_readiness(platform: Any, portal: Any, authenticator: Any) -> tuple[boo
     dcim_health = check_dcim(portal)
     cosign_health = check_cosign()
     secrets_health = check_secrets()
+    traffic_health = check_traffic_router()
 
     # Determine readiness: critical requirements must be OK
     # Database is strictly required
@@ -271,5 +272,20 @@ def probe_readiness(platform: Any, portal: Any, authenticator: Any) -> tuple[boo
         "dcim": dcim_health,
         "cosign": cosign_health,
         "secrets": secrets_health,
+        # Not a readiness condition: an installation without progressive delivery is
+        # complete. Reported so "why does canary answer 501?" is answered here.
+        "traffic": traffic_health,
     }
     return ready, details
+
+
+def check_traffic_router() -> dict[str, Any]:
+    from .traffic import default_traffic_router
+
+    describe = getattr(default_traffic_router, "describe", None)
+    if describe is None:
+        return {"mode": getattr(default_traffic_router, "mode", "memory"), "status": "local_only", "ready": True}
+    try:
+        return describe()
+    except Exception as exc:  # a kubectl that cannot run is a fact to report, not to raise from /readyz
+        return {"mode": getattr(default_traffic_router, "mode", "unknown"), "status": "unavailable", "ready": False, "error": str(exc)[-300:]}

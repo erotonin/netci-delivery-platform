@@ -2201,7 +2201,7 @@ def advance_canary_step(
                     pass
     coordinator = ReleasePlanCoordinator(portal, platform)
     try:
-        return coordinator.advance_canary(requestId, UUID(str(deployment_id)), metrics_data)
+        return coordinator.advance_canary(requestId, UUID(str(deployment_id)), metrics_data, actor=principal.subject)
     except TrafficRoutingUnavailable:
         raise
     except Exception as exc:
