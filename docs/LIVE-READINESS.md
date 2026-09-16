@@ -89,6 +89,13 @@ Jenkins builds, one worker restart drill, one rollback, one backup drill):
   gates (the failover/MTTR gate added), 10 PASS; builds ran in the project's isolated
   namespace with the `lint` custom stage.
 
+- `evidence/production_acceptance_20260916T094139Z.json` — code at `3ac3aa2`, lab commit
+  `139eeb67…` (the working tree published to the lab git server): **10 PASS**, failover
+  detected in 11.3 s, MTTR 83.2 s. The previous run of the day stamped a two-day-old
+  `commitSha` from a pin in the lab profile; the pin is gone, the harness now stamps the
+  repository HEAD (with `-dirty` when the tree is not clean), and that run's file was
+  discarded rather than kept with a wrong commit.
+
 The evidence file is the authority for the verdict; this table describes what each gate
 does.
 

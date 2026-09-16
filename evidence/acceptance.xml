@@ -1,23 +1,23 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<testsuite name="production_acceptance" tests="10" failures="0" skipped="0" timestamp="2026-09-15T15:48:13.319371+00:00">
-  <testcase name="persistence_across_api_restart" classname="acceptance" time="0.291">
+<testsuite name="production_acceptance" tests="10" failures="0" skipped="0" timestamp="2026-09-16T09:41:39.762613+00:00">
+  <testcase name="persistence_across_api_restart" classname="acceptance" time="0.319">
   </testcase>
-  <testcase name="oidc_role_and_team" classname="acceptance" time="0.025">
+  <testcase name="oidc_role_and_team" classname="acceptance" time="0.018">
   </testcase>
-  <testcase name="dcim_inventory_lookup" classname="acceptance" time="1.223">
+  <testcase name="dcim_inventory_lookup" classname="acceptance" time="0.927">
   </testcase>
-  <testcase name="jenkins_checkout_build_push" classname="acceptance" time="88.524">
+  <testcase name="jenkins_checkout_build_push" classname="acceptance" time="94.064">
   </testcase>
-  <testcase name="sbom_trivy_cosign_verification" classname="acceptance" time="0.159">
+  <testcase name="sbom_trivy_cosign_verification" classname="acceptance" time="0.147">
   </testcase>
-  <testcase name="temporal_workflow_restart_resume" classname="acceptance" time="181.274">
+  <testcase name="temporal_workflow_restart_resume" classname="acceptance" time="158.379">
   </testcase>
-  <testcase name="ansible_host_and_target_namespace" classname="acceptance" time="0.238">
+  <testcase name="ansible_host_and_target_namespace" classname="acceptance" time="0.356">
   </testcase>
-  <testcase name="deployment_failure_and_rollback" classname="acceptance" time="20.073">
+  <testcase name="deployment_failure_and_rollback" classname="acceptance" time="20.098">
   </testcase>
-  <testcase name="backup_and_restore_verification" classname="acceptance" time="10.275">
+  <testcase name="backup_and_restore_verification" classname="acceptance" time="12.846">
   </testcase>
-  <testcase name="multi_controller_failover_mttr" classname="acceptance" time="104.033">
+  <testcase name="multi_controller_failover_mttr" classname="acceptance" time="103.717">
   </testcase>
 </testsuite>
