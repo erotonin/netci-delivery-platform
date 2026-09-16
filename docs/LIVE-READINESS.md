@@ -291,7 +291,7 @@ Say these plainly rather than let the table above imply them.
 |---|---|
 | The registry is plaintext HTTP; `imagePullHost` is how the host reaches it. A real deployment needs TLS and one name. | Infra. |
 | Rekor / transparency log is off (`--tlog-upload=false`, `--insecure-ignore-tlog`). Signatures are key-based only. | Security: decide on a Rekor instance; set `NETCI_SIGNATURE_REQUIRE_TLOG=true`. |
-| `scripts/bootstrap.sh --up` has not been exercised on a clean host; the lab it inventories was built step by step. | Platform: a throwaway VM run. |
+| `scripts/bootstrap.sh --up` has not been exercised on a clean host (the lab machine has ~10 GB free; the reclaimable space is OpenStack data, not netCI's, and the owner chose not to tear the lab down for it). `--check` reports every component present. | Platform: a throwaway VM run when one is available. |
 | The Portal's static files are still served by one Vite/preview process; the API is balanced, the UI is not. | Infra: serve the build from the balancer or a CDN. |
 | `production_readiness_audit.py` is a code self-check; its verdict is now `SELF_CHECK_PASSED` / `SELF_CHECK_FAILED`, never "certified". | Done. |
 | The per-build pod's remaining cost, on a workload the compiler cache does not dominate, is provisioning + the mirror checkout + cleanup (≈ +17 s on the 5-second container build, §4f). The Go workload shows the cache recovers the build; nothing recovers the pod. | Platform: measured, accepted (ADR-030). |
