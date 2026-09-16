@@ -271,6 +271,19 @@ class JenkinsHttpAdapter:
             "jobs": jobs,
         }
 
+    def reload_configuration(self) -> None:
+        """Make the controller re-read its JCasC sources (files and /run/secrets).
+
+        This is how a change pushed to jenkins/casc, or a rotated secret file, reaches a
+        running controller without a rebuild (ADR-033). Jenkins answers 200 on success
+        and 4xx/5xx when the configuration does not apply; either way the caller
+        compares the controllers afterwards.
+        """
+
+        status, _, body = self._request("POST", "/configuration-as-code/reload", body=b"", content_type="text/plain")
+        if not 200 <= status < 300:
+            raise JenkinsHttpError(f"JCasC reload returned {status}: {body.decode(errors='replace')[:200]}")
+
     def queue_depth(self) -> int:
         try:
             _, _, body = self._request("GET", "/queue/api/json?tree=items[id]", use_crumb=False)

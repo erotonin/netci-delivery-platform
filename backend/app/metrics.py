@@ -183,6 +183,10 @@ metrics.register_counter(
     "netci_reconciler_corrections_total", "Runs and deployments the reconciler had to correct because a callback was lost"
 )
 metrics.register_gauge("netci_replica_info", "Constant 1, labelled with the replica id")
+metrics.register_gauge(
+    "netci_ci_controllers_drift", "1 when the Jenkins controllers do not run the same configuration (or one is unreachable)"
+)
+metrics.register_gauge("netci_ci_controllers_unreachable", "Jenkins controllers whose configuration could not be read")
 
 
 class PrometheusMetricsMiddleware(BaseHTTPMiddleware):

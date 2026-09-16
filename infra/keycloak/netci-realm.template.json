@@ -1,0 +1,141 @@
+{
+  "realm": "netci",
+  "enabled": true,
+  "accessTokenLifespan": 3600,
+  "groups": [
+    {
+      "name": "netci-admins"
+    },
+    {
+      "name": "release-managers"
+    },
+    {
+      "name": "engineers"
+    },
+    {
+      "name": "team-payments"
+    },
+    {
+      "name": "team-search"
+    }
+  ],
+  "users": [
+    {
+      "username": "pat",
+      "email": "pat@netci.local",
+      "emailVerified": true,
+      "enabled": true,
+      "firstName": "Pat",
+      "lastName": "netCI",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "__LAB_USER_PASSWORD__",
+          "temporary": false
+        }
+      ],
+      "groups": [
+        "/netci-admins"
+      ]
+    },
+    {
+      "username": "rae",
+      "email": "rae@netci.local",
+      "emailVerified": true,
+      "enabled": true,
+      "firstName": "Rae",
+      "lastName": "netCI",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "__LAB_USER_PASSWORD__",
+          "temporary": false
+        }
+      ],
+      "groups": [
+        "/release-managers",
+        "/team-payments"
+      ]
+    },
+    {
+      "username": "dana",
+      "email": "dana@netci.local",
+      "emailVerified": true,
+      "enabled": true,
+      "firstName": "Dana",
+      "lastName": "netCI",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "__LAB_USER_PASSWORD__",
+          "temporary": false
+        }
+      ],
+      "groups": [
+        "/engineers",
+        "/team-payments"
+      ]
+    },
+    {
+      "username": "sam",
+      "email": "sam@netci.local",
+      "emailVerified": true,
+      "enabled": true,
+      "firstName": "Sam",
+      "lastName": "netCI",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "__LAB_USER_PASSWORD__",
+          "temporary": false
+        }
+      ],
+      "groups": [
+        "/engineers",
+        "/team-search"
+      ]
+    }
+  ],
+  "clients": [
+    {
+      "clientId": "netci",
+      "name": "netCI",
+      "enabled": true,
+      "publicClient": false,
+      "secret": "__OIDC_CLIENT_SECRET__",
+      "directAccessGrantsEnabled": true,
+      "standardFlowEnabled": true,
+      "redirectUris": [
+        "http://localhost:5173/*",
+        "http://127.0.0.1:5173/*"
+      ],
+      "webOrigins": [
+        "http://localhost:5173"
+      ],
+      "protocolMappers": [
+        {
+          "name": "groups",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-group-membership-mapper",
+          "config": {
+            "claim.name": "groups",
+            "full.path": "false",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "true"
+          }
+        },
+        {
+          "name": "audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "config": {
+            "included.client.audience": "netci",
+            "id.token.claim": "true",
+            "access.token.claim": "true"
+          }
+        }
+      ]
+    }
+  ]
+}

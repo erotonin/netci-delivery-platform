@@ -208,6 +208,16 @@ stayed `queued` (now reconciled on a schedule).
 | `/metrics` publishes the readiness verdict (`netci_ready`, `netci_dependency_ready{dependency}`), `netci_cd_pollers`, `netci_ci_controllers_healthy`, `netci_agents{state}`, `netci_reconciler_corrections_total`, `netci_replica_info{replica}` | test in `test_observability_and_notifications.py` |
 | Prometheus v3.5.0 + Alertmanager v0.28.1 (`infra/monitoring/`, `scripts/lab/monitoring.sh`) scraping both replicas; rules for replica down, not ready, dependency lost, no/one worker, controller lost, stale agent, reconciler correcting, outbox backlog, 5xx rate. **Drill: `docker stop jenkins-b`** → `NetciJenkinsControllerLost` active 2 m 47 s later (scrape + `for: 2m`), delivered to the webhook receiver, **resolved** 60 s after `docker start` | `evidence/alerting-drill.json` (`passed`; the first delivery attempt failed on a port collision in the lab receiver, noted there) |
 
+## 4i. 2026-09-16 (evening): secrets as files, token rotation with revocation, reload from git, bootstrap inventory
+
+| Proof | Result |
+|---|---|
+| Both controllers recreated with `/run/secrets` mounted (token, pipeline key, cosign key as files; no secret in the container environment); JCasC resolved them | `docker exec jenkins-a ls /run/secrets`; `/readyz` `healthyControllers: 2` |
+| `POST /api/v1/ci/controllers/reload` with the HMAC push-webhook signature → both controllers reloaded in 4.4 s, drift `false`, audit row `ci.controllers.reloaded` by `webhook:casc`; a wrong signature → 401 | `evidence/casc-reload-and-rotation.json` |
+| `jenkins_lab.sh rotate-token`: new 24 h token bound to a new anchor Secret, file rewritten atomically, reload through netCI, previous anchor deleted → **previous token refused 10 s later**, new token accepted; a dev build then **succeeded** on the rotated credential (run `c78ecc13…`, deployment healthy); the same rotation ran once through `netci-jenkins-token-rotate.service` (timer twice daily) | same file; first two checks were wrong (client cert in the kubeconfig authenticated instead of the token) and are recorded as such |
+| `netci_ci_controllers_drift` metric + `NetciControllerDrift` rule loaded in Prometheus | `curl :8100/metrics`, `:9090/api/v1/rules` |
+| `scripts/bootstrap.sh --check` inventories 30 components and reports **everything present** on this host; `--up` is composed of the same ensure-steps. **Not run on a fresh machine.** | ADR-033 consequences |
+
 ## 4c. Host reboot (2026-09-16 08:06 UTC)
 
 The lab host rebooted overnight. Every container without a restart policy stopped
@@ -226,7 +236,7 @@ not prove: recovery on a fresh machine (see §6).
 
 | Suite | Command | Result |
 |---|---|---|
-| Backend + contract (PostgreSQL-backed) | `NETCI_TEST_DATABASE_URL=…/netci .venv/bin/python -m pytest backend/tests tests/contract -o addopts="" -q` (run in two halves; see CLAUDE.md) | 622 passed, 4 skipped (opt-in Temporal tests, run separately below) + 41 passed |
+| Backend + contract (PostgreSQL-backed) | `NETCI_TEST_DATABASE_URL=…/netci .venv/bin/python -m pytest backend/tests tests/contract -o addopts="" -q` (run in two halves; see CLAUDE.md) | 626 passed, 4 skipped (opt-in Temporal tests, run separately below) + 41 passed |
 | Temporal workflow tests against the time-skipping test server | `NETCI_RUN_TEMPORAL_TEST=1 .venv/bin/python -m pytest backend/tests/test_temporal_workflow.py` | 4 passed |
 | Frontend | `cd frontend && npm test && npm run build` | 27 passed, build OK |
 | Static | `pyflakes backend/app/`, `scripts/migrate.py --check-schema` | clean; schema matches 23 migrations |
@@ -241,6 +251,7 @@ Say these plainly rather than let the table above imply them.
 |---|---|
 | The registry is plaintext HTTP; `imagePullHost` is how the host reaches it. A real deployment needs TLS and one name. | Infra. |
 | Rekor / transparency log is off (`--tlog-upload=false`, `--insecure-ignore-tlog`). Signatures are key-based only. | Security: decide on a Rekor instance; set `NETCI_SIGNATURE_REQUIRE_TLOG=true`. |
+| `scripts/bootstrap.sh --up` has not been exercised on a clean host; the lab it inventories was built step by step. | Platform: a throwaway VM run. |
 | Two API replicas run behind two ports on the lab; there is no load balancer in front of them and the frontend is served by one process. | Infra: an L7 balancer with websocket support. |
 | Password-grant OIDC in the harness is a lab convenience; the browser login flow was not exercised by automation today. | Platform: Playwright login test against Keycloak. |
 | Production on a separate host is proven for systemd (§4e); the docker runtime was exercised on the worker's own Docker socket only. | Infra: a docker host with a remote socket in the inventory. |

@@ -12,6 +12,8 @@
 #
 #   scripts/jenkins_lab.sh up        build images, mirror agent images, start A and B
 #   scripts/jenkins_lab.sh recreate <a|b>   destroy and rebuild one controller from JCasC
+#   scripts/jenkins_lab.sh reload    make both controllers re-read jenkins/casc and /run/secrets
+#   scripts/jenkins_lab.sh rotate-token   mint a fresh 24h kube service-account token, reload
 #   scripts/jenkins_lab.sh status
 #   scripts/jenkins_lab.sh down
 set -euo pipefail
@@ -179,10 +181,92 @@ cosign_key() {
 }
 
 kube_credentials() {
-  KUBERNETES_SERVICE_ACCOUNT_TOKEN="$(kubectl -n netci-build create token jenkins-controller --duration=24h)"
   KUBERNETES_SERVER_CA="$(kubectl config view --raw --minify --flatten \
     -o jsonpath='{.clusters[0].cluster.certificate-authority-data}' | base64 -d)"
-  export KUBERNETES_SERVICE_ACCOUNT_TOKEN KUBERNETES_SERVER_CA
+  export KUBERNETES_SERVER_CA
+}
+
+SECRETS_DIR="${ROOT}/.netci-gate/jenkins/secrets"
+
+write_secrets() {
+  # JCasC resolves ${NAME} from a file named NAME under /run/secrets when no such
+  # environment variable exists (ADR-033). Secrets therefore reach the controller as
+  # files that can be rewritten and re-read with a JCasC reload -- a rotation needs no
+  # container recreate -- and never appear in `docker inspect`.
+  # The controller runs as uid 1000 (jenkins) and this directory belongs to the lab
+  # user; the files are readable by "other" inside the container's mount only. A real
+  # deployment gives the directory to the service's uid (or lets a secret manager
+  # mount it) and keeps 0400.
+  mkdir -p "${SECRETS_DIR}"
+  chmod 755 "${SECRETS_DIR}"
+  ( umask 022; printf '%s' "${NETCI_PIPELINE_API_KEY}" > "${SECRETS_DIR}/NETCI_PIPELINE_API_KEY"
+    printf '%s' "${NETCI_COSIGN_PRIVATE_KEY}" > "${SECRETS_DIR}/NETCI_COSIGN_PRIVATE_KEY" )
+  chmod 644 "${SECRETS_DIR}"/NETCI_*
+  [[ -s "${SECRETS_DIR}/KUBERNETES_SERVICE_ACCOUNT_TOKEN" ]] || write_sa_token
+}
+
+write_sa_token() {
+  # The token is *bound* to a Secret object: deleting that Secret invalidates the token
+  # at once, which is what makes a rotation a revocation and not merely a new token
+  # beside a live old one. The anchor's name is kept so the next rotation can revoke it.
+  local anchor="jenkins-controller-token-$(date -u +%Y%m%d-%H%M%S)"
+  kubectl -n netci-build create secret generic "${anchor}" --from-literal=purpose=token-anchor >/dev/null
+  kubectl -n netci-build label secret "${anchor}" netci.io/token-anchor=jenkins-controller >/dev/null
+  local uid; uid="$(kubectl -n netci-build get secret "${anchor}" -o jsonpath='{.metadata.uid}')"
+  local tmp="${SECRETS_DIR}/.KUBERNETES_SERVICE_ACCOUNT_TOKEN.new"
+  ( umask 022; kubectl -n netci-build create token jenkins-controller --duration="${NETCI_SA_TOKEN_TTL:-24h}" \
+      --bound-object-kind Secret --bound-object-name "${anchor}" --bound-object-uid "${uid}" > "${tmp}" )
+  chmod 644 "${tmp}"
+  # Atomic: JCasC never reads a half-written token.
+  mv -f "${tmp}" "${SECRETS_DIR}/KUBERNETES_SERVICE_ACCOUNT_TOKEN"
+  PREVIOUS_TOKEN_ANCHOR="$(cat "${SECRETS_DIR}/.token-anchor" 2>/dev/null || true)"
+  printf '%s' "${anchor}" > "${SECRETS_DIR}/.token-anchor"
+  log "wrote a fresh 24h service-account token to ${SECRETS_DIR}/KUBERNETES_SERVICE_ACCOUNT_TOKEN"
+}
+
+reload_casc() {
+  # Ask each controller to re-read jenkins/casc (mounted) and /run/secrets (mounted).
+  local letter ip jar crumb rc=0
+  for letter in a b; do
+    ip="${CONTROLLER_IP[$letter]}"
+    curl -sf --max-time 5 -u "admin:${ADMIN_PASSWORD}" "http://${ip}:8080/api/json?tree=mode" >/dev/null 2>&1 \
+      || { log "jenkins-${letter} is not up; skipped"; continue; }
+    jar="${ROOT}/.netci-gate/jenkins/cookies-${letter}"
+    crumb="$(curl -sf -c "${jar}" -u "admin:${ADMIN_PASSWORD}" \
+      "http://${ip}:8080/crumbIssuer/api/json" | sed -n 's/.*"crumb":"\([^"]*\)".*/\1/p')"
+    if curl -sf -o /dev/null -b "${jar}" -u "admin:${ADMIN_PASSWORD}" -H "Jenkins-Crumb: ${crumb}" -X POST \
+         "http://${ip}:8080/configuration-as-code/reload"; then
+      log "jenkins-${letter} reloaded its JCasC"
+    else
+      log "jenkins-${letter} refused the JCasC reload; recreate it instead"; rc=1
+    fi
+  done
+  return $rc
+}
+
+rotate_token() {
+  # The controllers' Kubernetes credential is a bound service-account token with a 24h
+  # life. Rotation: mint a new one into the secrets file, reload JCasC (the kubernetes
+  # plugin uses the credential on its next pod launch), then revoke the previous token
+  # by deleting the Secret it was bound to.
+  write_sa_token
+  if command -v curl >/dev/null && [[ -n "${NETCI_CASC_WEBHOOK_SECRET:-}" ]]; then
+    # Through netCI when it is up: the reload is audited and followed by a drift check.
+    local body='{"event":"token-rotated","controllers":["jenkins-a","jenkins-b"]}'
+    local sig; sig="sha256=$(printf '%s' "${body}" | openssl dgst -sha256 -hmac "${NETCI_CASC_WEBHOOK_SECRET}" | sed 's/^.* //')"
+    if curl -sf -X POST -H "Content-Type: application/json" -H "X-NetCI-Signature: ${sig}" \
+         --data "${body}" "http://127.0.0.1:${NETCI_API_PORT}/api/v1/ci/controllers/reload" > "${ROOT}/.netci-gate/jenkins/last-reload.json"; then
+      log "netCI reloaded the controllers: $(python3 -c "import json;d=json.load(open('${ROOT}/.netci-gate/jenkins/last-reload.json'));print(d['controllers'], 'drift' if d['drift']['drift'] else 'no drift')")"
+    else
+      log "netCI reload endpoint refused; reloading the controllers directly"; reload_casc
+    fi
+  else
+    reload_casc
+  fi
+  if [[ -n "${PREVIOUS_TOKEN_ANCHOR:-}" ]]; then
+    kubectl -n netci-build delete secret "${PREVIOUS_TOKEN_ANCHOR}" --ignore-not-found >/dev/null
+    log "revoked the previous token (anchor ${PREVIOUS_TOKEN_ANCHOR} deleted)"
+  fi
 }
 
 start_controller() {
@@ -197,11 +281,9 @@ start_controller() {
     -e CASC_JENKINS_CONFIG="$(casc_files "${letter}")" \
     -e JENKINS_CONTROLLER_ID="${name}" \
     -e JENKINS_ADMIN_PASSWORD="${ADMIN_PASSWORD}" \
-    -e NETCI_PIPELINE_API_KEY="${NETCI_PIPELINE_API_KEY}" \
-    -e NETCI_COSIGN_PRIVATE_KEY="${NETCI_COSIGN_PRIVATE_KEY}" \
+    -v "${SECRETS_DIR}:/run/secrets:ro" \
     -e KUBERNETES_API_URL="https://${CLUSTER}-control-plane:6443" \
     -e KUBERNETES_SERVER_CA="${KUBERNETES_SERVER_CA}" \
-    -e KUBERNETES_SERVICE_ACCOUNT_TOKEN="${KUBERNETES_SERVICE_ACCOUNT_TOKEN}" \
     -e KUBERNETES_CREDENTIALS_ID=netci-kind-token \
     -e JENKINS_AGENT_URL="http://${ip}:8080" \
     -e JENKINS_SHARED_LIBRARY_REMOTE="http://${GIT_SERVER_IP}/netci-shared-library.git" \
@@ -233,6 +315,7 @@ up() {
   start_git_server
   cosign_key
   kube_credentials
+  write_secrets
   for letter in a b; do
     start_controller "${letter}"
   done
@@ -247,6 +330,7 @@ recreate() {
   require_cluster
   cosign_key
   kube_credentials
+  write_secrets
   start_controller "${letter}"
   wait_for_controller "${CONTROLLER_IP[$letter]}" "jenkins-${letter}"
 }
@@ -302,34 +386,18 @@ publish() {
   # It cannot pick up a change to the controller *image* or to the environment the
   # container was started with -- use `recreate <a|b>` for those.
   start_git_server
-  for letter in a b; do
-    local ip="${CONTROLLER_IP[$letter]}"
-    # Authenticated: anonymous read is off, so an unauthenticated GET / answers 403 and
-    # would report a healthy controller as down.
-    curl -sf --max-time 5 -u "admin:${ADMIN_PASSWORD}" \
-      "http://${ip}:8080/api/json?tree=mode" >/dev/null 2>&1 \
-      || { log "jenkins-${letter} is not up; skipped"; continue; }
-    local jar="${ROOT}/.netci-gate/jenkins/cookies-${letter}"
-    local crumb
-    crumb="$(curl -sf -c "${jar}" -u "admin:${ADMIN_PASSWORD}" \
-      "http://${ip}:8080/crumbIssuer/api/json" | sed -n 's/.*"crumb":"\([^"]*\)".*/\1/p')"
-    if curl -sf -o /dev/null -b "${jar}" -u "admin:${ADMIN_PASSWORD}" \
-         -H "Jenkins-Crumb: ${crumb}" -X POST \
-         "http://${ip}:8080/configuration-as-code/reload"; then
-      log "jenkins-${letter} reloaded its JCasC"
-    else
-      log "jenkins-${letter} refused the JCasC reload; recreate it instead"
-    fi
-  done
+  reload_casc || true
   log "controllers re-clone the shared library on the next build"
 }
 
 case "${1:-up}" in
   up) up ;;
   publish) publish ;;
+  reload) reload_casc ;;
+  rotate-token) rotate_token ;;
   recreate) recreate "${2:-}" ;;
   status) status ;;
   down) down ;;
   gateway) kind_gateway ;;
-  *) echo "usage: scripts/jenkins_lab.sh {up|publish|recreate <a|b>|status|down|gateway}" >&2; exit 2 ;;
+  *) echo "usage: scripts/jenkins_lab.sh {up|publish|reload|rotate-token|recreate <a|b>|status|down|gateway}" >&2; exit 2 ;;
 esac

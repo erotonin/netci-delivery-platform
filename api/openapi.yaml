@@ -2513,6 +2513,43 @@ paths:
         '200': { description: Waiver revoked }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/ci/controllers/reload:
+    post:
+      operationId: reloadCiControllers
+      summary: Make every Jenkins controller re-read its git-managed JCasC, then compare them
+      description: >-
+        Called by the configuration repository's push webhook (HMAC-SHA256 over the body in
+        `X-Hub-Signature-256` or `X-NetCI-Signature`, secret `NETCI_CASC_WEBHOOK_SECRET`) or by
+        a platform admin. Configuration is rebuilt or reloaded from git, never edited in place
+        (ADR-033). The reload is audited (`ci.controllers.reloaded`) and followed by the
+        controller drift comparison; a controller that refused the reload is reported.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: true, description: the git host's push payload, opaque to netCI }
+      responses:
+        '200':
+          description: Per-controller reload outcome and the drift comparison
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  mode: { type: string }
+                  actor: { type: string }
+                  ok: { type: boolean }
+                  controllers:
+                    type: object
+                    additionalProperties:
+                      type: object
+                      properties:
+                        reloaded: { type: boolean }
+                        error: { type: string }
+                  drift: { type: object, additionalProperties: true }
+        '401': { description: No valid signature and no credential (`CASC_RELOAD_UNAUTHORIZED`) }
+        '403': { description: Authenticated but not a platform admin }
+        '501': { description: CI is not Jenkins (`CI_NOT_JENKINS`) }
   /api/v1/ci/controllers/drift:
     get:
       operationId: getCiControllerDrift

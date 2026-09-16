@@ -1,0 +1,10 @@
+[Unit]
+Description=Rotate the Jenkins Kubernetes token twice a day (24h tokens)
+
+[Timer]
+OnCalendar=*-*-* 01,13:00:00
+RandomizedDelaySec=10m
+Persistent=true
+
+[Install]
+WantedBy=timers.target

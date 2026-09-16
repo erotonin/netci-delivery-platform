@@ -234,3 +234,89 @@ def test_canary_weights_are_refused_when_no_router_can_apply_them(monkeypatch):
         traffic.build_traffic_router()
     monkeypatch.setenv("NETCI_ENVIRONMENT", "local")
     assert isinstance(traffic.build_traffic_router(), traffic.InMemoryTrafficRoutingAdapter)
+
+
+# --------------------------------------------------------- controller reload (ADR-033)
+
+
+class _ReloadableAdapter(_FingerprintAdapter):
+    def __init__(self, jcasc, plugins, jobs, *, refuse=False):
+        super().__init__(jcasc, plugins, jobs)
+        self.refuse = refuse
+        self.reloads = 0
+
+    def reload_configuration(self):
+        self.reloads += 1
+        if self.refuse:
+            raise OSError("500 configuration did not apply")
+
+
+def test_reload_reaches_every_controller_and_compares_them_afterwards():
+    a = _ReloadableAdapter("c1", "p1", [])
+    b = _ReloadableAdapter("c1", "p1", [])
+    outcome = _launcher({"jenkins-a": a, "jenkins-b": b}).reload_controllers()
+    assert (a.reloads, b.reloads) == (1, 1)
+    assert outcome["controllers"] == {"jenkins-a": {"reloaded": True}, "jenkins-b": {"reloaded": True}}
+    assert outcome["ok"] is True and outcome["drift"]["drift"] is False
+
+
+def test_a_controller_that_refuses_the_reload_is_reported_not_hidden():
+    a = _ReloadableAdapter("c1", "p1", [])
+    b = _ReloadableAdapter("c1", "p1", [], refuse=True)
+    outcome = _launcher({"jenkins-a": a, "jenkins-b": b}).reload_controllers()
+    assert outcome["controllers"]["jenkins-a"] == {"reloaded": True}
+    assert outcome["controllers"]["jenkins-b"]["reloaded"] is False
+    assert "configuration did not apply" in outcome["controllers"]["jenkins-b"]["error"]
+    assert outcome["ok"] is False
+
+
+def test_the_reload_webhook_needs_a_signature_or_an_admin(monkeypatch):
+    """Anyone on the network could otherwise make every controller re-read its
+    configuration at will. Without a configured secret no signature is valid."""
+
+    import hashlib
+    import hmac
+
+    from fastapi.testclient import TestClient
+
+    import app.main as main
+
+    from app.auth import AuthError, Principal
+    from app.policy.rules import Role
+
+    class StrictAuthenticator:
+        """Like production: no token is 401, a developer token is a developer."""
+
+        mode = "token"
+
+        def authenticate(self, authorization):
+            if not authorization:
+                raise AuthError("UNAUTHENTICATED", "a bearer token is required")
+            if authorization == "Bearer platform-admin-token":
+                return Principal(subject="pat", display_name="pat", email="", roles=frozenset({Role.PLATFORM_ADMIN}), method="token")
+            return Principal(subject="dana", display_name="dana", email="", roles=frozenset({Role.DEVELOPER}), method="token")
+
+    monkeypatch.setattr(main, "authenticator", StrictAuthenticator())
+    client = TestClient(main.app)
+    body = b'{"ref": "refs/heads/main", "repository": {"full_name": "platform/netci"}}'
+
+    monkeypatch.delenv("NETCI_CASC_WEBHOOK_SECRET", raising=False)
+    signed_with_nothing = client.post(
+        "/api/v1/ci/controllers/reload", content=body,
+        headers={"X-Hub-Signature-256": "sha256=" + hmac.new(b"", body, hashlib.sha256).hexdigest(), "Authorization": "Bearer developer-token"},
+    )
+    assert signed_with_nothing.status_code == 403, signed_with_nothing.text
+    assert signed_with_nothing.json()["code"] == "CASC_RELOAD_UNAUTHORIZED"
+
+    monkeypatch.setenv("NETCI_CASC_WEBHOOK_SECRET", "hook-secret")
+    wrong = client.post("/api/v1/ci/controllers/reload", content=body, headers={"X-Hub-Signature-256": "sha256=" + "0" * 64})
+    assert wrong.status_code == 401, wrong.text
+
+    good = "sha256=" + hmac.new(b"hook-secret", body, hashlib.sha256).hexdigest()
+    accepted = client.post("/api/v1/ci/controllers/reload", content=body, headers={"X-Hub-Signature-256": good})
+    # The test runtime has no Jenkins: the request is authenticated, then refused for that reason.
+    assert accepted.status_code == 501, accepted.text
+    assert accepted.json()["code"] == "CI_NOT_JENKINS"
+
+    as_admin = client.post("/api/v1/ci/controllers/reload", headers={"Authorization": "Bearer platform-admin-token"})
+    assert as_admin.status_code == 501

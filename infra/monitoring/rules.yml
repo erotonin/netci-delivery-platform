@@ -43,6 +43,13 @@ groups:
         annotations:
           summary: "fewer than two Jenkins controllers are healthy; builds route to the remainder"
 
+      - alert: NetciControllerDrift
+        expr: max(netci_ci_controllers_drift) == 1
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: "the Jenkins controllers do not run the same configuration (or one cannot be read): rebuild or reload from git"
+
       - alert: NetciAgentStale
         expr: max(netci_agents{state="stale"}) > 0
         for: 2m

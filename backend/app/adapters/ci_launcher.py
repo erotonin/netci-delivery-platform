@@ -146,6 +146,29 @@ class JenkinsCiLauncher:
             "differing": differing,
         }
 
+    def reload_controllers(self) -> dict[str, object]:
+        """Reload JCasC on every controller, then compare them (ADR-033).
+
+        The reload is what a push to the configuration repository (or a secret
+        rotation) triggers; the comparison afterwards is what says whether the
+        controllers still agree. A controller that refused the reload is reported,
+        not hidden -- it is now the one running the old configuration.
+        """
+
+        reloaded: dict[str, dict[str, object]] = {}
+        for controller in self.router.controllers:
+            adapter = self.adapters.get(controller.controller_id)
+            reload = getattr(adapter, "reload_configuration", None)
+            if reload is None:
+                continue
+            try:
+                reload()
+                reloaded[controller.controller_id] = {"reloaded": True}
+            except Exception as exc:  # noqa: BLE001 - reported per controller
+                reloaded[controller.controller_id] = {"reloaded": False, "error": f"{type(exc).__name__}: {exc}"[:300]}
+        drift = self.controller_drift()
+        return {"controllers": reloaded, "drift": drift, "ok": all(r["reloaded"] for r in reloaded.values()) and not drift["drift"]}
+
     def refresh_health(self) -> None:
         """Ask every adapter whether its controller answers, before routing."""
 

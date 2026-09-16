@@ -3,12 +3,14 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import hashlib
+import hmac
 import json
 import logging
 import os
 import re
 import subprocess
 import secrets
+import time
 
 logger = logging.getLogger("netci.main")
 from datetime import datetime, timezone
@@ -75,6 +77,7 @@ from .policy.rules import (
     require_team_access,
 )
 from .portal import PortalError, PortalService
+from .persistence import AuditRecord, UnitOfWork
 from .readiness import probe_readiness
 from .reconciler import Reconciler
 from .retention import RetentionManager
@@ -1428,6 +1431,37 @@ def healthz(response: Response) -> dict[str, object]:
     }
 
 
+_drift_observation: dict[str, object] = {"at": 0.0, "value": None}
+
+
+def _controller_drift_observation() -> dict[str, object] | None:
+    """The controllers' drift verdict, re-read at most once a minute per replica.
+
+    A JCasC export per controller costs about a second each; a scrape every 15 s must
+    not pay that. This is an observation cache for a metric, not durable state: every
+    replica publishes its own reading, and the alert rule takes the max.
+    """
+
+    probe = getattr(platform.ci_launcher, "controller_drift", None)
+    if probe is None:
+        return None
+    now = time.monotonic()
+    if _drift_observation["value"] is None or now - float(_drift_observation["at"]) > _drift_metric_interval_seconds():
+        try:
+            _drift_observation["value"] = probe()
+        except Exception as exc:  # noqa: BLE001 - a failed probe is itself the observation
+            _drift_observation["value"] = {"drift": True, "unreachable": {"probe": str(exc)[:200]}, "differing": []}
+        _drift_observation["at"] = now
+    return _drift_observation["value"]  # type: ignore[return-value]
+
+
+def _drift_metric_interval_seconds() -> float:
+    try:
+        return max(5.0, float(os.getenv("NETCI_DRIFT_METRIC_INTERVAL_SECONDS", "60")))
+    except ValueError:
+        return 60.0
+
+
 @app.get("/metrics", include_in_schema=False)
 def metrics_endpoint() -> PlainResponse:
     """Expose Prometheus formatted metrics."""
@@ -1444,6 +1478,10 @@ def metrics_endpoint() -> PlainResponse:
         metrics.gauge_set("netci_dependency_ready", {"dependency": dependency}, 1.0 if section.get("ready") else 0.0)
     metrics.gauge_set("netci_cd_pollers", {}, float((details.get("cd") or {}).get("pollers") or 0))
     metrics.gauge_set("netci_ci_controllers_healthy", {}, float((details.get("ci") or {}).get("healthyControllers") or 0))
+    drift = _controller_drift_observation()
+    if drift is not None:
+        metrics.gauge_set("netci_ci_controllers_drift", {}, 1.0 if drift.get("drift") else 0.0)
+        metrics.gauge_set("netci_ci_controllers_unreachable", {}, float(len(drift.get("unreachable") or {})))
     agents = fleet.connections()
     metrics.gauge_set("netci_agents", {"state": "connected"}, float(sum(1 for a in agents if not a["stale"])))
     metrics.gauge_set("netci_agents", {"state": "stale"}, float(sum(1 for a in agents if a["stale"])))
@@ -3189,6 +3227,56 @@ def ci_controller_drift(_: Principal = AdminAccess) -> dict[str, object]:
     if probe is None:
         return {"mode": getattr(platform.ci_launcher, "mode", "none"), "controllers": {}, "drift": False, "differing": [], "unreachable": {}}
     return {"mode": "jenkins", **probe()}
+
+
+def _casc_webhook_signature_ok(request: Request, body: bytes) -> bool:
+    """A git host's push webhook, authenticated by HMAC over the body.
+
+    GitHub's `X-Hub-Signature-256: sha256=<hex>` and a generic `X-NetCI-Signature` are
+    accepted. Without a configured secret no signature is valid: a reload is an
+    operator action, and an unauthenticated one would let anyone on the network make
+    every controller re-read its configuration at will.
+    """
+
+    secret = os.getenv("NETCI_CASC_WEBHOOK_SECRET", "").strip()
+    supplied = request.headers.get("x-hub-signature-256") or request.headers.get("x-netci-signature") or ""
+    if not secret or not supplied.startswith("sha256="):
+        return False
+    expected = hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
+    return secrets.compare_digest(supplied[len("sha256="):].strip().lower(), expected)
+
+
+@app.post("/api/v1/ci/controllers/reload")
+async def ci_controllers_reload(request: Request) -> dict[str, object]:
+    """Make every Jenkins controller re-read its git-managed JCasC, then compare them.
+
+    Called by the configuration repository's push webhook (HMAC) or by a platform
+    admin (bearer). Jenkins configuration is rebuilt or reloaded from git, never edited
+    in place (ADR-033); this is the reload half.
+    """
+
+    body = await request.body()
+    actor: str
+    if _casc_webhook_signature_ok(request, body):
+        actor = "webhook:casc"
+    else:
+        principal = current_principal(request, request.headers.get("authorization"))
+        if not principal.has_any(Role.PLATFORM_ADMIN):
+            raise HTTPException(
+                status_code=401 if principal.is_anonymous else 403,
+                detail={"code": "CASC_RELOAD_UNAUTHORIZED", "message": "a valid webhook signature or a platform-admin token is required"},
+            )
+        actor = principal.subject
+    reload = getattr(platform.ci_launcher, "reload_controllers", None)
+    if reload is None:
+        raise HTTPException(status_code=501, detail={"code": "CI_NOT_JENKINS", "message": "no Jenkins controllers are configured"})
+    outcome = await asyncio.to_thread(reload)
+    with database.transaction() as session:
+        session.apply(UnitOfWork(audit=[AuditRecord(
+            "ci.controllers.reloaded", actor=actor,
+            payload={"controllers": outcome["controllers"], "drift": outcome["drift"]["drift"], "differing": outcome["drift"]["differing"]},
+        )]))
+    return {"mode": "jenkins", "actor": actor, **outcome}
 
 
 @app.post("/reconciler/reconcile", status_code=status.HTTP_200_OK)

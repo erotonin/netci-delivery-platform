@@ -1,0 +1,15 @@
+# Rotate the Jenkins controllers' Kubernetes credential (ADR-033): mint a fresh 24h
+# service-account token bound to a new anchor Secret, write it to the controllers'
+# /run/secrets, reload JCasC through netCI (audited, drift-checked), then delete the
+# previous anchor so the previous token is refused within seconds.
+# Environment (/etc/netci/jenkins-rotate.env, 0600): KUBECONFIG, JENKINS_ADMIN_PASSWORD,
+# NETCI_CASC_WEBHOOK_SECRET, NETCI_API_PORT.
+[Unit]
+Description=netCI Jenkins service-account token rotation
+After=network-online.target docker.service
+
+[Service]
+Type=oneshot
+EnvironmentFile=/etc/netci/jenkins-rotate.env
+WorkingDirectory=/opt/netci
+ExecStart=/opt/netci/scripts/jenkins_lab.sh rotate-token
