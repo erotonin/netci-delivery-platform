@@ -250,6 +250,14 @@ stayed `queued` (now reconciled on a schedule).
 | Edge agents now run **on the host** (`netci-agent@netci-prod-01/02`, systemd, DynamicUser + docker group) and report the host's own figures. The daemon no longer invents 25/15/35 % on a failed reading; the server records nothing for an unknown one. `docker ps` through `execute` via the LB: requested on `api-a`, claimed by `api-b`, exit 0 | same |
 | The pre-flight gate then **refused** a prod release (`resource_exhausted`: disk 92.3 % > 90 %) — the lab disk is genuinely that full. Recreatable caches were cleared (89.8 %) and `hello-systemd-go` prod re-released healthy. | same; the 48 GB of reclaimable Docker volumes on this host are OpenStack data, not netCI's, and were not touched |
 
+## 4m. 2026-09-16 (night): real blue/green
+
+| Proof | Result |
+|---|---|
+| First blue/green after a rolling stable: `green` release installed with no Ingress; **0 %** of 200 requests reached it until the worker reported healthy; then the stable Ingress was patched to green: **200/200** new digest; switch-back refused (no `blue` release yet) | `evidence/bluegreen-nginx-1.json` |
+| Second blue/green: `blue` installed, switched on healthy (200/200); `POST …/traffic/switch {blue→green}` → **200/200 old digest** in one call; forward again → 200/200 | `evidence/bluegreen-nginx-2.json`, ADR-035 |
+| Rolling restart of both API replicas through the balancer while requests flowed: **353/353** ok | `scripts/lab/lb.sh` |
+
 ## 4c. Host reboot (2026-09-16 08:06 UTC)
 
 The lab host rebooted overnight. Every container without a restart policy stopped
@@ -268,7 +276,7 @@ not prove: recovery on a fresh machine (see §6).
 
 | Suite | Command | Result |
 |---|---|---|
-| Backend + contract (PostgreSQL-backed) | `NETCI_TEST_DATABASE_URL=…/netci .venv/bin/python -m pytest backend/tests tests/contract -o addopts="" -q` (run in two halves; see CLAUDE.md) | 629 passed, 4 skipped (opt-in Temporal tests, run separately below) + 41 passed |
+| Backend + contract (PostgreSQL-backed) | `NETCI_TEST_DATABASE_URL=…/netci .venv/bin/python -m pytest backend/tests tests/contract -o addopts="" -q` (run in two halves; see CLAUDE.md) | 634 passed, 4 skipped (opt-in Temporal tests, run separately below) + 41 passed |
 | Temporal workflow tests against the time-skipping test server | `NETCI_RUN_TEMPORAL_TEST=1 .venv/bin/python -m pytest backend/tests/test_temporal_workflow.py` | 4 passed |
 | Frontend | `cd frontend && npm test && npm run build` | 29 passed, build OK; Playwright OIDC spec 2 passed against the lab |
 | Static | `pyflakes backend/app/`, `scripts/migrate.py --check-schema` | clean; schema matches 23 migrations |
@@ -287,7 +295,7 @@ Say these plainly rather than let the table above imply them.
 | The Portal's static files are still served by one Vite/preview process; the API is balanced, the UI is not. | Infra: serve the build from the balancer or a CDN. |
 | `production_readiness_audit.py` is a code self-check; its verdict is now `SELF_CHECK_PASSED` / `SELF_CHECK_FAILED`, never "certified". | Done. |
 | The per-build pod's remaining cost, on a workload the compiler cache does not dominate, is provisioning + the mirror checkout + cleanup (≈ +17 s on the 5-second container build, §4f). The Go workload shows the cache recovers the build; nothing recovers the pod. | Platform: measured, accepted (ADR-030). |
-| Canary is Kubernetes + ingress-nginx only; blue/green has no router (`switch_route` → 501). | Platform. |
+| Canary and blue/green are Kubernetes + ingress-nginx only. Retiring an idle colour is a manual `helm uninstall`. | Platform. |
 | A ReadWriteOnce cache claim serialises a project's concurrent builds on one node; multi-node needs RWX or a registry layer cache. | Infra. |
 
 ---

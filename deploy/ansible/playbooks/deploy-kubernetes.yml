@@ -21,10 +21,15 @@
     # ingress carrying `canary_weight`; stable is untouched. `promote` moves stable to the
     # digest and removes the canary release. A rollback of a canary removes the canary
     # release; stable never changed.
+    # `blue` / `green` (ADR-035) install `<release>-<colour>` beside stable with no
+    # Ingress of their own; netCI's router switches the stable Ingress between them.
     netci_release_track: "{{ release_track | default('stable') }}"
     netci_canary_weight: "{{ canary_weight | default(0) }}"
     netci_canary_release: "{{ netci_release_name }}-canary"
-    netci_helm_release: "{{ netci_canary_release if netci_release_track == 'canary' else netci_release_name }}"
+    netci_helm_release: >-
+      {{ netci_canary_release if netci_release_track == 'canary'
+         else (netci_release_name ~ '-' ~ netci_release_track if netci_release_track in ['blue', 'green']
+         else netci_release_name) }}
     netci_workload_name: "{{ netci_helm_release }}-sample-kubernetes-app"
     netci_remove_canary: "{{ netci_release_track == 'promote' or (netci_release_track == 'canary' and netci_action | default('deploy') == 'rollback') }}"
     # One expression that yields a dict: a value templated field by field arrives at
@@ -33,7 +38,8 @@
       {{ {
         'environment': netci_target_namespace,
         'image': {'repository': netci_image_repository, 'digest': netci_artifact_digest},
-        'netci': {'releaseName': netci_release_name, 'applicationId': application_id | default('')},
+        'netci': {'releaseName': netci_release_name, 'applicationId': application_id | default(''),
+                  'track': (netci_release_track if netci_release_track in ['canary', 'blue', 'green'] else 'stable')},
         'canary': {
           'enabled': netci_release_track == 'canary',
           'weight': (netci_canary_weight | int) if netci_release_track == 'canary' else 0,
@@ -49,7 +55,7 @@
           - netci_image_repository is not search('@')
           - netci_image_repository is not search(':[Ll][Aa][Tt][Ee][Ss][Tt]$')
           - netci_target_namespace in ['dev', 'staging', 'prod']
-          - netci_release_track in ['stable', 'canary', 'promote']
+          - netci_release_track in ['stable', 'canary', 'promote', 'blue', 'green']
           - netci_canary_weight | int >= 0 and netci_canary_weight | int <= 100
         fail_msg: >-
           Kubernetes deployment requires a verified non-zero sha256 digest,

@@ -112,7 +112,12 @@ class ReleasePlanCoordinator:
                     **deployment_parameters, "release_track": "canary", "canary_weight": int(traffic_weight),
                 }
             elif strategy == "blue_green":
-                active_color = "green"
+                # The colour that is *not* serving gets the new release (ADR-035); the
+                # switch happens when it is healthy, not here.
+                application_id = str(self.portal.module(module_id).get("applicationId") or "")
+                serving = str(self.traffic_router.get_routing_status(application_id, "prod").get("activeColor") or "")
+                active_color = "blue" if serving == "green" else "green"
+                deployment_parameters = {**deployment_parameters, "release_track": active_color}
 
         deployment = self.platform.create_production_promotion(
             pipeline_run_id,
@@ -150,9 +155,6 @@ class ReleasePlanCoordinator:
                 comment=f"deploying module {module_id}",
                 deployment_id=deployment.id,
             )
-
-        if strategy == "blue_green":
-            self.traffic_router.switch_route(str(deployment.application_id), "prod", "green")
 
         try:
             self.platform.approve_deployment(deployment.id, actor)
@@ -214,9 +216,24 @@ class ReleasePlanCoordinator:
 
         if (request.strategy or "rolling") == "canary":
             self._confirm_canary_weight(deployment_id)
+        elif (request.strategy or "rolling") == "blue_green":
+            self._switch_to_healthy_color(deployment_id)
 
         # Check wave completion
         self._check_and_advance_waves(request_id)
+
+    def _switch_to_healthy_color(self, deployment_id: UUID) -> None:
+        """The colour is healthy: point the stable ingress at it (ADR-035).
+
+        A switch to a colour that is not ready is refused by the router, and the
+        deployment stays healthy-but-not-serving rather than serving nothing.
+        """
+
+        with self.portal._session() as transaction:
+            deployment = transaction.deployment(deployment_id)
+        if deployment is None or deployment.strategy != "blue_green" or not deployment.active_color:
+            return
+        self.traffic_router.switch_route(str(deployment.application_id), "prod", deployment.active_color)
 
     def _confirm_canary_weight(self, deployment_id: UUID) -> None:
         """The canary release is healthy: the router applies (and reads back) its weight.

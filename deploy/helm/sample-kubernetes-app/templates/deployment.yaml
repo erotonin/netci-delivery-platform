@@ -6,7 +6,11 @@ metadata:
     app.kubernetes.io/name: {{ include "sample-kubernetes-app.name" . }}
     app.kubernetes.io/instance: {{ .Release.Name }}
     netci/environment: {{ .Values.environment | quote }}
-    netci.io/track: {{ ternary "canary" "stable" .Values.canary.enabled | quote }}
+    netci.io/track: {{ include "sample-kubernetes-app.track" . | quote }}
+    netci.io/environment: {{ .Values.environment | quote }}
+    {{- if .Values.netci.applicationId }}
+    netci.io/application: {{ .Values.netci.applicationId | quote }}
+    {{- end }}
 spec:
   replicas: {{ .Values.replicaCount }}
   selector:
@@ -41,7 +45,7 @@ spec:
             - name: APP_VERSION
               value: {{ .Values.image.digest | quote }}
             - name: NETCI_TRACK
-              value: {{ ternary "canary" "stable" .Values.canary.enabled | quote }}
+              value: {{ include "sample-kubernetes-app.track" . | quote }}
             - name: PYTHONDONTWRITEBYTECODE
               value: "1"
           resources: {{- toYaml .Values.resources | nindent 12 }}

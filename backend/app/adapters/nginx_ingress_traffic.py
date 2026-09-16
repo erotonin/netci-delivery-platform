@@ -20,7 +20,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from ..traffic import TrafficRoutingAdapter, TrafficRoutingUnavailable
+from ..traffic import TrafficRoutingAdapter
 
 logger = logging.getLogger(__name__)
 
@@ -66,13 +66,46 @@ class NginxIngressTrafficRouter(TrafficRoutingAdapter):
         return status
 
     def switch_route(self, application_id, environment, active_color):
-        # A blue/green switch changes which Service the stable Ingress points at, which
-        # is a change to the stable release, not to a canary annotation. This router
-        # does not do it and says so rather than reporting a colour it did not switch.
-        raise TrafficRoutingUnavailable(
-            "NETCI_TRAFFIC_ROUTER=nginx-ingress steers canary weight and rules; blue/green "
-            "switching is not implemented by it"
-        )
+        """Point the stable Ingress at the colour's Service (ADR-035).
+
+        The colour is a release beside stable (`<release>-blue|green`) with a Service and
+        no Ingress. Switching is one patch of the stable Ingress's backend service name;
+        it is refused when the colour's Service has no ready endpoints, because a switch
+        to nothing is an outage with a green status.
+        """
+
+        color = str(active_color).lower()
+        if color not in ("blue", "green"):
+            raise ValueError(f"invalid route colour {active_color!r}: blue or green")
+        ingress = self._stable_ingress(application_id, environment)
+        namespace = ingress["metadata"]["namespace"]
+        service = self._tracked_service(application_id, environment, color, namespace)
+        ready = self._ready_addresses(namespace, service["metadata"]["name"])
+        if not ready:
+            raise RuntimeError(
+                f"colour {color} has no ready endpoints behind {namespace}/{service['metadata']['name']}; not switching"
+            )
+        name = service["metadata"]["name"]
+        patched_rules = []
+        for rule in (ingress.get("spec") or {}).get("rules") or []:
+            paths = []
+            for path in ((rule.get("http") or {}).get("paths") or []):
+                backend = dict(path.get("backend") or {})
+                svc = dict(backend.get("service") or {})
+                svc["name"] = name
+                backend["service"] = svc
+                paths.append({**path, "backend": backend})
+            patched_rules.append({**rule, "http": {**(rule.get("http") or {}), "paths": paths}})
+        patch = json.dumps({"spec": {"rules": patched_rules}})
+        metadata = ingress["metadata"]
+        result = self._kubectl(["patch", "ingress", metadata["name"], "-n", namespace, "--type", "merge", "-p", patch])
+        if result.returncode != 0:
+            raise RuntimeError(f"cannot switch ingress {namespace}/{metadata['name']}: {(result.stderr or result.stdout).strip()[-300:]}")
+        status = self.get_routing_status(application_id, environment)
+        if status.get("activeColor") != color:
+            raise RuntimeError(f"ingress reports {status.get('activeColor')} after switching to {color}")
+        logger.info("ingress-nginx blue/green %s:%s -> %s (%s, %d ready)", application_id, environment, color, name, len(ready))
+        return status
 
     def set_canary_rules(self, application_id, environment, rules):
         header = str(rules.get("header_name") or rules.get("headerName") or "").strip()
@@ -103,7 +136,7 @@ class NginxIngressTrafficRouter(TrafficRoutingAdapter):
             "applicationId": str(application_id),
             "environment": str(environment),
             "router": self.mode,
-            "activeColor": "blue",
+            "activeColor": self._active_color(application_id, environment),
             "updatedAt": datetime.now(timezone.utc).isoformat(),
         }
         try:
@@ -142,6 +175,64 @@ class NginxIngressTrafficRouter(TrafficRoutingAdapter):
         }
 
     # ------------------------------------------------------------------ kubectl
+
+    def _active_color(self, application_id: str, environment: str) -> str:
+        """Which colour the stable Ingress sends to: `blue`/`green`, `stable` when it is
+        the stable release's own Service, `unknown` when there is no stable ingress."""
+
+        try:
+            ingress = self._stable_ingress(application_id, environment)
+        except (RuntimeError, ValueError):
+            return "unknown"
+        names = {
+            (path.get("backend") or {}).get("service", {}).get("name")
+            for rule in (ingress.get("spec") or {}).get("rules") or []
+            for path in ((rule.get("http") or {}).get("paths") or [])
+        }
+        names.discard(None)
+        if len(names) != 1:
+            return "unknown"
+        name = names.pop()
+        namespace = ingress["metadata"]["namespace"]
+        result = self._kubectl(["get", "service", name, "-n", namespace, "-o", "json"])
+        if result.returncode != 0:
+            return "unknown"
+        return str(((json.loads(result.stdout or "{}").get("metadata") or {}).get("labels") or {}).get(TRACK_LABEL) or "unknown")
+
+    def _stable_ingress(self, application_id: str, environment: str) -> dict[str, Any]:
+        for value in (str(application_id), str(environment)):
+            if not _LABEL_VALUE.fullmatch(value):
+                raise ValueError(f"not a label value: {value!r}")
+        selector = f"{APPLICATION_LABEL}={application_id},{ENVIRONMENT_LABEL}={environment},{TRACK_LABEL}=stable"
+        result = self._kubectl(["get", "ingress", "--all-namespaces", "-l", selector, "-o", "json"])
+        if result.returncode != 0:
+            raise RuntimeError(f"cannot list stable ingresses: {(result.stderr or result.stdout).strip()[-300:]}")
+        items = json.loads(result.stdout or "{}").get("items") or []
+        if len(items) != 1:
+            raise RuntimeError(f"expected one stable ingress for application {application_id} in {environment}, found {len(items)}")
+        return items[0]
+
+    def _tracked_service(self, application_id: str, environment: str, track: str, namespace: str) -> dict[str, Any]:
+        selector = f"{APPLICATION_LABEL}={application_id},{ENVIRONMENT_LABEL}={environment},{TRACK_LABEL}={track}"
+        result = self._kubectl(["get", "service", "-n", namespace, "-l", selector, "-o", "json"])
+        if result.returncode != 0:
+            raise RuntimeError(f"cannot list services: {(result.stderr or result.stdout).strip()[-300:]}")
+        items = json.loads(result.stdout or "{}").get("items") or []
+        if len(items) != 1:
+            raise RuntimeError(
+                f"colour {track} of application {application_id} in {environment}: expected one Service in {namespace}, found {len(items)} "
+                "(deploy the colour first)"
+            )
+        return items[0]
+
+    def _ready_addresses(self, namespace: str, service: str) -> list[str]:
+        result = self._kubectl(["get", "endpoints", service, "-n", namespace, "-o", "json"])
+        if result.returncode != 0:
+            return []
+        addresses: list[str] = []
+        for subset in json.loads(result.stdout or "{}").get("subsets") or []:
+            addresses.extend(a.get("ip", "") for a in subset.get("addresses") or [])
+        return [a for a in addresses if a]
 
     def _canary_ingress(self, application_id: str, environment: str) -> dict[str, Any]:
         for value in (str(application_id), str(environment)):

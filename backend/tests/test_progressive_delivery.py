@@ -305,16 +305,30 @@ def test_blue_green_delivery_flow(client, auth_headers, dev_headers, reviewer_he
     assert req_res.status_code == 201, req_res.text
     req_id = req_res.json()["id"]
 
-    # Approve -> dispatches green deployment
+    # Approve -> dispatches the release into the colour that is not serving (blue is,
+    # so green), with the track as a server-decided parameter; nothing is switched yet.
     appr_res = client.post(f"/production-requests/{req_id}/approve", headers=reviewer_headers, json={"comment": "approve blue green"})
     assert appr_res.status_code == 202, appr_res.text
     dep_id = appr_res.json()["modules"][0]["deploymentId"]
 
-    # Verify active color is green
     traffic_res = client.get(f"/deployments/{dep_id}/traffic", headers=auth_headers)
     assert traffic_res.status_code == 200, traffic_res.text
     assert traffic_res.json()["activeColor"] == "green"
-    assert traffic_res.json()["routerStatus"]["activeColor"] == "green"
+    assert traffic_res.json()["routerStatus"]["activeColor"] == "blue"
+    from backend.app.main import platform, portal
+    dep = platform.get_deployment(UUID(dep_id))
+    assert platform.get_pipeline(dep.pipeline_run_id).parameters["release_track"] == "green"
+
+    # Healthy -> the stable ingress is switched to green.
+    platform.record_deployment_result(UUID(dep_id), "healthy", "green up", fencing_token=dep.fencing_token)
+    portal.record_production_deployment_result(UUID(dep_id), "healthy", "green up")
+    assert client.get(f"/deployments/{dep_id}/traffic", headers=auth_headers).json()["routerStatus"]["activeColor"] == "green"
+
+    # Switch-back is one call, recorded on the deployment; only blue/green deployments have colours.
+    back = client.post(f"/deployments/{dep_id}/traffic/switch", headers=reviewer_headers, json={"activeColor": "blue"})
+    assert back.status_code == 200, back.text
+    assert back.json()["previousColor"] == "green" and back.json()["routerStatus"]["activeColor"] == "blue"
+    assert client.get(f"/deployments/{dep_id}/traffic", headers=auth_headers).json()["activeColor"] == "blue"
 
 
 def test_canary_is_refused_for_a_runtime_without_a_traffic_router(client, auth_headers, dev_headers, reviewer_headers):
@@ -345,3 +359,15 @@ def test_canary_is_refused_for_a_runtime_without_a_traffic_router(client, auth_h
     assert "kubernetes runtime" in approve.text
     from backend.app.main import portal
     assert portal.production_request(req_id)["status"] != "succeeded"
+
+
+def test_colour_switch_is_refused_for_a_deployment_without_colours(client, auth_headers, dev_headers, reviewer_headers):
+    sys_res = client.post("/systems", headers=auth_headers, json={"id": f"sys-{uuid4().hex[:8]}", "unit": "Search", "description": "no colours"})
+    mod_id, _, _ = _setup_verified_module(client, auth_headers, sys_res.json()["id"], "search-rolling", "v2.3.0")
+    req_id = client.post("/production-requests", headers=dev_headers, json={
+        "modules": [{"moduleId": mod_id, "version": "v2.3.0"}], "scheduledFor": datetime.now(timezone.utc).isoformat(),
+        "rollbackStrategy": "automatic", "runAutomationTests": True, "strategy": "rolling",
+    }).json()["id"]
+    dep_id = client.post(f"/production-requests/{req_id}/approve", headers=reviewer_headers, json={"comment": "go"}).json()["modules"][0]["deploymentId"]
+    refused = client.post(f"/deployments/{dep_id}/traffic/switch", headers=reviewer_headers, json={"activeColor": "green"})
+    assert refused.status_code == 409 and refused.json()["code"] == "NOT_BLUE_GREEN"

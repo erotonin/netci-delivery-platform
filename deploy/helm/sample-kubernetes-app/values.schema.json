@@ -38,7 +38,8 @@
       "additionalProperties": false,
       "properties": {
         "releaseName": {"type": "string", "pattern": "^$|^[a-z0-9]([a-z0-9-]*[a-z0-9])?$"},
-        "applicationId": {"type": "string", "pattern": "^$|^[0-9a-f-]{36}$"}
+        "applicationId": {"type": "string", "pattern": "^$|^[0-9a-f-]{36}$"},
+        "track": {"type": "string", "enum": ["", "stable", "canary", "blue", "green"]}
       }
     },
     "canary": {

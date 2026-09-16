@@ -2422,6 +2422,42 @@ def get_deployment_traffic(deploymentId: UUID, principal: Principal = ReadAccess
     }
 
 
+class TrafficSwitchRequest(StrictBody):
+    activeColor: Literal["blue", "green"]
+
+
+@app.post("/deployments/{deploymentId}/traffic/switch")
+def switch_deployment_traffic(
+    deploymentId: UUID, payload: TrafficSwitchRequest, principal: Principal = ReviewerAccess
+) -> dict[str, object]:
+    """Point the stable ingress at a colour (ADR-035): the blue/green switch-back.
+
+    Both colours keep running after a blue/green release, so going back is one patch,
+    not a redeploy. The router refuses a colour with no ready endpoints. Recorded on the
+    deployment (`activeColor`) and in the audit log.
+    """
+
+    deployment = platform.get_deployment(deploymentId)
+    if deployment is None:
+        raise HTTPException(status_code=404, detail={"code": "DEPLOYMENT_NOT_FOUND", "message": "deployment not found"})
+    _require_application_access(platform.get_application(deployment.application_id), principal)
+    if deployment.strategy != "blue_green":
+        raise HTTPException(status_code=409, detail={"code": "NOT_BLUE_GREEN", "message": f"deployment strategy is {deployment.strategy}; only blue/green deployments switch colours"})
+    try:
+        status_info = default_traffic_router.switch_route(str(deployment.application_id), deployment.environment.value, payload.activeColor)
+    except TrafficRoutingUnavailable:
+        raise
+    except (RuntimeError, ValueError) as exc:
+        raise HTTPException(status_code=409, detail={"code": "TRAFFIC_SWITCH_REFUSED", "message": str(exc)}) from exc
+    with database.transaction() as session:
+        session.update_deployment_traffic(deploymentId, traffic_weight=deployment.traffic_weight, active_color=payload.activeColor)
+        session.apply(UnitOfWork(audit=[AuditRecord(
+            "deployment.traffic_switched", application_id=deployment.application_id, deployment_id=deploymentId,
+            actor=principal.subject, payload={"activeColor": payload.activeColor, "previous": deployment.active_color, "routerStatus": status_info},
+        )]))
+    return {"deploymentId": str(deploymentId), "activeColor": payload.activeColor, "previousColor": deployment.active_color, "routerStatus": status_info}
+
+
 @app.post("/production-requests/{requestId}/approve", status_code=status.HTTP_202_ACCEPTED)
 def approve_production_request(
     requestId: str, payload: PortalApprovalRequest, principal: Principal = ReviewerAccess

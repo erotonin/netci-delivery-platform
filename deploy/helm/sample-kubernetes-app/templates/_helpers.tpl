@@ -9,3 +9,8 @@
 {{- printf "%s-%s" .Release.Name (include "sample-kubernetes-app.name" .) | trunc 63 | trimSuffix "-" }}
 {{- end }}
 {{- end }}
+
+{{/* The release's track: an explicit netci.track, else canary/stable from the canary flag. */}}
+{{- define "sample-kubernetes-app.track" -}}
+{{- if .Values.netci.track }}{{ .Values.netci.track }}{{ else if .Values.canary.enabled }}canary{{ else }}stable{{ end -}}
+{{- end }}

@@ -5,6 +5,11 @@ metadata:
   labels:
     app.kubernetes.io/name: {{ include "sample-kubernetes-app.name" . }}
     app.kubernetes.io/instance: {{ .Release.Name }}
+    netci.io/track: {{ include "sample-kubernetes-app.track" . | quote }}
+    netci.io/environment: {{ .Values.environment | quote }}
+    {{- if .Values.netci.applicationId }}
+    netci.io/application: {{ .Values.netci.applicationId | quote }}
+    {{- end }}
 spec:
   type: {{ .Values.service.type }}
   selector:

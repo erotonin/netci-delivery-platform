@@ -1,4 +1,5 @@
-{{- if or .Values.ingress.enabled (and .Values.traits (and .Values.traits.autoTlsIngress .Values.traits.autoTlsIngress.enabled)) -}}
+{{- $track := include "sample-kubernetes-app.track" . -}}
+{{- if and (or (eq $track "stable") (eq $track "canary")) (or .Values.ingress.enabled (and .Values.traits (and .Values.traits.autoTlsIngress .Values.traits.autoTlsIngress.enabled))) -}}
 {{- $stable := .Values.netci.releaseName | default .Release.Name -}}
 {{- $host := .Values.ingress.host | default .Values.traits.autoTlsIngress.host | default (printf "%s.%s.netci.local" $stable .Values.environment) -}}
 {{- $secretName := .Values.traits.autoTlsIngress.tlsSecretName | default (printf "%s-tls" (include "sample-kubernetes-app.fullname" .)) -}}
@@ -11,14 +12,14 @@ metadata:
     app.kubernetes.io/instance: {{ .Release.Name }}
     netci.io/trait: auto-tls-ingress
     netci.io/environment: {{ .Values.environment | quote }}
-    netci.io/track: {{ ternary "canary" "stable" .Values.canary.enabled | quote }}
+    netci.io/track: {{ $track | quote }}
     {{- if .Values.netci.applicationId }}
     netci.io/application: {{ .Values.netci.applicationId | quote }}
     {{- end }}
   annotations:
     cert-manager.io/cluster-issuer: {{ .Values.traits.autoTlsIngress.clusterIssuer | default "selfsigned-issuer" | quote }}
     nginx.ingress.kubernetes.io/ssl-redirect: "true"
-    {{- if .Values.canary.enabled }}
+    {{- if eq $track "canary" }}
     nginx.ingress.kubernetes.io/canary: "true"
     nginx.ingress.kubernetes.io/canary-weight: {{ .Values.canary.weight | int | quote }}
     {{- if .Values.canary.header }}

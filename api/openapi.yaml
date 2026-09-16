@@ -1381,6 +1381,44 @@ paths:
           $ref: '#/components/responses/NotFound'
         '422':
           $ref: '#/components/responses/UnprocessableEntity'
+  /deployments/{deploymentId}/traffic/switch:
+    post:
+      operationId: switchDeploymentTraffic
+      summary: Point the stable ingress at a colour (blue/green switch-back or forward)
+      description: >-
+        Both colours keep running after a blue/green release (ADR-035), so going back is one
+        patch of the stable Ingress, not a redeploy. Reviewer or above. The router refuses a
+        colour with no ready endpoints (409 `TRAFFIC_SWITCH_REFUSED`); a deployment that is not
+        blue/green has no colours (409 `NOT_BLUE_GREEN`); no router configured -> 501.
+      parameters:
+        - $ref: '#/components/parameters/DeploymentId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [activeColor]
+              properties:
+                activeColor: { type: string, enum: [blue, green] }
+      responses:
+        '200':
+          description: Switched; the deployment's activeColor and the router's observation
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  deploymentId: { type: string, format: uuid }
+                  activeColor: { type: string }
+                  previousColor: { type: string, nullable: true }
+                  routerStatus: { type: object, additionalProperties: true }
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '501':
+          description: No traffic router is configured (NETCI_TRAFFIC_ROUTER)
   /reconciler/reconcile:
     post:
       operationId: triggerReconciliation

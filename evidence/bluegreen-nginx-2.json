@@ -1,0 +1,106 @@
+{
+  "schemaVersion": "1.0",
+  "startedAt": "2026-09-16T11:55:48.739596+00:00",
+  "module": "hello-kubernetes",
+  "samplesPerStep": 200,
+  "observations": [
+    {
+      "label": "while the colour deploys (nothing switched yet)",
+      "expectedPercent": 0,
+      "observedPercent": 0.0,
+      "answersByDigest": {
+        "sha256:e5fc87874cc1c5342254dcc9cef82b865a367e7f8dd63f190426bbee481aed7a": 200
+      },
+      "errors": 0,
+      "matched": true
+    },
+    {
+      "label": "healthy -> ingress switched to blue",
+      "expectedPercent": 100,
+      "observedPercent": 100.0,
+      "answersByDigest": {
+        "sha256:e8bedb337484346a0180df02418dec4f5c6f2e20f18470d6122bb9ad19231d6d": 200
+      },
+      "errors": 0,
+      "matched": true,
+      "routerStatus": {
+        "applicationId": "b30ed723-50ea-4210-b045-78576e2eeb89",
+        "environment": "prod",
+        "router": "nginx-ingress",
+        "activeColor": "blue",
+        "updatedAt": "2026-09-16T11:56:04.689542+00:00",
+        "canaryWeight": 0,
+        "baselineWeight": 100,
+        "canaryRules": {},
+        "canaryRelease": "absent"
+      }
+    },
+    {
+      "label": "switched back to green",
+      "expectedPercent": 100,
+      "observedPercent": 100.0,
+      "answersByDigest": {
+        "sha256:e5fc87874cc1c5342254dcc9cef82b865a367e7f8dd63f190426bbee481aed7a": 200
+      },
+      "errors": 0,
+      "matched": true,
+      "routerStatus": {
+        "applicationId": "b30ed723-50ea-4210-b045-78576e2eeb89",
+        "environment": "prod",
+        "router": "nginx-ingress",
+        "activeColor": "green",
+        "updatedAt": "2026-09-16T11:56:05.922298+00:00",
+        "canaryWeight": 0,
+        "baselineWeight": 100,
+        "canaryRules": {},
+        "canaryRelease": "absent"
+      }
+    },
+    {
+      "label": "switched forward to blue again",
+      "expectedPercent": 100,
+      "observedPercent": 100.0,
+      "answersByDigest": {
+        "sha256:e8bedb337484346a0180df02418dec4f5c6f2e20f18470d6122bb9ad19231d6d": 200
+      },
+      "errors": 0,
+      "matched": true,
+      "switch": 200
+    }
+  ],
+  "applicationId": "b30ed723-50ea-4210-b045-78576e2eeb89",
+  "servingBefore": "sha256:e5fc87874cc1c5342254dcc9cef82b865a367e7f8dd63f190426bbee481aed7a",
+  "newDigest": "sha256:e8bedb337484346a0180df02418dec4f5c6f2e20f18470d6122bb9ad19231d6d",
+  "host": "hello-kubernetes.prod.netci.local",
+  "productionRequestId": "8dbf6410-dcbf-48ff-86b8-b9046e51ede8",
+  "deploymentId": "0899c5d0-e2d7-40bb-a5a1-e5846894ac7a",
+  "colour": "blue",
+  "servingColourBefore": "green",
+  "switchBack": {
+    "status": 200,
+    "body": {
+      "deploymentId": "0899c5d0-e2d7-40bb-a5a1-e5846894ac7a",
+      "activeColor": "green",
+      "previousColor": "blue",
+      "routerStatus": {
+        "applicationId": "b30ed723-50ea-4210-b045-78576e2eeb89",
+        "environment": "prod",
+        "router": "nginx-ingress",
+        "activeColor": "green",
+        "updatedAt": "2026-09-16T11:56:05.922298+00:00",
+        "canaryWeight": 0,
+        "baselineWeight": 100,
+        "canaryRules": {},
+        "canaryRelease": "absent"
+      }
+    }
+  },
+  "helmReleases": [
+    "hello-kubernetes",
+    "hello-kubernetes-blue",
+    "hello-kubernetes-green"
+  ],
+  "finishedAt": "2026-09-16T11:56:14.094285+00:00",
+  "result": "passed",
+  "failures": []
+}

@@ -26,6 +26,9 @@ ingress:
 netci:
   releaseName: ""
   applicationId: ""
+  # stable | canary | blue | green (ADR-031/035). Only stable and canary render an
+  # Ingress: a colour is a Deployment+Service the stable Ingress is switched to.
+  track: ""
 
 # Progressive delivery (ADR-031). When enabled the ingress is an ingress-nginx canary
 # for the stable release's host: `weight` percent of requests reach this release, the

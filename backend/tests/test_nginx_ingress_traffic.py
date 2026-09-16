@@ -8,7 +8,6 @@ import subprocess
 import pytest
 
 from backend.app.adapters import nginx_ingress_traffic as mod
-from backend.app.traffic import TrafficRoutingUnavailable
 
 APP = "8c7dc688-ceac-4eff-91ae-d7deec2e8d86"
 
@@ -16,12 +15,24 @@ APP = "8c7dc688-ceac-4eff-91ae-d7deec2e8d86"
 class FakeCluster:
     """Just enough of `kubectl get/patch ingress` to exercise the router's logic."""
 
-    def __init__(self, ingresses: list[dict] | None = None) -> None:
+    def __init__(self, ingresses: list[dict] | None = None, services: list[dict] | None = None, endpoints: dict[str, list[str]] | None = None) -> None:
         self.ingresses = ingresses or []
+        self.services = services or []
+        self.endpoints = endpoints or {}
         self.calls: list[list[str]] = []
 
     def __call__(self, args: list[str]) -> subprocess.CompletedProcess[str]:
         self.calls.append(args)
+        if args[:2] == ["get", "service"]:
+            if "-l" in args:
+                selector = dict(part.split("=", 1) for part in args[args.index("-l") + 1].split(","))
+                items = [s for s in self.services if all(s["metadata"]["labels"].get(k) == v for k, v in selector.items())]
+                return subprocess.CompletedProcess(args, 0, json.dumps({"items": items}), "")
+            match = [s for s in self.services if s["metadata"]["name"] == args[2]]
+            return subprocess.CompletedProcess(args, 0 if match else 1, json.dumps(match[0]) if match else "", "" if match else "not found")
+        if args[:2] == ["get", "endpoints"]:
+            ips = self.endpoints.get(args[2], [])
+            return subprocess.CompletedProcess(args, 0, json.dumps({"subsets": [{"addresses": [{"ip": ip} for ip in ips]}] if ips else []}), "")
         if args[:2] == ["get", "ingress"]:
             selector = dict(part.split("=", 1) for part in args[args.index("-l") + 1].split(","))
             items = [
@@ -34,8 +45,10 @@ class FakeCluster:
             patch = json.loads(args[args.index("-p") + 1])
             for item in self.ingresses:
                 if item["metadata"]["name"] == name and item["metadata"]["namespace"] == namespace:
+                    if "spec" in patch:
+                        item["spec"]["rules"] = patch["spec"]["rules"]
                     annotations = item["metadata"].setdefault("annotations", {})
-                    for key, value in patch["metadata"]["annotations"].items():
+                    for key, value in (patch.get("metadata") or {}).get("annotations", {}).items():
                         if value is None:
                             annotations.pop(key, None)
                         else:
@@ -133,8 +146,8 @@ def test_rule_values_that_could_break_the_annotation_are_refused(rules):
     assert not any(call[0] == "patch" for call in cluster.calls)
 
 
-def test_blue_green_is_not_something_this_router_claims_to_do():
-    with pytest.raises(TrafficRoutingUnavailable):
+def test_a_switch_without_a_stable_ingress_is_refused_not_faked():
+    with pytest.raises(RuntimeError, match="expected one stable ingress"):
         router(FakeCluster([canary_ingress(0)])).switch_route(APP, "prod", "green")
 
 
@@ -151,3 +164,56 @@ def test_builder_requires_a_kubeconfig(monkeypatch, tmp_path):
     kubeconfig.write_text("apiVersion: v1\n")
     monkeypatch.setenv("NETCI_TRAFFIC_KUBECONFIG", str(kubeconfig))
     assert mod.build_nginx_ingress_router().kubeconfig == str(kubeconfig)
+
+
+# ----------------------------------------------------------------- blue/green (ADR-035)
+
+
+def stable_ingress(backend: str = "hello-kubernetes-sample-kubernetes-app") -> dict:
+    return {
+        "metadata": {"name": "hello-kubernetes-sample-kubernetes-app-ingress", "namespace": "prod",
+                     "labels": {mod.APPLICATION_LABEL: APP, mod.ENVIRONMENT_LABEL: "prod", mod.TRACK_LABEL: "stable"}, "annotations": {}},
+        "spec": {"rules": [{"host": "hello-kubernetes.prod.netci.local", "http": {"paths": [
+            {"path": "/", "pathType": "Prefix", "backend": {"service": {"name": backend, "port": {"number": 8080}}}}]}}]},
+    }
+
+
+def service(name: str, track: str) -> dict:
+    return {"metadata": {"name": name, "namespace": "prod", "labels": {mod.APPLICATION_LABEL: APP, mod.ENVIRONMENT_LABEL: "prod", mod.TRACK_LABEL: track}}}
+
+
+def colours_cluster(green_ready: bool = True) -> FakeCluster:
+    return FakeCluster(
+        [stable_ingress()],
+        [service("hello-kubernetes-sample-kubernetes-app", "stable"), service("hello-kubernetes-blue-sample-kubernetes-app", "blue"),
+         service("hello-kubernetes-green-sample-kubernetes-app", "green")],
+        {"hello-kubernetes-green-sample-kubernetes-app": ["10.0.0.5"] if green_ready else [], "hello-kubernetes-blue-sample-kubernetes-app": ["10.0.0.6"]},
+    )
+
+
+def test_switching_points_the_stable_ingress_at_the_colours_service():
+    cluster = colours_cluster()
+    r = router(cluster)
+    assert r.get_routing_status(APP, "prod")["activeColor"] == "stable"
+    status = r.switch_route(APP, "prod", "green")
+    assert status["activeColor"] == "green"
+    assert cluster.ingresses[0]["spec"]["rules"][0]["http"]["paths"][0]["backend"]["service"]["name"] == "hello-kubernetes-green-sample-kubernetes-app"
+    assert r.switch_route(APP, "prod", "blue")["activeColor"] == "blue"
+
+
+def test_a_colour_with_no_ready_endpoints_is_not_switched_to():
+    cluster = colours_cluster(green_ready=False)
+    with pytest.raises(RuntimeError, match="no ready endpoints"):
+        router(cluster).switch_route(APP, "prod", "green")
+    assert cluster.ingresses[0]["spec"]["rules"][0]["http"]["paths"][0]["backend"]["service"]["name"] == "hello-kubernetes-sample-kubernetes-app"
+
+
+def test_a_colour_that_was_never_deployed_is_refused():
+    cluster = FakeCluster([stable_ingress()], [service("hello-kubernetes-sample-kubernetes-app", "stable")], {})
+    with pytest.raises(RuntimeError, match="deploy the colour first"):
+        router(cluster).switch_route(APP, "prod", "green")
+
+
+def test_only_blue_or_green_are_colours():
+    with pytest.raises(ValueError):
+        router(colours_cluster()).switch_route(APP, "prod", "purple")
