@@ -258,6 +258,24 @@ stayed `queued` (now reconciled on a schedule).
 | Second blue/green: `blue` installed, switched on healthy (200/200); `POST …/traffic/switch {blue→green}` → **200/200 old digest** in one call; forward again → 200/200 | `evidence/bluegreen-nginx-2.json`, ADR-035 |
 | Rolling restart of both API replicas through the balancer while requests flowed: **353/353** ok | `scripts/lab/lb.sh` |
 
+## 4n. 2026-09-17: a second system onboarded from the browser; Temporal on PostgreSQL
+
+The portal was walked as a user in a headless Chromium (Playwright driving the real
+Vite build against the balanced API and Keycloak), not through the API: system
+`audit-shop` created, module `shop-api` created through the wizard's DCIM tab, pipeline
+run from the module page, configuration fixed and approved, run retried.
+
+| Proof | Result |
+|---|---|
+| Wizard step 3 before the fix offered `localhost · 127.0.0.1 · online` for a tenant NetBox had never heard of; `/dcim/servers` answered **503** for it | Both were wrong. NetBox says HTTP 400 "not a valid choice" for an unknown slug: now `not_registered`, an empty list, and the mapping the operator needs (tenant = system, role = module, site = env). `audit-shop` was then registered in NetBox (`scripts/netbox_seed_lab_inventory.py`) and the wizard offered only those devices. |
+| Module creation refused with `VALIDATION_ERROR` and no field named | The 422 now names `pipelineConfig.pipelines.CD Dev.coverageReportPath` (and never echoes input); the field is optional. |
+| First run failed at Build: registry `172.17.0.1:55000` connection refused | The lab registry had no restart policy and stayed down after the reboot (below). Honest failure; `--restart unless-stopped` everywhere now. |
+| Retry from the browser: deployed to `audit-shop-docker-dev` under the playbook default `/opt/netci-docker-demo` and failed on permission | The wizard had not asked for the runtime layout at all. It does now; the fix for the live module went through **Propose Revision → approve** (revision #2, #3). |
+| The retry carried the parent's parameters and `configRevisionId: null`; the drift check then reported "running revision none" for a deployment that had *failed* | Retry re-binds to the active revision and current targets; drift considers only deployments that reached the target; superseded revisions are marked so (migration 0025). |
+| Ports 18191-18193 were already held by `hello-systemd-go`; the container could not bind and the playbook's health gate failed and rolled back | Revision #4 moved to 18291-18293; the retried run **succeeded**: `shop-api-dev` healthy at `:18291`, digest `7bb2c9d0…`. |
+| A reviewer outside the owning team opening the module saw an endless "Loading" | The page now shows the server's 403 reason. `PUT /modules/{id}/owner` (platform-admin, audited) moved `shop-api` to `team-payments` so `rae` could approve the production configuration change. |
+| **Temporal on PostgreSQL** (`temporalio/auto-setup:1.29.7`, databases `temporal`/`temporal_visibility` on `netci-p0-pg`): `docker restart netci-temporal` issued while the staging rollout's deploy activity was in flight (ACTIVITY_TASK_STARTED 15:18:09.84Z; server back 15:18:12.93Z) | The activity completed at 15:18:15.50Z, the workflow **COMPLETED** at 15:18:15.64Z, `shop-api-staging` healthy at `:18292`. The history was read back from the restarted server. `evidence/temporal-postgres-restart-during-deploy.json`, ADR-036. What this does not prove: a restart longer than an activity's heartbeat/timeout, or a second Temporal replica. |
+
 ## 4c. Host reboot (2026-09-16 08:06 UTC)
 
 The lab host rebooted overnight. Every container without a restart policy stopped
@@ -293,6 +311,8 @@ Say these plainly rather than let the table above imply them.
 | Rekor / transparency log is off (`--tlog-upload=false`, `--insecure-ignore-tlog`). Signatures are key-based only. | Security: decide on a Rekor instance; set `NETCI_SIGNATURE_REQUIRE_TLOG=true`. |
 | `scripts/bootstrap.sh --up` has not been exercised on a clean host (the lab machine has ~10 GB free; the reclaimable space is OpenStack data, not netCI's, and the owner chose not to tear the lab down for it). `--check` reports every component present. | Platform: a throwaway VM run when one is available. |
 | The Portal's static files are still served by one Vite/preview process; the API is balanced, the UI is not. | Infra: serve the build from the balancer or a CDN. |
+| Temporal's databases are outside `scripts/netci_backup.py`'s create/verify (ADR-036). A netCI restore without them has deployments whose workflows are gone. | Ops: dump `temporal` and `temporal_visibility` with the same PostgreSQL tooling; restore-verify them the same way before calling the backup complete. |
+| The wizard does not know which host ports are free; a port another service holds is found by the playbook's health gate, after a rollout. | Platform: the edge agent could report listening ports to DCIM telemetry. |
 | `production_readiness_audit.py` is a code self-check; its verdict is now `SELF_CHECK_PASSED` / `SELF_CHECK_FAILED`, never "certified". | Done. |
 | The per-build pod's remaining cost, on a workload the compiler cache does not dominate, is provisioning + the mirror checkout + cleanup (≈ +17 s on the 5-second container build, §4f). The Go workload shows the cache recovers the build; nothing recovers the pod. | Platform: measured, accepted (ADR-030). |
 | Canary and blue/green are Kubernetes + ingress-nginx only. Retiring an idle colour is a manual `helm uninstall`. | Platform. |

@@ -58,7 +58,7 @@ ensure_container() {  # name, description, then the docker run arguments (withou
 }
 
 step_postgres() {
-  ensure_container netci-p0-pg "PostgreSQL :55432" --network host --restart unless-stopped \
+  ensure_container netci-p0-pg "PostgreSQL :55432" --network host \
     -e POSTGRES_DB=netci -e POSTGRES_USER=netci -e POSTGRES_PASSWORD="$PG_PASSWORD" -e PGPORT=55432 "$PG_IMAGE"
   if up; then
     for _ in $(seq 1 30); do docker exec netci-p0-pg pg_isready -q -p 55432 -U netci && break; sleep 1; done
@@ -70,13 +70,32 @@ step_postgres() {
 }
 
 step_registry() {
-  ensure_container netci-lab-registry "OCI registry :55000" --network host --restart unless-stopped \
+  ensure_container netci-lab-registry "OCI registry :55000" --network host \
     -e REGISTRY_HTTP_ADDR=0.0.0.0:55000 -v netci-lab-registry-data:/var/lib/registry registry:3.1.1
 }
 
 step_temporal() {
-  ensure_container netci-temporal "Temporal :7233" --network host --restart unless-stopped \
-    temporalio/temporal:1.8.2 server start-dev --ip 0.0.0.0 --port 7233 --ui-port 8233
+  # Temporal keeps every deployment workflow's history. `temporal server start-dev`
+  # kept it in memory: a restart lost every in-flight rollout and its audit of what
+  # ran. The server persists to PostgreSQL now (databases `temporal` and
+  # `temporal_visibility` beside netCI's own), so a restart resumes rather than
+  # forgets. auto-setup applies the schema on first start and is idempotent after.
+  if up; then
+    for db in temporal temporal_visibility; do
+      docker exec netci-p0-pg psql -U netci -p 55432 -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname='$db'" | grep -q 1 \
+        || docker exec netci-p0-pg psql -U netci -p 55432 -d postgres -qc "CREATE DATABASE $db"
+    done
+  fi
+  ensure_container netci-temporal "Temporal :7233 (PostgreSQL persistence)" --network host \
+    -e DB=postgres12 -e DB_PORT=55432 -e POSTGRES_SEEDS=127.0.0.1 -e POSTGRES_USER=netci -e POSTGRES_PWD="$PG_PASSWORD" \
+    -e DBNAME=temporal -e VISIBILITY_DBNAME=temporal_visibility \
+    -e BIND_ON_IP=0.0.0.0 -e TEMPORAL_BROADCAST_ADDRESS=127.0.0.1 -e TEMPORAL_ADDRESS=127.0.0.1:7233 \
+    -e DEFAULT_NAMESPACE=default -e DEFAULT_NAMESPACE_RETENTION=720h \
+    -v "$ROOT/infra/lab/temporal-dynamicconfig.yaml:/etc/temporal/config/dynamicconfig/docker.yaml:ro" \
+    temporalio/auto-setup:1.29.7
+  ensure_container netci-temporal-ui "Temporal UI :8233" --network host \
+    -e TEMPORAL_ADDRESS=127.0.0.1:7233 -e TEMPORAL_UI_PORT=8233 -e TEMPORAL_CORS_ORIGINS=http://127.0.0.1:8233 \
+    temporalio/ui:2.50.1
 }
 
 step_keycloak() {
@@ -88,7 +107,7 @@ step_keycloak() {
       chmod 600 "$realm"
     else absent "Keycloak realm file" "$realm (rendered from infra/keycloak/netci-realm.template.json)"; fi
   else present "Keycloak realm file"; fi
-  ensure_container netci-keycloak "Keycloak :8180" --network host --restart unless-stopped \
+  ensure_container netci-keycloak "Keycloak :8180" --network host \
     -e KC_BOOTSTRAP_ADMIN_USERNAME=admin -e KC_BOOTSTRAP_ADMIN_PASSWORD="${KEYCLOAK_ADMIN_PASSWORD:-$(rand 12)}" \
     -e KC_HTTP_PORT=8180 -e KC_HOSTNAME=http://127.0.0.1:8180 -e KC_HTTP_ENABLED=true \
     -v "$GATE/keycloak:/opt/keycloak/data/import" quay.io/keycloak/keycloak:26.0 start-dev --import-realm
@@ -99,11 +118,11 @@ step_netbox() {
   [ -f "$token_file" ] || { up && { rand 20 > "$token_file"; chmod 600 "$token_file"; }; }
   local token; token="$(cat "$token_file" 2>/dev/null || echo unset)"
   local nb_pw; nb_pw="${NETBOX_DB_PASSWORD:-netbox-local-only}"
-  ensure_container netci-netbox-pg "NetBox PostgreSQL :55433" --network host --restart unless-stopped \
+  ensure_container netci-netbox-pg "NetBox PostgreSQL :55433" --network host \
     -e POSTGRES_DB=netbox -e POSTGRES_USER=netbox -e POSTGRES_PASSWORD="$nb_pw" -e PGPORT=55433 -v netci-netbox-pg-data:/var/lib/postgresql/data "$PG_IMAGE"
-  ensure_container netci-netbox-redis "NetBox redis :6380" --network host --restart unless-stopped redis:7-alpine redis-server --port 6380
-  ensure_container netci-netbox-redis-cache "NetBox redis cache :6381" --network host --restart unless-stopped redis:7-alpine redis-server --port 6381
-  ensure_container netci-netbox "NetBox :8080" --network host --restart unless-stopped \
+  ensure_container netci-netbox-redis "NetBox redis :6380" --network host redis:7-alpine redis-server --port 6380
+  ensure_container netci-netbox-redis-cache "NetBox redis cache :6381" --network host redis:7-alpine redis-server --port 6381
+  ensure_container netci-netbox "NetBox :8080" --network host \
     -e DB_HOST=127.0.0.1 -e DB_PORT=55433 -e DB_NAME=netbox -e DB_USER=netbox -e DB_PASSWORD="$nb_pw" \
     -e REDIS_HOST=127.0.0.1 -e REDIS_PORT=6380 -e REDIS_CACHE_HOST=127.0.0.1 -e REDIS_CACHE_PORT=6381 \
     -e SECRET_KEY="$(rand 32)" -e SUPERUSER_NAME=admin -e SUPERUSER_EMAIL=admin@netci.local \

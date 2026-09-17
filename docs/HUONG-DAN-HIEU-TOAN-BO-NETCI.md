@@ -751,7 +751,7 @@ PYTHONPATH=backend .venv/bin/python -m uvicorn app.main:app --port 8000
 | `postgres` | Database |
 | `registry` | Docker registry nội bộ (lưu image theo digest) |
 | `minio` + `minio-init` | Lưu SBOM và evidence (giống S3) |
-| `temporalite` | Temporal bản nhẹ |
+| `temporal` | Temporal server, lưu trạng thái workflow trong PostgreSQL (ADR-036) |
 | `netci-api` | API |
 | `portal` | UI (Nginx phục vụ bundle, proxy `/api`) |
 | `temporal-worker` | Worker chạy deploy |

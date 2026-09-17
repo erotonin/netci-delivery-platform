@@ -25,6 +25,10 @@ worse than none:
     without them will refuse deployments it previously allowed.
   * The token file, the cosign keys, and anything else in the secret manager.
   * Jenkins home. That is rebuilt from JCasC by design; see ADR-006.
+  * Temporal's databases (`temporal`, `temporal_visibility`, ADR-036). A netCI restored
+    without them has deployments whose workflows no longer exist; the reconciler reports
+    those as crashed and the operator re-runs them. Back them up with your PostgreSQL
+    tooling; this script verifies netCI's schema only and will not claim more.
 """
 
 from __future__ import annotations

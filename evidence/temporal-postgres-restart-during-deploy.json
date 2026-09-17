@@ -1,0 +1,123 @@
+{
+ "note": "docker restart netci-temporal issued 2026-09-17T15:18:11Z (container StartedAt 15:18:12.93Z) while workflow netci-deploy-b99b9ffe-649f-47cd-8ac2-d9eeed675e32 (shop-api staging, pipeline run ec3eb515) had its deploy activity in flight (ACTIVITY_TASK_STARTED 15:18:09.84Z, ACTIVITY_TASK_COMPLETED 15:18:15.50Z). Events after the restart were recorded and the workflow completed at 15:18:15.64Z; history read back from the PostgreSQL-backed server.",
+ "serverImage": "temporalio/auto-setup:1.29.7",
+ "containerStartedAt": "2026-09-17T15:18:12.933936869Z",
+ "events": [
+  {
+   "t": "2026-09-17T15:18:09.718480751Z",
+   "type": "EVENT_TYPE_WORKFLOW_EXECUTION_STARTED"
+  },
+  {
+   "t": "2026-09-17T15:18:09.718541817Z",
+   "type": "EVENT_TYPE_WORKFLOW_TASK_SCHEDULED"
+  },
+  {
+   "t": "2026-09-17T15:18:09.727405940Z",
+   "type": "EVENT_TYPE_WORKFLOW_TASK_STARTED"
+  },
+  {
+   "t": "2026-09-17T15:18:09.746719182Z",
+   "type": "EVENT_TYPE_WORKFLOW_TASK_COMPLETED"
+  },
+  {
+   "t": "2026-09-17T15:18:09.746790404Z",
+   "type": "EVENT_TYPE_ACTIVITY_TASK_SCHEDULED"
+  },
+  {
+   "t": "2026-09-17T15:18:09.751494690Z",
+   "type": "EVENT_TYPE_ACTIVITY_TASK_STARTED"
+  },
+  {
+   "t": "2026-09-17T15:18:09.819703502Z",
+   "type": "EVENT_TYPE_ACTIVITY_TASK_COMPLETED"
+  },
+  {
+   "t": "2026-09-17T15:18:09.819708716Z",
+   "type": "EVENT_TYPE_WORKFLOW_TASK_SCHEDULED"
+  },
+  {
+   "t": "2026-09-17T15:18:09.833041447Z",
+   "type": "EVENT_TYPE_WORKFLOW_TASK_STARTED"
+  },
+  {
+   "t": "2026-09-17T15:18:09.841171483Z",
+   "type": "EVENT_TYPE_WORKFLOW_TASK_COMPLETED"
+  },
+  {
+   "t": "2026-09-17T15:18:09.841210795Z",
+   "type": "EVENT_TYPE_ACTIVITY_TASK_SCHEDULED"
+  },
+  {
+   "t": "2026-09-17T15:18:09.844700984Z",
+   "type": "EVENT_TYPE_ACTIVITY_TASK_STARTED"
+  },
+  {
+   "t": "2026-09-17T15:18:15.497437436Z",
+   "type": "EVENT_TYPE_ACTIVITY_TASK_COMPLETED"
+  },
+  {
+   "t": "2026-09-17T15:18:15.497444661Z",
+   "type": "EVENT_TYPE_WORKFLOW_TASK_SCHEDULED"
+  },
+  {
+   "t": "2026-09-17T15:18:15.512614744Z",
+   "type": "EVENT_TYPE_WORKFLOW_TASK_STARTED"
+  },
+  {
+   "t": "2026-09-17T15:18:15.525470565Z",
+   "type": "EVENT_TYPE_WORKFLOW_TASK_COMPLETED"
+  },
+  {
+   "t": "2026-09-17T15:18:15.525560366Z",
+   "type": "EVENT_TYPE_ACTIVITY_TASK_SCHEDULED"
+  },
+  {
+   "t": "2026-09-17T15:18:15.529749837Z",
+   "type": "EVENT_TYPE_ACTIVITY_TASK_STARTED"
+  },
+  {
+   "t": "2026-09-17T15:18:15.535154306Z",
+   "type": "EVENT_TYPE_ACTIVITY_TASK_COMPLETED"
+  },
+  {
+   "t": "2026-09-17T15:18:15.535165597Z",
+   "type": "EVENT_TYPE_WORKFLOW_TASK_SCHEDULED"
+  },
+  {
+   "t": "2026-09-17T15:18:15.538799356Z",
+   "type": "EVENT_TYPE_WORKFLOW_TASK_STARTED"
+  },
+  {
+   "t": "2026-09-17T15:18:15.552590277Z",
+   "type": "EVENT_TYPE_WORKFLOW_TASK_COMPLETED"
+  },
+  {
+   "t": "2026-09-17T15:18:15.552644651Z",
+   "type": "EVENT_TYPE_ACTIVITY_TASK_SCHEDULED"
+  },
+  {
+   "t": "2026-09-17T15:18:15.557686823Z",
+   "type": "EVENT_TYPE_ACTIVITY_TASK_STARTED"
+  },
+  {
+   "t": "2026-09-17T15:18:15.625849490Z",
+   "type": "EVENT_TYPE_ACTIVITY_TASK_COMPLETED"
+  },
+  {
+   "t": "2026-09-17T15:18:15.625856710Z",
+   "type": "EVENT_TYPE_WORKFLOW_TASK_SCHEDULED"
+  },
+  {
+   "t": "2026-09-17T15:18:15.631308806Z",
+   "type": "EVENT_TYPE_WORKFLOW_TASK_STARTED"
+  },
+  {
+   "t": "2026-09-17T15:18:15.639248512Z",
+   "type": "EVENT_TYPE_WORKFLOW_TASK_COMPLETED"
+  },
+  {
+   "t": "2026-09-17T15:18:15.639268110Z",
+   "type": "EVENT_TYPE_WORKFLOW_EXECUTION_COMPLETED"
+  }
+ ]
+}
