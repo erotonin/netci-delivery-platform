@@ -103,7 +103,11 @@ def test_validation_errors_use_the_public_error_contract_and_generated_correlati
 
     assert response.status_code == 422
     assert response.json()['code'] == 'VALIDATION_ERROR'
-    assert response.json()['message'] == 'request validation failed'
+    # The message names the field so the browser can show the user what to fix; the
+    # detail carries every field, but never the submitted value.
+    assert response.json()['message'].startswith('name: ')
+    assert response.json()['detail']['fields'][0]['field'] == 'name'
+    assert 'INVALID NAME' not in response.text
     assert response.json()['correlationId'] == response.headers['X-Correlation-Id']
 
 

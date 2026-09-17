@@ -972,3 +972,15 @@ CREATE INDEX IF NOT EXISTS agent_commands_pending_idx ON agent_commands (hostnam
 ALTER TABLE production_requests DROP CONSTRAINT IF EXISTS production_requests_status_check;
 ALTER TABLE production_requests ADD CONSTRAINT production_requests_status_check
     CHECK (status IN ('waiting_approval', 'approved', 'rejected', 'blocked', 'succeeded', 'cancelled'));
+
+-- >>> migration: 0025_supersede_replaced_config_revisions.sql
+-- Activation now marks the revision it replaces as `superseded`. Rows written before
+-- that fix are still `active` although the module points elsewhere; the browser showed
+-- every one of them as "Active". One-off repair; the invariant is enforced in code.
+UPDATE module_config_revisions r
+   SET status = 'superseded'
+  FROM modules m
+ WHERE r.module_id = m.id
+   AND r.status = 'active'
+   AND m.active_config_revision_id IS NOT NULL
+   AND r.id <> m.active_config_revision_id;

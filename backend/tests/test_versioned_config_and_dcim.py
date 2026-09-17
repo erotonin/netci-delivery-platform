@@ -124,6 +124,7 @@ def test_non_prod_config_change_auto_activates(auth_client):
     r1 = [r for r in revisions if r["revisionNumber"] == 1][0]
     assert r2["active"] is True
     assert r1["active"] is False  # previous is superseded
+    assert (r2["status"], r1["status"]) == ("active", "superseded")
 
 
 def test_production_config_change_requires_approval_and_enforces_separation_of_duties(auth_client):
@@ -542,3 +543,79 @@ def test_kubernetes_targets_carry_no_ansible_hosts(auth_client):
     assert parameters["target_hosts"] == []
     assert parameters["target_namespace"] == "dev"
     assert parameters["kubeconfig_ref"] == "netci-dev-kubeconfig"
+
+
+def _failed_and_healthy_deployments(application_id: UUID):
+    from uuid import uuid4
+
+    from app.domain.models import Deployment, DeploymentStatus, Environment, Runtime
+
+    def make(status: DeploymentStatus) -> Deployment:
+        return Deployment(
+            id=uuid4(), application_id=application_id, pipeline_run_id=None, runtime=Runtime.DOCKER,
+            environment=Environment.DEV, status=status, artifact_digest="sha256:" + "b" * 64,
+            fencing_token=1, config_revision_id=None,
+        )
+
+    return make(DeploymentStatus.FAILED), make(DeploymentStatus.HEALTHY)
+
+
+def test_a_failed_deployment_is_not_reported_as_configuration_drift(auth_client):
+    """A deployment that never reached the target says nothing about what runs there.
+    The check reported it as "running revision none" -- a drift that did not exist and
+    sent the operator looking for a rollout that had simply failed."""
+
+    from app.persistence import UnitOfWork
+
+    client, headers_for = auth_client
+    module = client.get("/modules/hello-container", headers=headers_for("dana")).json()
+    failed, healthy = _failed_and_healthy_deployments(UUID(module["applicationId"]))
+    with main.platform._transaction() as session:
+        session.apply(UnitOfWork(deployments=[(failed, None)]))
+    drift = client.get("/modules/hello-container/drift", headers=headers_for("dana")).json()
+    assert [d for d in drift["deploymentDrift"] if d["environment"] == "dev"] == []
+
+    # A healthy deployment that is not pinned to the active revision *is* drift.
+    with main.platform._transaction() as session:
+        session.apply(UnitOfWork(deployments=[(healthy, None)]))
+    drift = client.get("/modules/hello-container/drift", headers=headers_for("dana")).json()
+    dev = [d for d in drift["deploymentDrift"] if d["environment"] == "dev"]
+    assert len(dev) == 1 and dev[0]["drifted"] is True and dev[0]["deploymentId"] == str(healthy.id)
+
+
+def test_a_retry_deploys_the_configuration_that_is_active_now(auth_client):
+    """A retry happens now: it must carry the active revision and the targets of that
+    revision, not the binding of the run it retries. Before this, a retry copied the
+    parent's parameters and left configRevisionId empty."""
+
+    client, headers_for = auth_client
+    rev1 = client.get("/modules/hello-container/config-revisions", headers=headers_for("dana")).json()["items"][0]
+    prod_targets = [c for c in rev1["deploymentConfig"] if c.get("environment") == "prod"]
+    first = client.post(
+        "/modules/hello-container/pipeline-runs", headers=headers_for("dana"),
+        json={"commitSha": "c" * 40, "branch": "main", "environment": "dev", "parameters": {}},
+    )
+    assert first.status_code == 202, first.text
+    assert first.json()["configRevisionId"] == rev1["id"]
+    cancelled = client.post(f"/pipeline-runs/{first.json()['id']}/cancel", headers=headers_for("dana"),
+                            json={"reason": "wrong target"})
+    assert cancelled.status_code == 200, cancelled.text
+
+    # The dev target moves to another server; the change auto-activates (non-prod).
+    res = client.post(
+        "/modules/hello-container/config-revisions", headers=headers_for("dana"),
+        json={
+            "changeSummary": "dev moves to srv-dev-02",
+            "pipelineConfig": rev1["pipelineConfig"],
+            "deploymentConfig": [{"environment": "dev", "servers": ["srv-dev-02.internal"]}, *prod_targets],
+        },
+    )
+    assert res.status_code == 201, res.text
+    assert res.json()["active"] is True
+
+    retry = client.post(f"/pipeline-runs/{first.json()['id']}/retry", headers=headers_for("dana"))
+    assert retry.status_code == 201, retry.text
+    body = retry.json()
+    assert body["configRevisionId"] == res.json()["id"]
+    assert body["parameters"]["target_hosts"] == ["srv-dev-02.internal"]
+    assert body["parameters"]["target_environment"] == "dev"

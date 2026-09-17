@@ -378,6 +378,26 @@ paths:
                   error: { type: string, nullable: true }
         '404':
           $ref: '#/components/responses/NotFound'
+  /modules/{moduleId}/owner:
+    put:
+      operationId: setModuleOwner
+      summary: Transfer the module (its delivery application) to another team. Platform-admin only; audited as application.owner_changed.
+      parameters:
+        - $ref: '#/components/parameters/ModuleId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                ownerTeam: { type: string, minLength: 1, maxLength: 255, nullable: true, description: Identity-provider group that will own the module; null clears ownership unless NETCI_REQUIRE_APPLICATION_OWNER is set. }
+      responses:
+        '200': { description: The module with its new owner }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/UnprocessableEntity' }
   /modules/{moduleId}/overview:
     get:
       operationId: getModuleOverview
@@ -563,7 +583,13 @@ paths:
     get:
       operationId: listProductionRequests
       responses:
-        '200': { description: Production approval queue }
+        '200':
+          description: Production approval queue, newest first
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/ProductionRequest' }
     post:
       operationId: createProductionRequest
       parameters:
@@ -3080,10 +3106,10 @@ components:
     ModulePipelineTabConfig:
       type: object
       additionalProperties: false
-      required: [branch, coverageReportPath, stages]
+      required: [branch, stages]
       properties:
         branch: { type: string, minLength: 1, maxLength: 500 }
-        coverageReportPath: { type: string, minLength: 1, maxLength: 500 }
+        coverageReportPath: { type: string, maxLength: 500, nullable: true, description: Optional; empty means the pipeline publishes no coverage report. }
         stages:
           type: array
           minItems: 1
@@ -3434,6 +3460,44 @@ components:
         runAutomationTests: { type: boolean, default: true }
         strategy: { type: string, enum: [rolling, canary, blue_green], default: rolling }
         strategyConfig: { type: object }
+    ProductionRequest:
+      type: object
+      required: [id, modules, requestedBy, scheduledFor, rollbackStrategy, status, createdAt]
+      properties:
+        id: { type: string }
+        modules:
+          type: array
+          items: { $ref: '#/components/schemas/ProductionRequestModule' }
+        requestedBy: { type: string }
+        scheduledFor: { type: string, format: date-time }
+        rollbackStrategy: { type: string }
+        runAutomationTests: { type: boolean }
+        status: { type: string, enum: [waiting_approval, approved, rejected, blocked, succeeded, cancelled] }
+        deploymentId: { type: string, format: uuid, nullable: true }
+        comment: { type: string, nullable: true }
+        releasePlan: { type: object, additionalProperties: true, nullable: true }
+        strategy: { type: string, nullable: true }
+        strategyConfig: { type: object, additionalProperties: true, nullable: true }
+        canaryRules: { type: object, additionalProperties: true }
+        createdAt: { type: string, format: date-time, nullable: true }
+    ProductionRequestModule:
+      type: object
+      required: [moduleId, moduleName, version, deploymentOrder, dependencies, status]
+      properties:
+        moduleId: { type: string }
+        moduleName: { type: string }
+        systemId:
+          type: string
+          nullable: true
+          description: The system the module belongs to, as the server knows it; the browser scopes a system's queue by this and never by name matching.
+        version: { type: string }
+        deploymentOrder: { type: integer }
+        dependencies: { type: array, items: { type: string } }
+        status: { type: string }
+        deploymentId: { type: string, format: uuid, nullable: true }
+        startedAt: { type: string, format: date-time, nullable: true }
+        completedAt: { type: string, format: date-time, nullable: true }
+        errorMessage: { type: string, nullable: true }
     ProductionRequestModuleCreate:
       type: object
       required: [moduleId, version]

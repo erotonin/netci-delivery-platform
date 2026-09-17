@@ -18,6 +18,18 @@ class DcimUnavailable(RuntimeError):
     pass
 
 
+class DcimNotRegistered(DcimUnavailable):
+    """The DCIM answered, and it has no tenant/role by that name.
+
+    A subclass of DcimUnavailable so a caller that only knows the broad failure still
+    fails closed; the catalog itself turns it into an honest empty page.
+    """
+
+    def __init__(self, unknown: dict[str, str]):
+        self.unknown = dict(unknown)
+        super().__init__("DCIM has no record of " + ", ".join(f"{k}: {v}" for k, v in unknown.items()))
+
+
 @dataclass(frozen=True)
 class DcimPage:
     source: str

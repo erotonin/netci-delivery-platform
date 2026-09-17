@@ -529,6 +529,30 @@ def test_rolling_back_another_teams_deployment_is_refused(team_app):
     assert refused.status_code == 403
 
 
+def test_only_a_platform_admin_can_hand_a_module_to_another_team_and_it_is_audited(team_app):
+    """Teams reorganise. The transfer is the platform's decision, not the current
+    owner's (who could give a module away by mistake) nor the receiver's (who could
+    take one). After it, the old team is refused and the new team is served."""
+
+    client, headers, _ = team_app
+    application = _owned_application(client, headers["dana"], "payments").json()
+    module_id = application["moduleId"]
+
+    for who in ("dana", "sam"):
+        refused = client.put(f"/modules/{module_id}/owner", headers=headers[who], json={"ownerTeam": "search"})
+        assert refused.status_code == 403, refused.text
+
+    moved = client.put(f"/modules/{module_id}/owner", headers=headers["pat"], json={"ownerTeam": "search"})
+    assert moved.status_code == 200, moved.text
+    assert moved.json()["ownerTeam"] == "search"
+    assert client.get(f"/modules/{module_id}", headers=headers["sam"]).status_code == 200
+    assert client.get(f"/modules/{module_id}", headers=headers["dana"]).status_code == 403
+
+    events = [e for e in client.get("/audit-events?limit=100", headers=headers["pat"]).json()["items"]
+              if e["eventType"] == "application.owner_changed"]
+    assert events and events[-1]["payload"] == {"before": "payments", "after": "search"} and events[-1]["actor"] == "pat"
+
+
 def test_an_unowned_application_keeps_working_so_ownership_can_be_adopted_gradually(team_app):
     """Existing applications predate ownership; adopting it must not break them."""
 

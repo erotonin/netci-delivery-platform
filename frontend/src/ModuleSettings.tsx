@@ -1,11 +1,11 @@
 import { useEffect, useState } from 'react'
 import { Activity, ArrowLeft, Check, History, ListChecks, Settings as Cog } from 'lucide-react'
-import { approveCustomStage, deleteModule, getModule, getModuleStages, getStageCatalog, listAuditEvents, registerCustomStage, removeCustomStage, setModuleStages, updateModule, whoami, type AuditEvent, type CustomStageCreate, type StageDefinition } from './api/netciClient'
+import { approveCustomStage, deleteModule, getModule, getModuleStages, getStageCatalog, listAuditEvents, registerCustomStage, removeCustomStage, setModuleOwner, setModuleStages, updateModule, whoami, type AuditEvent, type CustomStageCreate, type StageDefinition } from './api/netciClient'
 import { usePortalFeedback } from './PortalFeedback'
 import { Modal } from './PortalShell'
 import type { SettingsTab } from './portalTypes'
 
-type SettingsModule = { name: string; type: string; description: string }
+type SettingsModule = { name: string; type: string; description: string; ownerTeam?: string | null }
 
 function GeneralSettings({ module, moduleId, onDeleted }: { module: SettingsModule; moduleId: string; onDeleted?: () => void }) {
   const { notify } = usePortalFeedback()
@@ -15,6 +15,23 @@ function GeneralSettings({ module, moduleId, onDeleted }: { module: SettingsModu
   const [saving, setSaving] = useState(false)
 
   useEffect(() => setForm(module), [moduleId, module])
+  const [me, setMe] = useState<{ subject: string; admin: boolean; teams: string[] }>({ subject: '', admin: false, teams: [] })
+  useEffect(() => { whoami().then((id) => setMe({ subject: id.principal.subject, admin: id.principal.roles.includes('platform-admin'), teams: id.principal.teams ?? [] })).catch(() => undefined) }, [])
+  const [owner, setOwner] = useState(module.ownerTeam ?? '')
+  useEffect(() => setOwner(module.ownerTeam ?? ''), [module.ownerTeam])
+  const [movingOwner, setMovingOwner] = useState(false)
+  const transferOwner = async () => {
+    setMovingOwner(true)
+    try {
+      const updated = await setModuleOwner(moduleId, owner.trim() || null)
+      setForm((current) => ({ ...current, ownerTeam: updated.ownerTeam ?? null }))
+      notify(`Module ${moduleId} nay thuộc team ${updated.ownerTeam ?? '(không có)'}.`)
+    } catch (error) {
+      notify(error instanceof Error ? error.message : 'Không thể chuyển team sở hữu.', 'error')
+    } finally {
+      setMovingOwner(false)
+    }
+  }
 
   const save = async () => {
     setSaving(true)
@@ -52,6 +69,15 @@ function GeneralSettings({ module, moduleId, onDeleted }: { module: SettingsModu
         <label className="field full"><span>Description</span><textarea value={form.description} onChange={(event) => setForm({ ...form, description: event.target.value })} /></label>
       </div>
       <div className="settings-save"><button className="primary-button" disabled={saving || !form.name.trim()} onClick={save}><Check size={16} />{saving ? 'Saving…' : 'Save changes'}</button></div>
+    </section>
+    <section className="panel settings-card">
+      <div className="section-heading"><div><h3>Team sở hữu</h3><p>Chỉ thành viên team này xem và thay đổi module; thay đổi cấu hình prod cần một thành viên khác của team phê duyệt.</p></div></div>
+      <div className="form-grid">
+        <label className="field full"><span>Owning team</span>{me.admin
+          ? <><input list="owner-team-options" value={owner} onChange={(event) => setOwner(event.target.value)} placeholder="tên group trong identity provider" /><datalist id="owner-team-options">{me.teams.map((team) => <option key={team} value={team} />)}</datalist></>
+          : <input value={form.ownerTeam ?? '(chưa gán)'} readOnly />}</label>
+      </div>
+      {me.admin && <div className="settings-save"><button className="secondary-button" disabled={movingOwner || (owner.trim() || null) === (form.ownerTeam ?? null)} onClick={transferOwner}>{movingOwner ? 'Đang chuyển…' : 'Chuyển team sở hữu'}</button></div>}
     </section>
     <section className="danger-zone"><h3>Danger zone</h3><div><span><strong>Remove module</strong><p>Module sẽ bị gỡ khỏi Release Portal; lịch sử delivery vẫn được giữ lại.</p></span><button className="danger-button" onClick={() => setRemoveModal(true)}>Remove module</button></div></section>
     {removeModal && <Modal title="Remove module" description={`Are you sure you want to remove ${moduleId}?`} onClose={() => setRemoveModal(false)} footer={<><button className="secondary-button" onClick={() => setRemoveModal(false)}>Cancel</button><button className="danger-button" disabled={deleting} onClick={handleRemove}>{deleting ? 'Removing…' : 'Confirm Remove'}</button></>}><div className="inline-error" role="status">Module sẽ không còn nhận lệnh delivery mới từ portal.</div></Modal>}
@@ -261,7 +287,7 @@ export function ModuleSettings({ systemId, moduleId, onClose, onDeleted }: { sys
 
   useEffect(() => {
     getModule(moduleId).then((item) => {
-      setModule({ name: item.name, type: item.type, description: item.description })
+      setModule({ name: item.name, type: item.type, description: item.description, ownerTeam: item.ownerTeam ?? null })
     }).catch(() => undefined)
   }, [moduleId])
 

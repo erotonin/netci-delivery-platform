@@ -145,6 +145,18 @@ device("netci-prod-02", "hello-container", "hello-container", "prod", dtype_host
 # One decommissioned device, so "refuse a retired target" is testable against real data.
 device("netci-retired-01", "hello-container", "hello-container", "prod", dtype_host, status="decommissioning")
 
+# A second system, registered the way a real team's would be *before* it exists in
+# netCI: tenant, a device role per module, one device per environment. The New Module
+# wizard offers only what NetBox holds, so this is what makes creating a module from the
+# browser possible for a system that is not one of the three samples.
+tenants["audit-shop"] = upsert("/tenancy/tenants/", "slug", "audit-shop",
+                               {"name": "audit-shop", "slug": "audit-shop", "group": group["id"],
+                                "description": "second lab system, onboarded through the portal"})
+roles["shop-api"] = upsert("/dcim/device-roles/", "slug", "shop-api",
+                           {"name": "shop-api", "slug": "shop-api", "color": "4caf50"})
+for env in ("dev", "staging", "prod"):
+    device(f"audit-shop-docker-{env}", "shop-api", "audit-shop", env, dtype_host)
+
 st, page = call("GET", "/dcim/devices/?limit=100")
 print(f"NetBox now holds {page.get('count')} devices under tenants {sorted(tenants)}")
 for d in page["results"]:

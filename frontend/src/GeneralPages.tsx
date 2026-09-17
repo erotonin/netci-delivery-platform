@@ -81,16 +81,6 @@ function DashboardContent({ dashboard, navigate }: { dashboard: PortalDashboard;
   </>
 }
 
-const defaultPipelineStages = ['checkout', 'unit-test', 'build', 'sbom', 'vulnerability-scan', 'sign', 'publish', 'deploy', 'health-check']
-const defaultPipelineConfig: ModulePipelineConfig = {
-  runner: 'docker-linux',
-  strategy: 'Gitflow',
-  pipelines: Object.fromEntries(['CI', 'CD Dev', 'CD Staging', 'CD Prod', 'Automation Test'].map((tab) => [tab, {
-    branch: tab === 'CI' ? 'main, merge_requests' : tab === 'CD Prod' ? 'tags/v*' : 'develop',
-    coverageReportPath: 'coverage/lcov.info',
-    stages: [...defaultPipelineStages],
-  }])),
-}
 
 export function SystemsPage({ navigate }: { navigate: Navigate }) {
   const { notify } = usePortalFeedback()
@@ -109,9 +99,6 @@ export function SystemsPage({ navigate }: { navigate: Navigate }) {
   const [localId, setLocalId] = useState('')
   const [localUnit, setLocalUnit] = useState('Core Engineering')
   const [localDescription, setLocalDescription] = useState('')
-  const [initModule, setInitModule] = useState(true)
-  const [initModuleName, setInitModuleName] = useState('')
-  const [initRuntime, setInitRuntime] = useState<Runtime>('docker')
   const [loadState, setLoadState] = useState<'loading' | 'ready' | 'error'>('loading')
   const [loadError, setLoadError] = useState<Error | null>(null)
   const [attempt, setAttempt] = useState(0)
@@ -179,100 +166,6 @@ export function SystemsPage({ navigate }: { navigate: Navigate }) {
     setFormError('')
     try {
       const created = await createSystem({ id: systemId, unit, description })
-      if (systemSource === 'local' && initModule) {
-        const modId = (initModuleName.trim() || `${systemId}-service`).toLowerCase().replace(/[^a-z0-9-_]/g, '-')
-        const gitUrl = 'http://172.17.0.52/netci.git'
-        const tpl = initRuntime === 'kubernetes' ? 'kubernetes-ci-cd-v1' : initRuntime === 'systemd' ? 'systemd-ansible-ci-cd-v1' : 'container-ci-cd-v1'
-        const devServer = initRuntime === 'kubernetes' ? [] : initRuntime === 'systemd' ? ['netci-local-systemd-dev'] : ['netci-local-docker-dev']
-        const stagingServer = initRuntime === 'kubernetes' ? [] : initRuntime === 'systemd' ? ['netci-local-systemd-staging'] : ['netci-local-docker-staging']
-        const prodServer = initRuntime === 'kubernetes' ? [] : initRuntime === 'systemd' ? ['netci-prod-01'] : ['netci-prod-02']
-        try {
-          await createModule(created.id, {
-            name: modId,
-            displayName: `${created.id} Core Service`,
-            repositoryUrl: gitUrl,
-            pipelineTemplate: tpl,
-            runtime: initRuntime,
-            moduleType: 'Backend',
-            description: `Phân hệ dịch vụ chính cho hệ thống ${created.id}`,
-            defaultEnvironment: 'dev',
-            deploymentEnvironments: [
-              {
-                displayName: 'Development',
-                environment: 'dev',
-                runtime: initRuntime,
-                servers: devServer,
-                tasks: [],
-                taskSettings: {},
-                kubeconfigRef: initRuntime === 'kubernetes' ? 'netci-dev-kubeconfig' : null,
-                namespace: initRuntime === 'kubernetes' ? 'dev' : null,
-                runtimeSettings: initRuntime === 'docker' ? {
-                  become: false,
-                  appRoot: `/var/tmp/netci-live/${modId}`,
-                  hostPort: 18201,
-                  networkMode: 'host',
-                  imagePullHost: 'localhost:55000',
-                } : initRuntime === 'systemd' ? {
-                  become: false,
-                  appPort: 18211,
-                  systemdScope: 'user',
-                } : null,
-              },
-              {
-                displayName: 'Staging',
-                environment: 'staging',
-                runtime: initRuntime,
-                servers: stagingServer,
-                tasks: [],
-                taskSettings: {},
-                kubeconfigRef: initRuntime === 'kubernetes' ? 'netci-staging-kubeconfig' : null,
-                namespace: initRuntime === 'kubernetes' ? 'staging' : null,
-                runtimeSettings: initRuntime === 'docker' ? {
-                  become: false,
-                  appRoot: `/var/tmp/netci-live/${modId}-staging`,
-                  hostPort: 18202,
-                  networkMode: 'host',
-                  imagePullHost: 'localhost:55000',
-                } : initRuntime === 'systemd' ? {
-                  become: false,
-                  appPort: 18212,
-                  systemdScope: 'user',
-                } : null,
-              },
-              {
-                displayName: 'Production',
-                environment: 'prod',
-                runtime: initRuntime,
-                servers: prodServer,
-                tasks: [],
-                taskSettings: {},
-                kubeconfigRef: initRuntime === 'kubernetes' ? 'netci-prod-kubeconfig' : null,
-                namespace: initRuntime === 'kubernetes' ? 'prod' : null,
-                runtimeSettings: initRuntime === 'docker' ? {
-                  become: true,
-                  appRoot: `/opt/netci/${modId}`,
-                  hostPort: 18203,
-                  networkMode: 'bridge',
-                  containerPort: 8080,
-                  imagePullHost: '172.17.0.1:55000',
-                } : initRuntime === 'systemd' ? {
-                  become: true,
-                  appPort: 18213,
-                  systemdScope: 'system',
-                } : null,
-              },
-            ],
-            stages: defaultPipelineStages,
-            pipelineConfig: defaultPipelineConfig,
-          })
-          setModal(false)
-          notify(`Hệ thống ${created.id} và module ${modId} đã được khởi tạo thành công.`)
-          navigate('module', { systemId: created.id, moduleId: modId })
-          return
-        } catch (modErr) {
-          console.warn('Initial module creation skipped/failed:', modErr)
-        }
-      }
       setItems((current) => [...current, {
         id: created.id,
         code,
@@ -314,9 +207,6 @@ export function SystemsPage({ navigate }: { navigate: Navigate }) {
             <input value={localId} onChange={(e) => {
               const val = e.target.value.toLowerCase().replace(/[^a-z0-9-_]/g, '-')
               setLocalId(val)
-              if (!initModuleName || initModuleName.endsWith('-service')) {
-                setInitModuleName(val ? `${val}-service` : '')
-              }
             }} placeholder="e.g. fintech-platform, payment-core, crm-hub" />
             <small>Chữ thường, số, dấu gạch nối (e.g. fintech-core)</small>
           </label>
@@ -328,28 +218,6 @@ export function SystemsPage({ navigate }: { navigate: Navigate }) {
             <span>Mô tả hệ thống</span>
             <textarea value={localDescription} onChange={(e) => setLocalDescription(e.target.value)} placeholder="Mô tả chức năng và mục đích của hệ thống..." />
           </label>
-          <div className="field full" style={{ marginTop: '8px', padding: '12px 14px', background: 'rgba(59, 130, 246, 0.05)', borderRadius: '6px', border: '1px solid rgba(59, 130, 246, 0.2)' }}>
-            <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontWeight: 600, fontSize: '0.85rem', color: 'var(--text)' }}>
-              <input type="checkbox" checked={initModule} onChange={(e) => setInitModule(e.target.checked)} />
-              <span>Khởi tạo phân hệ (Module) ban đầu ngay (Quick Start)</span>
-            </label>
-            {initModule && (
-              <div style={{ marginTop: '10px', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
-                <label className="field">
-                  <span>Tên Module ID *</span>
-                  <input value={initModuleName || (localId ? `${localId}-service` : '')} onChange={(e) => setInitModuleName(e.target.value.toLowerCase().replace(/[^a-z0-9-_]/g, '-'))} placeholder="e.g. core-service" />
-                </label>
-                <label className="field">
-                  <span>Runtime Target</span>
-                  <select value={initRuntime} onChange={(e) => setInitRuntime(e.target.value as Runtime)}>
-                    <option value="docker">Docker Container (Ansible host)</option>
-                    <option value="kubernetes">Kubernetes Workload (KinD)</option>
-                    <option value="systemd">Linux Systemd (Go Daemon)</option>
-                  </select>
-                </label>
-              </div>
-            )}
-          </div>
         </div>
       ) : (
         <>

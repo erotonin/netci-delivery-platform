@@ -903,13 +903,11 @@ export function ProductionRequestsPage({ systemId }: { systemId: string }) {
   const [scopeFilter, setScopeFilter] = useState<'scoped' | 'all'>(systemId ? 'scoped' : 'all')
 
   const scopedItems = useMemo(() => {
-    if (!systemId || scopeFilter === 'all' || availableModules.length === 0) return items
-    return items.filter((request) =>
-      request.modules.some((item) =>
-        availableModules.some((am) => am.id === item.moduleId || am.name === item.moduleName || am.id === item.moduleName)
-      )
-    )
-  }, [items, systemId, scopeFilter, availableModules])
+    if (!systemId || scopeFilter === 'all') return items
+    // The server says which system each module belongs to. A system with no modules
+    // yet has no requests -- it must not fall back to showing everyone else's.
+    return items.filter((request) => request.modules.some((item) => item.systemId === systemId))
+  }, [items, systemId, scopeFilter])
 
   const filtered = useMemo(
     () =>

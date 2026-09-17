@@ -71,6 +71,18 @@ def netbox():
             if state.fail_with:
                 self.send_response(state.fail_with); self.end_headers(); return
             if parts.path == "/api/dcim/devices/":
+                # Real NetBox validates filter slugs and answers 400, not an empty page.
+                known = {"tenant": {d["tenant"]["slug"] for d in state.devices},
+                         "role": {d["role"]["slug"] for d in state.devices}}
+                errors = {key: [f"Select a valid choice. {query[key][0]} is not one of the available choices."]
+                          for key, slugs in known.items() if key in query and query[key][0] not in slugs}
+                if errors:
+                    body = json.dumps(errors).encode()
+                    self.send_response(400)
+                    self.send_header("Content-Type", "application/json")
+                    self.end_headers()
+                    self.wfile.write(body)
+                    return
                 rows = state.filter_devices(query)
             elif parts.path == "/api/tenancy/tenants/":
                 q = (query.get("q") or [""])[0].lower()
@@ -221,3 +233,24 @@ def test_an_unconfigured_dcim_never_calls_a_target_healthy():
     result = UnconfiguredDcimCatalog().validate_target("sys", "mod", "prod", "server-prod-01")
     assert result.status == "unconfigured"
     assert "healthy" not in result.message
+
+
+def test_a_system_netbox_has_never_heard_of_is_not_registered_not_an_outage(netbox):
+    """NetBox answers 400 for an unknown tenant slug. That is "nobody registered this
+    system", which the wizard must show as guidance -- not the 503 that would send the
+    operator to check whether NetBox is down."""
+
+    netbox.devices = [device("web-1")]
+    page = catalog(netbox).list_servers("brand-new-system")
+    assert (page.status, page.items) == ("not_registered", [])
+    page = catalog(netbox).list_modules("brand-new-system")
+    assert (page.status, page.items) == ("not_registered", [])
+    page = catalog(netbox).list_servers("payments", "unknown-role")
+    assert (page.status, page.items) == ("not_registered", [])
+    # A deployment target under an unknown tenant is not_found, and still not valid.
+    result = catalog(netbox).validate_target("brand-new-system", "api", "dev", "web-1")
+    assert (result.valid, result.status) == (False, "not_found")
+    # A genuine 400 that is not about filter slugs stays an error.
+    netbox.fail_with = 400
+    with pytest.raises(DcimUnavailable):
+        catalog(netbox).list_servers("payments")

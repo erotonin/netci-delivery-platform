@@ -9,8 +9,8 @@ import {
   diffConfigRevisions, getDora, getModule, getModuleGitRefs, getModuleOverview, getPipelineLogs,
   getPipelineStages, listConfigRevisions, listModulePipelineRuns, listModuleVersions,
   proposeConfigRevision, rejectConfigRevision, retryPipelineRun, rollbackConfigRevision,
-  startModulePipeline, applyModuleConfig, type ConfigApplyResponse, type ConfigDriftReport, type ConfigRevision, type ConfigRevisionDiff,
-  type DeploymentEnvironmentConfig, type Environment, type GitRefs, type ModuleOverview, type ModulePipelineConfig, type ModuleVersion,
+  startModulePipeline, applyModuleConfig, whoami, NetciApiError, type ConfigApplyResponse, type ConfigDriftReport, type ConfigRevision, type ConfigRevisionDiff,
+  listDcimServers, type DcimServer, type RuntimeSettings, type DeploymentEnvironmentConfig, type Environment, type GitRefs, type ModuleOverview, type ModulePipelineConfig, type ModuleVersion,
   type PipelineRun, type PipelineStage, type Runtime,
 } from './api/netciClient'
 import { usePortalFeedback } from './PortalFeedback'
@@ -71,7 +71,9 @@ function OverviewTab({ moduleId, onOpenRun }: { moduleId: string; onOpenRun?: (r
         <div><span>SBOM</span><strong>{q.sbom?.present ? `${q.sbom.format ?? 'present'} (${q.sbom.generatedBy ?? '?'})` : 'không có'}</strong></div>
         <div><span>Vulnerability scan</span><strong>{q.scan?.scanner ? `${q.scan.scanner}: ${q.scan.status ?? '?'} · critical ${q.scan.critical ?? '?'} · high ${q.scan.high ?? '?'}` : 'không có'}</strong></div>
         <div><span>Chữ ký</span><strong>{q.signature?.verified ? `${q.signature.provider ?? 'cosign'} · verified` : 'chưa xác minh'}</strong></div>
-        <div><span>CI quality report</span><strong>{overview.trends.testCoverage !== null ? `coverage ${overview.trends.testCoverage}%` : 'chưa có báo cáo'}{overview.trends.automationPassRate !== null ? ` · autotest ${overview.trends.automationPassRate}%` : ''}</strong></div>
+        <div><span>Kiểm thử của build</span><strong>{q.ciReport?.autoTest
+          ? `${q.ciReport.autoTest}${typeof q.ciReport.testsRun === 'number' ? ` · ${q.ciReport.testsRun} test` : ''}${q.ciReport.runner ? ` (${q.ciReport.runner})` : ''}${typeof (q.ciReport.coveragePercentage ?? q.ciReport.coverage) === 'number' ? ` · coverage ${q.ciReport.coveragePercentage ?? q.ciReport.coverage}%` : ''}`
+          : 'pipeline không gửi kết quả test'}</strong></div>
       </div>}
     </section>
     <div className="module-overview-grid">
@@ -103,6 +105,14 @@ function stageCategory(stage: string): string {
   if (['build', 'Build', 'Build Docker Image', 'Generate Docs'].includes(stage)) return 'build'
   if (['publish', 'deploy', 'health-check', 'Package Artifact', 'Publish Artifact'].includes(stage)) return 'publish'
   return 'source'
+}
+
+// "jenkins-a:netci-<uuid>#3" is the controller's name for the run; the user reads
+// "#3" and finds the rest in the subtitle.
+function buildLabel(run: PipelineRun): string {
+  const jenkins = run.jenkinsRunId ?? ''
+  const match = /#(\d+)$/.exec(jenkins)
+  return match ? `#${match[1]}` : `#${run.id.slice(0, 8)}`
 }
 
 function PipelineRunView({
@@ -213,11 +223,11 @@ function PipelineRunView({
     <div className="run-heading">
       <div>
         <div className="title-status">
-          <h2>{pipeline.name} {liveRun ? `#${liveRun.jenkinsRunId ?? liveRun.id.slice(0, 8)}` : ''}</h2>
+          <h2>{pipeline.name} {liveRun ? `· build ${buildLabel(liveRun)}` : ''}</h2>
           <StatusPill status={liveRun?.status.replace('_', ' ') ?? 'Not started'} />
           {liveRun?.retryOf && <span className="mono" style={{ marginLeft: 8, fontSize: '0.85em', opacity: 0.8 }}>(retry of #{liveRun.retryOf.slice(0, 8)})</span>}
         </div>
-        <p>{liveRun ? `${liveRun.branch} · ${liveRun.commitSha} · triggered by ${liveRun.startedBy ?? 'unknown actor'}` : 'No pipeline run selected.'}</p>
+        <p>{liveRun ? `${liveRun.branch} · ${liveRun.commitSha} · triggered by ${liveRun.startedBy ?? 'unknown actor'}` : 'No pipeline run selected.'}{liveRun?.jenkinsRunId && <><br /><span className="mono" style={{ opacity: 0.7 }}>Jenkins: {liveRun.jenkinsRunId}</span></>}</p>
       </div>
       <div className="run-actions">
         {canCancel && (
@@ -562,6 +572,10 @@ function DoraTab({ moduleId }: { moduleId: string }) {
 function ConfigTab({ moduleId }: { moduleId: string }) {
   const { notify } = usePortalFeedback()
   const [revisions, setRevisions] = useState<ConfigRevision[]>([])
+  // Who the server says we are: the approve button is hidden from the author, the way
+  // the server will refuse them, instead of inviting a click that ends in 403.
+  const [me, setMe] = useState<string>('')
+  useEffect(() => { whoami().then((identity) => setMe(identity.principal.subject)).catch(() => setMe('')) }, [])
   const [configVersion, setConfigVersion] = useState<number>(1)
   const [driftReport, setDriftReport] = useState<ConfigDriftReport | null>(null)
   const [loadingDrift, setLoadingDrift] = useState(false)
@@ -579,13 +593,12 @@ function ConfigTab({ moduleId }: { moduleId: string }) {
   const [applyingConfig, setApplyingConfig] = useState(false)
   const [fastApplyResult, setFastApplyResult] = useState<ConfigApplyResponse | null>(null)
 
-  // Propose form state
+  // Propose form state. The form edits a copy of the *active* revision, target by
+  // target; it never starts from placeholders, and what it does not show (pipeline
+  // settings, tasks) it carries over unchanged. Only the raw editor touches those.
   const [changeSummary, setChangeSummary] = useState('')
-  const [runner, setRunner] = useState('jenkins-primary')
-  const [stagesText, setStagesText] = useState('checkout, unit-test, build, sbom, vulnerability-scan, sign, publish, deploy')
-  const [devServers, setDevServers] = useState('srv-dev-01.internal')
-  const [stagingServers, setStagingServers] = useState('srv-staging-01.internal')
-  const [prodServers, setProdServers] = useState('srv-prod-01.internal')
+  const [envDrafts, setEnvDrafts] = useState<DeploymentEnvironmentConfig[]>([])
+  const [dcimHosts, setDcimHosts] = useState<DcimServer[]>([])
   const [useRawJson, setUseRawJson] = useState(false)
   const [pipelineJsonText, setPipelineJsonText] = useState('{}')
   const [deploymentJsonText, setDeploymentJsonText] = useState('[]')
@@ -601,16 +614,13 @@ function ConfigTab({ moduleId }: { moduleId: string }) {
     }
   }
 
-  const checkDrift = async () => {
+  const checkDrift = async (announce = false) => {
     setLoadingDrift(true)
     try {
       const report = await detectDrift(moduleId)
       setDriftReport(report)
-      if (report.hasDrift) {
-        notify('Configuration drift detected between active revision and running deployments or DCIM targets.', 'error')
-      } else {
-        notify('No configuration drift. Desired state matches running deployments and DCIM targets.')
-      }
+      // The banner below says it; a toast on every visit was noise.
+      if (announce) notify(report.hasDrift ? 'Có sai lệch giữa revision đang hoạt động và trạng thái đang chạy / NetBox.' : 'Không có sai lệch cấu hình.', report.hasDrift ? 'error' : 'success')
     } catch (error) {
       notify(error instanceof Error ? error.message : 'Unable to run drift detection.', 'error')
     } finally {
@@ -626,23 +636,20 @@ function ConfigTab({ moduleId }: { moduleId: string }) {
   const openProposeModal = () => {
     const active = revisions.find((r) => r.active) ?? revisions[0]
     if (active) {
-      setRunner(String(active.pipelineConfig.runner ?? 'jenkins-primary'))
-      const stages = Array.isArray(active.pipelineConfig.stages) ? active.pipelineConfig.stages.join(', ') : 'checkout, unit-test, build'
-      setStagesText(stages)
-      const getServers = (env: string) => {
-        const item = active.deploymentConfig.find((d) => d.environment === env)
-        return Array.isArray(item?.servers) ? (item.servers as string[]).join(', ') : ''
-      }
-      setDevServers(getServers('dev') || 'srv-dev-01.internal')
-      setStagingServers(getServers('staging') || 'srv-staging-01.internal')
-      setProdServers(getServers('prod') || 'srv-prod-01.internal')
+      setEnvDrafts((active.deploymentConfig as unknown as DeploymentEnvironmentConfig[]).map((item) => ({ ...item, servers: [...(item.servers ?? [])], runtimeSettings: { ...(item.runtimeSettings ?? {}) } })))
       setPipelineJsonText(JSON.stringify(active.pipelineConfig, null, 2))
       setDeploymentJsonText(JSON.stringify(active.deploymentConfig, null, 2))
     }
     setChangeSummary('')
     setFormError('')
+    setUseRawJson(false)
     setProposeModal(true)
+    // Hosts NetBox knows for this module, offered as suggestions; anything else is
+    // refused by the server at dispatch, so a typo is caught before a release.
+    getModule(moduleId).then((m) => listDcimServers(m.systemId, moduleId)).then((page) => setDcimHosts(page.items)).catch(() => setDcimHosts([]))
   }
+  const updateDraft = (index: number, patch: Partial<DeploymentEnvironmentConfig>) => setEnvDrafts((current) => current.map((item, i) => (i === index ? { ...item, ...patch } : item)))
+  const updateDraftSettings = (index: number, patch: Partial<RuntimeSettings>) => setEnvDrafts((current) => current.map((item, i) => (i === index ? { ...item, runtimeSettings: { ...(item.runtimeSettings ?? {}), ...patch } } : item)))
 
   const handlePropose = async () => {
     if (!changeSummary.trim()) {
@@ -665,15 +672,12 @@ function ConfigTab({ moduleId }: { moduleId: string }) {
           return
         }
       } else {
-        pipelineConfig = {
-          runner: runner.trim(),
-          stages: stagesText.split(',').map((s) => s.trim()).filter(Boolean),
-        }
-        deploymentConfig = [
-          { environment: 'dev', servers: devServers.split(',').map((s) => s.trim()).filter(Boolean) },
-          { environment: 'staging', servers: stagingServers.split(',').map((s) => s.trim()).filter(Boolean) },
-          { environment: 'prod', servers: prodServers.split(',').map((s) => s.trim()).filter(Boolean) },
-        ]
+        const active = revisions.find((r) => r.active) ?? revisions[0]
+        pipelineConfig = active ? { ...active.pipelineConfig } : {}
+        deploymentConfig = envDrafts.map((item) => {
+          const settings = Object.fromEntries(Object.entries(item.runtimeSettings ?? {}).filter(([, v]) => v !== '' && v !== null && v !== undefined))
+          return { ...item, servers: item.servers.map((h) => h.trim()).filter(Boolean), runtimeSettings: Object.keys(settings).length ? settings : null } as unknown as Record<string, unknown>
+        })
       }
 
       const res = await proposeConfigRevision(moduleId, {
@@ -780,12 +784,14 @@ function ConfigTab({ moduleId }: { moduleId: string }) {
                 Proposed by <strong>{pendingRev.createdBy}</strong> at {new Date(pendingRev.createdAt).toLocaleString('vi-VN')}: <em>"{pendingRev.changeSummary}"</em>
               </p>
               <small style={{ display: 'block', color: 'var(--text-muted)', marginBottom: 12 }}>
-                Separation of duties applies: the author of a production configuration cannot approve their own change.
+                {me && me === pendingRev.createdBy
+                  ? 'Bạn là tác giả của thay đổi này: một reviewer khác phải phê duyệt (separation of duties).'
+                  : 'Separation of duties applies: the author of a production configuration cannot approve their own change.'}
               </small>
               <div style={{ display: 'flex', gap: 10 }}>
-                <button className="primary-button" onClick={() => handleApprove(pendingRev.id, pendingRev.revisionNumber)}>
+                {me !== pendingRev.createdBy && <button className="primary-button" onClick={() => handleApprove(pendingRev.id, pendingRev.revisionNumber)}>
                   <Check size={15} /> Approve & Activate
-                </button>
+                </button>}
                 <button className="secondary-button" onClick={() => setRejectModal(pendingRev)}>
                   <XCircle size={15} /> Reject
                 </button>
@@ -804,7 +810,7 @@ function ConfigTab({ moduleId }: { moduleId: string }) {
         <div>
           <h2>Environment & Pipeline Configuration</h2>
           <p>
-            Immutable, versioned domain configuration with compare-and-set pointer (CAS Version: {configVersion}) and DCIM lifecycle validation.
+            Cấu hình triển khai theo revision bất biến (phiên bản {configVersion}); thay đổi prod cần một reviewer khác phê duyệt; mỗi máy chủ đích được đối chiếu với NetBox.
           </p>
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
@@ -816,7 +822,7 @@ function ConfigTab({ moduleId }: { moduleId: string }) {
           >
             <Zap size={15} /> Fast Apply Config
           </button>
-          <button className="secondary-button" disabled={loadingDrift} onClick={checkDrift}>
+          <button className="secondary-button" disabled={loadingDrift} onClick={() => checkDrift(true)}>
             <RotateCcw size={15} /> {loadingDrift ? 'Detecting…' : 'Check Drift'}
           </button>
           <button className="primary-button" onClick={openProposeModal}>
@@ -853,7 +859,7 @@ function ConfigTab({ moduleId }: { moduleId: string }) {
             </div>
           ) : (
             <p style={{ margin: 0, fontSize: '0.88rem', color: 'var(--text-muted)' }}>
-              All running deployment environments match the active desired configuration revision, and all DCIM target hosts are validated online.
+              Không có deployment nào đã tới máy chủ lệch khỏi revision đang hoạt động, và DCIM chấp nhận mọi máy chủ đích đã cấu hình (trạng thái inventory, không phải kiểm tra "online").
             </p>
           )}
         </section>
@@ -870,25 +876,23 @@ function ConfigTab({ moduleId }: { moduleId: string }) {
               </div>
               <p style={{ margin: '0 0 6px 0', color: 'var(--text-secondary)' }}>{activeRev.changeSummary}</p>
               <small style={{ color: 'var(--text-muted)' }}>
-                Created by {activeRev.createdBy} on {new Date(activeRev.createdAt).toLocaleString('vi-VN')}
-                {activeRev.approvedBy && ` · Approved by ${activeRev.approvedBy}`}
+                Created by <span title={activeRev.createdBy}>{person(activeRev.createdBy)}</span> on {new Date(activeRev.createdAt).toLocaleString('vi-VN')}
+                {activeRev.approvedBy && <> · Approved by <span title={activeRev.approvedBy}>{person(activeRev.approvedBy)}</span></>}
               </small>
             </div>
           </div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginTop: 16, paddingTop: 16, borderTop: '1px solid var(--border)' }}>
-            <div>
-              <strong style={{ fontSize: '0.85rem', textTransform: 'uppercase', letterSpacing: 0.5, opacity: 0.8 }}>Pipeline Settings</strong>
-              <pre style={{ margin: '8px 0 0 0', padding: 10, borderRadius: 6, background: 'var(--bg-card)', fontSize: '0.8rem' }}>
-                {JSON.stringify(activeRev.pipelineConfig, null, 2)}
-              </pre>
-            </div>
-            <div>
-              <strong style={{ fontSize: '0.85rem', textTransform: 'uppercase', letterSpacing: 0.5, opacity: 0.8 }}>Deployment Target Environments</strong>
-              <pre style={{ margin: '8px 0 0 0', padding: 10, borderRadius: 6, background: 'var(--bg-card)', fontSize: '0.8rem' }}>
-                {JSON.stringify(activeRev.deploymentConfig, null, 2)}
-              </pre>
-            </div>
+          <div className="env-grid" style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid var(--border)' }}>
+            {(activeRev.deploymentConfig as unknown as DeploymentEnvironmentConfig[]).map((env) => <article className="env-card" key={env.environment} style={{ border: '1px solid var(--border)', borderRadius: 8 }}>
+              <header><span className={`env-badge env-${env.environment}`}>{env.displayName || env.environment}</span><small className="muted">{env.runtime}</small></header>
+              <dl>
+                <div><dt>Máy chủ</dt><dd className="mono">{env.servers?.length ? env.servers.join(', ') : (env.runtime === 'kubernetes' ? `namespace ${env.namespace ?? '—'}` : '—')}</dd></div>
+                {env.runtime === 'kubernetes' && <div><dt>Kubeconfig</dt><dd className="mono">{env.kubeconfigRef ?? '—'}</dd></div>}
+                {Object.entries(env.runtimeSettings ?? {}).filter(([, v]) => v !== null && v !== undefined && v !== '').map(([k, v]) => <div key={k}><dt>{k}</dt><dd className="mono">{String(v)}</dd></div>)}
+                {env.runtime !== 'kubernetes' && (env.runtimeSettings?.become === null || env.runtimeSettings?.become === undefined) && <div><dt>become</dt><dd className="mono" title="Không khai trong revision; playbook mặc định leo thang quyền (sudo)">mặc định (bật)</dd></div>}
+              </dl>
+            </article>)}
           </div>
+          {Object.keys(activeRev.pipelineConfig ?? {}).length > 0 && <details style={{ marginTop: 12 }}><summary className="muted">Pipeline settings (JSON)</summary><pre style={{ margin: '8px 0 0 0', padding: 10, borderRadius: 6, background: 'var(--bg-card)', fontSize: '0.8rem' }}>{JSON.stringify(activeRev.pipelineConfig, null, 2)}</pre></details>}
         </section>
       )}
 
@@ -916,7 +920,7 @@ function ConfigTab({ moduleId }: { moduleId: string }) {
                 {rev.active && <small style={{ color: '#10b981', display: 'block', fontWeight: 600 }}>Active</small>}
               </span>
               <StatusPill status={rev.status.replace('_', ' ')} />
-              <span>{rev.createdBy}</span>
+              <span title={rev.createdBy}>{person(rev.createdBy)}</span>
               <span style={{ fontSize: '0.85rem' }}>{new Date(rev.createdAt).toLocaleString('vi-VN')}</span>
               <span className="truncate" title={rev.changeSummary}>{rev.changeSummary}</span>
               <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
@@ -929,7 +933,7 @@ function ConfigTab({ moduleId }: { moduleId: string }) {
                     Diff with Active
                   </button>
                 )}
-                {!rev.active && rev.status !== 'rejected' && (
+                {!rev.active && rev.status === 'superseded' && (
                   <button
                     className="secondary-button"
                     style={{ padding: '4px 8px', fontSize: '0.8rem' }}
@@ -1002,26 +1006,34 @@ function ConfigTab({ moduleId }: { moduleId: string }) {
               </>
             ) : (
               <>
-                <label className="field">
-                  <span>Pipeline Runner</span>
-                  <input value={runner} onChange={(e) => setRunner(e.target.value)} />
-                </label>
-                <label className="field full">
-                  <span>Pipeline Stages (comma-separated)</span>
-                  <input value={stagesText} onChange={(e) => setStagesText(e.target.value)} />
-                </label>
-                <label className="field full">
-                  <span>Development Target Servers (comma-separated)</span>
-                  <input value={devServers} onChange={(e) => setDevServers(e.target.value)} />
-                </label>
-                <label className="field full">
-                  <span>Staging Target Servers (comma-separated)</span>
-                  <input value={stagingServers} onChange={(e) => setStagingServers(e.target.value)} />
-                </label>
-                <label className="field full">
-                  <span>Production Target Servers (comma-separated, triggers approval)</span>
-                  <input value={prodServers} onChange={(e) => setProdServers(e.target.value)} />
-                </label>
+                {envDrafts.map((env, index) => <fieldset className="field full env-draft" key={env.environment}>
+                  <legend><span className={`env-badge env-${env.environment}`}>{env.displayName || env.environment}</span> <small className="muted">runtime {env.runtime}{env.environment === 'prod' ? ' · thay đổi prod cần một reviewer khác phê duyệt' : ''}</small></legend>
+                  <div className="form-grid">
+                    <label className="field full"><span>Máy chủ đích (tên trong NetBox, phân cách bằng dấu phẩy)</span>
+                      <input list={`dcim-${env.environment}`} value={env.servers.join(', ')} onChange={(e) => updateDraft(index, { servers: e.target.value.split(',').map((h) => h.trim()) })} placeholder={env.runtime === 'kubernetes' ? '(Kubernetes: không cần máy chủ)' : 'ví dụ: netci-prod-01'} />
+                      <datalist id={`dcim-${env.environment}`}>{dcimHosts.filter((h) => !h.environment || h.environment === env.environment).map((h) => <option key={h.id} value={h.hostname}>{h.ipAddress ? `${h.hostname} (${h.ipAddress})` : h.hostname}</option>)}</datalist>
+                      <small>netCI kiểm tra tên máy chủ với NetBox (tenant/role/site) và trạng thái của nó trước mỗi lần triển khai.</small>
+                    </label>
+                    {env.runtime === 'kubernetes' && <>
+                      <label className="field"><span>Namespace</span><input value={env.namespace ?? ''} onChange={(e) => updateDraft(index, { namespace: e.target.value })} /></label>
+                      <label className="field"><span>Kubeconfig secret ref</span><input value={env.kubeconfigRef ?? ''} onChange={(e) => updateDraft(index, { kubeconfigRef: e.target.value })} /></label>
+                    </>}
+                    {env.runtime === 'docker' && <>
+                      <label className="field"><span>Thư mục ứng dụng (appRoot)</span><input value={env.runtimeSettings?.appRoot ?? ''} onChange={(e) => updateDraftSettings(index, { appRoot: e.target.value })} /></label>
+                      <label className="field"><span>Host port</span><input type="number" value={env.runtimeSettings?.hostPort ?? ''} onChange={(e) => updateDraftSettings(index, { hostPort: e.target.value === '' ? null : Number(e.target.value) })} /></label>
+                      <label className="field"><span>Container port</span><input type="number" value={env.runtimeSettings?.containerPort ?? ''} onChange={(e) => updateDraftSettings(index, { containerPort: e.target.value === '' ? null : Number(e.target.value) })} /></label>
+                      <label className="field"><span>Network mode</span><select value={env.runtimeSettings?.networkMode ?? 'bridge'} onChange={(e) => updateDraftSettings(index, { networkMode: e.target.value as 'bridge' | 'host' })}><option value="bridge">bridge</option><option value="host">host</option></select></label>
+                      <label className="field"><span>Registry host nhìn từ máy chủ (imagePullHost)</span><input value={env.runtimeSettings?.imagePullHost ?? ''} onChange={(e) => updateDraftSettings(index, { imagePullHost: e.target.value })} placeholder="registry.example:5000" /></label>
+                    </>}
+                    {env.runtime === 'systemd' && <>
+                      <label className="field"><span>Cổng ứng dụng (appPort)</span><input type="number" value={env.runtimeSettings?.appPort ?? ''} onChange={(e) => updateDraftSettings(index, { appPort: e.target.value === '' ? null : Number(e.target.value) })} /></label>
+                      <label className="field"><span>Thư mục cài đặt (appRoot)</span><input value={env.runtimeSettings?.appRoot ?? ''} onChange={(e) => updateDraftSettings(index, { appRoot: e.target.value })} /></label>
+                      <label className="field"><span>Phạm vi systemd</span><select value={env.runtimeSettings?.systemdScope ?? 'user'} onChange={(e) => updateDraftSettings(index, { systemdScope: e.target.value as 'system' | 'user' })}><option value="user">user</option><option value="system">system</option></select></label>
+                    </>}
+                    {env.runtime !== 'kubernetes' && <label className="field checkbox-field"><input type="checkbox" checked={env.runtimeSettings?.become ?? true} onChange={(e) => updateDraftSettings(index, { become: e.target.checked })} /><span>Leo thang quyền (become/sudo) trên máy chủ — playbook mặc định bật khi không khai</span></label>}
+                  </div>
+                </fieldset>)}
+                {!envDrafts.length && <p className="muted full">Revision hiện tại không có môi trường nào; dùng Raw JSON.</p>}
               </>
             )}
 
@@ -1167,17 +1179,28 @@ function ConfigTab({ moduleId }: { moduleId: string }) {
   )
 }
 
-type ModuleView = { id: string; name: string; type: string; description: string; runtime: Runtime; versions: string[]; activityCount: number; pipelineConfig: Partial<ModulePipelineConfig>; deploymentEnvironments?: DeploymentEnvironmentConfig[] }
+type ModuleView = { id: string; name: string; type: string; description: string; runtime: Runtime; versions: string[]; activityCount: number; pipelineConfig: Partial<ModulePipelineConfig>; deploymentEnvironments?: DeploymentEnvironmentConfig[]; repositoryUrl?: string }
 
 export function ModulePage({ moduleId, onSettings }: { moduleId: string; onSettings: () => void }) {
   const [module, setModule] = useState<ModuleView>(() => ({ id: moduleId, name: moduleId, type: 'Module', description: 'Loading module data from netCI.', runtime: 'docker', versions: [], activityCount: 0, pipelineConfig: {} }))
   const [tab, setTab] = useState<ModuleTab>('overview')
+  // A refusal is a page, not a spinner that never ends: the server says whose module
+  // this is and why the caller may not see it.
+  const [loadError, setLoadError] = useState<{ status: number; message: string } | null>(null)
   useEffect(() => {
-    getModule(moduleId).then((item) => setModule({ id: item.id, name: item.name, type: item.type, description: item.description, runtime: item.runtime, versions: item.versions, activityCount: item.pipelineRuns.length, pipelineConfig: item.pipelineConfig, deploymentEnvironments: item.deploymentEnvironments })).catch(() => undefined)
+    setLoadError(null)
+    getModule(moduleId).then((item) => setModule({ id: item.id, name: item.name, type: item.type, description: item.description, runtime: item.runtime, versions: item.versions, activityCount: item.pipelineRuns.length, pipelineConfig: item.pipelineConfig, repositoryUrl: item.repositoryUrl ?? undefined, deploymentEnvironments: item.deploymentEnvironments })).catch((error) => setLoadError({ status: error instanceof NetciApiError ? error.status : 0, message: error instanceof Error ? error.message : String(error) }))
   }, [moduleId])
-  const moduleCode = module.id.toUpperCase().replace(/-/g, '_')
+  const moduleCode = module.id
+  if (loadError) {
+    return <section className="panel" style={{ padding: 24 }}>
+      <h2 style={{ marginTop: 0 }}>{loadError.status === 403 ? 'Bạn không có quyền xem module này' : loadError.status === 404 ? 'Không tìm thấy module' : 'Không tải được module'}</h2>
+      <p className="muted">{loadError.message}</p>
+      <p className="muted" style={{ fontSize: '0.85rem' }}>Module <code>{moduleId}</code>. {loadError.status === 403 ? 'Quyền truy cập do team sở hữu module quyết định; hãy hỏi platform-admin hoặc team đó.' : ''}</p>
+    </section>
+  }
   return <>
-    <div className="module-heading"><div className="module-title"><span className="module-icon purple"><Box size={20} /></span><div><div className="title-status"><h1>{module.name}</h1><span className="type-badge purple">{module.type}</span></div><p>{module.description}</p><small>Module code: {moduleCode} · Runtime: {module.runtime}</small></div></div><button className="secondary-button" onClick={onSettings}><Settings size={16} />Settings</button></div>
+    <div className="module-heading"><div className="module-title"><span className="module-icon purple"><Box size={20} /></span><div><div className="title-status"><h1>{module.name}</h1><span className="type-badge purple">{module.type}</span></div><p>{module.description}</p><small>Module: {moduleCode} · Runtime: {module.runtime}{module.repositoryUrl ? <> · <a href={module.repositoryUrl} target="_blank" rel="noreferrer">{module.repositoryUrl}</a></> : null}</small></div></div><button className="secondary-button" onClick={onSettings}><Settings size={16} />Settings</button></div>
     <nav className="tabs" role="tablist" aria-label="Module views">{([['overview', 'Overview'], ['pipeline', 'Pipeline'], ['version', 'Version'], ['config', 'Configuration'], ['dora', 'DORA Metrics']] as [ModuleTab, string][]).map(([id, label]) => <button role="tab" aria-selected={tab === id} className={tab === id ? 'active' : ''} onClick={() => setTab(id)} key={id}>{label}</button>)}</nav>
     <div className="tab-content" role="tabpanel">{tab === 'overview' && <OverviewTab moduleId={moduleId} />}{tab === 'pipeline' && <PipelineTab moduleId={moduleId} pipelineConfig={module.pipelineConfig ?? {}} deploymentEnvironments={module.deploymentEnvironments} />}{tab === 'version' && <VersionsTab moduleId={moduleId} />}{tab === 'config' && <ConfigTab moduleId={moduleId} />}{tab === 'dora' && <DoraTab moduleId={moduleId} />}</div>
   </>

@@ -51,7 +51,10 @@ ensure_container() {  # name, description, then the docker run arguments (withou
     if up; then creating "$desc (stopped, starting)"; docker start "$name" >/dev/null; return 0; fi
     absent "$desc" "container exists but is stopped"; return 0
   fi
-  if up; then creating "$desc"; docker run -d --name "$name" "$@" >/dev/null; else absent "$desc"; fi
+  # unless-stopped: a host reboot must bring the lab back on its own. Without it every
+  # container stayed Exited after a reboot while the API replicas (user systemd) came up
+  # and reported the stack unhealthy.
+  if up; then creating "$desc"; docker run -d --name "$name" --restart unless-stopped "$@" >/dev/null; else absent "$desc"; fi
 }
 
 step_postgres() {

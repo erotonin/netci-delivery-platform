@@ -40,6 +40,7 @@ from typing import Any
 from ..domain.models import ServerHealthRecord, utc_now
 from .dcim import (
     DcimPage,
+    DcimNotRegistered,
     DcimUnavailable,
     TargetValidationResult,
     get_server_maintenance,
@@ -80,6 +81,13 @@ class NetBoxDcimCatalog:
                 with urllib.request.urlopen(request, timeout=self.timeout_seconds) as response:
                     payload = json.loads(response.read() or b"{}")
             except urllib.error.HTTPError as exc:
+                if exc.code == 400:
+                    unknown = self._unknown_filter_values(exc)
+                    if unknown:
+                        # NetBox validates filter slugs: a tenant or role it has never
+                        # heard of is "not registered", not an outage. Saying 503 here
+                        # would tell the operator NetBox is down when NetBox just said no.
+                        raise DcimNotRegistered(unknown) from exc
                 # 401/403 mean the token is wrong; say so without echoing it.
                 raise DcimUnavailable(f"NetBox returned HTTP {exc.code} for {path}") from exc
             except (urllib.error.URLError, json.JSONDecodeError) as exc:
@@ -89,6 +97,23 @@ class NetBoxDcimCatalog:
             results.extend(item for item in payload["results"] if isinstance(item, dict))
             url = payload.get("next") or ""
         return results
+
+    @staticmethod
+    def _unknown_filter_values(exc: urllib.error.HTTPError) -> dict[str, str]:
+        """NetBox's 400 body for a bad filter is {"tenant": ["Select a valid choice. x ..."]}."""
+
+        try:
+            body = json.loads(exc.read() or b"{}")
+        except (json.JSONDecodeError, OSError):
+            return {}
+        if not isinstance(body, dict):
+            return {}
+        unknown: dict[str, str] = {}
+        for field, messages in body.items():
+            if field in ("tenant", "role", "site") and isinstance(messages, list):
+                if any("Select a valid choice" in str(message) for message in messages):
+                    unknown[field] = "; ".join(str(message) for message in messages)
+        return unknown
 
     # ------------------------------------------------------------------- mapping
 
@@ -134,7 +159,10 @@ class NetBoxDcimCatalog:
         return DcimPage(self.source, "ready", [self._system(item) for item in tenants])
 
     def list_modules(self, system_id: str) -> DcimPage:
-        devices = self._get("/dcim/devices/", {"tenant": system_id})
+        try:
+            devices = self._get("/dcim/devices/", {"tenant": system_id})
+        except DcimNotRegistered:
+            return DcimPage(self.source, "not_registered", [])
         seen: dict[str, dict[str, object]] = {}
         for device in devices:
             role = device.get("role") or {}
@@ -154,13 +182,19 @@ class NetBoxDcimCatalog:
         params: dict[str, Any] = {"tenant": system_id}
         if module_id:
             params["role"] = module_id
-        devices = self._get("/dcim/devices/", params)
+        try:
+            devices = self._get("/dcim/devices/", params)
+        except DcimNotRegistered:
+            return DcimPage(self.source, "not_registered", [])
         return DcimPage(self.source, "ready", [self._device(item) for item in devices])
 
     def resolve_inventory(self, system_id: str, module_id: str, environment: str) -> list[str]:
-        devices = self._get(
-            "/dcim/devices/", {"tenant": system_id, "role": module_id, "site": environment}
-        )
+        try:
+            devices = self._get(
+                "/dcim/devices/", {"tenant": system_id, "role": module_id, "site": environment}
+            )
+        except DcimNotRegistered:
+            return []
         return [
             str(item.get("name"))
             for item in devices
@@ -174,6 +208,8 @@ class NetBoxDcimCatalog:
     ) -> TargetValidationResult:
         try:
             devices = self._get("/dcim/devices/", {"tenant": system_id, "role": module_id, "name": target})
+        except DcimNotRegistered:
+            devices = []
         except DcimUnavailable as exc:
             return TargetValidationResult(
                 valid=False, status="error",

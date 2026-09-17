@@ -77,7 +77,7 @@ from .policy.rules import (
     require_separation_of_duties,
     require_team_access,
 )
-from .portal import PortalError, PortalService
+from .portal import SERVER_OWNED_DELIVERY_KEYS, PortalError, PortalService
 from .persistence import AuditRecord, UnitOfWork
 from .readiness import probe_readiness
 from .reconciler import Reconciler
@@ -1097,7 +1097,9 @@ class RuntimeSettings(StrictBody):
 
 class ModulePipelineTabConfig(StrictBody):
     branch: str = Field(min_length=1, max_length=500)
-    coverageReportPath: str = Field(min_length=1, max_length=500)
+    # Optional: a module without a coverage report is a fact the report shows as "no
+    # coverage", not a reason to refuse the module.
+    coverageReportPath: str | None = Field(default=None, max_length=500)
     stages: list[str] = Field(default_factory=list, min_length=1, max_length=100)
 
 
@@ -1399,11 +1401,18 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
     it that the override had worked.
     """
 
+    fields: list[dict[str, str]] = []
     for item in exc.errors():
         cause = item.get("ctx", {}).get("error") if isinstance(item.get("ctx"), dict) else None
         if isinstance(cause, BuildInputError):
             return error(cause.code, cause.message, request.state.correlation_id, 422)
-    return error("VALIDATION_ERROR", "request validation failed", request.state.correlation_id, 422)
+        # Field path and pydantic's message only -- never `input`, which would echo the
+        # body (a token pasted into the wrong field included) back into logs and toasts.
+        location = ".".join(str(part) for part in item.get("loc", ()) if part != "body")
+        fields.append({"field": location or "body", "message": str(item.get("msg", "invalid"))})
+    summary = "; ".join(f"{f['field']}: {f['message']}" for f in fields[:5]) or "request validation failed"
+    return error("VALIDATION_ERROR", summary, request.state.correlation_id, 422,
+                 detail={"fields": fields})
 
 
 @app.exception_handler(TrafficRoutingUnavailable)
@@ -1903,6 +1912,29 @@ def update_module(moduleId: str, payload: ModuleUpdate, principal: Principal = D
         )
     except KeyError as exc:
         raise HTTPException(status_code=404, detail={"code": "MODULE_NOT_FOUND", "message": str(exc)}) from exc
+
+
+class ModuleOwnerUpdate(StrictBody):
+    ownerTeam: str | None = Field(default=None, min_length=1, max_length=255)
+
+
+@app.put("/modules/{moduleId}/owner")
+def set_module_owner(moduleId: str, payload: ModuleOwnerUpdate, principal: Principal = AdminAccess) -> dict[str, object]:
+    """Transfer a module to another team. Platform-admin only: a team must not be able
+    to hand itself somebody else's module, nor give its own away by mistake."""
+
+    try:
+        module = portal.module(moduleId)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail={"code": "MODULE_NOT_FOUND", "message": str(exc)}) from exc
+    application_id = module.get("applicationId")
+    if not application_id:
+        raise HTTPException(status_code=409, detail={"code": "MODULE_NOT_PROVISIONED", "message": "module has no delivery application"})
+    owner = (payload.ownerTeam or "").strip() or None
+    if owner is None and require_application_owner():
+        raise HTTPException(status_code=422, detail={"code": "OWNER_TEAM_REQUIRED", "message": "ownerTeam is required: NETCI_REQUIRE_APPLICATION_OWNER is set"})
+    platform.set_application_owner(UUID(str(application_id)), owner, actor=principal.subject)
+    return portal.module(moduleId)
 
 
 @app.get("/modules/{moduleId}/overview")
@@ -3121,8 +3153,27 @@ def retry_pipeline_run(
 ) -> dict[str, object]:
     parent = platform.get_pipeline(pipelineRunId)
     _require_application_access(platform.get_application(parent.application_id), principal)
+    _require_environment_role(parent.environment, principal)
     idempotency_key = request.headers.get("Idempotency-Key")
-    new_run = platform.retry_pipeline(pipelineRunId, actor=principal.subject, idempotency_key=idempotency_key)
+    # Re-bind to the module's current targets and active revision (see retry_pipeline).
+    parameters: dict[str, object] | None = None
+    active_rev_id: UUID | None = None
+    module = portal.module_for_application(parent.application_id)
+    if module is not None:
+        supplied = {
+            key: value for key, value in parent.parameters.items()
+            if key not in SERVER_OWNED_DELIVERY_KEYS
+        }
+        try:
+            parameters = portal.delivery_parameters(str(module["id"]), parent.environment, supplied)
+        except PortalError as exc:
+            raise HTTPException(status_code=exc.status_code, detail={"code": exc.code, "message": exc.message}) from exc
+        if module.get("activeConfigRevisionId"):
+            active_rev_id = UUID(str(module["activeConfigRevisionId"]))
+    new_run = platform.retry_pipeline(
+        pipelineRunId, actor=principal.subject, idempotency_key=idempotency_key,
+        parameters=parameters, config_revision_id=active_rev_id,
+    )
     return pipeline_json(new_run)
 
 

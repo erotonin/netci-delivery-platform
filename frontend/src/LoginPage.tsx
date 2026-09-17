@@ -27,32 +27,30 @@ export function LoginPage({ onLogin }: { onLogin: (session: AuthSession) => void
 
   useEffect(() => {
     let cancelled = false
-    whoami()
-      .then((identity) => {
-        if (cancelled) return
-        setAuthMode(identity.authMode)
-        if (identity.authMode === 'none' && !manualMode) {
-          window.sessionStorage.removeItem('netci.manual_login')
-          onLogin({ token: null, identity })
-        }
-      })
-      .catch((cause) => {
-        if (cancelled) return
-        // A 401 says only "a credential is needed"; /auth/config says which kind, and
-        // may already have answered -- never downgrade its answer to the generic one.
-        if (cause instanceof NetciApiError && cause.status === 401) setAuthMode((current) => current ?? 'token')
-        else if (cause instanceof NetciApiError && cause.code === 'AUTH_NOT_CONFIGURED') setAuthMode('auth-required')
-        else setAuthMode('unreachable')
-      })
     // How to sign in is the server's to say: the mode, and for OIDC the public client
-    // and the provider's endpoints. The Portal bundle carries none of it.
+    // and the provider's endpoints. The Portal bundle carries none of it. /me is asked
+    // only in open mode, where it answers; asking it first put a 401 in the console on
+    // every visit to the login page for nothing.
     fetchAuthConfig()
       .then((config) => {
         if (cancelled) return
-        if (config.authMode === 'token' || config.authMode === 'oidc') setAuthMode(config.authMode)
         setOidc(config.oidc)
+        if (config.authMode === 'none' && !manualMode) {
+          return whoami().then((identity) => {
+            if (cancelled) return
+            setAuthMode(identity.authMode)
+            window.sessionStorage.removeItem('netci.manual_login')
+            onLogin({ token: null, identity })
+          })
+        }
+        setAuthMode(config.authMode === 'token' || config.authMode === 'oidc' || config.authMode === 'none' ? config.authMode : 'auth-required')
       })
-      .catch(() => { /* /me already told us whether the API is reachable */ })
+      .catch((cause) => {
+        if (cancelled) return
+        if (cause instanceof NetciApiError && cause.code === 'AUTH_NOT_CONFIGURED') setAuthMode('auth-required')
+        else if (cause instanceof NetciApiError && cause.status === 401) setAuthMode('token')
+        else setAuthMode('unreachable')
+      })
     return () => {
       cancelled = true
     }

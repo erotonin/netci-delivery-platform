@@ -409,7 +409,7 @@ export type RuntimeSettings = {
 
 export type ModulePipelineTabConfig = {
   branch: string
-  coverageReportPath: string
+  coverageReportPath?: string
   stages: string[]
 }
 
@@ -465,6 +465,7 @@ export type PortalDashboard = {
 export type ProductionRequestModule = {
   moduleId: string
   moduleName: string
+  systemId?: string | null
   version: string
   deploymentOrder: number
   dependencies?: string[]
@@ -536,6 +537,15 @@ export function getModule(moduleId: string): Promise<PortalModule> {
   return request<PortalModule>(`/modules/${encodeURIComponent(moduleId)}`)
 }
 
+/** Platform-admin only: hand the module to another identity-provider team. */
+export function setModuleOwner(moduleId: string, ownerTeam: string | null): Promise<PortalModule> {
+  return request<PortalModule>(`/modules/${encodeURIComponent(moduleId)}/owner`, {
+    method: 'PUT',
+    headers: { 'X-Correlation-Id': requestId() },
+    body: JSON.stringify({ ownerTeam }),
+  })
+}
+
 export function updateModule(moduleId: string, payload: { displayName: string; moduleType: string; description: string }): Promise<PortalModule> {
   return request<PortalModule>(`/modules/${encodeURIComponent(moduleId)}`, {
     method: 'PATCH',
@@ -576,6 +586,7 @@ export type ArtifactQuality = {
   sbom?: { present: boolean; format: string | null; generatedBy: string | null }
   scan?: { scanner: string | null; status: string | null; critical: number | null; high: number | null }
   signature?: { provider: string | null; verified: boolean }
+  ciReport?: { autoTest?: string; testsRun?: number; runner?: string; coverage?: number; coveragePercentage?: number } | null
 }
 
 export type ModuleOverview = {
@@ -798,13 +809,18 @@ export type DcimService = {
   description: string
 }
 
+// What the DCIM catalog knows about a module: a NetBox device role under the tenant.
+// Type and repository are netCI's to ask the user for; the inventory does not hold them.
 export type DcimModule = {
   id: string
   name: string
-  code: string
-  type: string
-  repositoryUrl: string
+  systemId?: string
+  description?: string
+  source?: string
   registered: boolean
+  code?: string
+  type?: string
+  repositoryUrl?: string
 }
 
 export type DcimServer = {

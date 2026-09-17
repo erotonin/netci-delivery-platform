@@ -28,8 +28,9 @@ describe('LoginPage', () => {
   })
 
   it('asks the server how it is configured before drawing a form', async () => {
-    whoamiMock.mockImplementationOnce(() => Promise.reject(new NetciApiError(401, null, 'unauthenticated')))
     render(<LoginPage onLogin={vi.fn()} />)
+    // /me is not asked in token mode: it would only answer 401. /auth/config decides.
+    expect(whoamiMock).not.toHaveBeenCalled()
 
     // No credential field exists until the server says one is needed. A login box that
     // appears regardless is the theatre this screen used to be.
@@ -48,6 +49,8 @@ describe('LoginPage', () => {
   })
 
   it('distinguishes a reachable API with unsafe auth configuration from an outage', async () => {
+    // The server says "no auth" but refuses the proxied caller on /me: unsafe, not down.
+    requestMock.mockResolvedValue({ authMode: 'none', oidc: null })
     whoamiMock.mockImplementationOnce(() => Promise.reject(new NetciApiError(
       403,
       { code: 'AUTH_NOT_CONFIGURED' },
@@ -64,7 +67,6 @@ describe('LoginPage', () => {
   it('only creates a session from a token the server accepted', async () => {
     const user = userEvent.setup()
     const onLogin = vi.fn()
-    whoamiMock.mockImplementationOnce(() => Promise.reject(new NetciApiError(401, null, 'unauthenticated')))
     render(<LoginPage onLogin={onLogin} />)
     const field = await screen.findByLabelText('Access token')
 
@@ -86,7 +88,6 @@ describe('LoginPage', () => {
   it('says so plainly when a valid token carries no netCI role', async () => {
     const user = userEvent.setup()
     const onLogin = vi.fn()
-    whoamiMock.mockImplementationOnce(() => Promise.reject(new NetciApiError(401, null, 'unauthenticated')))
     render(<LoginPage onLogin={onLogin} />)
     const field = await screen.findByLabelText('Access token')
 
@@ -100,7 +101,6 @@ describe('LoginPage', () => {
 
   it('never keeps the typed credential in the DOM as readable text', async () => {
     const user = userEvent.setup()
-    whoamiMock.mockImplementationOnce(() => Promise.reject(new NetciApiError(401, null, 'unauthenticated')))
     render(<LoginPage onLogin={vi.fn()} />)
     const field = await screen.findByLabelText('Access token')
 
@@ -130,7 +130,6 @@ describe('LoginPage with OIDC', () => {
 
   it('offers SSO only when the server names a provider, and sends the browser there with PKCE', async () => {
     const user = userEvent.setup()
-    whoamiMock.mockImplementationOnce(() => Promise.reject(new NetciApiError(401, null, 'unauthenticated')))
     requestMock.mockResolvedValue({ authMode: 'oidc', oidc })
     const assign = vi.fn()
     const original = window.location
@@ -157,7 +156,6 @@ describe('LoginPage with OIDC', () => {
   })
 
   it('refuses a callback whose state this tab did not issue', async () => {
-    whoamiMock.mockImplementationOnce(() => Promise.reject(new NetciApiError(401, null, 'unauthenticated')))
     requestMock.mockResolvedValue({ authMode: 'oidc', oidc })
     window.sessionStorage.setItem('netci.oidc.state', 'expected')
     window.sessionStorage.setItem('netci.oidc.verifier', 'v')

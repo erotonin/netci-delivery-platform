@@ -29,7 +29,7 @@ up() {
   # not permitted" on the first pull); a real filesystem underneath fixes that. The image
   # also turns the containerd snapshotter off (its store lives in /var/lib/containerd,
   # which was still on the outer overlay: same error on the second attempt).
-  docker run -d --name "$NAME" --network kind --ip "$IP" --privileged --cgroupns=host \
+  docker run -d --name "$NAME" --network kind --ip "$IP" --privileged --cgroupns=host --restart unless-stopped \
     --tmpfs /run --tmpfs /run/lock -v /sys/fs/cgroup:/sys/fs/cgroup:rw \
     -v "${NAME}-docker:/var/lib/docker" "$IMAGE" >/dev/null
   # The image (infra/lab-prod-host) carries sshd, python3, sudo and the netci user;

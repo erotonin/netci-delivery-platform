@@ -6,11 +6,11 @@ import {
 } from 'lucide-react'
 import { Modal } from './PortalShell'
 import { usePortalFeedback } from './PortalFeedback'
-import { getStageCatalog, listDcimModules, listDcimServers, getGitInfo, listSampleApps, type DcimModule, type StageDefinition, type DeploymentEnvironmentConfig, type Environment, type GitInfo, type GitSample, type SampleApps, type ModulePipelineConfig, type ModulePipelineTabConfig, type Runtime } from './api/netciClient'
+import { getStageCatalog, listDcimModules, listDcimServers, getGitInfo, listSampleApps, type DcimModule, type StageDefinition, type DeploymentEnvironmentConfig, type Environment, type GitInfo, type GitSample, type SampleApps, type ModulePipelineConfig, type ModulePipelineTabConfig, type Runtime, type RuntimeSettings } from './api/netciClient'
 
 type DeploymentEnvironment = 'Dev' | 'Staging' | 'Production'
 type DeploymentTarget = 'Systemd' | 'Docker' | 'Kubernetes'
-type EnvironmentConfig = { name: string; environment: DeploymentEnvironment; target: DeploymentTarget; servers: string[]; kubeconfigRef?: string; namespace?: string }
+type EnvironmentConfig = { name: string; environment: DeploymentEnvironment; target: DeploymentTarget; servers: string[]; kubeconfigRef?: string; namespace?: string; runtimeSettings?: RuntimeSettings }
 type EnvironmentDraft = Pick<EnvironmentConfig, 'name' | 'environment' | 'target'>
 type PortalInformation = { displayName: string; moduleType: string; description: string }
 type ModuleWizardSubmission = PortalInformation & { runtime: Runtime; defaultEnvironment: Environment; deploymentEnvironments: DeploymentEnvironmentConfig[]; stages: string[]; pipelineConfig: ModulePipelineConfig; ownerTeam?: string }
@@ -30,12 +30,15 @@ const deploymentTargets: { label: DeploymentTarget; icon: typeof Server; executi
 type TargetServer = { name: string; ip: string; environment: DeploymentEnvironment; status: string }
 
 const defaultPipelineStages = ['checkout', 'unit-test', 'build', 'sbom', 'vulnerability-scan', 'sign', 'publish', 'deploy', 'health-check']
+// One pipeline per environment: a netCI run builds the chosen commit and deploys it to
+// that environment, so "CI" and "Automation Test" were not separate pipelines and the
+// old `develop` / `tags/v*` defaults named branches most repositories do not have.
 const defaultPipelineConfig: ModulePipelineConfig = {
   runner: 'docker-linux',
-  strategy: 'Gitflow',
-  pipelines: Object.fromEntries(['CI', 'CD Dev', 'CD Staging', 'CD Prod', 'Automation Test'].map((tab) => [tab, {
-    branch: tab === 'CI' ? 'main, merge_requests' : tab === 'CD Prod' ? 'tags/v*' : 'develop',
-    coverageReportPath: 'coverage/lcov.info',
+  strategy: 'Trunk-based',
+  pipelines: Object.fromEntries(['CD Dev', 'CD Staging', 'CD Prod'].map((tab) => [tab, {
+    branch: 'main',
+    coverageReportPath: '',
     stages: [...defaultPipelineStages],
   }])),
 }
@@ -73,6 +76,7 @@ function WizardSteps({ step }: { step: number }) {
 }
 
 function GeneralStep({
+  systemId,
   modules = [],
   integrationStatus = 'loading',
   selected,
@@ -87,6 +91,7 @@ function GeneralStep({
   sampleApps,
   onSelectSample,
 }: {
+  systemId: string
   modules?: DcimModule[]
   integrationStatus?: string
   selected: string
@@ -121,11 +126,13 @@ function GeneralStep({
           {modules.map((item) => <button disabled={item.registered} className={selected === item.id ? 'selected' : ''} onClick={() => onSelect(item.id)} key={item.id}>
             <span className="radio">{selected === item.id && <i />}</span>
             <span className="module-symbol"><Box size={17} /></span>
-            <span><strong>{item.name}</strong><small>{item.code} · {item.type}</small></span>
+            <span><strong>{item.name}</strong><small>{item.id}{item.description ? ` · ${item.description}` : ''} · nguồn: {item.source ?? 'DCIM'}</small></span>
             {item.registered ? <em>Already added</em> : <ChevronRight size={17} />}
           </button>)}
         </div>
-        {integrationStatus === 'ready' && !modules.length && <div className="inline-empty"><Box size={23} /><span>DCIM returned no modules for this system.</span></div>}
+        {integrationStatus === 'ready' && !modules.length && <div className="inline-empty"><Box size={23} /><span>NetBox có tenant này nhưng chưa có device nào — nên chưa có device role để chọn làm module.</span></div>}
+        {integrationStatus === 'not_registered' && <div className="inline-empty"><Box size={23} /><span>NetBox chưa có tenant "{systemId}". Tạo tenant và device (role = module) trong NetBox, hoặc dùng tab "Tạo Module Local".</span></div>}
+        {integrationStatus === 'error' && <div className="inline-error" role="status">Không truy vấn được DCIM — kiểm tra NetBox. netCI không tự bịa danh sách module.</div>}
       </>
     ) : (
       <>
@@ -140,11 +147,6 @@ function GeneralStep({
                     : 'Repository base is not configured (NETCI_SAMPLE_APPS_REPOSITORY_BASE); selecting a sample prefills runtime only — enter the repository URL yourself.'}
                 </p>
               </div>
-              {gitInfo?.currentCommitSha && (
-                <span className="mono" style={{ fontSize: '0.75rem', background: 'rgba(59, 130, 246, 0.1)', color: '#60a5fa', padding: '3px 8px', borderRadius: '4px', border: '1px solid rgba(59, 130, 246, 0.25)' }}>
-                  Build: {gitInfo.currentCommitSha.slice(0, 7)}{gitInfo.currentBranch ? ` (${gitInfo.currentBranch})` : ''}
-                </span>
-              )}
             </div>
             {sampleApps.items.length === 0 ? (
               <div className="inline-empty"><Box size={23} /><span>No sample applications found in this checkout.</span></div>
@@ -263,9 +265,9 @@ function GeneralStep({
       <div className="panel wizard-form">
         <div className="form-grid">
           <label className="field full"><span>Display name</span><input value={information.displayName} onChange={(event) => onInformationChange({ ...information, displayName: event.target.value })} /></label>
-          <label className="field"><span>Module code</span><input value={module.code} readOnly /></label>
-          <label className="field"><span>Type</span><select value={information.moduleType} onChange={(event) => onInformationChange({ ...information, moduleType: event.target.value })}><option>Backend</option><option>Frontend</option><option>Worker</option><option>Gateway</option></select></label>
-          <label className="field full"><span>Git repository</span><input value={module.repositoryUrl} readOnly /></label>
+          <label className="field"><span>Module code (device role trong NetBox)</span><input value={module.id} readOnly /></label>
+          <label className="field"><span>Type *</span><select value={information.moduleType} onChange={(event) => onInformationChange({ ...information, moduleType: event.target.value })}><option value="">— chọn —</option><option>Backend</option><option>Frontend</option><option>Worker</option><option>Gateway</option></select></label>
+          <label className="field full"><span>Repository URL *</span><input value={customModule.repositoryUrl} onChange={(event) => onCustomModuleChange({ ...customModule, repositoryUrl: event.target.value })} placeholder="URL git mà Jenkins checkout được" /><small>NetBox chỉ biết máy chủ; nguồn mã của module là do bạn khai.</small></label>
           <label className="field full"><span>Description</span><textarea value={information.description} onChange={(event) => onInformationChange({ ...information, description: event.target.value })} /></label>
         </div>
       </div>
@@ -281,7 +283,7 @@ function GeneralStep({
 }
 
 function PipelineDesigner({ initialConfig, onCancel, onSave }: { initialConfig: ModulePipelineConfig; onCancel: () => void; onSave: (config: ModulePipelineConfig) => void }) {
-  const [tab, setTab] = useState('CI')
+  const [tab, setTab] = useState(Object.keys(initialConfig.pipelines)[0] ?? 'CD Dev')
   const [mode, setMode] = useState<'visual' | 'code'>('visual')
   const [config, setConfig] = useState<ModulePipelineConfig>(() => ({ ...initialConfig, pipelines: Object.fromEntries(Object.entries(initialConfig.pipelines).map(([key, value]) => [key, { ...value, stages: [...value.stages] }])) }))
   const [validated, setValidated] = useState(false)
@@ -301,8 +303,8 @@ function PipelineDesigner({ initialConfig, onCancel, onSave }: { initialConfig: 
     updateCurrent({ stages: next })
     setPicking(false)
   }
-  const yaml = ['pipeline:', `  name: ${tab.toLowerCase().replace(/\s+/g, '-')}`, `  runner: ${config.runner}`, `  strategy: ${config.strategy.toLowerCase()}`, '  branches:', `    - ${current.branch}`, `  coverageReportPath: ${current.coverageReportPath}`, '  stages:', ...current.stages.map((stage) => `    - ${stage}`)].join('\n')
-  const valid = Boolean(config.runner.trim() && current.branch.trim() && current.coverageReportPath.trim() && current.stages.length)
+  const yaml = ['pipeline:', `  name: ${tab.toLowerCase().replace(/\s+/g, '-')}`, `  runner: ${config.runner}`, `  strategy: ${config.strategy.toLowerCase()}`, '  branches:', `    - ${current.branch}`, ...(current.coverageReportPath ? [`  coverageReportPath: ${current.coverageReportPath}`] : []), '  stages:', ...current.stages.map((stage) => `    - ${stage}`)].join('\n')
+  const valid = Boolean(config.runner.trim() && current.branch.trim() && current.stages.length)
   return <div className="pipeline-designer">
     <div className="designer-top">
       <button className="back-button" onClick={onCancel}><ArrowLeft size={16} />Back to CI / CD</button>
@@ -312,11 +314,11 @@ function PipelineDesigner({ initialConfig, onCancel, onSave }: { initialConfig: 
     {mode === 'visual' ? <>
       <div className="form-grid designer-form">
         <label className="field"><span>Runner routing label</span><input value={config.runner} onChange={(event) => setConfig({ ...config, runner: event.target.value })} placeholder="docker-linux" /><small>The configured CI engine resolves this label.</small></label>
-        <label className="field"><span>Branch configuration</span><input value={current.branch} onChange={(event) => updateCurrent({ branch: event.target.value })} /></label>
-        <label className="field full"><span>Coverage report path</span><input value={current.coverageReportPath} onChange={(event) => updateCurrent({ coverageReportPath: event.target.value })} /></label>
+        <label className="field"><span>Nhánh mặc định cho {tab}</span><input value={current.branch} onChange={(event) => updateCurrent({ branch: event.target.value })} placeholder="main" /><small>Nhánh được đề xuất khi bấm "Chạy"; commit thực tế được chọn lúc chạy.</small></label>
+        <label className="field full"><span>Coverage report path <em className="muted">(tuỳ chọn)</em></span><input value={current.coverageReportPath ?? ''} onChange={(event) => updateCurrent({ coverageReportPath: event.target.value })} placeholder="coverage/lcov.info" /></label>
       </div>
       <div className="stage-list">
-        <div className="section-heading"><h3>{tab} stages</h3><button className="secondary-button" disabled={!addable.length} title={addable.length ? 'Add an approved custom stage from the catalog' : 'No approved custom stage fits this pipeline (register one in Module Settings → Pipeline stages)'} onClick={() => setPicking(true)}><Plus size={15} />Add custom stage</button></div>
+        <div className="section-heading"><h3>Các bước của pipeline (chung cho mọi môi trường)</h3><button className="secondary-button" disabled={!addable.length} title={addable.length ? 'Add an approved custom stage from the catalog' : 'No approved custom stage fits this pipeline (register one in Module Settings → Pipeline stages)'} onClick={() => setPicking(true)}><Plus size={15} />Add custom stage</button></div>
         {picking && addable.length > 0 && <div className="panel" style={{ padding: 8, marginBottom: 8, display: 'grid', gap: 6 }}>{addable.map((stage) => <button key={stage.id} className="secondary-button" onClick={() => addCustom(stage)}>{stage.name} <code className="mono">{stage.script}</code> · after {stage.afterStage}</button>)}</div>}
         {current.stages.map((stage, index) => {
           const def = catalogById[stage]
@@ -326,7 +328,7 @@ function PipelineDesigner({ initialConfig, onCancel, onSave }: { initialConfig: 
         })}
       </div>
     </> : <div className="code-editor"><div><span>pipeline.yml · read-only projection</span><button onClick={() => setValidated(valid)}><Code2 size={15} />Validate</button>{validated && <small role="status">Required catalog fields are present</small>}</div><pre>{yaml}</pre></div>}
-    <div className="designer-footer"><button className="primary-button" disabled={!valid} onClick={() => onSave(config)}><Check size={16} />Save configuration</button></div>
+    <div className="designer-footer"><button className="primary-button" disabled={!valid} onClick={() => onSave({ ...config, pipelines: Object.fromEntries(Object.entries(config.pipelines).map(([name, item]) => [name, { ...item, stages: [...current.stages] }])) })}><Check size={16} />Save configuration</button></div>
   </div>
 }
 
@@ -336,7 +338,7 @@ function CicdStep({ config, onConfigChange }: { config: ModulePipelineConfig; on
   return <div className="wizard-content">
     <div className="wizard-section-title"><span><Server size={18} /></span><div><h2>Runner routing label</h2><p>This label is sent to the configured CI adapter. Availability is verified by the CI engine when the run starts.</p></div></div>
     <label className="field runner-label"><span>Runner label</span><input value={config.runner} onChange={(event) => onConfigChange({ ...config, runner: event.target.value })} placeholder="docker-linux" /></label>
-    <div className="wizard-section-title spaced"><div><h2>Pipeline tabs</h2><p>Review or adjust pipelines and stages for this module.</p></div><button className="secondary-button" onClick={() => setDesigner(true)}><Settings2 size={15} />Open pipeline designer</button></div>
+    <div className="wizard-section-title spaced"><div><h2>Pipelines theo môi trường</h2><p>Mỗi môi trường một pipeline: build commit đã chọn → ký & quét → triển khai. Các bước là chung; nhánh mặc định có thể khác nhau.</p></div><button className="secondary-button" onClick={() => setDesigner(true)}><Settings2 size={15} />Open pipeline designer</button></div>
     <div className="pipeline-card-grid">{Object.entries(config.pipelines).map(([name, item]) => <article className="panel pipeline-card" key={name}><div className="pipeline-card-header"><div><h3>{name}</h3><small>Branch: {item.branch}</small></div><span className="stage-count">{item.stages.length} stages</span></div><ol className="pipeline-stage-pills">{item.stages.map((stage) => <li key={stage}>{stageLabels[stage] ?? stage}</li>)}</ol></article>)}</div>
   </div>
 }
@@ -345,7 +347,27 @@ function TargetConfiguration({ current, targetServers = [], updateCurrent, onSel
   if (current.target === 'Kubernetes') {
     return <section className="deployment-section panel"><div className="section-heading"><div><h3>Cluster access</h3><p>Reference stored cluster credentials; never paste kubeconfig contents into the module.</p></div></div><div className="form-grid target-connection-form"><label className="field"><span>Kubeconfig secret reference</span><input value={current.kubeconfigRef ?? ''} onChange={(event) => updateCurrent({ kubeconfigRef: event.target.value })} placeholder="netci-staging-kubeconfig" /><small>Secret reference resolved by the runtime adapter.</small></label><label className="field"><span>Target namespace</span><input value={current.namespace ?? ''} onChange={(event) => updateCurrent({ namespace: event.target.value })} placeholder="staging" /><small>The namespace must already exist and be authorized.</small></label></div></section>
   }
-  return <section className="deployment-section panel"><div className="section-heading"><div><h3>Target servers</h3><p>Máy chủ triển khai cho runtime {current.target}.</p></div><button className="secondary-button" onClick={onSelectServers}><Plus size={15} />Select servers</button></div>{current.servers.length ? <div className="target-server-list">{current.servers.map((server) => { const target = targetServers.find((item) => item.name === server); return <div key={server}><HardDrive size={17} /><span><strong>{server}</strong><small>{target?.ip || '127.0.0.1 (Local)'}</small></span><span className={`status status-${target?.status === 'online' ? 'online' : 'online'}`}><i />{target?.status || 'online'}</span><button aria-label={`Remove ${server}`} onClick={() => updateCurrent({ servers: current.servers.filter((item) => item !== server) })}><X size={15} /></button></div> })}</div> : <div className="inline-empty"><Server size={23} /><span>No target servers selected</span></div>}</section>
+  const rs = current.runtimeSettings ?? {}
+  const setRs = (changes: RuntimeSettings) => updateCurrent({ runtimeSettings: { ...rs, ...changes } })
+  const num = (value: string) => (value.trim() === '' ? null : Number(value))
+  // Placeholders are the checked-in playbook's defaults: what happens when the field is
+  // left empty, stated instead of guessed.
+  const layout = current.target === 'Docker'
+    ? <section className="deployment-section panel"><div className="section-heading"><div><h3>Bố trí trên máy chủ (Docker)</h3><p>Playbook `deploy-docker.yml` nhận đúng các tham số này từ cấu hình đã duyệt; để trống là dùng mặc định của playbook.</p></div></div><div className="form-grid">
+        <label className="field"><span>Thư mục cài đặt (appRoot)</span><input value={rs.appRoot ?? ''} placeholder="/opt/netci-docker-demo" onChange={(e) => setRs({ appRoot: e.target.value || null })} /><small>Với become tắt, thư mục phải ghi được bởi user chạy worker.</small></label>
+        <label className="field"><span>Cổng trên host (hostPort)</span><input type="number" value={rs.hostPort ?? ''} placeholder="18081" onChange={(e) => setRs({ hostPort: num(e.target.value) })} /></label>
+        <label className="field"><span>Network mode</span><select value={rs.networkMode ?? ''} onChange={(e) => setRs({ networkMode: (e.target.value || null) as RuntimeSettings['networkMode'] })}><option value="">bridge (mặc định)</option><option value="bridge">bridge</option><option value="host">host</option></select></label>
+        <label className="field"><span>Cổng trong container (containerPort)</span><input type="number" value={rs.containerPort ?? ''} placeholder="8080" onChange={(e) => setRs({ containerPort: num(e.target.value) })} /></label>
+        <label className="field"><span>Registry nhìn từ máy chủ (imagePullHost)</span><input value={rs.imagePullHost ?? ''} placeholder="vd. 172.17.0.1:55000" onChange={(e) => setRs({ imagePullHost: e.target.value || null })} /><small>Chỉ đổi tên máy registry; digest của image không đổi.</small></label>
+        <label className="field checkbox-field"><input type="checkbox" checked={rs.become ?? true} onChange={(e) => setRs({ become: e.target.checked })} /><span>Ansible become (sudo) trên máy chủ — mặc định bật</span></label>
+      </div></section>
+    : <section className="deployment-section panel"><div className="section-heading"><div><h3>Bố trí trên máy chủ (systemd)</h3><p>Playbook `deploy-systemd.yml` nhận đúng các tham số này; để trống là dùng mặc định của playbook.</p></div></div><div className="form-grid">
+        <label className="field"><span>Thư mục cài đặt (appRoot)</span><input value={rs.appRoot ?? ''} placeholder="/opt/netci-demo" onChange={(e) => setRs({ appRoot: e.target.value || null })} /></label>
+        <label className="field"><span>Cổng dịch vụ (appPort)</span><input type="number" value={rs.appPort ?? ''} placeholder="8080" onChange={(e) => setRs({ appPort: num(e.target.value) })} /></label>
+        <label className="field"><span>Phạm vi unit</span><select value={rs.systemdScope ?? ''} onChange={(e) => setRs({ systemdScope: (e.target.value || null) as RuntimeSettings['systemdScope'] })}><option value="">system (mặc định)</option><option value="system">system</option><option value="user">user</option></select></label>
+        <label className="field checkbox-field"><input type="checkbox" checked={rs.become ?? true} onChange={(e) => setRs({ become: e.target.checked })} /><span>Ansible become (sudo) trên máy chủ — mặc định bật</span></label>
+      </div></section>
+  return <>{layout}<section className="deployment-section panel"><div className="section-heading"><div><h3>Target servers</h3><p>Máy chủ triển khai cho runtime {current.target}.</p></div><button className="secondary-button" onClick={onSelectServers}><Plus size={15} />Select servers</button></div>{current.servers.length ? <div className="target-server-list">{current.servers.map((server) => { const target = targetServers.find((item) => item.name === server); return <div key={server}><HardDrive size={17} /><span><strong>{server}</strong><small>{target ? `${target.ip || 'chưa có IP trong NetBox'} · NetBox: ${target.status}` : 'không có trong NetBox — DCIM sẽ từ chối khi deploy'}</small></span><span className={`status status-${target ? (target.status === 'active' ? 'online' : 'degraded') : 'offline'}`}><i />{target ? target.status : 'unregistered'}</span><button aria-label={`Remove ${server}`} onClick={() => updateCurrent({ servers: current.servers.filter((item) => item !== server) })}><X size={15} /></button></div> })}</div> : <div className="inline-empty"><Server size={23} /><span>No target servers selected</span></div>}</section></>
 }
 
 function DeploymentStep({ systemId, moduleId, initialTarget = 'Docker', targetServers = [], onValidityChange, onConfigurationChange }: { systemId: string; moduleId: string; initialTarget?: DeploymentTarget; targetServers?: TargetServer[]; onValidityChange: (valid: boolean) => void; onConfigurationChange: (config: DeploymentEnvironmentConfig[]) => void }) {
@@ -360,45 +382,35 @@ function DeploymentStep({ systemId, moduleId, initialTarget = 'Docker', targetSe
         environment: (item.environment === 'prod' ? 'Production' : item.environment === 'staging' ? 'Staging' : 'Dev') as DeploymentEnvironment,
         status: item.status ?? 'unknown',
       }))
-      setLiveTargetServers(mapped.length > 0 ? mapped : [
-        { name: 'localhost', ip: '127.0.0.1', environment: 'Dev', status: 'online' },
-        { name: 'localhost', ip: '127.0.0.1', environment: 'Staging', status: 'online' },
-        { name: 'localhost', ip: '127.0.0.1', environment: 'Production', status: 'online' },
-      ])
+      // Only what NetBox actually holds. A made-up "localhost · online" here would be
+      // refused by DCIM at deploy time anyway, after the user believed it was set up.
+      setLiveTargetServers(mapped)
     }).catch(() => {
       setInventoryStatus('error')
-      setLiveTargetServers([
-        { name: 'localhost', ip: '127.0.0.1', environment: 'Dev', status: 'online' },
-        { name: 'localhost', ip: '127.0.0.1', environment: 'Staging', status: 'online' },
-        { name: 'localhost', ip: '127.0.0.1', environment: 'Production', status: 'online' },
-      ])
+      setLiveTargetServers([])
     })
   }, [systemId, moduleId])
-  targetServers = liveTargetServers.length > 0 ? liveTargetServers : [
-    { name: 'localhost', ip: '127.0.0.1', environment: 'Dev', status: 'online' },
-    { name: 'localhost', ip: '127.0.0.1', environment: 'Staging', status: 'online' },
-    { name: 'localhost', ip: '127.0.0.1', environment: 'Production', status: 'online' },
-  ]
+  targetServers = liveTargetServers.length > 0 ? liveTargetServers : targetServers
   const [environments, setEnvironments] = useState<EnvironmentConfig[]>(() => [
     {
       name: 'Development',
       environment: 'Dev',
       target: initialTarget,
-      servers: initialTarget === 'Kubernetes' ? [] : ['localhost'],
+      servers: [],
       ...(initialTarget === 'Kubernetes' ? kubernetesDefaults('Dev') : {})
     },
     {
       name: 'Staging',
       environment: 'Staging',
       target: initialTarget,
-      servers: initialTarget === 'Kubernetes' ? [] : ['localhost'],
+      servers: [],
       ...(initialTarget === 'Kubernetes' ? kubernetesDefaults('Staging') : {})
     },
     {
       name: 'Production',
       environment: 'Production',
       target: initialTarget,
-      servers: initialTarget === 'Kubernetes' ? [] : ['localhost'],
+      servers: [],
       ...(initialTarget === 'Kubernetes' ? kubernetesDefaults('Production') : {})
     }
   ])
@@ -412,21 +424,21 @@ function DeploymentStep({ systemId, moduleId, initialTarget = 'Docker', targetSe
             name: 'Development',
             environment: 'Dev',
             target: initialTarget,
-            servers: initialTarget === 'Kubernetes' ? [] : ['localhost'],
+            servers: [],
             ...(initialTarget === 'Kubernetes' ? kubernetesDefaults('Dev') : {})
           },
           {
             name: 'Staging',
             environment: 'Staging',
             target: initialTarget,
-            servers: initialTarget === 'Kubernetes' ? [] : ['localhost'],
+            servers: [],
             ...(initialTarget === 'Kubernetes' ? kubernetesDefaults('Staging') : {})
           },
           {
             name: 'Production',
             environment: 'Production',
             target: initialTarget,
-            servers: initialTarget === 'Kubernetes' ? [] : ['localhost'],
+            servers: [],
             ...(initialTarget === 'Kubernetes' ? kubernetesDefaults('Production') : {})
           }
         ]
@@ -434,7 +446,7 @@ function DeploymentStep({ systemId, moduleId, initialTarget = 'Docker', targetSe
       return prev.map((env) => ({
         ...env,
         target: initialTarget,
-        servers: initialTarget === 'Kubernetes' ? [] : (env.servers.length ? env.servers : ['localhost']),
+        servers: initialTarget === 'Kubernetes' ? [] : env.servers,
         ...(initialTarget === 'Kubernetes' ? kubernetesDefaults(env.environment) : { kubeconfigRef: undefined, namespace: undefined })
       }))
     })
@@ -461,6 +473,9 @@ function DeploymentStep({ systemId, moduleId, initialTarget = 'Docker', targetSe
     taskSettings: {},
     kubeconfigRef: environment.kubeconfigRef ?? null,
     namespace: environment.namespace ?? null,
+    runtimeSettings: environment.target === 'Kubernetes' || !environment.runtimeSettings || !Object.values(environment.runtimeSettings).some((value) => value !== null && value !== undefined)
+      ? null
+      : Object.fromEntries(Object.entries(environment.runtimeSettings).filter(([, value]) => value !== null && value !== undefined)),
   }))), [environments, onConfigurationChange])
   const openAddEnvironment = () => {
     if (!availableEnvironment) return
@@ -478,7 +493,7 @@ function DeploymentStep({ systemId, moduleId, initialTarget = 'Docker', targetSe
   const saveEnvironment = () => {
     const normalizedDraft = { ...environmentDraft, name: environmentDraft.name.trim() }
     if (!normalizedDraft.name || duplicateEnvironment) return
-    const defaultServers = normalizedDraft.target === 'Kubernetes' ? [] : ['localhost']
+    const defaultServers: string[] = []
     if (editingEnvironment === null) {
       setEnvironments([...environments, { ...normalizedDraft, servers: defaultServers, ...(normalizedDraft.target === 'Kubernetes' ? kubernetesDefaults(normalizedDraft.environment) : {}) }])
       setActive(environments.length)
@@ -501,38 +516,49 @@ function DeploymentStep({ systemId, moduleId, initialTarget = 'Docker', targetSe
     closeEnvironmentModal()
   }
   const updateCurrent = (changes: Partial<EnvironmentConfig>) => setEnvironments((items) => items.map((item, index) => index === active ? { ...item, ...changes } : item))
+  const [manualServer, setManualServer] = useState('')
   const openServerPicker = () => {
-    const candidates = targetServers.filter((server) => server.environment === current.environment)
-    const list = candidates.length > 0 ? candidates : [{ name: 'localhost', ip: '127.0.0.1', environment: current.environment, status: 'online' }]
-    setServerDraft(current.servers.length ? current.servers : list.map((server) => server.name))
+    setServerDraft(current.servers)
+    setManualServer('')
     setSelectServers(true)
   }
-  return <div className="deployment-builder"><aside><div><h3>Environments</h3><button aria-label="Add environment" disabled={!availableEnvironment} title={availableEnvironment ? undefined : 'Dev, Staging and Production are already configured'} onClick={openAddEnvironment}><Plus size={16} /></button></div>{environments.map((environment, index) => <button className={active === index ? 'active' : ''} onClick={() => setActive(index)} key={`${environment.name}-${index}`}><span className={`env-dot env-${environment.environment.toLowerCase()}`} /><span><strong>{environment.name}</strong><small>{environment.target}</small></span><ChevronRight size={16} /></button>)}{!environments.length && <div className="empty-environments"><Globe2 size={24} /><p>No environments yet</p><button onClick={openAddEnvironment}>Add environment</button></div>}</aside><main>{inventoryStatus === 'not_configured' && <div className="inline-error" role="status">DCIM server inventory is not configured. Target "localhost" is provided automatically for Local host runs. Kubernetes targets use managed kubeconfig reference.</div>}{current ? <><div className="panel" style={{ marginBottom: '16px', padding: '12px 16px' }}><div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '8px' }}><div><h3 style={{ margin: 0, fontSize: '0.95rem' }}>Môi trường Runtime mục tiêu</h3><p style={{ margin: '2px 0 0', fontSize: '0.8rem', color: 'var(--text-muted)' }}>Chọn 1 trong 3 runtime local để triển khai ({current.name}):</p></div><div className="segmented compact">{deploymentTargets.map(({ label, icon: TargetIcon }) => <button key={label} type="button" className={current.target === label ? 'active' : ''} onClick={() => setEnvironments((items) => items.map((item) => ({ ...item, target: label, servers: label === 'Kubernetes' ? [] : (item.servers.length ? item.servers : ['localhost']), ...(label === 'Kubernetes' ? kubernetesDefaults(item.environment) : { kubeconfigRef: undefined, namespace: undefined }) })))}><TargetIcon size={14} style={{ marginRight: '6px' }} />{label}</button>)}</div></div></div><div className="environment-title"><div><h2>{current.name}</h2><p>{current.environment} · {current.target} deployment target</p></div><button className="secondary-button" onClick={openEditEnvironment}><Settings2 size={15} />Edit</button></div><TargetConfiguration current={current} targetServers={targetServers} updateCurrent={updateCurrent} onSelectServers={openServerPicker} /><section className="deployment-section panel"><div className="section-heading"><div><h3>Managed deployment adapter</h3><p>The checked-in {current.target} playbook owns the task order, immutable artifact deployment, health gate and rollback behavior. Target selection above is the only runtime routing control exposed here.</p></div></div></section></> : <div className="deployment-empty"><Globe2 size={34} /><h2>Configure deployment environments</h2><p>Add Dev, Staging or Production and bind its runtime target.</p><button className="primary-button" onClick={openAddEnvironment}><Plus size={16} />Add environment</button></div>}</main>
+  const pickerCandidates = current ? targetServers.filter((server) => server.environment === current.environment) : []
+  const siteSlug = current ? ({ Dev: 'dev', Staging: 'staging', Production: 'prod' } as const)[current.environment] : 'dev'
+  const inventoryNotice = inventoryStatus === 'not_configured'
+    ? 'DCIM chưa được cấu hình (NETCI_DCIM_BASE_URL). Máy chủ nhập tay sẽ không được NetBox xác nhận trước khi deploy.'
+    : inventoryStatus === 'not_registered'
+      ? `NetBox chưa có tenant "${systemId}"${moduleId ? ` với device role "${moduleId}"` : ''}. Đăng ký máy chủ trong NetBox (tenant = system, device role = module, site = dev/staging/prod) rồi mở lại bước này.`
+      : inventoryStatus === 'error'
+        ? 'Không truy vấn được DCIM. Kiểm tra NetBox trước khi tạo module — netCI không tự bịa máy chủ.'
+        : null
+  return <div className="deployment-builder"><aside><div><h3>Environments</h3><button aria-label="Add environment" disabled={!availableEnvironment} title={availableEnvironment ? undefined : 'Dev, Staging and Production are already configured'} onClick={openAddEnvironment}><Plus size={16} /></button></div>{environments.map((environment, index) => <button className={active === index ? 'active' : ''} onClick={() => setActive(index)} key={`${environment.name}-${index}`}><span className={`env-dot env-${environment.environment.toLowerCase()}`} /><span><strong>{environment.name}</strong><small>{environment.target}</small></span><ChevronRight size={16} /></button>)}{!environments.length && <div className="empty-environments"><Globe2 size={24} /><p>No environments yet</p><button onClick={openAddEnvironment}>Add environment</button></div>}</aside><main>{inventoryNotice && <div className="inline-error" role="status">{inventoryNotice}</div>}{current ? <><div className="panel" style={{ marginBottom: '16px', padding: '12px 16px' }}><div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '8px' }}><div><h3 style={{ margin: 0, fontSize: '0.95rem' }}>Môi trường Runtime mục tiêu</h3><p style={{ margin: '2px 0 0', fontSize: '0.8rem', color: 'var(--text-muted)' }}>Chọn 1 trong 3 runtime local để triển khai ({current.name}):</p></div><div className="segmented compact">{deploymentTargets.map(({ label, icon: TargetIcon }) => <button key={label} type="button" className={current.target === label ? 'active' : ''} onClick={() => setEnvironments((items) => items.map((item) => ({ ...item, target: label, servers: label === 'Kubernetes' ? [] : item.servers, ...(label === 'Kubernetes' ? kubernetesDefaults(item.environment) : { kubeconfigRef: undefined, namespace: undefined }) })))}><TargetIcon size={14} style={{ marginRight: '6px' }} />{label}</button>)}</div></div></div><div className="environment-title"><div><h2>{current.name}</h2><p>{current.environment} · {current.target} deployment target</p></div><button className="secondary-button" onClick={openEditEnvironment}><Settings2 size={15} />Edit</button></div><TargetConfiguration current={current} targetServers={targetServers} updateCurrent={updateCurrent} onSelectServers={openServerPicker} /><section className="deployment-section panel"><div className="section-heading"><div><h3>Managed deployment adapter</h3><p>The checked-in {current.target} playbook owns the task order, immutable artifact deployment, health gate and rollback behavior. Target selection above is the only runtime routing control exposed here.</p></div></div></section></> : <div className="deployment-empty"><Globe2 size={34} /><h2>Configure deployment environments</h2><p>Add Dev, Staging or Production and bind its runtime target.</p><button className="primary-button" onClick={openAddEnvironment}><Plus size={16} />Add environment</button></div>}</main>
     {addEnv && <Modal title={editingEnvironment === null ? 'Add environment' : 'Edit environment'} description="Create a deployment target for this module." onClose={closeEnvironmentModal} footer={<><button className="secondary-button" onClick={closeEnvironmentModal}>Cancel</button><button className="primary-button" disabled={!environmentDraft.name.trim() || duplicateEnvironment} onClick={saveEnvironment}>{editingEnvironment === null ? 'Add environment' : 'Save changes'}</button></>}><div className="form-grid"><label className="field full"><span>Name</span><input value={environmentDraft.name} onChange={(event) => setEnvironmentDraft({ ...environmentDraft, name: event.target.value })} /></label><label className="field full"><span>Environment</span><select value={environmentDraft.environment} onChange={(event) => setEnvironmentDraft({ ...environmentDraft, environment: event.target.value as DeploymentEnvironment, name: environmentNames[event.target.value as DeploymentEnvironment] })}>{(['Dev', 'Staging', 'Production'] as DeploymentEnvironment[]).map((environment) => <option disabled={environments.some((item, index) => item.environment === environment && index !== editingEnvironment)} key={environment}>{environment}</option>)}</select></label>{duplicateEnvironment && <div className="inline-error full" role="alert">This environment is already configured.</div>}<div className="field full"><span>Deployment target</span><div className="target-options">{deploymentTargets.map(({ label, icon: TargetIcon, execution }) => <button className={environmentDraft.target === label ? 'selected' : ''} disabled={Boolean(lockedTarget && label !== lockedTarget)} title={lockedTarget && label !== lockedTarget ? `Application runtime is already ${lockedTarget}` : undefined} onClick={() => setEnvironmentDraft({ ...environmentDraft, target: label })} key={label}><TargetIcon size={18} /><span><strong>{label}</strong><small>{execution}</small></span></button>)}</div>{lockedTarget && <small className="target-policy-hint">Application runtime is shared by all deployment environments.</small>}</div></div></Modal>}
-    {selectServers && <Modal title="Select target servers" description={`DCIM servers assigned to ${current.name}.`} onClose={() => setSelectServers(false)} footer={<><button className="secondary-button" onClick={() => setSelectServers(false)}>Cancel</button><button className="primary-button" disabled={!serverDraft.length} onClick={() => { updateCurrent({ servers: serverDraft }); setSelectServers(false) }}>Add selected servers</button></>}><div className="server-picker">{(targetServers.filter((server) => server.environment === current.environment).length > 0 ? targetServers.filter((server) => server.environment === current.environment) : [{ name: 'localhost', ip: '127.0.0.1', environment: current.environment, status: 'online' }]).map(({ name, ip, status }) => <label key={name}><input type="checkbox" checked={serverDraft.includes(name)} onChange={(event) => setServerDraft((items) => event.target.checked ? [...items, name] : items.filter((item) => item !== name))} /><Server size={17} /><span><strong>{name}</strong><small>{ip || '127.0.0.1 (Local)'} · {status || 'online'}</small></span></label>)}</div></Modal>}
+    {selectServers && <Modal title="Select target servers" description={`DCIM servers assigned to ${current.name}.`} onClose={() => setSelectServers(false)} footer={<><button className="secondary-button" onClick={() => setSelectServers(false)}>Cancel</button><button className="primary-button" disabled={!serverDraft.length} onClick={() => { updateCurrent({ servers: serverDraft }); setSelectServers(false) }}>Add selected servers</button></>}><div className="server-picker">{pickerCandidates.map(({ name, ip, status }) => <label key={name}><input type="checkbox" checked={serverDraft.includes(name)} onChange={(event) => setServerDraft((items) => event.target.checked ? [...items, name] : items.filter((item) => item !== name))} /><Server size={17} /><span><strong>{name}</strong><small>{ip || 'chưa có IP trong NetBox'} · NetBox: {status}</small></span></label>)}{!pickerCandidates.length && <div className="inline-empty"><Server size={23} /><span>{inventoryStatus === 'ready' ? `NetBox không có device nào của tenant "${systemId}" tại site "${siteSlug}".` : inventoryNotice}</span></div>}</div>{inventoryStatus === 'not_configured' && <div className="form-grid"><label className="field full"><span>Hostname (nhập tay, chỉ khi không có DCIM)</span><input value={manualServer} placeholder="vd. app-01.example.internal" onChange={(event) => setManualServer(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && manualServer.trim()) { setServerDraft((items) => items.includes(manualServer.trim()) ? items : [...items, manualServer.trim()]); setManualServer('') } }} /><small>Nhấn Enter để thêm. {serverDraft.filter((name) => !pickerCandidates.some((item) => item.name === name)).join(', ')}</small></label></div>}</Modal>}
   </div>
 }
 
-export function NewModuleWizard({ systemId, ownerTeams = [], onCancel, onCreate }: { systemId: string; ownerTeams?: string[]; onCancel: () => void; onCreate: (module: DcimModule, configuration: ModuleWizardSubmission) => Promise<void> | void }) {
+export function NewModuleWizard({ systemId, ownerTeams = [], canOwnAnyTeam = false, onCancel, onCreate }: { systemId: string; ownerTeams?: string[]; canOwnAnyTeam?: boolean; onCancel: () => void; onCreate: (module: DcimModule, configuration: ModuleWizardSubmission) => Promise<void> | void }) {
   const { notify } = usePortalFeedback()
   const [step, setStep] = useState(1)
-  const [selected, setSelected] = useState('core-api')
+  const [selected, setSelected] = useState('')
   const [dcimModules, setDcimModules] = useState<DcimModule[]>([])
   const [dcimStatus, setDcimStatus] = useState('loading')
   const [moduleSource, setModuleSource] = useState<'local' | 'dcim'>('local')
   const [gitInfo, setGitInfo] = useState<GitInfo | null>(null)
   const [sampleApps, setSampleApps] = useState<SampleApps | null>(null)
   const [selectedTarget, setSelectedTarget] = useState<DeploymentTarget>('Docker')
+  // Empty, not example values: a form submitted unchanged used to register a module
+  // pointing at a repository that does not exist.
   const [customModule, setCustomModule] = useState<DcimModule>({
-    id: 'core-api',
-    name: 'Core API Service',
-    code: 'core-api',
+    id: '',
+    name: '',
+    code: '',
     type: 'Backend',
-    repositoryUrl: 'https://github.com/netci/core-api',
+    repositoryUrl: '',
     registered: false,
   })
   const [ownerTeam, setOwnerTeam] = useState(ownerTeams[0] ?? '')
-  const [portalInformation, setPortalInformation] = useState<PortalInformation>({ displayName: 'Core API Service', moduleType: 'Backend', description: 'Dịch vụ xử lý giao dịch lõi' })
+  const [portalInformation, setPortalInformation] = useState<PortalInformation>({ displayName: '', moduleType: 'Backend', description: '' })
   const [pipelineConfig, setPipelineConfig] = useState<ModulePipelineConfig>(defaultPipelineConfig)
   const [deploymentReady, setDeploymentReady] = useState(false)
   const [deploymentConfig, setDeploymentConfig] = useState<DeploymentEnvironmentConfig[]>([])
@@ -572,38 +598,36 @@ export function NewModuleWizard({ systemId, ownerTeams = [], onCancel, onCreate 
     listDcimModules(systemId)
       .then((modulesResult) => {
         if (!active) return
+        // Only record what DCIM said. Switching tabs or pre-selecting here would
+        // overwrite whatever the user had already typed by the time the answer came.
         setDcimModules(modulesResult.items)
         setDcimStatus(modulesResult.status)
-        if (modulesResult.items.length > 0) {
-          setModuleSource('dcim')
-          setSelected(modulesResult.items[0].id)
-          setPortalInformation({
-            displayName: modulesResult.items[0].name,
-            moduleType: modulesResult.items[0].type,
-            description: '',
-          })
-        } else {
-          setModuleSource('local')
-          setSelected('core-api')
-        }
       })
       .catch(() => {
         if (!active) return
         setDcimStatus('error')
-        setModuleSource('local')
-        setSelected('core-api')
       })
     return () => { active = false }
   }, [systemId])
   const selectModule = (moduleId: string) => {
     const module = dcimModules.find((item) => item.id === moduleId)
-    if (!module) return
+    if (!module) {
+      // A locally defined module has no DCIM entry: the typed code *is* its id. Ignoring
+      // it here left "Next" disabled forever unless a sample had been clicked first.
+      setSelected(moduleSource === 'local' ? moduleId : '')
+      return
+    }
     setSelected(moduleId)
     setPortalInformation({
       displayName: module.name,
-      moduleType: module.type,
-      description: '',
+      moduleType: portalInformation.moduleType,
+      description: module.description ?? '',
     })
+  }
+  // Switching source must not carry a DCIM selection into local mode or vice versa.
+  const changeSource = (next: 'local' | 'dcim') => {
+    setModuleSource(next)
+    setSelected(next === 'local' ? customModule.code ?? '' : '')
   }
   const finish = async () => {
     const defaultConfig = deploymentConfig[0]
@@ -613,16 +637,19 @@ export function NewModuleWizard({ systemId, ownerTeams = [], onCancel, onCreate 
     }
     setCreating(true)
     try {
-      const selectedModule = moduleSource === 'local' ? customModule : dcimModules.find((item) => item.id === selected)
+      const dcimModule = dcimModules.find((item) => item.id === selected)
+      const selectedModule = moduleSource === 'local'
+        ? customModule
+        : dcimModule && { ...dcimModule, code: dcimModule.id, type: portalInformation.moduleType, repositoryUrl: customModule.repositoryUrl }
       if (!selectedModule) throw new Error('Module definition not found.')
       await onCreate(selectedModule, {
         ...portalInformation,
         displayName: portalInformation.displayName || selectedModule.name,
-        moduleType: portalInformation.moduleType || selectedModule.type,
+        moduleType: portalInformation.moduleType || selectedModule.type || 'Backend',
         runtime: defaultConfig.runtime,
         defaultEnvironment: defaultConfig.environment,
         deploymentEnvironments: deploymentConfig,
-        stages: pipelineConfig.pipelines.CI?.stages || defaultPipelineStages,
+        stages: pipelineConfig.pipelines['CD Dev']?.stages || defaultPipelineStages,
         pipelineConfig,
         ownerTeam: ownerTeam || undefined,
       })
@@ -633,5 +660,7 @@ export function NewModuleWizard({ systemId, ownerTeams = [], onCancel, onCreate 
       setCreating(false)
     }
   }
-  return <div className="new-module-page"><div className="wizard-header"><button className="back-button" onClick={onCancel}><ArrowLeft size={16} />Back to System</button><div><h1>New Module</h1><p>Add a module and configure its delivery lifecycle.</p></div><WizardSteps step={step} /></div><section className="wizard-shell">{step === 1 && <><GeneralStep modules={dcimModules} integrationStatus={dcimStatus} selected={selected} onSelect={selectModule} information={portalInformation} onInformationChange={setPortalInformation} source={moduleSource} onSourceChange={setModuleSource} customModule={customModule} onCustomModuleChange={setCustomModule} gitInfo={gitInfo} sampleApps={sampleApps} onSelectSample={handleSelectSample} />{ownerTeams.length > 0 && <div className="wizard-content"><label className="field"><span>Owning team</span><select value={ownerTeam} onChange={(event) => setOwnerTeam(event.target.value)}>{ownerTeams.map((team) => <option key={team}>{team}</option>)}</select><small>Only members of this verified identity team can access the module.</small></label></div>}</>}{step === 2 && <CicdStep config={pipelineConfig} onConfigChange={setPipelineConfig} />}{step === 3 && <DeploymentStep systemId={systemId} moduleId={selected} initialTarget={selectedTarget} onValidityChange={setDeploymentReady} onConfigurationChange={setDeploymentConfig} />}</section><footer className="wizard-footer"><button className="secondary-button" disabled={creating} onClick={step === 1 ? onCancel : () => setStep(step - 1)}>{step === 1 ? 'Cancel' : 'Back'}</button>{step < 3 ? <button className="primary-button" disabled={step === 1 && (!selected || !portalInformation.displayName.trim() || !portalInformation.moduleType || ownerTeams.length > 0 && !ownerTeam) || step === 2 && !pipelineConfig.runner.trim()} onClick={() => setStep(step + 1)}>Next <ArrowRight size={16} /></button> : <button className="primary-button" disabled={!deploymentReady || creating} title={deploymentReady ? undefined : 'Complete an environment and its target connection'} onClick={finish}><Check size={16} />{creating ? 'Creating…' : 'Create Module'}</button>}</footer></div>
+  return <div className="new-module-page"><div className="wizard-header"><button className="back-button" onClick={onCancel}><ArrowLeft size={16} />Back to System</button><div><h1>New Module</h1><p>Add a module and configure its delivery lifecycle.</p></div><WizardSteps step={step} /></div><section className="wizard-shell">{step === 1 && <><GeneralStep systemId={systemId} modules={dcimModules} integrationStatus={dcimStatus} selected={selected} onSelect={selectModule} information={portalInformation} onInformationChange={setPortalInformation} source={moduleSource} onSourceChange={changeSource} customModule={customModule} onCustomModuleChange={setCustomModule} gitInfo={gitInfo} sampleApps={sampleApps} onSelectSample={handleSelectSample} />{(ownerTeams.length > 0 || canOwnAnyTeam) && <div className="wizard-content"><label className="field"><span>Owning team</span>{canOwnAnyTeam
+  ? <><input list="owner-teams" value={ownerTeam} onChange={(event) => setOwnerTeam(event.target.value)} placeholder="vd. team-payments" /><datalist id="owner-teams">{ownerTeams.map((team) => <option key={team} value={team} />)}</datalist><small>Platform-admin có thể giao module cho bất kỳ team nào (tên group trong identity provider). Chỉ thành viên team đó xem được module; thay đổi prod cần một thành viên khác của team phê duyệt.</small></>
+  : <><select value={ownerTeam} onChange={(event) => setOwnerTeam(event.target.value)}>{ownerTeams.map((team) => <option key={team}>{team}</option>)}</select><small>Only members of this verified identity team can access the module.</small></>}</label></div>}</>}{step === 2 && <CicdStep config={pipelineConfig} onConfigChange={setPipelineConfig} />}{step === 3 && <DeploymentStep systemId={systemId} moduleId={selected} initialTarget={selectedTarget} onValidityChange={setDeploymentReady} onConfigurationChange={setDeploymentConfig} />}</section><footer className="wizard-footer"><button className="secondary-button" disabled={creating} onClick={step === 1 ? onCancel : () => setStep(step - 1)}>{step === 1 ? 'Cancel' : 'Back'}</button>{step < 3 ? <button className="primary-button" disabled={step === 1 && (!selected || !portalInformation.displayName.trim() || !portalInformation.moduleType || !(customModule.repositoryUrl ?? '').trim() || ownerTeams.length > 0 && !ownerTeam) || step === 2 && !pipelineConfig.runner.trim()} onClick={() => setStep(step + 1)}>Next <ArrowRight size={16} /></button> : <button className="primary-button" disabled={!deploymentReady || creating} title={deploymentReady ? undefined : 'Complete an environment and its target connection'} onClick={finish}><Check size={16} />{creating ? 'Creating…' : 'Create Module'}</button>}</footer></div>
 }

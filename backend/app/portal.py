@@ -149,6 +149,17 @@ def _without_nulls(value: Any) -> Any:
     return value.value if isinstance(value, Environment) else value
 
 
+# Every delivery parameter the server derives from the module's reviewed configuration.
+# A retry strips these from the parent run before re-binding, so a key a superseded
+# revision carried (an old app_root, a removed host_port) cannot ride along.
+SERVER_OWNED_DELIVERY_KEYS = frozenset({
+    "app_root", "host_port", "container_port", "network_mode", "app_port", "health_url",
+    "systemd_scope", "netci_become", "image_pull_host",
+    "app_name", "target_environment", "target_hosts", "deployment_tasks", "task_settings",
+    "runtime_health_verified", "target_namespace", "kubeconfig_ref",
+})
+
+
 def runtime_parameters(target: dict[str, Any]) -> dict[str, object]:
     """Playbook inputs from a target's reviewed `runtimeSettings`.
 
@@ -1054,10 +1065,15 @@ class PortalService:
             active_id = str(active_rev.id) if active_rev else None
             app_id = module.application_id
 
-            # 1. Deployment revision drift
+            # 1. Deployment revision drift. Only a deployment that reached the target says
+            # what is running there: a failed or still-deploying one changed nothing, and
+            # reporting it as "running revision none" was a drift that did not exist.
             deployments = list(self.platform.list_deployments(app_id, session=transaction)) if app_id else []
+            observed = {DeploymentStatus.HEALTHY, DeploymentStatus.ROLLED_BACK, DeploymentStatus.ROLLBACK_FAILED}
             latest_by_env: dict[str, Any] = {}
             for d in deployments:
+                if d.status not in observed:
+                    continue
                 env = d.environment.value
                 if env not in latest_by_env or d.created_at > latest_by_env[env].created_at:
                     latest_by_env[env] = d
@@ -1149,6 +1165,12 @@ class PortalService:
             deployment_config=list(revision.deployment_config),
             pipeline_config=dict(revision.pipeline_config),
         )
+        # The revision this one replaces is history now. Leaving it `active` showed
+        # three "active" revisions in the browser, and let fast-apply's superseded
+        # check never fire.
+        previous = module.active_config_revision_id
+        if previous is not None and previous != revision.id:
+            transaction.update_config_revision_status(previous, ConfigRevisionStatus.SUPERSEDED)
 
     @staticmethod
     def separation_of_duties_required() -> bool:
@@ -1439,8 +1461,6 @@ class PortalService:
                 for version in module["versions"]
                 if isinstance(versions.get(str(version), {}).get("ciReport"), dict)
             ]
-            latest_report = reports[0] if reports else {}
-
             # What a person opening the module wants first: what each environment is
             # running now, the last few builds and releases (newest first), and the
             # evidence behind the newest artifact -- not every deployment ever, oldest
@@ -1490,8 +1510,12 @@ class PortalService:
                     "sbom": {"present": bool(sbom), "format": sbom.get("format"), "generatedBy": sbom.get("generatedBy")},
                     "scan": {"scanner": scan.get("scanner"), "status": scan.get("status"), "critical": scan.get("critical"), "high": scan.get("high")},
                     "signature": {"provider": signature.get("provider"), "verified": bool(signature.get("verified"))},
+                    "ciReport": evidence.get("ciReport") if isinstance(evidence.get("ciReport"), dict) else None,
                 }
                 break
+            # The newest registered version's report, else the newest build's: a module
+            # whose builds carry test results has a report before anyone tags a version.
+            latest_report = reports[0] if reports else (quality.get("ciReport") or {})
 
             return {
                 "module": module,
@@ -1734,6 +1758,7 @@ class PortalService:
                 {
                     "moduleId": member.module_id,
                     "moduleName": module.name if module else member.module_id,
+                    "systemId": module.system_id if module else None,
                     "version": member.version,
                     "deploymentOrder": member.deployment_order,
                     "dependencies": list(member.dependencies),
@@ -2140,6 +2165,10 @@ class PortalService:
             "jenkinsRunId": run.jenkins_run_id,
             "workflowId": run.workflow_id,
             "artifactDigest": run.artifact_digest,
+            # The module's run list is what the run view opens from; without the console
+            # URL here "Open Jenkins" stayed disabled although the run had one.
+            "consoleUrl": run.console_url,
+            "retryOf": str(run.retry_of) if getattr(run, "retry_of", None) else None,
             "startedBy": run.started_by,
         }
 

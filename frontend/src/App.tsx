@@ -160,11 +160,11 @@ function PortalApp({ session, onLogout }: { session: AuthSession; onLogout: () =
       {page === 'system' && <SystemPage systemId={systemId} navigate={navigate} />}
       {page === 'requests' && <ProductionRequestsPage systemId={systemId} />}
       {page === 'module' && <ModulePage moduleId={moduleId} onSettings={() => moveTo({ ...route, settingsOpen: true })} />}
-      {page === 'new-module' && <NewModuleWizard systemId={systemId} ownerTeams={session.identity.principal.teams} onCancel={() => navigate('system', { systemId })} onCreate={async (selected, configuration) => {
+      {page === 'new-module' && <NewModuleWizard systemId={systemId} ownerTeams={session.identity.principal.teams} canOwnAnyTeam={session.identity.principal.roles.includes('platform-admin')} onCancel={() => navigate('system', { systemId })} onCreate={async (selected, configuration) => {
         await createModule(systemId, {
           name: selected.id,
           displayName: configuration.displayName,
-          repositoryUrl: selected.repositoryUrl,
+          repositoryUrl: selected.repositoryUrl ?? '',
           pipelineTemplate: pipelineTemplateForRuntime[configuration.runtime],
           runtime: configuration.runtime,
           moduleType: configuration.moduleType,

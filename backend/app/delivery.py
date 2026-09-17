@@ -669,6 +669,26 @@ class DeliveryPlatform:
             self._apply(transaction, unit)
         return updated
 
+    def set_application_owner(self, application_id: UUID, owner_team: str | None, *, actor: str) -> Application:
+        """Hand an application to another team.
+
+        Ownership decides who may see and change the module, so the transfer is
+        audited with both teams named. Delivery history stays with the application.
+        """
+
+        with self._transaction() as transaction:
+            application = transaction.application(application_id)
+            if application is None:
+                raise DeliveryError("APPLICATION_NOT_FOUND", "application not found", 404)
+            updated = replace(application, owner_team=owner_team)
+            unit = UnitOfWork(applications=[updated])
+            unit.audit.append(AuditRecord(
+                "application.owner_changed", application_id=application.id, actor=actor,
+                payload={"before": application.owner_team, "after": owner_team},
+            ))
+            self._apply(transaction, unit)
+        return updated
+
     # ------------------------------------------------------------ applications
 
     def create_application(
@@ -1273,7 +1293,19 @@ class DeliveryPlatform:
         pipeline_run_id: UUID,
         actor: str,
         idempotency_key: str | None = None,
+        parameters: dict[str, object] | None = None,
+        config_revision_id: UUID | None = None,
     ) -> PipelineRun:
+        """Queue a new run for the parent's commit.
+
+        `parameters` and `config_revision_id` are the module's *current* desired target
+        configuration, resolved by the caller: a retry happens now, so it must deploy
+        what is active now. Copying the parent's binding would replay a configuration
+        that may since have been superseded -- and a parent with no revision pinned
+        would leave the retry unpinned, which the drift check then reported as a running
+        deployment on "revision none".
+        """
+
         request_payload = {"parentRunId": str(pipeline_run_id)}
         with self._transaction() as transaction:
             parent = transaction.pipeline_run(pipeline_run_id)
@@ -1300,10 +1332,11 @@ class DeliveryPlatform:
                 commit_sha=parent.commit_sha,
                 branch=parent.branch,
                 environment=parent.environment,
-                parameters=dict(parent.parameters),
+                parameters=dict(parameters if parameters is not None else parent.parameters),
                 correlation_id=corr_id,
                 started_by=actor,
                 retry_of=parent.id,
+                config_revision_id=config_revision_id if config_revision_id is not None else parent.config_revision_id,
             )
             unit = UnitOfWork(runs=[(new_run, None)])
             unit.logs.append(

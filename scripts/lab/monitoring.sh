@@ -9,10 +9,10 @@ case "${1:-up}" in
   up)
     sed "s#\${NETCI_ALERT_WEBHOOK_URL}#${NETCI_ALERT_WEBHOOK_URL:-http://127.0.0.1:9095/alerts}#" infra/monitoring/alertmanager.yml > .netci-gate/monitoring/alertmanager.yml
     docker rm -f netci-prometheus netci-alertmanager >/dev/null 2>&1 || true
-    docker run -d --name netci-alertmanager --network host \
+    docker run -d --name netci-alertmanager --network host --restart unless-stopped \
       -v "$root/.netci-gate/monitoring/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro" \
       prom/alertmanager:v0.28.1 --config.file=/etc/alertmanager/alertmanager.yml --web.listen-address=127.0.0.1:9093 --cluster.listen-address= >/dev/null
-    docker run -d --name netci-prometheus --network host \
+    docker run -d --name netci-prometheus --network host --restart unless-stopped \
       -v "$root/infra/monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro" \
       -v "$root/infra/monitoring/rules.yml:/etc/prometheus/rules.yml:ro" \
       prom/prometheus:v3.5.0 --config.file=/etc/prometheus/prometheus.yml --web.listen-address=127.0.0.1:9090 >/dev/null
