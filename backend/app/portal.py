@@ -1276,6 +1276,8 @@ class PortalService:
             "runtime": item.runtime,
             "applicationId": str(item.application_id) if item.application_id else None,
             "ownerTeam": application.owner_team if application else None,
+            "repositoryUrl": application.repository_url if application else None,
+            "pipelineTemplate": application.pipeline_template if application else None,
             "versions": [row.version for row in transaction.portal_versions(module_id)],
             "activeConfigRevisionId": (
                 str(item.active_config_revision_id) if item.active_config_revision_id else None
@@ -1438,6 +1440,59 @@ class PortalService:
                 if isinstance(versions.get(str(version), {}).get("ciReport"), dict)
             ]
             latest_report = reports[0] if reports else {}
+
+            # What a person opening the module wants first: what each environment is
+            # running now, the last few builds and releases (newest first), and the
+            # evidence behind the newest artifact -- not every deployment ever, oldest
+            # first, with no digest or time on it.
+            runs = list(self._module_runs(transaction, record)) if record.application_id else []
+            runs_by_id = {run.id: run for run in runs}
+            version_by_digest = {
+                str(meta.get("artifactDigest")): tag for tag, meta in versions.items() if meta.get("artifactDigest")
+            }
+            configured = [str(t.get("environment")) for t in record.deployment_config] or ["dev", "staging", "prod"]
+            environments = []
+            for env_name in dict.fromkeys(configured):
+                latest = next((d for d in reversed(deployments) if d.environment.value == env_name), None)
+                if latest is None:
+                    environments.append({"environment": env_name, "status": "never_deployed"})
+                    continue
+                run = runs_by_id.get(latest.pipeline_run_id) if latest.pipeline_run_id else None
+                environments.append({
+                    "environment": env_name,
+                    "status": latest.status.value,
+                    "deploymentId": str(latest.id),
+                    "artifactDigest": latest.artifact_digest,
+                    "version": version_by_digest.get(str(latest.artifact_digest)),
+                    "pipelineRunId": str(latest.pipeline_run_id) if latest.pipeline_run_id else None,
+                    "commitSha": run.commit_sha if run else None,
+                    "strategy": latest.strategy,
+                    "approvedBy": latest.approved_by,
+                    "updatedAt": latest.updated_at.isoformat(),
+                })
+
+            newest_runs = sorted(runs, key=lambda r: r.created_at, reverse=True)[:6]
+            newest_deployments = sorted(deployments, key=lambda d: d.created_at, reverse=True)[:6]
+
+            # The evidence behind the newest artifact: what the pipeline actually
+            # produced and verified, read from the security evidence it recorded.
+            quality: dict[str, object] = {"source": None}
+            for run in sorted(runs, key=lambda r: r.created_at, reverse=True):
+                if run.status.value != "succeeded" or not run.artifact_digest:
+                    continue
+                evidence = transaction.security_evidence(run.id) or {}
+                scan = evidence.get("vulnerabilityScan") if isinstance(evidence.get("vulnerabilityScan"), dict) else {}
+                signature = evidence.get("signature") if isinstance(evidence.get("signature"), dict) else {}
+                sbom = evidence.get("sbom") if isinstance(evidence.get("sbom"), dict) else {}
+                quality = {
+                    "source": {"pipelineRunId": str(run.id), "commitSha": run.commit_sha, "artifactDigest": run.artifact_digest, "at": run.updated_at.isoformat()},
+                    "decision": evidence.get("decision"),
+                    "sbom": {"present": bool(sbom), "format": sbom.get("format"), "generatedBy": sbom.get("generatedBy")},
+                    "scan": {"scanner": scan.get("scanner"), "status": scan.get("status"), "critical": scan.get("critical"), "high": scan.get("high")},
+                    "signature": {"provider": signature.get("provider"), "verified": bool(signature.get("verified"))},
+                }
+                break
+
             return {
                 "module": module,
                 "mergeRequests": [],
@@ -1445,6 +1500,18 @@ class PortalService:
                     {"environment": item.environment.value, "status": item.status.value}
                     for item in deployments
                 ],
+                "environments": environments,
+                "recentRuns": [self._run_json(run) for run in newest_runs],
+                "recentDeployments": [
+                    {
+                        "id": str(d.id), "environment": d.environment.value, "status": d.status.value,
+                        "artifactDigest": d.artifact_digest, "version": version_by_digest.get(str(d.artifact_digest)),
+                        "strategy": d.strategy, "approvedBy": d.approved_by, "createdAt": d.created_at.isoformat(),
+                        "updatedAt": d.updated_at.isoformat(), "pipelineRunId": str(d.pipeline_run_id) if d.pipeline_run_id else None,
+                    }
+                    for d in newest_deployments
+                ],
+                "quality": quality,
                 "recentReleases": recent_releases,
                 "trends": {
                     "testCoverage": latest_report.get("coveragePercentage"),

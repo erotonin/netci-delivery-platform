@@ -448,7 +448,11 @@ class OidcAuthenticator:
         if isinstance(not_before, (int, float)) and now < float(not_before) - self.leeway_seconds:
             raise AuthError("UNAUTHENTICATED", "token is not valid yet")
 
-        subject = str(claims.get("sub", "")).strip()
+        # The subject is what audit rows, approvals and "requested by" carry, and what
+        # separation of duties compares. Keycloak's `sub` is an opaque UUID; the login
+        # name (`preferred_username`) identifies the same person and is readable in a
+        # request list. `sub` remains the fallback for providers that send nothing else.
+        subject = str(claims.get("preferred_username") or claims.get("sub") or "").strip()
         if not subject:
             raise AuthError("UNAUTHENTICATED", "token has no subject")
 

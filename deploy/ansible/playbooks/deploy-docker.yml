@@ -3,7 +3,7 @@
   hosts: docker_targets
   become: "{{ netci_become | default(true) }}"
   vars:
-    netci_app_name: "{{ app_name | default('hello-container') }}"
+    netci_app_name: "{{ app_name | default(release_name | default('hello-container')) }}"
     netci_app_root: "{{ app_root | default('/opt/netci-docker-demo') }}"
     netci_registry_url: "{{ registry_url | default('192.168.122.1:5000') }}"
     # The registry may be reachable from this host under a different name than the one

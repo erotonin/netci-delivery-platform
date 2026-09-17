@@ -133,6 +133,9 @@ def call(Map config = [:]) {
                         netciCallbackAuth(callbackCredentialsId) {
                             sh 'mkdir -p "${NETCI_OUTPUT_DIR}"'
                             sh 'python3 scripts/netci_callback.py status --status running --log "jenkins build ${BUILD_TAG} started"'
+                            // Checkout itself finished before the callback script existed;
+                            // its result is reported here, once, after the fact.
+                            sh 'python3 scripts/netci_callback.py stage --id checkout --name Checkout --status succeeded >/dev/null'
                         }
                     }
                 }
@@ -164,7 +167,8 @@ def call(Map config = [:]) {
             }
             stage('Unit Test') {
                 when { expression { netciStageEnabled('unit-test', defaultStages) } }
-                steps { netciInBuilder { sh 'bash "${NETCI_CI_SCRIPT_DIR}/test.sh"' } }
+                steps { script { netciStage('unit-test', 'Unit Test', callbackCredentialsId) { netciInBuilder { sh 'bash "${NETCI_CI_SCRIPT_DIR}/test.sh"'} } } }
+
             }
             stage('Custom: after unit-test') {
                 when { expression { netciCustomStagesAfter('unit-test') } }
@@ -172,7 +176,8 @@ def call(Map config = [:]) {
             }
             stage('Build') {
                 when { expression { netciStageEnabled('build', defaultStages) } }
-                steps { netciInBuilder { sh 'bash "${NETCI_CI_SCRIPT_DIR}/build.sh"' } }
+                steps { script { netciStage('build', 'Build', callbackCredentialsId) { netciInBuilder { sh 'bash "${NETCI_CI_SCRIPT_DIR}/build.sh"'} } } }
+
             }
             stage('Custom: after build') {
                 when { expression { netciCustomStagesAfter('build') } }
@@ -180,7 +185,8 @@ def call(Map config = [:]) {
             }
             stage('SBOM') {
                 when { expression { netciStageEnabled('sbom', defaultStages) } }
-                steps { netciInBuilder { sh 'bash "${NETCI_CI_SCRIPT_DIR}/sbom.sh"' } }
+                steps { script { netciStage('sbom', 'Generate SBOM', callbackCredentialsId) { netciInBuilder { sh 'bash "${NETCI_CI_SCRIPT_DIR}/sbom.sh"'} } } }
+
             }
             stage('Custom: after sbom') {
                 when { expression { netciCustomStagesAfter('sbom') } }
@@ -188,7 +194,8 @@ def call(Map config = [:]) {
             }
             stage('Vulnerability Scan') {
                 when { expression { netciStageEnabled('vulnerability-scan', defaultStages) } }
-                steps { netciInBuilder { sh 'bash "${NETCI_CI_SCRIPT_DIR}/scan.sh"' } }
+                steps { script { netciStage('vulnerability-scan', 'Vulnerability Scan', callbackCredentialsId) { netciInBuilder { sh 'bash "${NETCI_CI_SCRIPT_DIR}/scan.sh"'} } } }
+
             }
             stage('Custom: after vulnerability-scan') {
                 when { expression { netciCustomStagesAfter('vulnerability-scan') } }
@@ -196,7 +203,7 @@ def call(Map config = [:]) {
             }
             stage('Sign') {
                 when { expression { netciStageEnabled('sign', defaultStages) } }
-                steps {
+                steps { script { netciStage('sign', 'Sign Artifact', callbackCredentialsId) {
                     netciInBuilder {
                         // The signing key is written to the ephemeral workspace and dies
                         // with the pod. It is never passed on a command line, where it
@@ -213,7 +220,7 @@ def call(Map config = [:]) {
                             '''
                         }
                     }
-                }
+                } } }
             }
             stage('Custom: after sign') {
                 when { expression { netciCustomStagesAfter('sign') } }
@@ -221,7 +228,8 @@ def call(Map config = [:]) {
             }
             stage('Publish') {
                 when { expression { netciStageEnabled('publish', defaultStages) } }
-                steps { netciInBuilder { sh 'bash "${NETCI_CI_SCRIPT_DIR}/publish.sh"' } }
+                steps { script { netciStage('publish', 'Publish Artifact', callbackCredentialsId) { netciInBuilder { sh 'bash "${NETCI_CI_SCRIPT_DIR}/publish.sh"'} } } }
+
             }
             stage('Custom: after publish') {
                 when { expression { netciCustomStagesAfter('publish') } }

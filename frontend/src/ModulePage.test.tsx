@@ -7,10 +7,11 @@ vi.mock('./api/netciClient', async (importOriginal) => {
   return {
     ...original,
     getModule: vi.fn().mockResolvedValue({
-      id: 'notification-worker', systemId: 'netChat', name: 'Notification Worker', type: 'Worker', description: 'Notifications', runtime: 'docker', applicationId: 'app-1', versions: [], deploymentEnvironments: [], environments: [], pipelineRuns: [], dora: [],
+      id: 'notification-worker', systemId: 'netChat', name: 'Notification Worker', type: 'Worker', description: 'Notifications', runtime: 'docker', applicationId: 'app-1', versions: [], deploymentEnvironments: [{ displayName: 'Production', environment: 'prod', runtime: 'docker', servers: ['prod-host'], tasks: [], taskSettings: {} }], environments: [], pipelineRuns: [], dora: [],
       pipelineConfig: { runner: 'Jenkins', strategy: 'Trunk-based', pipelines: { CI: { branch: 'main', coverageReportPath: 'coverage/lcov.info', stages: ['checkout', 'unit-test'] }, 'CD Prod': { branch: 'release/*', coverageReportPath: 'coverage/lcov.info', stages: ['checkout', 'deploy', 'health-check'] } } },
     }),
     listModulePipelineRuns: vi.fn().mockResolvedValue({ moduleId: 'notification-worker', items: [] }),
+    getModuleGitRefs: vi.fn().mockResolvedValue({ moduleId: 'notification-worker', repositoryUrl: 'https://git.example/notification-worker.git', branches: [{ name: 'main', sha: 'a'.repeat(40) }], tags: [], error: null }),
     getDora: vi.fn(),
   }
 })
@@ -27,7 +28,8 @@ describe('ModulePage pipeline contract', () => {
     await screen.findByRole('heading', { name: 'Notification Worker' })
     await user.click(screen.getByRole('tab', { name: 'Pipeline' }))
 
-    expect(await screen.findByText(/Jenkins · release\/\*/)).toBeTruthy()
+    // One card per configured environment, carrying the branch the wizard configured for it.
+    expect(await screen.findByText(/nhánh release\/\*/)).toBeTruthy()
   })
 
   it('states how many delivery events the DORA figures came from', async () => {

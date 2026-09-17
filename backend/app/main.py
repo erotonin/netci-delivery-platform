@@ -1946,6 +1946,66 @@ def list_module_pipeline_runs(moduleId: str, principal: Principal = ReadAccess) 
         raise HTTPException(status_code=404, detail={"code": "MODULE_NOT_FOUND", "message": str(exc)}) from exc
 
 
+
+_GIT_REF_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,200}$")
+
+
+def list_remote_refs(repository_url: str, timeout_seconds: float = 15.0) -> dict[str, list[dict[str, str]]]:
+    """Branches and tags of a repository with the commit each points at, from the
+    repository itself (`git ls-remote`) -- what the "run this branch" dialog offers.
+
+    Read-only and anonymous: repositories that need credentials answer with an
+    error the caller sees as "refs unavailable", never with a guess. Only http(s)
+    and ssh URLs are dialled, and git's own credential prompting is disabled so a
+    protected repository fails fast instead of hanging.
+    """
+
+    parsed = urlsplit(repository_url)
+    if parsed.scheme not in {"http", "https", "ssh"}:
+        raise ValueError(f"unsupported repository URL scheme {parsed.scheme!r}")
+    result = subprocess.run(
+        ["git", "ls-remote", "--heads", "--tags", "--refs", repository_url],
+        capture_output=True, text=True, timeout=timeout_seconds, check=False,
+        env={**os.environ, "GIT_TERMINAL_PROMPT": "0", "GIT_ASKPASS": "/bin/true"},
+    )
+    if result.returncode != 0:
+        raise RuntimeError((result.stderr or result.stdout).strip()[-300:] or "git ls-remote failed")
+    branches: list[dict[str, str]] = []
+    tags: list[dict[str, str]] = []
+    for line in result.stdout.splitlines():
+        sha, _, ref = line.partition("\t")
+        if not re.fullmatch(r"[0-9a-f]{40}", sha):
+            continue
+        if ref.startswith("refs/heads/"):
+            name = ref[len("refs/heads/"):]
+            if _GIT_REF_NAME.fullmatch(name):
+                branches.append({"name": name, "sha": sha})
+        elif ref.startswith("refs/tags/"):
+            name = ref[len("refs/tags/"):]
+            if _GIT_REF_NAME.fullmatch(name):
+                tags.append({"name": name, "sha": sha})
+    branches.sort(key=lambda item: (item["name"] not in {"main", "master"}, item["name"]))
+    tags.sort(key=lambda item: item["name"], reverse=True)
+    return {"branches": branches, "tags": tags}
+
+
+@app.get("/modules/{moduleId}/git-refs")
+def get_module_git_refs(moduleId: str, principal: Principal = ReadAccess) -> dict[str, object]:
+    """What the module's repository has to build: branches and tags with their commits."""
+
+    try:
+        module = portal.module(moduleId)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail={"code": "MODULE_NOT_FOUND", "message": str(exc)}) from exc
+    _require_module_access(moduleId, principal)
+    repository_url = str(module.get("repositoryUrl") or "")
+    try:
+        refs = list_remote_refs(repository_url)
+    except (ValueError, RuntimeError, subprocess.TimeoutExpired) as exc:
+        return {"moduleId": moduleId, "repositoryUrl": repository_url, "branches": [], "tags": [], "error": str(exc)[:300]}
+    return {"moduleId": moduleId, "repositoryUrl": repository_url, **refs, "error": None}
+
+
 @app.get("/git/info")
 def get_git_info(principal: Principal = ReadAccess) -> dict[str, object]:
     """Which commit this process was built from, or an honest "unknown".
@@ -2015,6 +2075,8 @@ def _discover_sample_apps() -> list[dict[str, object]]:
             runtime, template = "docker", "container-ci-cd-v1"
         else:
             continue
+        git_url = os.getenv("NETCI_GIT_URL", "").strip()
+        repo_url = git_url or (f"{base}/netci.git" if base else None)
         found.append(
             {
                 "id": entry.name,
@@ -2022,7 +2084,7 @@ def _discover_sample_apps() -> list[dict[str, object]]:
                 "runtime": runtime,
                 "pipelineTemplate": template,
                 "path": f"sample-apps/{entry.name}",
-                "repositoryUrl": f"{base}/{entry.name}" if base else None,
+                "repositoryUrl": repo_url,
                 "hasTests": any(name.startswith("test_") or name.endswith("_test.go") for name in files),
             }
         )

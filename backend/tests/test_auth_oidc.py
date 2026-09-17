@@ -271,3 +271,13 @@ def test_a_bad_bearer_header_is_rejected_before_any_crypto(rsa_key, ec_key, monk
     for header in (None, "", "Token abc", "Bearer ", "Bearer not.a.jwt.at.all", "Bearer onlyonepart"):
         with pytest.raises(AuthError):
             verifier.authenticate(header)
+
+
+def test_the_subject_is_the_login_name_when_the_provider_sends_one(rsa_key, ec_key, monkeypatch):
+    """Keycloak's `sub` is an opaque UUID; a request list that says who asked for a
+    release must show a person. `sub` stays the fallback."""
+
+    verifier = authenticator(rsa_key, ec_key, monkeypatch)
+    principal = verifier.authenticate(bearer(sign_rs256(rsa_key, claims(preferred_username="dana"))))
+    assert principal.subject == "dana"
+    assert verifier.authenticate(bearer(sign_rs256(rsa_key, claims()))).subject == "u-1042"

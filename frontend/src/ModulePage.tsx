@@ -6,11 +6,11 @@ import {
 } from 'lucide-react'
 import {
   approveConfigRevision, cancelPipelineRun, createModuleVersion, detectDrift,
-  diffConfigRevisions, getDora, getGitInfo, getModule, getModuleOverview, getPipelineLogs,
+  diffConfigRevisions, getDora, getModule, getModuleGitRefs, getModuleOverview, getPipelineLogs,
   getPipelineStages, listConfigRevisions, listModulePipelineRuns, listModuleVersions,
   proposeConfigRevision, rejectConfigRevision, retryPipelineRun, rollbackConfigRevision,
   startModulePipeline, applyModuleConfig, type ConfigApplyResponse, type ConfigDriftReport, type ConfigRevision, type ConfigRevisionDiff,
-  type DeploymentEnvironmentConfig, type Environment, type GitInfo, type ModuleOverview, type ModulePipelineConfig, type ModuleVersion,
+  type DeploymentEnvironmentConfig, type Environment, type GitRefs, type ModuleOverview, type ModulePipelineConfig, type ModuleVersion,
   type PipelineRun, type PipelineStage, type Runtime,
 } from './api/netciClient'
 import { usePortalFeedback } from './PortalFeedback'
@@ -18,17 +18,29 @@ import { DoraCards, Modal, StatusPill } from './PortalShell'
 import type { DoraCardMetric, ModuleTab } from './portalTypes'
 
 const pipelineStages = ['checkout', 'unit-test', 'build', 'sbom', 'vulnerability-scan', 'sign', 'publish', 'deploy', 'health-check']
-const pipelines = [
-  { id: 'ci', name: 'CI Pipeline', number: '', sha: '', actor: '', time: '', duration: '', status: 'not_started', branch: 'main' },
-  { id: 'cd-dev', name: 'CD Dev', number: '', sha: '', actor: '', time: '', duration: '', status: 'not_started', branch: 'main' },
-  { id: 'cd-staging', name: 'CD Staging', number: '', sha: '', actor: '', time: '', duration: '', status: 'not_started', branch: 'main' },
-  { id: 'cd-prod', name: 'CD Prod', number: '', sha: '', actor: '', time: '', duration: '', status: 'not_started', branch: 'main' },
-] as const
 function EmptyModuleData({ title, description }: { title: string; description: string }) {
   return <section className="panel empty-tab-state"><Box size={29} /><h2>{title}</h2><p>{description}</p></section>
 }
 
-function OverviewTab({ moduleId }: { moduleId: string }) {
+const shortDigest = (digest?: string | null) => (digest ? digest.replace(/^sha256:/, '').slice(0, 12) : '—')
+const shortSha = (sha?: string | null) => (sha ? sha.slice(0, 8) : '—')
+// Older records carry the identity provider's opaque subject; show what fits, keep the rest in the title.
+const person = (subject?: string | null) => (!subject ? '—' : /^[0-9a-f]{8}-[0-9a-f]{4}-/.test(subject) ? `${subject.slice(0, 8)}…` : subject)
+export function timeAgo(iso?: string | null): string {
+  if (!iso) return '—'
+  const seconds = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 1000))
+  if (seconds < 60) return 'vừa xong'
+  if (seconds < 3600) return `${Math.round(seconds / 60)} phút trước`
+  if (seconds < 86400) return `${Math.round(seconds / 3600)} giờ trước`
+  return `${Math.round(seconds / 86400)} ngày trước`
+}
+const environmentLabel: Record<string, string> = { dev: 'Development', staging: 'Staging', prod: 'Production' }
+const statusLabel = (status: string) => ({
+  never_deployed: 'chưa triển khai', healthy: 'healthy', failed: 'failed', rolled_back: 'rolled back',
+  deploying: 'deploying', pending_approval: 'chờ phê duyệt', rollback_in_progress: 'đang rollback', cancelled: 'cancelled', rollback_failed: 'rollback failed',
+}[status] ?? status.replace(/_/g, ' '))
+
+function OverviewTab({ moduleId, onOpenRun }: { moduleId: string; onOpenRun?: (run: PipelineRun) => void }) {
   const [overview, setOverview] = useState<ModuleOverview | null>(null)
   const [error, setError] = useState('')
   useEffect(() => {
@@ -38,17 +50,46 @@ function OverviewTab({ moduleId }: { moduleId: string }) {
   }, [moduleId])
   if (error) return <EmptyModuleData title="Overview unavailable" description={error} />
   if (!overview) return <EmptyModuleData title="Loading delivery evidence" description="Reading deployments, releases and quality reports from netCI." />
-  const hasData = overview.deployments.length > 0 || overview.recentReleases.length > 0 || Object.values(overview.trends).some((value) => value !== null)
-  if (!hasData) return <EmptyModuleData title="No delivery activity yet" description="Deployments, releases and quality evidence will appear after real pipeline callbacks are recorded." />
-  const trends = [
-    ['Test coverage', overview.trends.testCoverage, '%'],
-    ['Automation pass rate', overview.trends.automationPassRate, '%'],
-    ['Security findings', overview.trends.securityFindings, ''],
-  ] as const
-  return <><div className="module-overview-grid"><section className="panel"><div className="panel-heading"><div><h2>Deployments</h2><p>Recorded deployment state by environment</p></div></div><div className="compact-list">{overview.deployments.map((item, index) => <div key={`${item.environment}-${index}`}><span>{item.environment}</span><StatusPill status={item.status.replace('_', ' ')} /></div>)}</div></section><section className="panel"><div className="panel-heading"><div><h2>Recent releases</h2><p>{overview.recentReleases.length} recorded</p></div></div><div className="compact-list">{overview.recentReleases.map((release) => <div key={release.version}><span><strong>{release.version}</strong><small>Test: {release.testStatus}</small></span><StatusPill status={release.status.replace('_', ' ')} /></div>)}</div></section></div><div className="quality-grid">{trends.map(([label, value, unit]) => <article className="panel quality-card" key={label}><div><span>{label}</span><strong>{value === null ? 'Not reported' : `${value}${unit}`}</strong><small>Latest CI quality report</small></div></article>)}</div></>
+  const hasData = overview.recentRuns.length > 0 || overview.recentDeployments.length > 0
+  if (!hasData) return <EmptyModuleData title="No delivery activity yet" description="Run the pipeline once: builds, deployments and the evidence behind them will appear here." />
+  const q = overview.quality
+  return <>
+    <div className="env-grid">{overview.environments.map((env) => <article className={`panel env-card env-${env.environment}`} key={env.environment}>
+      <header><span className={`env-badge env-${env.environment}`}>{environmentLabel[env.environment] ?? env.environment}</span><StatusPill status={statusLabel(env.status)} /></header>
+      {env.status === 'never_deployed' ? <p className="muted">Chưa có deployment nào tới môi trường này.</p> : <dl>
+        <div><dt>Artifact</dt><dd className="mono" title={env.artifactDigest ?? ''}>{shortDigest(env.artifactDigest)}{env.version ? <em> · {env.version}</em> : <em className="muted"> · build chưa gắn version</em>}</dd></div>
+        <div><dt>Commit</dt><dd className="mono">{shortSha(env.commitSha)}</dd></div>
+        <div><dt>Chiến lược</dt><dd>{env.strategy ?? 'rolling'}</dd></div>
+        <div><dt>Cập nhật</dt><dd title={env.updatedAt}>{timeAgo(env.updatedAt)}</dd></div>
+        {env.approvedBy && <div><dt>Phê duyệt</dt><dd title={env.approvedBy}>{person(env.approvedBy)}</dd></div>}
+        {env.status === 'rolled_back' && <p className="muted">Đã rollback: môi trường đang chạy bản trước đó.</p>}
+      </dl>}
+    </article>)}</div>
+    <section className="panel quality-strip">
+      <div className="panel-heading"><div><h2>Bằng chứng của artifact mới nhất</h2><p>{q.source ? <>Run <span className="mono">{q.source.pipelineRunId.slice(0, 8)}</span> · commit <span className="mono">{shortSha(q.source.commitSha)}</span> · digest <span className="mono">{shortDigest(q.source.artifactDigest)}</span> · {timeAgo(q.source.at)}</> : 'Chưa có build thành công nào có artifact.'}</p></div>{q.source && <StatusPill status={q.decision === 'allow' ? 'policy: allow' : `policy: ${q.decision ?? 'unknown'}`} />}</div>
+      {q.source && <div className="quality-facts">
+        <div><span>SBOM</span><strong>{q.sbom?.present ? `${q.sbom.format ?? 'present'} (${q.sbom.generatedBy ?? '?'})` : 'không có'}</strong></div>
+        <div><span>Vulnerability scan</span><strong>{q.scan?.scanner ? `${q.scan.scanner}: ${q.scan.status ?? '?'} · critical ${q.scan.critical ?? '?'} · high ${q.scan.high ?? '?'}` : 'không có'}</strong></div>
+        <div><span>Chữ ký</span><strong>{q.signature?.verified ? `${q.signature.provider ?? 'cosign'} · verified` : 'chưa xác minh'}</strong></div>
+        <div><span>CI quality report</span><strong>{overview.trends.testCoverage !== null ? `coverage ${overview.trends.testCoverage}%` : 'chưa có báo cáo'}{overview.trends.automationPassRate !== null ? ` · autotest ${overview.trends.automationPassRate}%` : ''}</strong></div>
+      </div>}
+    </section>
+    <div className="module-overview-grid">
+      <section className="panel"><div className="panel-heading"><div><h2>Build gần đây</h2><p>{overview.recentRuns.length} lượt chạy mới nhất</p></div></div>
+        <div className="data-table history-table compact"><div className="table-row table-head"><span>Trạng thái</span><span>Môi trường</span><span>Commit</span><span>Artifact</span><span>Bởi</span><span>Khi nào</span></div>
+          {overview.recentRuns.map((run) => <button className="table-row table-button" key={run.id} onClick={() => onOpenRun?.(run)} title={run.id}><StatusPill status={run.status.replace('_', ' ')} /><span>{run.environment}</span><span className="mono">{shortSha(run.commitSha)}</span><span className="mono">{shortDigest(run.artifactDigest)}</span><span title={run.startedBy ?? ''}>{person(run.startedBy)}</span><span title={run.createdAt}>{timeAgo(run.createdAt)}</span></button>)}
+        </div>
+      </section>
+      <section className="panel"><div className="panel-heading"><div><h2>Deployment gần đây</h2><p>{overview.recentDeployments.length} bản ghi mới nhất</p></div></div>
+        <div className="data-table history-table compact five"><div className="table-row table-head"><span>Trạng thái</span><span>Môi trường</span><span>Artifact</span><span>Duyệt bởi</span><span>Khi nào</span></div>
+          {overview.recentDeployments.map((d) => <div className="table-row" key={d.id} title={d.id}><StatusPill status={statusLabel(d.status)} /><span>{d.environment}</span><span className="mono">{shortDigest(d.artifactDigest)}{d.version ? ` · ${d.version}` : ''}</span><span title={d.approvedBy ?? ''}>{person(d.approvedBy)}</span><span title={d.updatedAt}>{timeAgo(d.updatedAt)}</span></div>)}
+        </div>
+      </section>
+    </div>
+  </>
 }
 
-type PipelineDefinition = Omit<(typeof pipelines)[number], 'id' | 'branch'> & { id: string; branch: string; stages: string[] }
+type PipelineDefinition = { id: string; name: string; number: string; sha: string; actor: string; time: string; duration: string; status: string; branch: string; stages: string[] }
 
 const stageLabels: Record<string, string> = {
   checkout: 'Checkout', 'unit-test': 'Unit Test', build: 'Build', sbom: 'Generate SBOM',
@@ -254,63 +295,94 @@ function pipelineEnvironment(pipelineId: string, configuredEnvs?: DeploymentEnvi
   return 'dev'
 }
 
-const pipelineConfigKey: Record<string, string> = { ci: 'CI', 'cd-dev': 'CD Dev', 'cd-staging': 'CD Staging', 'cd-prod': 'CD Prod' }
-
-function configuredPipelines(config: Partial<ModulePipelineConfig> = {}): PipelineDefinition[] {
-  return pipelines.map((pipeline) => {
-    const configured = config?.pipelines?.[pipelineConfigKey[pipeline.id]]
-    return { ...pipeline, branch: configured?.branch || pipeline.branch, stages: configured?.stages?.length ? configured.stages : [...pipelineStages] }
+function environmentPipelines(config: Partial<ModulePipelineConfig> = {}, environments?: DeploymentEnvironmentConfig[]): PipelineDefinition[] {
+  // One pipeline per configured environment: a netCI run always builds *and* deploys
+  // to the environment it was started for, so "CI" and "CD dev" were the same run
+  // shown twice, and "last build" on every card was the same oldest record.
+  const configured = (environments ?? []).map((e) => e.environment)
+  const order: Environment[] = ['dev', 'staging', 'prod']
+  const envs = order.filter((e) => configured.includes(e))
+  const list = envs.length ? envs : (['dev'] as Environment[])
+  const keyFor: Record<string, string> = { dev: 'CD Dev', staging: 'CD Staging', prod: 'CD Prod' }
+  return list.map((env) => {
+    const fromConfig = config?.pipelines?.[keyFor[env]] ?? config?.pipelines?.CI
+    return {
+      id: `cd-${env}`, name: `${environmentLabel[env] ?? env}`, number: '', sha: '', actor: '', time: '', duration: '', status: 'not_started',
+      branch: (fromConfig?.branch || 'main').trim(),
+      stages: fromConfig?.stages?.length ? fromConfig.stages : [...pipelineStages],
+    }
   })
 }
 
-function PipelineTab({ moduleId, pipelineConfig, deploymentEnvironments }: { moduleId: string; pipelineConfig: Partial<ModulePipelineConfig>; deploymentEnvironments?: DeploymentEnvironmentConfig[] }) {
+function PipelineTab({ moduleId, pipelineConfig, deploymentEnvironments, initialRun }: { moduleId: string; pipelineConfig: Partial<ModulePipelineConfig>; deploymentEnvironments?: DeploymentEnvironmentConfig[]; initialRun?: PipelineRun | null }) {
   const { notify } = usePortalFeedback()
-  const definitions = configuredPipelines(pipelineConfig)
+  const definitions = environmentPipelines(pipelineConfig, deploymentEnvironments)
   const [historyPipeline, setHistoryPipeline] = useState<PipelineDefinition | null>(null)
-  const [run, setRun] = useState<{ pipeline: PipelineDefinition; liveRun: PipelineRun | null } | null>(null)
+  const [run, setRun] = useState<{ pipeline: PipelineDefinition; liveRun: PipelineRun | null } | null>(() => {
+    if (!initialRun) return null
+    const pipeline = definitions.find((d) => d.id === `cd-${initialRun.environment}`) ?? definitions[0]
+    return pipeline ? { pipeline, liveRun: initialRun } : null
+  })
   const [liveRuns, setLiveRuns] = useState<PipelineRun[]>([])
   const [busyPipeline, setBusyPipeline] = useState<string | null>(null)
   const [triggered, setTriggered] = useState<string | null>(null)
-  const [sourceRevision, setSourceRevision] = useState('')
-  const [gitInfo, setGitInfo] = useState<GitInfo | null>(null)
+  const [refs, setRefs] = useState<GitRefs | null>(null)
 
   useEffect(() => {
     let active = true
-    listModulePipelineRuns(moduleId).then((result) => { if (active) setLiveRuns(result.items) }).catch((error) => { if (active) notify(error instanceof Error ? error.message : 'Không tải được pipeline history.', 'error') })
-    getGitInfo().then((info) => {
-      if (active) {
-        setGitInfo(info)
-        if (info.currentCommitSha) {
-          const sha = info.currentCommitSha
-          setSourceRevision((prev) => prev || sha)
-        }
-      }
-    }).catch(() => {})
+    listModulePipelineRuns(moduleId).then((result) => { if (active) setLiveRuns([...result.items].sort((a, b) => b.createdAt.localeCompare(a.createdAt))) }).catch((error) => { if (active) notify(error instanceof Error ? error.message : 'Không tải được pipeline history.', 'error') })
+    // Branches and tags come from the module's own repository, read by the server. The
+    // Portal used to offer netCI's *own* build commit here, which does not exist in the
+    // module's repository, so the default "Run" failed at checkout.
+    getModuleGitRefs(moduleId).then((result) => { if (active) setRefs(result) }).catch(() => { if (active) setRefs(null) })
     return () => { active = false }
   }, [moduleId])
-  const effectiveRevision = (sourceRevision || gitInfo?.currentCommitSha || '').trim()
-  const trigger = async (pipeline: PipelineDefinition, revision?: string) => {
-    const rev = (revision || effectiveRevision).trim()
+  const [runModalPipeline, setRunModalPipeline] = useState<PipelineDefinition | null>(null)
+  const [modalBranch, setModalBranch] = useState('')
+  const [modalRevision, setModalRevision] = useState('')
+  const [modalEnv, setModalEnv] = useState<Environment>('dev')
+  const [modalError, setModalError] = useState('')
+  const branchSha = (name: string) => refs?.branches.find((b) => b.name === name)?.sha ?? refs?.tags.find((t) => t.name === name)?.sha ?? ''
+
+  const openRunModal = (pipeline: PipelineDefinition) => {
+    setRunModalPipeline(pipeline)
+    const wanted = cleanBranchName(pipeline.branch)
+    const branch = refs?.branches.some((b) => b.name === wanted) ? wanted : (refs?.branches[0]?.name ?? wanted)
+    setModalBranch(branch)
+    setModalRevision(branchSha(branch))
+    setModalEnv((pipeline.id.replace('cd-', '') as Environment) || 'dev')
+    setModalError('')
+  }
+
+  const executeModalRun = async () => {
+    if (!runModalPipeline) return
+    const rev = modalRevision.trim()
     if (!/^[0-9a-f]{7,64}$/i.test(rev)) {
-      notify('Enter a valid 7–64 character Git commit SHA before starting a pipeline.', 'error')
+      setModalError('Commit SHA phải là 7–64 ký tự hex. Chọn một nhánh để netCI điền commit đầu nhánh.')
       return
     }
-    setBusyPipeline(pipeline.id)
-    const targetEnv = pipelineEnvironment(pipeline.id, deploymentEnvironments)
-    const targetBranch = cleanBranchName(pipeline.branch, gitInfo?.currentBranch || 'main')
+    setBusyPipeline(runModalPipeline.id)
+    setModalError('')
     try {
-      const next = await startModulePipeline(moduleId, { commitSha: rev, branch: targetBranch, environment: targetEnv, parameters: { portalPipeline: pipeline.id } })
+      const next = await startModulePipeline(moduleId, {
+        commitSha: rev,
+        branch: modalBranch.trim() || 'main',
+        environment: modalEnv,
+        parameters: { portalPipeline: runModalPipeline.id },
+      })
       setLiveRuns((current) => [next, ...current.filter((item) => item.id !== next.id)])
-      setTriggered(pipeline.name)
-      notify(`${pipeline.name} đã được đưa vào hàng đợi.`)
-      setRun({ pipeline, liveRun: next })
+      setTriggered(runModalPipeline.name)
+      notify(`Đã đưa vào hàng đợi: build ${rev.slice(0, 8)} → ${modalEnv}.`)
+      setRunModalPipeline(null)
+      setRun({ pipeline: runModalPipeline, liveRun: next })
     } catch (error) {
-      notify(error instanceof Error ? error.message : 'Không thể trigger pipeline.', 'error')
+      setModalError(error instanceof Error ? error.message : 'Không thể trigger pipeline.')
     } finally {
       setBusyPipeline(null)
     }
   }
-  const runsForPipeline = (pipeline: PipelineDefinition) => liveRuns.filter((item) => item.parameters?.portalPipeline === pipeline.id || (!item.parameters?.portalPipeline && (pipeline.id === 'ci' || item.environment === 'prod' || item.environment === 'dev')))
+
+  const runsForPipeline = (pipeline: PipelineDefinition) => liveRuns.filter((item) => item.environment === pipeline.id.replace('cd-', ''))
   if (run) {
     return (
       <PipelineRunView
@@ -325,11 +397,51 @@ function PipelineTab({ moduleId, pipelineConfig, deploymentEnvironments }: { mod
       />
     )
   }
-  if (historyPipeline) { const historyRuns = runsForPipeline(historyPipeline); return <section className="history-view"><button className="back-button" onClick={() => setHistoryPipeline(null)}><ArrowLeft size={16} />All pipelines</button><div className="run-heading"><div><h2>{historyPipeline.name} · Build history</h2><p>Recent pipeline runs from netCI API and Jenkins callbacks.</p></div><button className="primary-button" disabled={busyPipeline === historyPipeline.id} onClick={() => trigger(historyPipeline)}><Play size={15} />{busyPipeline === historyPipeline.id ? 'Queuing…' : 'Run pipeline'}</button></div><section className="panel table-panel"><div className="data-table history-table"><div className="table-row table-head"><span>Build</span><span>Commit</span><span>Branch</span><span>Triggered by</span><span>Started</span><span>Status</span><span /></div>{historyRuns.map((item) => <button className="table-row table-button" onClick={() => setRun({ pipeline: historyPipeline, liveRun: item })} key={item.id}><span className="request-id">#{item.jenkinsRunId ?? item.id.slice(0, 8)}</span><span className="mono">{item.commitSha}</span><span>{item.branch}</span><span>{item.startedBy ?? 'unknown'}</span><span>{new Date(item.createdAt).toLocaleString('vi-VN')}</span><StatusPill status={item.status.replace('_', ' ')} /><ExternalLink size={15} /></button>)}</div>{!historyRuns.length && <div className="empty-table"><History size={22} /><strong>No runs for this pipeline</strong><span>Enter a source commit and trigger the first API-backed run.</span></div>}</section>{triggered && <div className="toast success-toast"><CheckCircle2 size={17} />{triggered} was queued successfully.</div>}</section> }
-  return <><section className="panel form-grid"><label className="field full"><div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}><span>Source Git commit SHA</span>{gitInfo?.currentCommitSha && <span className="mono" style={{ fontSize: '0.78rem', color: '#60a5fa' }}>Git Local: {gitInfo.currentCommitSha.slice(0, 7)} ({gitInfo.currentBranch})</span>}</div><input className="mono" value={sourceRevision} onChange={(event) => setSourceRevision(event.target.value)} placeholder="7–64 hexadecimal characters" /><small>netCI records and sends this exact immutable revision to the configured CI engine.</small></label></section><div className="pipeline-card-grid">{definitions.map((pipeline) => {
+  if (historyPipeline) { const historyRuns = runsForPipeline(historyPipeline); return <section className="history-view"><button className="back-button" onClick={() => setHistoryPipeline(null)}><ArrowLeft size={16} />Tất cả môi trường</button><div className="run-heading"><div><h2>{historyPipeline.name} · lịch sử build</h2><p>Các lượt chạy tới môi trường này, mới nhất trước; trạng thái do Jenkins và worker báo về.</p></div><button className="primary-button" disabled={busyPipeline === historyPipeline.id} onClick={() => openRunModal(historyPipeline)}><Play size={15} />{busyPipeline === historyPipeline.id ? 'Đang xếp hàng…' : 'Chạy pipeline'}</button></div><section className="panel table-panel"><div className="data-table history-table"><div className="table-row table-head"><span>Build</span><span>Commit</span><span>Nhánh</span><span>Bởi</span><span>Bắt đầu</span><span>Trạng thái</span><span /></div>{historyRuns.map((item) => <button className="table-row table-button" onClick={() => setRun({ pipeline: historyPipeline, liveRun: item })} key={item.id}><span className="request-id" title={item.jenkinsRunId ?? item.id}>#{item.jenkinsRunId ? item.jenkinsRunId.split('#').pop() : item.id.slice(0, 8)}</span><span className="mono" title={item.commitSha}>{shortSha(item.commitSha)}</span><span>{item.branch}</span><span title={item.startedBy ?? ''}>{person(item.startedBy)}</span><span title={item.createdAt}>{new Date(item.createdAt).toLocaleString('vi-VN')}</span><StatusPill status={item.status.replace('_', ' ')} /><ExternalLink size={15} /></button>)}</div>{!historyRuns.length && <div className="empty-table"><History size={22} /><strong>Chưa có lượt chạy nào tới môi trường này</strong><span>Bấm "Chạy pipeline" để build một commit và triển khai.</span></div>}</section>{triggered && <div className="toast success-toast"><CheckCircle2 size={17} />{triggered} đã được xếp hàng.</div>}</section> }
+  return <><section className="panel repo-strip"><div><span>Repository</span><strong className="mono">{refs?.repositoryUrl ?? '…'}</strong></div>{refs?.error ? <div className="repo-error"><ShieldAlert size={14} />Không đọc được nhánh từ repository: {refs.error}</div> : <div><span>Nhánh</span><strong>{refs ? refs.branches.map((b) => `${b.name} @ ${b.sha.slice(0, 7)}`).join(' · ') || 'không có nhánh' : 'đang đọc…'}</strong></div>}{refs && refs.tags.length > 0 && <div><span>Tag mới nhất</span><strong>{refs.tags.slice(0, 3).map((t) => t.name).join(' · ')}</strong></div>}</section><div className="pipeline-card-grid">{definitions.map((pipeline) => {
     const live = runsForPipeline(pipeline)[0]
-    return <article className="pipeline-card panel" key={pipeline.id}><div className="pipeline-card-title"><span className={`pipeline-icon pipeline-${pipeline.id}`}><GitBranch size={18} /></span><div><h3>{pipeline.name}</h3><p>{pipelineConfig.runner ? `${pipelineConfig.runner} · ` : 'netCI API → configured CI adapter · '}{pipeline.branch}</p></div><button aria-label={`Mở lịch sử ${pipeline.name}`} onClick={() => setHistoryPipeline(pipeline)}><MoreHorizontal size={18} /></button></div><div className="last-build"><span>Last build</span><strong>{live ? `#${live.jenkinsRunId ?? live.id.slice(0, 8)}` : '—'}</strong><StatusPill status={live?.status.replace('_', ' ') ?? 'Not started'} /></div><dl><div><dt>Commit</dt><dd className="mono">{live?.commitSha ?? '—'}</dd></div><div><dt>Triggered by</dt><dd>{live?.startedBy ?? '—'}</dd></div><div><dt>Started</dt><dd>{live ? new Date(live.createdAt).toLocaleString('vi-VN') : 'No run yet'}</dd></div><div><dt>Environment</dt><dd>{pipelineEnvironment(pipeline.id, deploymentEnvironments)}</dd></div></dl><footer><button className="secondary-button" onClick={() => setHistoryPipeline(pipeline)}><History size={15} />History</button><button className="trigger-button" disabled={busyPipeline === pipeline.id || !effectiveRevision} title={effectiveRevision ? undefined : 'No source commit known: enter a commit SHA first'} aria-label={`Run ${pipeline.name}`} onClick={() => trigger(pipeline)}><Play size={16} /></button></footer></article>
-  })}</div>{triggered && <div className="toast success-toast"><CheckCircle2 size={17} />{triggered} was queued successfully.<button aria-label="Đóng thông báo" onClick={() => setTriggered(null)}>×</button></div>}</>
+    const env = pipeline.id.replace('cd-', '')
+    return <article className="pipeline-card panel" key={pipeline.id}><div className="pipeline-card-title"><span className={`pipeline-icon pipeline-${pipeline.id}`}><GitBranch size={18} /></span><div><h3>{pipeline.name}</h3><p>build → publish → deploy tới <b>{env}</b> · nhánh {pipeline.branch}{env === 'prod' ? ' · cần phê duyệt' : ''}</p></div><button aria-label={`Mở lịch sử ${pipeline.name}`} onClick={() => setHistoryPipeline(pipeline)}><MoreHorizontal size={18} /></button></div><div className="last-build"><span>Lượt chạy gần nhất</span><strong title={live?.jenkinsRunId ?? live?.id}>{live ? `#${live.jenkinsRunId ? live.jenkinsRunId.split('#').pop() : live.id.slice(0, 8)}` : '—'}</strong><StatusPill status={live?.status.replace('_', ' ') ?? 'chưa chạy'} /></div><dl><div><dt>Commit</dt><dd className="mono" title={live?.commitSha}>{shortSha(live?.commitSha)}{live?.branch ? ` (${live.branch})` : ''}</dd></div><div><dt>Artifact</dt><dd className="mono" title={live?.artifactDigest ?? ''}>{shortDigest(live?.artifactDigest)}</dd></div><div><dt>Bởi</dt><dd title={live?.startedBy ?? ''}>{person(live?.startedBy)}</dd></div><div><dt>Khi nào</dt><dd title={live?.createdAt}>{live ? timeAgo(live.createdAt) : 'chưa có'}</dd></div></dl><footer><button className="secondary-button" onClick={() => setHistoryPipeline(pipeline)}><History size={15} />Lịch sử</button><button className="primary-button" style={{ height: '32px', padding: '0 12px', fontSize: '0.82rem', display: 'flex', alignItems: 'center', gap: '6px' }} disabled={busyPipeline === pipeline.id} aria-label={`Run ${pipeline.name}`} onClick={() => openRunModal(pipeline)}><Play size={14} />Chạy</button></footer></article>
+  })}</div>
+  {runModalPipeline && (
+    <Modal
+      title={`Chạy pipeline → ${runModalPipeline.name}`}
+      description={`Build commit đã chọn trên Jenkins (pod tạm cho mỗi build), ký & quét artifact, rồi triển khai tới ${modalEnv}${modalEnv === 'prod' ? ' sau khi được phê duyệt' : ''}.`}
+      onClose={() => setRunModalPipeline(null)}
+      footer={
+        <>
+          <button className="secondary-button" onClick={() => setRunModalPipeline(null)}>Hủy</button>
+          <button className="primary-button" disabled={busyPipeline === runModalPipeline.id || !modalRevision.trim()} onClick={executeModalRun}>
+            <Play size={15} />{busyPipeline === runModalPipeline.id ? 'Đang xếp hàng…' : 'Chạy pipeline'}
+          </button>
+        </>
+      }
+    >
+      <div className="form-grid" style={{ gap: '14px' }}>
+        <label className="field full">
+          <span>Nhánh</span>
+          {refs && refs.branches.length > 0 ? <select value={modalBranch} onChange={(e) => { setModalBranch(e.target.value); setModalRevision(branchSha(e.target.value)) }}>
+            {refs.branches.map((b) => <option key={b.name} value={b.name}>{b.name} — {b.sha.slice(0, 7)}</option>)}
+            {refs.tags.slice(0, 20).map((t) => <option key={`tag:${t.name}`} value={t.name}>tag {t.name} — {t.sha.slice(0, 7)}</option>)}
+          </select> : <input value={modalBranch} onChange={(e) => setModalBranch(e.target.value)} placeholder="main" />}
+          <small>{refs?.error ? `Không đọc được repository (${refs.error}); nhập commit thủ công.` : 'Chọn nhánh hoặc tag: netCI điền commit đầu nhánh, đọc từ repository của module.'}</small>
+        </label>
+        <label className="field full">
+          <span>Commit SHA</span>
+          <input className="mono" value={modalRevision} onChange={(e) => setModalRevision(e.target.value)} placeholder="7–64 ký tự hex" />
+          <small>Commit bất biến được ghi vào lượt chạy và gửi tới Jenkins; có thể sửa để build một commit cũ hơn của nhánh.</small>
+        </label>
+        <label className="field full">
+          <span>Môi trường</span>
+          <select value={modalEnv} onChange={(e) => setModalEnv(e.target.value as Environment)}>
+            {definitions.map((d) => { const env = d.id.replace('cd-', '') as Environment; return <option key={env} value={env}>{environmentLabel[env] ?? env}{env === 'prod' ? ' (cần phê duyệt)' : ''}</option> })}
+          </select>
+        </label>
+        {modalError && <div className="login-error" role="alert">{modalError}</div>}
+      </div>
+    </Modal>
+  )}
+  {triggered && <div className="toast success-toast"><CheckCircle2 size={17} />{triggered} was queued successfully.<button aria-label="Đóng thông báo" onClick={() => setTriggered(null)}>×</button></div>}</>
 }
 
 type VersionRow = { tag: string; date: string; user: string; commit: string; coverage: number | null; dev: string; staging: string; prod: string; autoTest: string; signed: boolean; sbom: string; scan: string; promotable: boolean }

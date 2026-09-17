@@ -177,6 +177,29 @@ def command_status(arguments: argparse.Namespace) -> int:
     return 0
 
 
+def command_stage(arguments: argparse.Namespace) -> int:
+    """One stage's transition. The Portal draws the stage graph from these; without
+    them a succeeded run showed nine "Pending" boxes forever."""
+
+    payload: dict[str, object] = {
+        "stageId": arguments.id,
+        "stageName": arguments.name or arguments.id,
+        "status": arguments.status,
+        "attempt": int(setting("NETCI_STAGE_ATTEMPT", "1") or 1),
+    }
+    if arguments.started_at:
+        payload["startedAt"] = arguments.started_at
+    if arguments.completed_at:
+        payload["completedAt"] = arguments.completed_at
+    if arguments.duration_ms is not None:
+        payload["durationMs"] = max(0, int(arguments.duration_ms))
+    if arguments.error:
+        payload["errorMessage"] = arguments.error[:2000]
+    response = post(f"/pipeline-runs/{run_id()}/stages", payload)
+    print(json.dumps(response, indent=2))
+    return 0
+
+
 def command_evidence(arguments: argparse.Namespace) -> int:
     digest = arguments.digest or read_text_file("artifact-digest.txt")
     if not digest.startswith(DIGEST_PREFIX):
@@ -238,6 +261,16 @@ def main() -> int:
     status.add_argument("--digest", default="", help="artifact digest (default: read artifact-digest.txt)")
     status.add_argument("--log", action="append", help="a log line to attach; repeatable")
     status.set_defaults(handler=command_status)
+
+    stage = subcommands.add_parser("stage", help="report one pipeline stage transition")
+    stage.add_argument("--id", required=True, help="stage id, e.g. unit-test")
+    stage.add_argument("--name", default="", help="human name, e.g. Unit Test")
+    stage.add_argument("--status", required=True, choices=["queued", "running", "succeeded", "failed", "cancelled", "skipped"])
+    stage.add_argument("--started-at", default="", help="ISO-8601")
+    stage.add_argument("--completed-at", default="", help="ISO-8601")
+    stage.add_argument("--duration-ms", type=int, default=None)
+    stage.add_argument("--error", default="")
+    stage.set_defaults(handler=command_stage)
 
     evidence = subcommands.add_parser("evidence", help="publish SBOM, scan and signature evidence")
     evidence.add_argument("--digest", default="")

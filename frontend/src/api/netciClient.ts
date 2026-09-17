@@ -427,6 +427,9 @@ export type PortalModule = {
   description: string
   runtime: Runtime
   applicationId: string | null
+  ownerTeam?: string | null
+  repositoryUrl?: string | null
+  pipelineTemplate?: string | null
   versions: string[]
   deploymentEnvironments: DeploymentEnvironmentConfig[]
   pipelineConfig: Partial<ModulePipelineConfig>
@@ -540,10 +543,60 @@ export function updateModule(moduleId: string, payload: { displayName: string; m
   })
 }
 
+export type EnvironmentState = {
+  environment: Environment
+  status: string
+  deploymentId?: string
+  artifactDigest?: string | null
+  version?: string | null
+  pipelineRunId?: string | null
+  commitSha?: string | null
+  strategy?: string | null
+  approvedBy?: string | null
+  updatedAt?: string
+}
+
+export type RecentDeployment = {
+  id: string
+  environment: Environment
+  status: string
+  artifactDigest: string | null
+  version: string | null
+  strategy: string | null
+  approvedBy: string | null
+  createdAt: string
+  updatedAt: string
+  pipelineRunId: string | null
+}
+
+export type ArtifactQuality = {
+  source: { pipelineRunId: string; commitSha: string; artifactDigest: string; at: string } | null
+  decision?: string | null
+  sbom?: { present: boolean; format: string | null; generatedBy: string | null }
+  scan?: { scanner: string | null; status: string | null; critical: number | null; high: number | null }
+  signature?: { provider: string | null; verified: boolean }
+}
+
 export type ModuleOverview = {
   deployments: Array<{ environment: Environment; status: string }>
+  environments: EnvironmentState[]
+  recentRuns: PipelineRun[]
+  recentDeployments: RecentDeployment[]
+  quality: ArtifactQuality
   recentReleases: Array<{ version: string; status: string; testStatus: string }>
   trends: { testCoverage: number | null; automationPassRate: number | null; securityFindings: number | null }
+}
+
+export type GitRefs = {
+  moduleId: string
+  repositoryUrl: string
+  branches: Array<{ name: string; sha: string }>
+  tags: Array<{ name: string; sha: string }>
+  error: string | null
+}
+
+export function getModuleGitRefs(moduleId: string): Promise<GitRefs> {
+  return request<GitRefs>(`/modules/${encodeURIComponent(moduleId)}/git-refs`)
 }
 
 export function getModuleOverview(moduleId: string): Promise<ModuleOverview> {

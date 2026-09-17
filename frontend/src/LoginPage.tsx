@@ -143,18 +143,18 @@ export function LoginPage({ onLogin }: { onLogin: (session: AuthSession) => void
 
   return <main className="login-page">
     <section className="login-story" aria-labelledby="login-story-title">
-      <div className="login-brand"><span>R</span><strong>Release Portal</strong></div>
+      <div className="login-brand"><span style={{ backgroundColor: '#ee0033', color: '#fff', fontSize: '13px', fontWeight: 900 }}>netci</span><strong>netCI Delivery Platform</strong></div>
       <div className="login-story-copy">
         <span className="login-eyebrow"><ShieldCheck size={16} />netCI Platform · Continuous Delivery</span>
         <h1 id="login-story-title">Track every release, from commit to production.</h1>
-        <p>Đăng nhập một lần để quản lý pipeline, phiên bản và yêu cầu triển khai trên tất cả hệ thống.</p>
+        <p>Đăng nhập một lần (SSO) để quản lý pipeline, phiên bản và yêu cầu triển khai trên tất cả hệ thống.</p>
       </div>
       <small>netCI Platform · Continuous Delivery</small>
     </section>
     <section className="login-panel">
       <div className="login-card">
-        <div className="login-mark">R</div>
-        <h2>Đăng nhập Hệ thống</h2>
+        <div className="login-mark" style={{ backgroundColor: '#ee0033', color: '#fff', fontSize: '13px', fontWeight: 900, textTransform: 'lowercase' }}>netci</div>
+        <h2>Sign in to your account</h2>
 
         {authMode === null && <p className="login-checking" role="status"><Loader2 size={16} className="spin" />Đang kiểm tra cấu hình xác thực…</p>}
 
@@ -231,7 +231,7 @@ export function LoginPage({ onLogin }: { onLogin: (session: AuthSession) => void
 
             <form className="login-form" onSubmit={handleCredentialsSubmit} noValidate>
               <div className="login-field">
-                <label htmlFor="login-username">Tên đăng nhập (Username)</label>
+                <label htmlFor="login-username">Username or email</label>
                 <input
                   id="login-username"
                   type="text"
@@ -239,27 +239,27 @@ export function LoginPage({ onLogin }: { onLogin: (session: AuthSession) => void
                   spellCheck={false}
                   value={username}
                   onChange={(e) => setUsername(e.target.value)}
-                  placeholder="admin hoặc dev"
+                  placeholder="Username or email (e.g. admin, dev)"
                 />
               </div>
 
               <div className="login-field">
-                <label htmlFor="login-password">Mật khẩu (Password)</label>
+                <label htmlFor="login-password">Password</label>
                 <input
                   id="login-password"
                   type="password"
                   autoComplete="current-password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  placeholder="admin hoặc dev"
+                  placeholder="Password"
                 />
               </div>
 
               {error && <div className="login-error" role="alert">{error}</div>}
 
-              <button className="login-primary" type="submit" disabled={busy}>
+              <button className="login-primary" type="submit" disabled={busy} style={{ backgroundColor: '#ee0033', borderColor: '#ee0033' }}>
                 {busy ? <Loader2 size={18} className="spin" /> : <LogIn size={18} />}
-                {busy ? 'Đang xác thực…' : 'Đăng nhập'}
+                {busy ? 'Đang xác thực…' : 'Sign In'}
               </button>
             </form>
           </>
@@ -267,9 +267,9 @@ export function LoginPage({ onLogin }: { onLogin: (session: AuthSession) => void
 
         {authMode === 'oidc' && oidc && !oidc.error && (
           <div className="login-sso">
-            <button className="login-primary" type="button" onClick={signInWithProvider} disabled={busy} data-testid="sso-login">
+            <button className="login-primary" type="button" onClick={signInWithProvider} disabled={busy} data-testid="sso-login" style={{ backgroundColor: '#ee0033', borderColor: '#ee0033', fontWeight: 700 }}>
               {busy ? <Loader2 size={18} className="spin" /> : <LogIn size={18} />}
-              {busy ? 'Đang xác thực…' : 'Đăng nhập bằng SSO'}
+              {busy ? 'Đang xác thực…' : 'Sign in with SSO (Keycloak)'}
             </button>
             <small>Chuyển tới <code>{oidc.issuer}</code> để xác thực; netCI kiểm tra token trả về và quyết định quyền.</small>
           </div>

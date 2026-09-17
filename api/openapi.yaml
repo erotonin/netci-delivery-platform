@@ -352,6 +352,32 @@ paths:
         '200': { description: Module settings persisted }
         '403': { description: Caller does not have access to the owning team }
         '404': { $ref: '#/components/responses/NotFound' }
+  /modules/{moduleId}/git-refs:
+    get:
+      operationId: getModuleGitRefs
+      summary: Branches and tags of the module's repository with the commit each points at
+      description: >-
+        Read by the server with `git ls-remote` (anonymous, read-only, http(s)/ssh only). What
+        the "run this branch" dialog offers; the Portal used to propose netCI's own build
+        commit, which does not exist in the module's repository. A repository that cannot
+        be read answers with `error` and empty lists, never a guess.
+      parameters:
+        - $ref: '#/components/parameters/ModuleId'
+      responses:
+        '200':
+          description: Refs
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  moduleId: { type: string }
+                  repositoryUrl: { type: string }
+                  branches: { type: array, items: { type: object, properties: { name: { type: string }, sha: { type: string } } } }
+                  tags: { type: array, items: { type: object, properties: { name: { type: string }, sha: { type: string } } } }
+                  error: { type: string, nullable: true }
+        '404':
+          $ref: '#/components/responses/NotFound'
   /modules/{moduleId}/overview:
     get:
       operationId: getModuleOverview

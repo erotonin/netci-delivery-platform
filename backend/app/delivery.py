@@ -1989,6 +1989,11 @@ class DeliveryPlatform:
         updated_run = replace(run, workflow_id=workflow_id, version=run.version + 1, updated_at=_now())
         unit = UnitOfWork(runs=[(updated_run, run.version)])
         unit.logs.append((run.id, [f"cd-workflow-started workflowId={workflow_id}"]))
+        # The deploy stage is running from here; the result callback closes it.
+        with self._transaction() as transaction:
+            transaction.record_pipeline_stage(PipelineStage(
+                pipeline_run_id=run.id, stage_id="deploy", stage_name="Deploy", status="running", started_at=_now(),
+            ))
         unit.audit.append(
             AuditRecord(
                 "deployment.workflow_started",
@@ -2323,6 +2328,15 @@ class DeliveryPlatform:
             )
             if message:
                 unit.logs.append((run.id, [f"deployment={target_status.value} {message}"]))
+            # The run's last two stages are netCI's, not Jenkins': the deployment and
+            # its health check. Recorded here so the Portal's stage graph ends where
+            # the release did instead of stopping at "publish".
+            stage_status = "succeeded" if healthy else "failed"
+            for stage_id, stage_name in (("deploy", "Deploy"), ("health-check", "Health Check")):
+                transaction.record_pipeline_stage(PipelineStage(
+                    pipeline_run_id=run.id, stage_id=stage_id, stage_name=stage_name, status=stage_status,
+                    completed_at=now, error_message=None if healthy else (message or None),
+                ))
         self._record_delivery_outcome(
             transaction, unit, updated, run, healthy=healthy, occurred_at=now
         )
