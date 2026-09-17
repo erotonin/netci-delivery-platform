@@ -3411,12 +3411,12 @@ components:
         commit: { type: string, pattern: '^[0-9a-fA-F]{7,64}$' }
     VersionCreate:
       type: object
-      required: [tag, gitTagUrl, artifactUrl]
+      required: [tag]
       additionalProperties: false
       properties:
         tag: { type: string, pattern: '^v?\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$' }
-        gitTagUrl: { type: string, format: uri }
-        artifactUrl: { type: string, format: uri }
+        gitTagUrl: { type: string, format: uri, nullable: true, description: optional link for people; the digest and run identify the artifact }
+        artifactUrl: { type: string, format: uri, nullable: true }
         pipelineRunId: { type: string, format: uuid, nullable: true }
         artifactDigest: { type: string, pattern: '^sha256:[0-9a-f]{64}$', nullable: true }
     ProductionRequestCreate:

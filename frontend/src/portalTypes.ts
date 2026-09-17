@@ -32,6 +32,10 @@ export type PortalServer = {
   environment: 'Dev' | 'Staging' | 'Production'
   status: 'Online' | 'Maintenance' | 'Offline' | 'Unknown'
   lastChecked: string
+  usedBy: Array<{ systemId: string; moduleId: string; environment: string }>
+  dcim: { status: string; valid: boolean; message: string; netboxUrl?: string | null } | null
+  agent: { replicaId: string; lastSeenAt: string; stale: boolean } | null
+  telemetry: { cpuPercent: number; memPercent: number; diskPercent: number; observedAt: string } | null
 }
 
 export type DoraCardMetric = {

@@ -1514,8 +1514,8 @@ class PortalService:
                 "quality": quality,
                 "recentReleases": recent_releases,
                 "trends": {
-                    "testCoverage": latest_report.get("coveragePercentage"),
-                    "automationPassRate": latest_report.get("automationPassRate"),
+                    "testCoverage": latest_report.get("coveragePercentage", latest_report.get("coverage")),
+                    "automationPassRate": latest_report.get("automationPassRate", 100.0 if latest_report.get("autoTest") == "passed" else None),
                     "securityFindings": latest_report.get("securityFindings"),
                 },
             }
@@ -1626,7 +1626,12 @@ class PortalService:
                 "scan": (evidence.get("vulnerabilityScan") or {}).get("status", "not_available"),
                 "createdBy": created_by,
                 "createdAt": datetime.now(timezone.utc).isoformat(),
-                "ciReport": None,
+                # The run's test result, if the pipeline recorded one, is this version's
+                # automation evidence from the start; a per-tag report may still replace it.
+                "ciReport": (
+                    {**evidence["ciReport"], "source": "pipeline-run"}
+                    if isinstance(evidence.get("ciReport"), dict) and evidence["ciReport"].get("autoTest") else None
+                ),
             }
             try:
                 transaction.insert_portal_version(VersionRow(module_id, tag, record))
@@ -1753,6 +1758,7 @@ class PortalService:
             "strategy": request.strategy,
             "strategyConfig": request.strategy_config,
             "canaryRules": (request.strategy_config or {}).get("canary_rules") or {},
+            "createdAt": request.created_at.isoformat() if request.created_at else None,
         }
 
     def production_request(self, request_id: str) -> dict[str, object] | None:
@@ -1911,6 +1917,24 @@ class PortalService:
     def reject_request(self, request_id: str, actor: str, comment: str | None = None) -> dict[str, object]:
         return self._set_request_status(request_id, "rejected", actor, comment)
 
+    def record_production_deployment_cancelled(self, deployment_id: UUID, actor: str, reason: str) -> None:
+        """The deployment a request created was cancelled before it ran: the request is
+        `cancelled`, not blocked (nothing failed) and not rejected (nobody refused it)."""
+
+        with self._session() as transaction:
+            request = transaction.portal_request_for_deployment(deployment_id)
+            if request is None or request.status not in {"approved", "waiting_approval"}:
+                return
+            module = next((m for m in request.modules if m.deployment_id == deployment_id), None)
+            if module is not None:
+                transaction.update_portal_request_module(
+                    request.id, module.module_id, status="cancelled", deployment_id=deployment_id,
+                    error_message=reason or None, completed_at=datetime.now(timezone.utc),
+                )
+            transaction.update_portal_request(
+                request.id, status="cancelled", comment=f"deployment cancelled by {actor}" + (f": {reason}" if reason else ""),
+            )
+
     def record_production_deployment_result(
         self,
         deployment_id: UUID,
@@ -1944,49 +1968,74 @@ class PortalService:
     # --------------------------------------------------------- servers and DCIM
 
     def servers(self, application_ids: set[UUID] | None = None) -> list[dict[str, object]]:
+        """Every deployment target the modules name, with what is *known* about it.
+
+        The address comes from NetBox's primary IP, the state from the edge agent's
+        connection row and its last telemetry, the maintenance flag from the operator.
+        Anything not known is null: an earlier version invented a 10.244.x.y address
+        per row, which looked like inventory and was not.
+        """
+
         with self._session() as transaction:
-            result: list[dict[str, object]] = []
-            seen: set[tuple[str, str, str]] = set()
+            agents = {row.hostname: row for row in transaction.list_agent_connections()}
+            rows: dict[str, dict[str, object]] = {}
             for module in transaction.portal_modules():
                 if application_ids is not None and module.application_id not in application_ids:
                     continue
                 for target in module.deployment_config:
                     environment = str(target.get("environment") or "dev")
                     for hostname in target.get("servers") or []:
-                        key = (module.system_id, environment, str(hostname))
-                        if key in seen:
-                            continue
-                        seen.add(key)
-                        server_id = f"{module.id}:{environment}:{hostname}"
-                        if hostname == "localhost":
-                            ip_addr = "127.0.0.1"
-                        elif environment == "staging":
-                            ip_addr = f"10.244.1.{10 + len(seen)}"
-                        elif environment == "prod":
-                            ip_addr = f"10.244.2.{20 + len(seen)}"
-                        else:
-                            ip_addr = f"10.244.0.{10 + len(seen)}"
-
-                        maint = transaction.get_server_maintenance(server_id)
-                        if maint and maint.in_maintenance:
-                            status_val = "maintenance"
-                        else:
-                            status_val = "unknown"
-
-                        result.append(
-                            {
-                                "id": server_id,
-                                "hostname": str(hostname),
-                                "systemId": module.system_id,
-                                "moduleId": module.id,
-                                "ipAddress": ip_addr,
-                                "environment": environment,
-                                "status": status_val,
-                                "kind": "configured-runtime-target",
+                        hostname = str(hostname)
+                        row = rows.get(hostname)
+                        if row is None:
+                            row = rows[hostname] = {
+                                "id": hostname,
+                                "hostname": hostname,
                                 "runtime": module.runtime,
+                                "usedBy": [],
+                                "ipAddress": None,
+                                "dcim": None,
+                                "agent": None,
+                                "telemetry": None,
+                                "status": "unknown",
+                                "kind": "configured-runtime-target",
                             }
-                        )
-            return result
+                        row["usedBy"].append({"systemId": module.system_id, "moduleId": module.id, "environment": environment})
+                        # Backwards-compatible single-valued fields: the first user.
+                        row.setdefault("systemId", module.system_id)
+                        row.setdefault("moduleId", module.id)
+                        row.setdefault("environment", environment)
+            for hostname, row in rows.items():
+                first = row["usedBy"][0]
+                try:
+                    verdict = self.dcim_catalog.validate_target(first["systemId"], first["moduleId"], first["environment"], hostname)
+                    details = verdict.details if isinstance(verdict.details, dict) else {}
+                    row["dcim"] = {"status": verdict.status, "valid": verdict.valid, "message": verdict.message,
+                                   "netboxUrl": details.get("netboxUrl"), "site": details.get("environment")}
+                    if details.get("ipAddress"):
+                        row["ipAddress"] = details["ipAddress"]
+                except Exception as exc:  # noqa: BLE001 - reported per row, never invented
+                    row["dcim"] = {"status": "error", "valid": False, "message": str(exc)[:200]}
+                agent = agents.get(hostname)
+                if agent is not None:
+                    seen_seconds = (datetime.now(timezone.utc) - agent.last_seen_at).total_seconds()
+                    row["agent"] = {"replicaId": agent.replica_id, "lastSeenAt": agent.last_seen_at.isoformat(), "stale": seen_seconds > 90}
+                telemetry = transaction.get_server_telemetry(hostname)
+                if telemetry is not None:
+                    row["telemetry"] = {"cpuPercent": telemetry.cpu_percent, "memPercent": telemetry.mem_percent,
+                                        "diskPercent": telemetry.disk_percent, "observedAt": telemetry.observed_at.isoformat()}
+                maint = transaction.get_server_maintenance(hostname)
+                if maint and maint.in_maintenance:
+                    row["status"] = "maintenance"
+                elif row["agent"] and not row["agent"]["stale"]:
+                    row["status"] = "online"
+                elif row["agent"] and row["agent"]["stale"]:
+                    row["status"] = "offline"
+                elif row["dcim"] and row["dcim"].get("status") in ("decommissioning", "decommissioned", "offline", "failed"):
+                    row["status"] = "offline"
+                else:
+                    row["status"] = "unknown"
+            return sorted(rows.values(), key=lambda r: str(r["hostname"]))
 
     def dcim_services(self, query: str) -> dict[str, object]:
         page = self.dcim_catalog.search_services(query)

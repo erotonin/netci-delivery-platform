@@ -73,6 +73,7 @@ class RequestRow:
     release_plan: dict[str, Any] | None = None
     strategy: str = "rolling"
     strategy_config: dict[str, Any] = field(default_factory=dict)
+    created_at: datetime | None = None
 
 
 @dataclass(frozen=True)

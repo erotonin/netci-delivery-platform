@@ -495,6 +495,7 @@ export type ProductionRequest = {
   status: string
   deploymentId: string | null
   comment: string | null
+  createdAt?: string | null
   strategy?: 'rolling' | 'canary' | 'blue_green'
   strategyConfig?: Record<string, unknown>
   canaryRules?: { header_name?: string; header_value?: string; cookie?: string }
@@ -624,7 +625,7 @@ export type ModuleVersion = {
   promotable?: boolean
   createdBy?: string | null
   createdAt?: string | null
-  ciReport?: { coveragePercentage?: number; automationPassRate?: number; autoTest?: string; commit?: string } | null
+  ciReport?: { coveragePercentage?: number; coverage?: number; automationPassRate?: number; autoTest?: string; commit?: string; testsRun?: number; runner?: string; source?: string } | null
   environments: Record<Environment, string>
 }
 
@@ -818,11 +819,16 @@ export type ServerInventoryItem = {
   id: string
   hostname: string
   systemId: string
-  ipAddress: string
+  moduleId?: string
+  ipAddress: string | null
   environment: Environment
   status: string
   kind: string
   runtime?: Runtime
+  usedBy?: Array<{ systemId: string; moduleId: string; environment: Environment }>
+  dcim?: { status: string; valid: boolean; message: string; netboxUrl?: string | null; site?: string | null } | null
+  agent?: { replicaId: string; lastSeenAt: string; stale: boolean } | null
+  telemetry?: { cpuPercent: number; memPercent: number; diskPercent: number; observedAt: string } | null
 }
 
 export type AuditEvent = {
@@ -860,7 +866,7 @@ export function listServerInventory(): Promise<ServerInventoryItem[]> {
   return request<ServerInventoryItem[]>('/servers')
 }
 
-export function createModuleVersion(moduleId: string, payload: { tag: string; gitTagUrl: string; artifactUrl: string; pipelineRunId: string; artifactDigest: string }): Promise<Record<string, unknown>> {
+export function createModuleVersion(moduleId: string, payload: { tag: string; gitTagUrl?: string; artifactUrl?: string; pipelineRunId: string; artifactDigest: string }): Promise<Record<string, unknown>> {
   return request<Record<string, unknown>>(`/modules/${encodeURIComponent(moduleId)}/versions`, {
     method: 'POST',
     headers: { 'X-Correlation-Id': requestId() },

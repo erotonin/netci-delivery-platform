@@ -1,13 +1,13 @@
 import { useEffect, useMemo, useState } from 'react'
 import {
   CalendarClock, Check, CheckCircle2, Circle, CircleAlert, Clock3, Eye,
-  FileCheck2, Pencil, Plus, RefreshCw, RotateCcw, Search, ShieldCheck, Trash2, XCircle,
+  FileCheck2, Pencil, Plus, RefreshCw, RotateCcw, Search, ShieldCheck, XCircle,
   GitFork, Split, TrendingUp, Layers, Activity,
 } from 'lucide-react'
 import {
   approveProductionRequest, createProductionRequest, listProductionRequests, listSystems,
   getSystem, rejectProductionRequest, getProductionRequestPlan, advanceCanary, abortCanary,
-  getDeploymentTraffic, type ProductionRequest, type ProductionRequestCreate,
+  getDeploymentTraffic, cancelDeployment, type ProductionRequest, type ProductionRequestCreate,
 } from './api/netciClient'
 import { Modal, PageHeader, StatusPill } from './PortalShell'
 import { usePortalFeedback } from './PortalFeedback'
@@ -19,6 +19,7 @@ const statusLabels: Record<string, string> = {
   rejected: 'Rejected',
   blocked: 'Blocked',
   succeeded: 'Succeeded',
+  cancelled: 'Cancelled',
 }
 
 function statusLabel(status: string): string {
@@ -40,10 +41,13 @@ function scheduledDate(value: string): string {
   return new Intl.DateTimeFormat('vi-VN', { dateStyle: 'short', timeStyle: 'short', timeZone: 'Asia/Ho_Chi_Minh' }).format(date)
 }
 
+// Default: now. A window a day away used to be the default, and an approved request
+// then sat "deploying" for 24 hours while the workflow waited for it, with nothing on
+// screen saying so. A window is something the requester chooses on purpose.
 function localScheduleDefault(): string {
-  const date = new Date(Date.now() + 24 * 60 * 60 * 1000)
-  date.setMinutes(0, 0, 0)
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}T${String(date.getHours()).padStart(2, '0')}:00`
+  const date = new Date(Date.now() + 60 * 1000)
+  date.setSeconds(0, 0)
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}T${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`
 }
 
 function toOffsetIso(localValue: string): string {
@@ -135,7 +139,7 @@ function RequestDetails({
     {
       label: 'Check approval status',
       detail: pending
-        ? 'Waiting for mentor / GNOC approval'
+        ? 'Chờ một reviewer khác phê duyệt (separation of duties)'
         : currentReq.status === 'approved'
         ? 'Approved for promotion'
         : `Request ${currentReq.status}`,
@@ -144,10 +148,12 @@ function RequestDetails({
     {
       label: 'Execute CD Production',
       detail: currentReq.deploymentId
-        ? `Deployment ${currentReq.deploymentId}`
+        ? (isApproved && new Date(currentReq.scheduledFor).getTime() > Date.now()
+          ? `Deployment ${currentReq.deploymentId.slice(0, 8)} đã được duyệt; worker chờ tới cửa sổ triển khai ${new Date(currentReq.scheduledFor).toLocaleString('vi-VN')} rồi mới chạy`
+          : `Deployment ${currentReq.deploymentId.slice(0, 8)}`)
         : 'No deployment has been created',
       state: currentReq.deploymentId
-        ? currentReq.status === 'blocked'
+        ? currentReq.status === 'blocked' || currentReq.status === 'cancelled'
           ? 'failed'
           : currentReq.status === 'succeeded'
           ? 'done'
@@ -187,6 +193,22 @@ function RequestDetails({
                 <ShieldCheck size={16} />Approve
               </button>
             </>
+          )}
+          {isApproved && currentReq.deploymentId && !['succeeded', 'cancelled'].includes(currentReq.status) && (
+            <button className="danger-button" disabled={busy || canaryBusy} onClick={async () => {
+              const reason = window.prompt('Lý do huỷ deployment (ghi vào audit):', '') ?? ''
+              setCanaryBusy(true)
+              try {
+                await cancelDeployment(currentReq.deploymentId!, reason)
+                notify('Đã huỷ deployment; workflow đã được dừng.')
+                onRefresh?.()
+                onClose()
+              } catch (error) {
+                notify(error instanceof Error ? error.message : 'Không huỷ được deployment.', 'error')
+              } finally { setCanaryBusy(false) }
+            }}>
+              <XCircle size={16} />Huỷ deployment
+            </button>
           )}
           <button className="secondary-button" onClick={onClose}>
             Close
@@ -315,26 +337,22 @@ function RequestDetails({
         </div>
       )}
 
-      {/* Policy Governance & Risk Assessment */}
+      {/* What netCI checks at approval, as facts, not as a score it did not compute */}
       <div className="governance-risk-card" style={{ marginTop: 12, marginBottom: 12, padding: '12px', background: 'rgba(255,255,255,0.03)', borderRadius: 8, border: '1px solid rgba(255,255,255,0.08)' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
           <h4 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: 6, fontSize: 13 }}>
             <ShieldCheck size={16} />
-            Enterprise Governance & Policy Verification
+            Kiểm tra khi phê duyệt
           </h4>
-          <span className="risk-badge" style={{
-            padding: '2px 8px', borderRadius: 12, fontSize: 11, fontWeight: 600,
-            background: currentReq.policyDecision?.riskScore && currentReq.policyDecision.riskScore >= 70 ? '#7f1d1d' : '#14532d',
-            color: currentReq.policyDecision?.riskScore && currentReq.policyDecision.riskScore >= 70 ? '#fca5a5' : '#86efac',
-          }}>
-            Risk Score: {currentReq.policyDecision?.riskScore ?? (currentReq.strategy === 'rolling' ? 40 : 35)}/100
-          </span>
+          {currentReq.policyDecision ? <span className="risk-badge" style={{ padding: '2px 8px', borderRadius: 12, fontSize: 11, fontWeight: 600, background: currentReq.policyDecision.allowed ? '#14532d' : '#7f1d1d', color: currentReq.policyDecision.allowed ? '#86efac' : '#fca5a5' }}>
+            policy: {currentReq.policyDecision.allowed ? 'allow' : 'deny'} · risk {currentReq.policyDecision.riskScore}/100
+          </span> : <span className="risk-badge" style={{ padding: '2px 8px', borderRadius: 12, fontSize: 11, color: '#94a3b8', border: '1px solid rgba(148,163,184,.4)' }}>chính sách chạy lúc phê duyệt</span>}
         </div>
         <div style={{ fontSize: 12, color: '#94a3b8', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-          <div><strong>Dual Control:</strong> Required (Separation of Duties)</div>
-          <div><strong>Resource Quota:</strong> Verified Active Limits</div>
-          <div><strong>Artifact Digest:</strong> Immutable SHA-256 PIN</div>
-          <div><strong>Break-Glass Status:</strong> {currentReq.policyDecision?.checks?.break_glass ? 'Active Emergency Override' : 'Standard Dual Approval'}</div>
+          <div><strong>Phê duyệt:</strong> người khác người yêu cầu ({currentReq.requestedBy})</div>
+          <div><strong>Bằng chứng tự động hoá:</strong> {currentReq.runAutomationTests ? 'bắt buộc autoTest: passed' : 'không bắt buộc'}</div>
+          <div><strong>Artifact:</strong> theo digest sha256 của lượt chạy đã ký/quét</div>
+          <div><strong>Rollback:</strong> {currentReq.rollbackStrategy}</div>
         </div>
         {currentReq.policyDecision?.reason && (
           <div style={{ marginTop: 8, fontSize: 11, color: '#cbd5e1', borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: 6 }}>
@@ -699,6 +717,7 @@ function NewRequest({
                 value={scheduledFor}
                 onChange={(event) => setScheduledFor(event.target.value)}
               />
+              <small>{new Date(toOffsetIso(scheduledFor)).getTime() > Date.now() + 5 * 60 * 1000 ? `Sau khi được phê duyệt, worker sẽ chờ tới ${new Date(toOffsetIso(scheduledFor)).toLocaleString('vi-VN')} mới triển khai.` : 'Triển khai ngay sau khi được phê duyệt.'}</small>
             </label>
           </section>
 
@@ -763,7 +782,7 @@ function NewRequest({
           <div className="review-grid">
             <div>
               <span>Modules</span>
-              <strong>{selected.map((id) => availableModules.find((item) => item.id === id)?.name).join(', ')}</strong>
+              <strong>{selected.map((id) => `${availableModules.find((item) => item.id === id)?.name} ${drafts[id]?.version || ''}`.trim()).join(', ')}</strong>
             </div>
             <div>
               <span>Strategy</span>
@@ -903,7 +922,7 @@ export function ProductionRequestsPage({ systemId }: { systemId: string }) {
           (!fromDate || date >= fromDate) &&
           (!toDate || date <= toDate)
         )
-      }),
+      }).sort((a, b) => (b.createdAt ?? b.scheduledFor).localeCompare(a.createdAt ?? a.scheduledFor)),
     [scopedItems, query, moduleFilter, statusFilter, fromDate, toDate]
   )
 
@@ -930,9 +949,6 @@ export function ProductionRequestsPage({ systemId }: { systemId: string }) {
       setCommandBusy(false)
     }
   }
-
-  const immutableNotice = (request: ProductionRequest, action: string) =>
-    notify(`${displayRequestId(request)} đã submit và là immutable. ${action} cần command cancel/recreate riêng.`, 'info')
 
   return (
     <>
@@ -1063,16 +1079,6 @@ export function ProductionRequestsPage({ systemId }: { systemId: string }) {
                   <button aria-label={`Xem ${displayRequestId(request)}`} onClick={() => setDetails(request)}>
                     <Eye size={16} />
                   </button>
-                  {request.status === 'waiting_approval' && (
-                    <>
-                      <button aria-label={`Sửa ${displayRequestId(request)}`} onClick={() => immutableNotice(request, 'Editing')}>
-                        <Pencil size={15} />
-                      </button>
-                      <button aria-label={`Xóa ${displayRequestId(request)}`} onClick={() => immutableNotice(request, 'Deleting')}>
-                        <Trash2 size={15} />
-                      </button>
-                    </>
-                  )}
                 </span>
               </div>
             ))}
@@ -1096,7 +1102,7 @@ export function ProductionRequestsPage({ systemId }: { systemId: string }) {
         <RequestDetails
           request={details}
           busy={commandBusy}
-          onClose={() => setDetails(null)}
+          onClose={() => { setDetails(null); void load() }}
           onApprove={() => updateStatus('approve')}
           onReject={() => updateStatus('reject')}
           onRefresh={load}

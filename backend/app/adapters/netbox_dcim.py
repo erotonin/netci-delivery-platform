@@ -28,6 +28,8 @@ and a NetBox API token via `NETCI_DCIM_API_TOKEN_FILE` (preferred) or
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import json
 import logging
 import urllib.error
@@ -207,7 +209,9 @@ class NetBoxDcimCatalog:
             )
         telemetry_gate = check_preflight_telemetry(target)
         if not telemetry_gate.valid:
-            return telemetry_gate
+            # The gate's verdict, with the device it was about: the inventory page shows
+            # the address and the NetBox link even when the host is refusing releases.
+            return replace(telemetry_gate, details={**device, **(telemetry_gate.details or {})})
         return TargetValidationResult(
             valid=True, status=status,
             message=f"Target {target} is {status} in NetBox and passed the pre-flight gate",

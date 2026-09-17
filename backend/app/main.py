@@ -1266,8 +1266,10 @@ class ServerMaintenanceRequest(StrictBody):
 
 class VersionCreate(StrictBody):
     tag: str = Field(pattern=r"^v?\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$")
-    gitTagUrl: HttpUrl
-    artifactUrl: HttpUrl
+    # Links are optional: the artifact is identified by its digest and the run that
+    # built it, which the server verifies. A link is a convenience for people.
+    gitTagUrl: HttpUrl | None = None
+    artifactUrl: HttpUrl | None = None
     pipelineRunId: UUID | None = None
     artifactDigest: str | None = Field(default=None, pattern=r"^sha256:[0-9a-f]{64}$")
 
@@ -1313,6 +1315,13 @@ class SignatureEvidence(BaseModel):
     bundleLocation: str | None = Field(default=None, max_length=1000)
 
 
+class RunCiReport(BaseModel):
+    autoTest: Literal["passed", "failed", "skipped"]
+    coverage: float | None = Field(default=None, ge=0, le=100)
+    testsRun: int | None = Field(default=None, ge=0)
+    runner: str | None = Field(default=None, max_length=64)
+
+
 class SecurityEvidenceRequest(BaseModel):
     """Supply-chain evidence a CI run publishes for one immutable artifact."""
 
@@ -1322,6 +1331,8 @@ class SecurityEvidenceRequest(BaseModel):
     vulnerabilityScan: VulnerabilityScanEvidence
     signature: SignatureEvidence
     buildRunId: str | None = Field(default=None, max_length=255)
+    # What the test stage recorded; copied onto a version registered from this run.
+    ciReport: RunCiReport | None = None
 
 
 class VulnerabilityCounts(StrictBody):
@@ -2272,8 +2283,8 @@ def create_module_version(
         return portal.register_version(
             moduleId,
             tag=payload.tag,
-            git_tag_url=str(payload.gitTagUrl),
-            artifact_url=str(payload.artifactUrl),
+            git_tag_url=str(payload.gitTagUrl) if payload.gitTagUrl else "",
+            artifact_url=str(payload.artifactUrl) if payload.artifactUrl else "",
             pipeline_run_id=payload.pipelineRunId,
             artifact_digest=payload.artifactDigest,
             created_by=principal.subject,
@@ -3411,6 +3422,7 @@ def cancel_deployment(
     )
     reason = payload.reason if payload else ""
     updated = platform.cancel_deployment(deploymentId, actor=principal.subject, reason=reason)
+    portal.record_production_deployment_cancelled(deploymentId, principal.subject, reason)
     return deployment_json(updated)
 
 

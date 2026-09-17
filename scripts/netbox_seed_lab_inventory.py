@@ -21,7 +21,6 @@ from __future__ import annotations
 import json
 import os
 import subprocess
-import sys
 import urllib.error
 import urllib.request
 
@@ -80,11 +79,39 @@ dtype_host = upsert("/dcim/device-types/", "slug", "linux-host",
 dtype_node = upsert("/dcim/device-types/", "slug", "kind-node",
                     {"manufacturer": manufacturer["id"], "model": "kind node", "slug": "kind-node"})
 
-def device(name: str, role: str, tenant: str, site: str, dtype: dict, status: str = "active") -> dict:
-    return upsert("/dcim/devices/", "name", name, {
+def device(name: str, role: str, tenant: str, site: str, dtype: dict, status: str = "active", address: str | None = None) -> dict:
+    created = upsert("/dcim/devices/", "name", name, {
         "name": name, "role": roles[role]["id"], "tenant": tenants[tenant]["id"],
         "site": sites[site]["id"], "device_type": dtype["id"], "status": status,
     })
+    if address:
+        primary_ip(created, address)
+    return created
+
+
+def primary_ip(dev: dict, address: str) -> None:
+    """A management interface with the address, set as the device's primary IPv4 -- the
+    field netCI's inventory page shows. The lab's own machine answers on loopback for
+    the `ansible_connection=local` targets; the separate host has its lab address."""
+
+    st, page = call("GET", f"/dcim/interfaces/?device_id={dev['id']}&name=eth0")
+    if st == 200 and page.get("count"):
+        iface = page["results"][0]
+    else:
+        st, iface = call("POST", "/dcim/interfaces/", {"device": dev["id"], "name": "eth0", "type": "virtual"})
+        assert st == 201, iface
+    # The address may already exist (an earlier seed created it unassigned): adopt it.
+    st, page = call("GET", f"/ipam/ip-addresses/?address={urllib.parse.quote(address)}")
+    if st == 200 and page.get("count"):
+        ip = page["results"][0]
+        st, ip = call("PATCH", f"/ipam/ip-addresses/{ip['id']}/", {"assigned_object_type": "dcim.interface", "assigned_object_id": iface["id"]})
+        assert st == 200, ip
+    else:
+        st, ip = call("POST", "/ipam/ip-addresses/", {"address": address, "status": "active",
+                                                       "assigned_object_type": "dcim.interface", "assigned_object_id": iface["id"]})
+        assert st == 201, ip
+    st, updated = call("PATCH", f"/dcim/devices/{dev['id']}/", {"primary_ip4": ip["id"]})
+    assert st == 200, updated
 
 # This machine: the Docker and systemd deployment target for every environment the
 # localhost inventory serves.
@@ -92,6 +119,8 @@ def device(name: str, role: str, tenant: str, site: str, dtype: dict, status: st
 # it is right: a machine belongs to whoever runs it. This host runs two sample services,
 # so it is two logical targets here, both reached through ansible_connection=local.
 for env in ("dev", "staging", "prod"):
+    # No primary IP: NetBox keeps addresses unique and these six logical devices are
+    # one machine reached with ansible_connection=local; netCI shows them as "no IP".
     device(f"netci-local-docker-{env}", "hello-container", "hello-container", env, dtype_host)
     device(f"netci-local-systemd-{env}", "hello-systemd-go", "hello-systemd-go", env, dtype_host)
 
@@ -104,16 +133,14 @@ for node in nodes:
 
 # A separate production host (scripts/lab/prod_host.sh): reached over SSH, system-scope
 # systemd, privilege escalation -- the way a real production machine is.
-prod_host = device("netci-prod-01", "hello-systemd-go", "hello-systemd-go", "prod", dtype_host)
+prod_host = device("netci-prod-01", "hello-systemd-go", "hello-systemd-go", "prod", dtype_host, address="172.17.0.60/16")
 # A NetBox device belongs to one tenant and one role, so the same machine serving a second
 # module is a second device record. In the lab both records are the one container at
 # 172.17.0.60 (the inventory names the same address twice); on real hardware they would
 # more likely be two hosts, which is the model this encodes.
+# Same address as netci-prod-01 (one machine); NetBox keeps addresses unique, so the
+# second device record carries the fact in its comments and no primary IP.
 device("netci-prod-02", "hello-container", "hello-container", "prod", dtype_host)
-st, ip = call("POST", "/ipam/ip-addresses/", {"address": "172.17.0.60/16", "status": "active",
-             "assigned_object_type": None})
-if st == 201 or st == 400:
-    pass  # primary IP is informational for netCI; the inventory names the address
 
 # One decommissioned device, so "refuse a retired target" is testable against real data.
 device("netci-retired-01", "hello-container", "hello-container", "prod", dtype_host, status="decommissioning")

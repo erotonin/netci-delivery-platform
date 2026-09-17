@@ -40,7 +40,8 @@ import type { DoraCardMetric, PortalServer, PortalSystemView } from './portalTyp
 function serverFromApi(item: ServerInventoryItem): PortalServer {
   const environment: PortalServer['environment'] = item.environment === 'prod' ? 'Production' : item.environment === 'staging' ? 'Staging' : 'Dev'
   const status: PortalServer['status'] = item.status === 'maintenance' ? 'Maintenance' : item.status === 'offline' ? 'Offline' : item.status === 'online' ? 'Online' : 'Unknown'
-  return { id: item.id || item.hostname, systemId: item.systemId, ip: item.ipAddress || '', environment, status, lastChecked: 'Not reported' }
+  const lastChecked = item.telemetry?.observedAt ?? item.agent?.lastSeenAt ?? 'Not reported'
+  return { id: item.id || item.hostname, systemId: item.systemId, ip: item.ipAddress || '', environment, status, lastChecked, usedBy: item.usedBy ?? [], dcim: item.dcim ?? null, agent: item.agent ?? null, telemetry: item.telemetry ?? null }
 }
 
 export function DashboardPage({ navigate }: { navigate: Navigate }) {
@@ -437,7 +438,7 @@ export function ServersPage() {
     return () => { active = false }
   }, [])
 
-  const filtered = useMemo(() => items.filter((item) => `${item.id} ${item.systemId} ${item.ip}`.toLowerCase().includes(query.toLowerCase()) && (environment === 'All environments' || item.environment === environment) && (status === 'All statuses' || item.status === status)), [items, query, environment, status])
+  const filtered = useMemo(() => items.filter((item) => `${item.id} ${item.systemId} ${item.ip} ${item.usedBy.map((u) => `${u.moduleId} ${u.environment}`).join(' ')}`.toLowerCase().includes(query.toLowerCase()) && (environment === 'All environments' || item.usedBy.some((u) => (u.environment === 'prod' ? 'Production' : u.environment === 'staging' ? 'Staging' : 'Dev') === environment)) && (status === 'All statuses' || item.status === status)), [items, query, environment, status])
   const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize))
   const visible = filtered.slice((page - 1) * pageSize, page * pageSize)
   useEffect(() => setPage((current) => Math.min(current, totalPages)), [totalPages])
@@ -514,9 +515,9 @@ export function ServersPage() {
         <div className="table-row table-head">
           <span><input type="checkbox" aria-label="Chọn tất cả trên trang" checked={visible.length > 0 && visible.every((item) => selectedIds.includes(item.id))} onChange={toggleAll} /></span>
           <span>Server</span>
-          <span>Hệ thống</span>
-          <span>IP address</span>
-          <span>Environment</span>
+          <span>Dùng bởi</span>
+          <span>IP (NetBox)</span>
+          <span>Agent · telemetry</span>
           <span>Status</span>
           <span>Chế độ bảo trì</span>
           <span />
@@ -534,10 +535,10 @@ export function ServersPage() {
                   </span>
                 )}
               </span>
-              <span>{server.systemId}</span>
-              <span className="mono">{server.ip || '—'}</span>
-              <span className={`env-badge env-${server.environment.toLowerCase()}`}>{server.environment}</span>
-              <StatusPill status={isMaint ? 'Maintenance' : server.status} />
+              <span className="used-by">{server.usedBy.map((u) => <em key={`${u.moduleId}-${u.environment}`} className={`env-badge env-${u.environment}`} title={`${u.systemId} / ${u.moduleId}`}>{u.moduleId} · {u.environment}</em>)}</span>
+              <span className="mono" title={server.dcim?.message ?? ''}>{server.ip || <i className="muted">{server.dcim && server.dcim.status !== 'not_found' && server.dcim.status !== 'error' ? 'trong NetBox, chưa gán IP' : server.dcim?.status === 'error' ? 'NetBox không trả lời' : 'không có trong NetBox'}</i>}</span>
+              <span className="mono" title={server.agent ? `agent qua ${server.agent.replicaId}, thấy lần cuối ${server.agent.lastSeenAt}` : 'chưa có edge agent trên host này'}>{server.agent ? (server.agent.stale ? 'agent mất kết nối' : 'agent online') : '—'}{server.telemetry ? ` · cpu ${server.telemetry.cpuPercent}% · mem ${server.telemetry.memPercent}% · disk ${server.telemetry.diskPercent}%` : ''}</span>
+              <span className="status-stack"><StatusPill status={isMaint ? 'Maintenance' : server.status} />{server.dcim && !server.dcim.valid && !isMaint && <small className="gate-note" title={server.dcim.message}>gate: {server.dcim.status.replace(/_/g, ' ')}</small>}</span>
               <span>
                 <button
                   type="button"
@@ -590,7 +591,7 @@ export function ServersPage() {
           <Plus size={16} /> Tạo miễn trừ CVE
         </button>
       </div>
-      <div className="data-table">
+      <div className="data-table waivers-table">
         <div className="table-row table-head">
           <span>CVE Identifier</span>
           <span>Module</span>
@@ -881,7 +882,7 @@ export function SystemPage({ systemId, navigate }: { systemId: string; navigate:
   }
 
   return <>
-    <div className="system-heading"><div><div className="title-status"><h1>{system.id}</h1><StatusPill status={system.status[0].toUpperCase() + system.status.slice(1)} /></div><p>{system.description}</p><small>Đơn vị: {system.unit} · Owner: {system.owner}</small></div><div className="heading-actions"><button className="danger-button" onClick={() => setDeleteModal(true)}><Trash2 size={16} />Delete System</button><button className="primary-button" onClick={() => navigate('new-module', { systemId })}><Plus size={16} />New Module</button></div></div>
+    <div className="system-heading"><div><div className="title-status"><h1>{system.id}</h1><StatusPill status={system.status[0].toUpperCase() + system.status.slice(1)} /></div><p>{system.description}</p><small>Đơn vị: {system.unit} · Tạo bởi: <span title={system.owner}>{/^[0-9a-f]{8}-[0-9a-f]{4}-/.test(system.owner) ? `${system.owner.slice(0, 8)}…` : system.owner}</span></small></div><div className="heading-actions"><button className="danger-button" onClick={() => setDeleteModal(true)}><Trash2 size={16} />Delete System</button><button className="primary-button" onClick={() => navigate('new-module', { systemId })}><Plus size={16} />New Module</button></div></div>
     <div className="dora-section-label">DORA METRICS · LAST 30 DAYS</div>
     <DoraCards metrics={doraMetrics} />
     <section className="modules-section"><div className="section-heading"><h2>{system.modules.length} modules</h2><span>Live API projection</span></div><div className="module-grid">{system.modules.map((module) => <article className="module-card" key={module.id}><div className="module-card-top"><span className={`module-icon ${module.type === 'Frontend' ? 'blue' : 'purple'}`}><Box size={19} /></span><div><h3>{module.name}</h3><p>{module.description}</p></div><em className={`type-badge ${module.type === 'Frontend' ? 'blue' : 'purple'}`}>{module.type}</em></div><label>Versions</label><div className="version-chips">{module.versions.length ? module.versions.map((version) => <span key={version}>{version}</span>) : <span>None</span>}</div><label>Environments</label><div className="environment-grid">{module.environments.map((environment) => <div key={environment.name}><span>{environment.name === 'prod' ? 'Production' : environment.name === 'staging' ? 'Staging' : 'Dev'}</span><StatusPill status={environment.status.replace('_', ' ')} /></div>)}</div><button className="module-view-button" onClick={() => navigate('module', { systemId, moduleId: module.id })}>View Module <ArrowRight size={15} /></button></article>)}{!system.modules.length && <div className="empty-module-state"><Box size={27} /><strong>No modules yet</strong><span>Add a DCIM module to configure its delivery lifecycle.</span><button className="primary-button" onClick={() => navigate('new-module', { systemId })}><Plus size={15} />Add module</button></div>}</div></section>

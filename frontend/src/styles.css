@@ -233,7 +233,9 @@ select, input, textarea { border: 1px solid #dfe2e6; border-radius: 6px; backgro
 select, input { height: 34px; padding: 0 10px; font-size: 11px; }
 textarea { min-height: 78px; padding: 9px 10px; resize: vertical; font-size: 11px; line-height: 1.5; }
 .systems-table .table-row { grid-template-columns: 1.05fr 1.5fr 1.8fr .9fr .9fr 18px; }
-.servers-table .table-row { min-width: 1040px; grid-template-columns: 28px 1.2fr .85fr 1fr .9fr .8fr 1.2fr 96px; }
+.servers-table .table-row { min-width: 1040px; grid-template-columns: 28px 1fr 1.3fr .8fr 1.5fr .7fr .8fr 60px; }
+.used-by { display: flex; flex-wrap: wrap; gap: 4px; }
+.used-by em { font-style: normal; font-size: 10px; }
 .server-filters > .input-with-icon { flex: 1; max-width: 380px; }
 .sync-note { margin: -12px 0 15px; color: var(--muted); display: flex; align-items: center; gap: 7px; font-size: 10px; }
 .sync-note svg { color: var(--green); }
@@ -341,7 +343,7 @@ textarea { min-height: 78px; padding: 9px 10px; resize: vertical; font-size: 11p
 .request-filters > .input-with-icon { width: 220px; }
 .date-filter { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 9px; }
 .date-filter input { width: 118px; }
-.requests-table .table-row { min-width: 900px; grid-template-columns: 1fr 1.3fr .75fr 1fr 1fr .9fr 78px; }
+.requests-table .table-row { min-width: 960px; grid-template-columns: 1.1fr 1.3fr .75fr .8fr 1fr .8fr 1fr 60px; }
 .module-list-cell { align-items: flex-start !important; flex-direction: column; gap: 3px !important; }
 .module-list-cell small { color: #4f5763; font-size: 10px; }
 .request-summary { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 13px; }
@@ -694,3 +696,6 @@ textarea { min-height: 78px; padding: 9px 10px; resize: vertical; font-size: 11p
 .repo-strip span { color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: .04em; }
 .repo-strip strong { font-size: 12px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; }
 .repo-strip .repo-error { flex-direction: row; align-items: center; gap: 6px; color: var(--accent-text); font-size: 12px; }
+.status-stack { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; }
+.gate-note { color: var(--accent-text); font-size: 10px; }
+.waivers-table .table-row { grid-template-columns: 1fr .9fr 2fr 1fr .8fr 90px; }

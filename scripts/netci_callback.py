@@ -220,10 +220,27 @@ def command_evidence(arguments: argparse.Namespace) -> int:
     signature_path = output_dir() / arguments.signature_file
     signature_verified = signature_path.is_file() and signature_path.stat().st_size > 0
 
+    # What the test stage recorded (test-result.json), so a version registered from
+    # this run carries its automation evidence without a second, per-tag report.
+    ci_report: dict[str, object] | None = None
+    result_path = output_dir() / "test-result.json"
+    if result_path.is_file():
+        try:
+            raw = json.loads(result_path.read_text(encoding="utf-8"))
+            if raw.get("autoTest") in {"passed", "failed", "skipped"}:
+                ci_report = {"autoTest": raw["autoTest"], "runner": str(raw.get("runner") or "")[:64]}
+                if isinstance(raw.get("coverage"), (int, float)):
+                    ci_report["coverage"] = float(raw["coverage"])
+                if isinstance(raw.get("testsRun"), int):
+                    ci_report["testsRun"] = raw["testsRun"]
+        except (OSError, json.JSONDecodeError):
+            ci_report = None
+
     payload = {
         "artifactDigest": digest,
         "artifactRef": read_text_file("artifact-ref.txt", required=False) or None,
         "buildRunId": setting("BUILD_TAG") or None,
+        "ciReport": ci_report,
         "sbom": {
             "generatedBy": "syft",
             "location": arguments.sbom_location or str(sbom_path),

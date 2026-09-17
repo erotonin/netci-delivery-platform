@@ -122,7 +122,7 @@ MODULE_COLUMNS = (
 REQUEST_COLUMNS = (
     "id, module_id, version, requested_by, scheduled_for, rollback_strategy,"
     " run_automation_tests, status, deployment_id, comment, idempotency_key, request_hash,"
-    " release_plan, strategy, strategy_config"
+    " release_plan, strategy, strategy_config, created_at"
 )
 CONFIG_REVISION_COLUMNS = (
     "id, module_id, revision_number, pipeline_config, deployment_config, change_summary,"
@@ -1317,6 +1317,7 @@ class PostgresSession:
                     release_plan=row.get("release_plan"),
                     strategy=str(row.get("strategy") or "rolling"),
                     strategy_config=dict(row.get("strategy_config") or {}),
+                    created_at=row.get("created_at"),
                 )
             )
         return tuple(output)
