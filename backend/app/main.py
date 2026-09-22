@@ -72,6 +72,7 @@ from .demo_data import seed_demo_data
 from .notifications import NotificationOutboxWorker
 from .policy.break_glass import BreakGlassError, BreakGlassService
 from .policy.engine import PolicyEngine
+from .runtime_environment import is_local_runtime
 from .policy.rules import (
     PROD_CD_ROLES,
     PolicyViolation,
@@ -3106,12 +3107,60 @@ async def receive_scm_webhook(
     )
 
 
+def _require_netbox_webhook_signature(request: Request, body: bytes) -> None:
+    """NetBox signs each webhook with HMAC-SHA512 of the raw body in `X-Hook-Signature`.
+
+    Fails closed when the secret is not configured: outside local mode an unsigned
+    endpoint that can block or unblock deployments is worse than no endpoint, and
+    silently accepting everything is indistinguishable from having configured it.
+    """
+
+    secret = os.getenv("NETCI_NETBOX_WEBHOOK_SECRET", "").strip()
+    if not secret:
+        if is_local_runtime():
+            return
+        raise HTTPException(
+            status.HTTP_501_NOT_IMPLEMENTED,
+            detail={
+                "code": "NETBOX_WEBHOOK_SECRET_NOT_CONFIGURED",
+                "message": "set NETCI_NETBOX_WEBHOOK_SECRET to the secret configured on the "
+                           "NetBox webhook; netCI will not act on an unsigned DCIM event",
+            },
+        )
+
+    supplied = (request.headers.get("x-hook-signature") or "").strip()
+    expected = hmac.new(secret.encode(), body, hashlib.sha512).hexdigest()
+    if not supplied or not secrets.compare_digest(supplied.lower(), expected):
+        raise HTTPException(
+            status.HTTP_401_UNAUTHORIZED,
+            detail={"code": "INVALID_WEBHOOK_SIGNATURE",
+                    "message": "X-Hook-Signature does not match the configured secret"},
+        )
+
+
 @app.post("/webhooks/dcim/netbox", status_code=status.HTTP_200_OK)
 @app.post("/webhooks/netbox", status_code=status.HTTP_200_OK)
 async def receive_netbox_webhook(request: Request) -> dict[str, object]:
-    """Bidirectional webhook from NetBox DCIM: locks or unlocks targets when device status changes."""
+    """Bidirectional webhook from NetBox DCIM: locks or unlocks targets when device status changes.
+
+    Signed, because of what it decides. This endpoint took an unauthenticated body and
+    acted on it: anyone who could reach it could put a production host into maintenance
+    and block every deployment to it, or -- worse -- clear the maintenance flag on a host
+    an operator had deliberately taken out of service, and watch deployments land on it.
+    The SCM webhook next door has always verified a signature against a server-side
+    secret; this one is held to the same bar.
+    """
+
+    raw_body = await request.body()
+    if len(raw_body) > MAX_WEBHOOK_PAYLOAD_BYTES:
+        raise HTTPException(
+            status.HTTP_413_CONTENT_TOO_LARGE,
+            "webhook payload exceeds maximum permitted size of 1MB",
+        )
+    _require_netbox_webhook_signature(request, raw_body)
+
     try:
-        payload = await request.json()
+        payload = json.loads(raw_body)
     except Exception as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, f"invalid JSON payload: {exc}") from exc
 
@@ -3131,12 +3180,17 @@ async def receive_netbox_webhook(request: Request) -> dict[str, object]:
         else str(raw_status or "")
     ).strip().lower()
 
-    user = str(payload.get("username") or "netbox")
+    # ADR-015: the server decides the actor. `username` arrives in the body, so it is
+    # what the caller claims, not who acted -- recording it as the operator would put a
+    # caller-chosen name in the maintenance audit trail.
+    claimed_user = str(payload.get("username") or "")
     blocking_statuses = {"offline", "failed", "decommissioning", "maintenance", "staged", "planned"}
 
     if event == "deleted" or status_str in blocking_statuses:
-        reason = f"NetBox DCIM event '{event}': device status is '{status_str}'"
-        state = set_server_maintenance(server_name, in_maintenance=True, reason=reason, operator=f"netbox:{user}")
+        reason = f"NetBox DCIM event '{event}': device status is '{status_str}'" + (
+            f" (reported by {claimed_user})" if claimed_user else ""
+        )
+        state = set_server_maintenance(server_name, in_maintenance=True, reason=reason, operator="netbox-webhook")
         logger.warning("NetBox Webhook: locked server %s from deployments (%s)", server_name, reason)
         return {
             "status": "ok",
@@ -3146,7 +3200,7 @@ async def receive_netbox_webhook(request: Request) -> dict[str, object]:
             "reason": reason,
         }
     elif status_str == "active":
-        state = set_server_maintenance(server_name, in_maintenance=False, reason="NetBox DCIM status: active", operator=f"netbox:{user}")
+        state = set_server_maintenance(server_name, in_maintenance=False, reason="NetBox DCIM status: active", operator="netbox-webhook")
         logger.info("NetBox Webhook: unlocked server %s for deployments", server_name)
         return {
             "status": "ok",

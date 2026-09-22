@@ -184,3 +184,61 @@ def test_admission_http_endpoint_webhook():
     assert resp.status_code == 200
     res = resp.json()
     assert res["response"]["allowed"] is True
+
+
+def test_admission_does_not_scan_every_pipeline_run_to_resolve_a_digest():
+    """Admission asked "which run produced this digest?" by loading the whole table.
+
+    It did that once per container, on the endpoint a cluster calls for every pod, and
+    `pipeline_runs` is the table here that grows fastest. An admission webhook that
+    outruns its timeout either blocks the pod or -- under failurePolicy=Ignore -- admits
+    it with the security check skipped, which is the false green this platform exists to
+    refuse. The lookup is indexed now; this fails if the scan comes back.
+    """
+
+    database = InMemoryDatabase()
+
+    class _NoScanSession:
+        def __init__(self, inner):
+            self._inner = inner
+
+        def pipeline_runs(self, *args, **kwargs):
+            raise AssertionError(
+                "admission loaded every pipeline run; use pipeline_run_by_artifact_digest"
+            )
+
+        def __getattr__(self, name):
+            return getattr(self._inner, name)
+
+    with database.transaction() as inner:
+        AdmissionController.handle_admission_review(
+            _NoScanSession(inner),
+            _build_admission_review_request(f"registry.example.com/app@{DIGEST_VALID}"),
+        )
+
+
+def test_the_in_memory_store_resolves_a_digest_to_the_newest_run():
+    """The suite runs on the in-memory store; production runs on PostgreSQL.
+
+    A lookup that disagrees between them means the tests prove something the deployed
+    system does not do, so the PostgreSQL half of this is pinned in
+    `test_persistence_postgres.py`. Both answer with the newest run carrying the digest.
+    """
+
+    database = InMemoryDatabase()
+    older = PipelineRun(
+        application_id=uuid4(), commit_sha="a" * 40, environment=Environment.DEV,
+        status=PipelineStatus.SUCCEEDED, artifact_digest=DIGEST_VALID,
+        created_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+    )
+    newer = PipelineRun(
+        application_id=uuid4(), commit_sha="b" * 40, environment=Environment.DEV,
+        status=PipelineStatus.SUCCEEDED, artifact_digest=DIGEST_VALID,
+        created_at=datetime(2026, 6, 1, tzinfo=timezone.utc),
+    )
+    with database.transaction() as session:
+        session.apply(UnitOfWork(runs=[(older, None), (newer, None)]))
+
+    with database.transaction() as session:
+        assert session.pipeline_run_by_artifact_digest(DIGEST_VALID).id == newer.id
+        assert session.pipeline_run_by_artifact_digest(DIGEST_VULNERABLE) is None

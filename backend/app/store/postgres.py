@@ -630,6 +630,25 @@ class PostgresSession:
             )
         return tuple(_run(row) for row in self._cursor.fetchall())
 
+    def pipeline_run_by_artifact_digest(self, artifact_digest: str) -> PipelineRun | None:
+        """The run that produced a digest, by index.
+
+        Kubernetes admission asks this for every container of every pod. It used to be
+        answered by loading every pipeline_runs row and scanning the list in Python, so
+        the cost grew with the table that grows fastest -- and an admission webhook that
+        runs out of time either blocks the pod or, under failurePolicy=Ignore, admits it
+        without the check. A digest identifies one artifact, so the newest run carrying
+        it is the answer.
+        """
+
+        self._cursor.execute(
+            f"SELECT {RUN_COLUMNS} FROM pipeline_runs WHERE artifact_digest = %s"
+            " ORDER BY created_at DESC, id DESC LIMIT 1",
+            (artifact_digest,),
+        )
+        row = self._cursor.fetchone()
+        return _run(row) if row else None
+
     def deployment(self, deployment_id: UUID) -> Deployment | None:
         self._cursor.execute(
             f"SELECT {DEPLOYMENT_COLUMNS} FROM deployments WHERE id = %s", (deployment_id,)

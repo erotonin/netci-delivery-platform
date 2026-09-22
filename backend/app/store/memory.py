@@ -179,6 +179,13 @@ class InMemorySession:
             return runs
         return tuple(run for run in runs if run.application_id == application_id)
 
+    def pipeline_run_by_artifact_digest(self, artifact_digest: str) -> PipelineRun | None:
+        matches = [r for r in self._state.runs.values() if r.artifact_digest == artifact_digest]
+        if not matches:
+            return None
+        # Same tie-break as PostgreSQL: the newest run carrying the digest.
+        return max(matches, key=lambda r: (r.created_at, str(r.id)))
+
     def deployment(self, deployment_id: UUID) -> Deployment | None:
         return self._state.deployments.get(deployment_id)
 

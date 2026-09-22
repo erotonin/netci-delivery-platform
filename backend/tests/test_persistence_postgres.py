@@ -1114,3 +1114,57 @@ def test_only_one_of_two_simultaneous_approvals_claims_a_production_request(port
         with connection.cursor() as cursor:
             cursor.execute("SELECT status FROM production_requests WHERE id = %s", (request_id,))
             assert cursor.fetchone()[0] == "approved"
+
+
+def test_postgres_resolves_a_digest_to_the_same_run_the_memory_store_does(portal_database):
+    """The other half of the admission lookup's parity (see test_kubernetes_admission).
+
+    Admission runs against PostgreSQL and the suite runs against the in-memory store, so
+    a disagreement here would mean the tests pass on a lookup the cluster never performs.
+    Both answer with the newest run carrying the digest.
+    """
+
+    from datetime import datetime, timezone
+
+    from app.domain.models import Environment, PipelineRun, PipelineStatus
+    from app.persistence import UnitOfWork
+    from app.store import PostgresDatabase
+    from app.store.memory import InMemoryDatabase
+
+    digest = "sha256:" + "e" * 64
+    application_id = uuid.uuid4()
+    older = PipelineRun(
+        application_id=application_id, commit_sha="a" * 40, environment=Environment.DEV,
+        status=PipelineStatus.SUCCEEDED, artifact_digest=digest,
+        created_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+    )
+    newer = PipelineRun(
+        application_id=application_id, commit_sha="b" * 40, environment=Environment.DEV,
+        status=PipelineStatus.SUCCEEDED, artifact_digest=digest,
+        created_at=datetime(2026, 6, 1, tzinfo=timezone.utc),
+    )
+
+    _execute(
+        ("INSERT INTO applications (id, name, repository_url, pipeline_template, runtime,"
+         " default_environment) VALUES (%s,%s,%s,%s,%s,%s)",
+         (application_id, f"digest-{uuid.uuid4().hex[:8]}", "https://example.invalid/r",
+          "container-ci-cd-v1", "docker", "dev")),
+    )
+
+    postgres = PostgresDatabase(DATABASE_URL)
+    try:
+        with postgres.transaction() as session:
+            session.apply(UnitOfWork(runs=[(older, None), (newer, None)]))
+        with postgres.transaction() as session:
+            from_postgres = session.pipeline_run_by_artifact_digest(digest)
+            assert session.pipeline_run_by_artifact_digest("sha256:" + "f" * 64) is None
+    finally:
+        postgres.close()
+
+    memory = InMemoryDatabase()
+    with memory.transaction() as session:
+        session.apply(UnitOfWork(runs=[(older, None), (newer, None)]))
+    with memory.transaction() as session:
+        from_memory = session.pipeline_run_by_artifact_digest(digest)
+
+    assert from_postgres.id == from_memory.id == newer.id

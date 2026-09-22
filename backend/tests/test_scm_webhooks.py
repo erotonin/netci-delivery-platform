@@ -398,3 +398,88 @@ def test_commit_status_lifecycle():
         and s["status"] == ScmCommitStatus.SUCCESS
         for s in mock_provider.status_updates
     )
+
+
+# -----------------------------------------------------------------------------
+# NetBox DCIM webhook: it decides whether a host may receive deployments
+# -----------------------------------------------------------------------------
+
+def _netbox_body(name: str, status_value: str, event: str = "updated") -> bytes:
+    return json.dumps({
+        "event": event,
+        "username": "attacker-chosen",
+        "data": {"name": name, "status": {"value": status_value}},
+    }).encode()
+
+
+def test_an_unsigned_netbox_webhook_cannot_unlock_a_host_an_operator_locked(monkeypatch):
+    """This endpoint took an unauthenticated body and acted on it.
+
+    Two ways that hurt. Sending `offline` for a production host put it into maintenance
+    and blocked every deployment to it. Sending `active` cleared a maintenance flag an
+    operator had set deliberately, and deployments then landed on a host someone had
+    taken out of service on purpose. The SCM webhook beside it has always verified a
+    signature; there was no reason for this one not to.
+    """
+
+    from app.adapters.dcim import get_server_maintenance, set_server_maintenance
+
+    client = TestClient(main_mod.app)
+    monkeypatch.setenv("NETCI_NETBOX_WEBHOOK_SECRET", "netbox-shared-secret")
+    monkeypatch.setenv("NETCI_ENVIRONMENT", "production")
+
+    host = f"prod-host-{uuid4().hex[:8]}"
+    set_server_maintenance(host, in_maintenance=True, reason="operator took it out", operator="pat")
+
+    body = _netbox_body(host, "active")
+
+    unsigned = client.post("/webhooks/netbox", content=body,
+                           headers={"Content-Type": "application/json"})
+    assert unsigned.status_code == 401
+    assert get_server_maintenance(host).in_maintenance is True
+
+    wrong = client.post("/webhooks/netbox", content=body,
+                        headers={"Content-Type": "application/json",
+                                 "X-Hook-Signature": "00" * 64})
+    assert wrong.status_code == 401
+    assert get_server_maintenance(host).in_maintenance is True
+
+    signature = hmac.new(b"netbox-shared-secret", body, hashlib.sha512).hexdigest()
+    signed = client.post("/webhooks/netbox", content=body,
+                         headers={"Content-Type": "application/json",
+                                  "X-Hook-Signature": signature})
+    assert signed.status_code == 200, signed.text
+    assert signed.json()["action"] == "unlocked"
+    assert get_server_maintenance(host).in_maintenance is False
+
+
+def test_the_netbox_webhook_refuses_to_run_unsigned_in_production(monkeypatch):
+    """No secret configured is a configuration error, not a reason to accept anything."""
+
+    client = TestClient(main_mod.app)
+    monkeypatch.delenv("NETCI_NETBOX_WEBHOOK_SECRET", raising=False)
+    monkeypatch.setenv("NETCI_ENVIRONMENT", "production")
+
+    response = client.post("/webhooks/dcim/netbox", content=_netbox_body("h1", "offline"),
+                           headers={"Content-Type": "application/json"})
+    assert response.status_code == 501
+    assert response.json()["code"] == "NETBOX_WEBHOOK_SECRET_NOT_CONFIGURED"
+
+
+def test_the_netbox_webhook_does_not_take_the_operator_from_the_payload(monkeypatch):
+    """ADR-015: the server decides the actor. `username` is a claim, not an identity."""
+
+    from app.adapters.dcim import get_server_maintenance
+
+    client = TestClient(main_mod.app)
+    monkeypatch.setenv("NETCI_NETBOX_WEBHOOK_SECRET", "s3cret")
+    host = f"host-{uuid4().hex[:8]}"
+    body = _netbox_body(host, "offline")
+    signature = hmac.new(b"s3cret", body, hashlib.sha512).hexdigest()
+
+    response = client.post("/webhooks/netbox", content=body,
+                           headers={"Content-Type": "application/json",
+                                    "X-Hook-Signature": signature})
+    assert response.status_code == 200, response.text
+    assert get_server_maintenance(host).updated_by == "netbox-webhook"
+    assert "attacker-chosen" not in get_server_maintenance(host).updated_by

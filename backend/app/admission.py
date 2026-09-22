@@ -49,10 +49,9 @@ class AdmissionController:
 
             digest = match.group("digest")
 
-            # Look up evidence in platform store if available
-            # Check pipeline runs to find the pipeline run matching this digest
-            runs = session.pipeline_runs()
-            matching_run = next((r for r in runs if r.artifact_digest == digest), None)
+            # Indexed lookup. This used to load every pipeline run and scan the list,
+            # once per container, on an endpoint the cluster calls for every pod.
+            matching_run = session.pipeline_run_by_artifact_digest(digest)
             evidence = session.security_evidence(matching_run.id) if matching_run else None
 
             # Evaluate policy
