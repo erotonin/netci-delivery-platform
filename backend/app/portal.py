@@ -2016,9 +2016,15 @@ class PortalService:
             if request.status != "waiting_approval":
                 raise ValueError("production request is not waiting for approval")
             next_comment = comment or f"{status} by {actor}"
-            transaction.update_portal_request(
-                request_id, status=status, comment=next_comment, deployment_id=None
-            )
+            # Conditional, like the approval path. Without it a rejection racing an
+            # approval wrote `rejected` over a request whose first wave had already been
+            # dispatched: the record said nobody wanted this release while it was going
+            # out.
+            if not transaction.claim_portal_request(
+                request_id, from_status="waiting_approval", to_status=status,
+                comment=next_comment,
+            ):
+                raise ValueError("production request is not waiting for approval")
             updated = transaction.portal_request(request_id)
             assert updated is not None
             return self._request_json(transaction, updated)

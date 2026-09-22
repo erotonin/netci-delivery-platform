@@ -1291,3 +1291,63 @@ def test_only_one_of_two_simultaneous_config_approvals_activates_the_revision(po
 
     assert outcomes.count(True) == 1, outcomes
     assert outcomes.count(False) == 1, outcomes
+
+
+def test_an_approval_and_a_rejection_racing_do_not_both_win(portal_database):
+    """The dangerous pairing, not two of the same.
+
+    `approve_request` claims the request conditionally, but `reject_request` wrote its
+    status unconditionally after reading `waiting_approval`. So a rejection arriving
+    beside an approval overwrote a request whose first wave had already been dispatched:
+    the record said nobody wanted this release while it was going out.
+    """
+
+    import threading
+
+    import psycopg
+
+    from app.store import PostgresDatabase
+
+    module_id = f"ar-{uuid.uuid4().hex[:8]}"
+    request_id = uuid.uuid4()
+    _execute(
+        ("INSERT INTO systems (id, unit, description, owner, status) VALUES (%s,%s,%s,%s,%s)"
+         " ON CONFLICT (id) DO NOTHING",
+         (module_id, "ar", "approve vs reject", "tester", "healthy")),
+        ("INSERT INTO modules (id, system_id, name, module_type, description, runtime)"
+         " VALUES (%s,%s,%s,%s,%s,%s)",
+         (module_id, module_id, module_id, "Backend", "approve vs reject", "docker")),
+        ("INSERT INTO production_requests (id, module_id, requested_by, status) VALUES (%s,%s,%s,%s)",
+         (request_id, module_id, "dana", "waiting_approval")),
+    )
+
+    started = threading.Barrier(2)
+    winners: list[str] = []
+    lock = threading.Lock()
+
+    def decide(target_status: str) -> None:
+        database = PostgresDatabase(DATABASE_URL)
+        try:
+            started.wait(timeout=10)
+            with database.transaction() as transaction:
+                won = transaction.claim_portal_request(
+                    str(request_id), from_status="waiting_approval",
+                    to_status=target_status, comment=target_status,
+                )
+            if won:
+                with lock:
+                    winners.append(target_status)
+        finally:
+            database.close()
+
+    threads = [threading.Thread(target=decide, args=(s,)) for s in ("approved", "rejected")]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=30)
+
+    assert len(winners) == 1, winners
+    with psycopg.connect(DATABASE_URL) as connection:
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT status FROM production_requests WHERE id = %s", (request_id,))
+            assert cursor.fetchone()[0] == winners[0]
