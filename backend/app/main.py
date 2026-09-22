@@ -2535,8 +2535,28 @@ def advance_canary_step(
         return coordinator.advance_canary(requestId, UUID(str(deployment_id)), metrics_data, actor=principal.subject)
     except TrafficRoutingUnavailable:
         raise
+    except KeyError as exc:
+        raise HTTPException(
+            status_code=404, detail={"code": "CANARY_TARGET_NOT_FOUND", "message": str(exc)}
+        ) from exc
+    except ValueError as exc:
+        # The coordinator raises ValueError for a request the caller really did get
+        # wrong: no release plan, an unverified version, a runtime that cannot take a
+        # canary. Those are 400s and their messages are written for the caller.
+        raise HTTPException(
+            status_code=400, detail={"code": "CANARY_ERROR", "message": str(exc)}
+        ) from exc
     except Exception as exc:
-        raise HTTPException(status_code=400, detail={"code": "CANARY_ERROR", "message": str(exc)}) from exc
+        # Anything else is ours. Answering 400 told the operator their request was wrong
+        # when the fault was here, and str(exc) on a database error carries SQL and table
+        # names out to the caller. The detail belongs in the log, not the response.
+        logger.exception("canary operation failed for production request %s", requestId)
+        raise HTTPException(
+            status_code=500,
+            detail={"code": "CANARY_INTERNAL_ERROR",
+                    "message": "the canary operation failed inside netCI; see the server log "
+                               f"with correlation to request {requestId}"},
+        ) from exc
 
 
 class AbortCanaryRequest(StrictBody):
@@ -2565,8 +2585,28 @@ def abort_canary_step(
         return coordinator.abort_canary(requestId, UUID(str(deployment_id)), reason)
     except TrafficRoutingUnavailable:
         raise
+    except KeyError as exc:
+        raise HTTPException(
+            status_code=404, detail={"code": "CANARY_TARGET_NOT_FOUND", "message": str(exc)}
+        ) from exc
+    except ValueError as exc:
+        # The coordinator raises ValueError for a request the caller really did get
+        # wrong: no release plan, an unverified version, a runtime that cannot take a
+        # canary. Those are 400s and their messages are written for the caller.
+        raise HTTPException(
+            status_code=400, detail={"code": "CANARY_ERROR", "message": str(exc)}
+        ) from exc
     except Exception as exc:
-        raise HTTPException(status_code=400, detail={"code": "CANARY_ERROR", "message": str(exc)}) from exc
+        # Anything else is ours. Answering 400 told the operator their request was wrong
+        # when the fault was here, and str(exc) on a database error carries SQL and table
+        # names out to the caller. The detail belongs in the log, not the response.
+        logger.exception("canary operation failed for production request %s", requestId)
+        raise HTTPException(
+            status_code=500,
+            detail={"code": "CANARY_INTERNAL_ERROR",
+                    "message": "the canary operation failed inside netCI; see the server log "
+                               f"with correlation to request {requestId}"},
+        ) from exc
 
 
 @app.get("/deployments/{deploymentId}/traffic")

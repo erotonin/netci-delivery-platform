@@ -487,3 +487,57 @@ def test_starting_a_release_does_not_force_the_status_back_to_approved():
     _coordinator_over(transaction).start_release("req-idem", "rae")
 
     assert transaction.updates[0]["status"] == "cancelled"
+
+
+def test_an_internal_canary_failure_is_not_reported_as_the_callers_mistake(client, reviewer_headers, monkeypatch):
+    """Every exception used to become `400 CANARY_ERROR` with str(exc) in the body.
+
+    Two things wrong with that. A database fault was reported to the operator as a bad
+    request, so the one person who could escalate it was told to fix their own input.
+    And `str(exc)` on a psycopg error carries SQL and table names out to the caller.
+    A fault inside netCI is a 500 and its detail belongs in the log.
+    """
+
+    from backend.app import main as main_module
+    from backend.app.coordinator import ReleasePlanCoordinator
+
+    monkeypatch.setattr(
+        main_module.portal, "production_request",
+        lambda request_id: {"deploymentId": str(uuid4()), "modules": []},
+    )
+
+    def exploding(self, *args, **kwargs):
+        raise RuntimeError('relation "production_requests" does not exist')
+
+    monkeypatch.setattr(ReleasePlanCoordinator, "advance_canary", exploding)
+
+    response = client.post("/production-requests/req-1/canary/advance",
+                           headers=reviewer_headers, json={"metrics": {}})
+
+    assert response.status_code == 500, response.text
+    assert response.json()["code"] == "CANARY_INTERNAL_ERROR"
+    assert "production_requests" not in response.text
+
+
+def test_a_caller_mistake_on_the_canary_is_still_a_400(client, reviewer_headers, monkeypatch):
+    """The coordinator's ValueErrors are written for the caller, and stay 400."""
+
+    from backend.app import main as main_module
+    from backend.app.coordinator import ReleasePlanCoordinator
+
+    monkeypatch.setattr(
+        main_module.portal, "production_request",
+        lambda request_id: {"deploymentId": str(uuid4()), "modules": []},
+    )
+
+    def refuses(self, *args, **kwargs):
+        raise ValueError("canary delivery needs the kubernetes runtime; module m-1 runs on docker")
+
+    monkeypatch.setattr(ReleasePlanCoordinator, "advance_canary", refuses)
+
+    response = client.post("/production-requests/req-1/canary/advance",
+                           headers=reviewer_headers, json={"metrics": {}})
+
+    assert response.status_code == 400, response.text
+    assert response.json()["code"] == "CANARY_ERROR"
+    assert "kubernetes runtime" in response.json()["message"]

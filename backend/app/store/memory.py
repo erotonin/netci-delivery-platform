@@ -29,6 +29,7 @@ from ..domain.models import (
     ConfigRevisionStatus,
     DeliveryEvent,
     Deployment,
+    DeploymentStatus,
     ModuleConfigRevision,
     NotificationRecord,
     NotificationStatus,
@@ -185,6 +186,20 @@ class InMemorySession:
             return None
         # Same tie-break as PostgreSQL: the newest run carrying the digest.
         return max(matches, key=lambda r: (r.created_at, str(r.id)))
+
+    def runs_awaiting_ci_result(self, limit: int = 50) -> tuple[PipelineRun, ...]:
+        ordered = sorted(self._state.runs.values(), key=lambda r: (r.created_at, str(r.id)))
+        return tuple(
+            run for run in ordered
+            if run.status in {PipelineStatus.QUEUED, PipelineStatus.RUNNING}
+            and not run.artifact_digest
+        )[:limit]
+
+    def deployments_with_status(
+        self, status: DeploymentStatus, limit: int = 50
+    ) -> tuple[Deployment, ...]:
+        ordered = sorted(self._state.deployments.values(), key=lambda d: (d.created_at, str(d.id)))
+        return tuple(d for d in ordered if d.status == status)[:limit]
 
     def deployment(self, deployment_id: UUID) -> Deployment | None:
         return self._state.deployments.get(deployment_id)
@@ -856,6 +871,8 @@ class InMemorySession:
                 raw = base64.urlsafe_b64decode(cursor.encode("ascii")).decode("utf-8")
                 ts_str, id_str = raw.split("|", 1)
                 cursor_ts = datetime.fromisoformat(ts_str)
+                if cursor_ts.tzinfo is None:  # see decode_cursor in store/postgres.py
+                    cursor_ts = cursor_ts.replace(tzinfo=timezone.utc)
                 filtered: list[Any] = []
                 for it in items:
                     it_ts, it_id = key_fn(it)

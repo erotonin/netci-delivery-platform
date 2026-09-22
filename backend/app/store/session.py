@@ -18,6 +18,7 @@ from ..domain.models import (
     ConfigRevisionStatus,
     DeliveryEvent,
     Deployment,
+    DeploymentStatus,
     ModuleConfigRevision,
     PipelineRun,
     PipelineStage,
@@ -63,6 +64,13 @@ class PlatformSession(Protocol):
     def pipeline_runs(self, application_id: UUID | None = None) -> tuple[PipelineRun, ...]: ...
 
     def pipeline_run_by_artifact_digest(self, artifact_digest: str) -> PipelineRun | None: ...
+
+    def runs_awaiting_ci_result(self, limit: int = 50) -> tuple[PipelineRun, ...]: ...
+
+    def deployments_with_status(
+        self, status: DeploymentStatus, limit: int = 50
+    ) -> tuple[Deployment, ...]: ...
+
 
     def deployment(self, deployment_id: UUID) -> Deployment | None: ...
 

@@ -199,7 +199,14 @@ def decode_cursor(cursor_str: str | None) -> tuple[datetime, str] | None:
     try:
         raw = base64.urlsafe_b64decode(cursor_str.encode("ascii")).decode("utf-8")
         ts_str, id_str = raw.split("|", 1)
-        return datetime.fromisoformat(ts_str), id_str
+        parsed = datetime.fromisoformat(ts_str)
+        # A cursor this server minted is always tz-aware. One that is not was crafted,
+        # and the two stores disagreed about it in silence: PostgreSQL compared it as a
+        # local timestamp, the in-memory store raised and swallowed it and handed back
+        # page one forever. Reading it as UTC makes both answer the same thing.
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed, id_str
     except Exception:
         return None
 
@@ -648,6 +655,36 @@ class PostgresSession:
         )
         row = self._cursor.fetchone()
         return _run(row) if row else None
+
+    def runs_awaiting_ci_result(self, limit: int = 50) -> tuple[PipelineRun, ...]:
+        """The runs the reconciler has to ask Jenkins about, filtered and capped in SQL.
+
+        The reconciler used to load every pipeline_runs row and pick the active ones in
+        Python, applying its limit afterwards. Nothing thins that table -- retention
+        covers console lines, delivery events, notifications and spent callback tokens,
+        not the runs themselves -- so a loop that runs on a timer forever read a table
+        that only grows, every cycle. The predicate is the same one it applied: a run
+        carrying a digest has already had its CI result, and re-reporting it would build
+        a second deployment for the same artifact.
+        """
+
+        self._cursor.execute(
+            f"SELECT {RUN_COLUMNS} FROM pipeline_runs"
+            " WHERE status = ANY(%s) AND artifact_digest IS NULL"
+            " ORDER BY created_at, id LIMIT %s",
+            ([PipelineStatus.QUEUED.value, PipelineStatus.RUNNING.value], limit),
+        )
+        return tuple(_run(row) for row in self._cursor.fetchall())
+
+    def deployments_with_status(
+        self, status: DeploymentStatus, limit: int = 50
+    ) -> tuple[Deployment, ...]:
+        self._cursor.execute(
+            f"SELECT {DEPLOYMENT_COLUMNS} FROM deployments WHERE status = %s"
+            " ORDER BY created_at, id LIMIT %s",
+            (status.value, limit),
+        )
+        return tuple(_deployment(row) for row in self._cursor.fetchall())
 
     def deployment(self, deployment_id: UUID) -> Deployment | None:
         self._cursor.execute(

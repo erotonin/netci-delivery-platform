@@ -61,19 +61,18 @@ class Reconciler:
         limit: int = 50,
         timeout_seconds: int = 3600,
     ) -> list[dict[str, Any]]:
-        with self.platform._transaction() as transaction:
-            all_runs = transaction.pipeline_runs()
         # A run stays `running` while its deployment executes, so "status is running" is
         # not the same as "CI has not reported". A run that already carries an artifact
         # digest has received its CI result; re-reporting it would create a second
         # deployment for the same build -- and, once leases exist, that second deployment
         # is refused with DEPLOYMENT_TARGET_BUSY, turning a healthy release into a
         # reconciler-generated error. The digest is what says CI is done.
-        active = [
-            r for r in all_runs
-            if r.status in {PipelineStatus.QUEUED, PipelineStatus.RUNNING}
-            and not r.artifact_digest
-        ][:limit]
+        #
+        # The predicate and the limit are the database's work. This loop runs on a timer
+        # for the life of the process, and nothing thins pipeline_runs, so selecting in
+        # Python meant reading a table that only grows, every cycle, to act on a handful.
+        with self.platform._transaction() as transaction:
+            active = list(transaction.runs_awaiting_ci_result(limit=limit))
 
         if not active:
             return []
@@ -222,8 +221,9 @@ class Reconciler:
         self.platform.recover_expired_leases()
 
         with self.platform._transaction() as transaction:
-            all_deps = transaction.deployments()
-        active = [d for d in all_deps if d.status == DeploymentStatus.DEPLOYING][:limit]
+            active = list(
+                transaction.deployments_with_status(DeploymentStatus.DEPLOYING, limit=limit)
+            )
 
         if not active:
             return []

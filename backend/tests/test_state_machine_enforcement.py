@@ -208,3 +208,45 @@ def test_repairing_a_lost_callback_records_the_transition_it_missed():
     assert repaired == []
     assert engine.get_pipeline(run.id).artifact_digest == DIGEST
     assert len(engine.list_deployments()) == 1, "the reconciler must not duplicate a deployment"
+
+
+def test_the_reconciler_does_not_read_every_run_and_deployment_each_cycle():
+    """It selected in Python what the database can select, then applied its limit after.
+
+    This loop runs on a timer for the life of the process, and nothing thins
+    `pipeline_runs` or `deployments` -- retention covers console lines, delivery events,
+    notifications and spent callback tokens, not the durable record. So each cycle read
+    two tables that only grow in order to act on at most `limit` rows.
+    """
+
+    from app.reconciler import Reconciler
+
+    from app.store.memory import InMemoryDatabase
+
+    engine = DeliveryPlatform(database=InMemoryDatabase())
+
+    class _NoFullScanSession:
+        def __init__(self, inner):
+            self._inner = inner
+
+        def pipeline_runs(self, *args, **kwargs):
+            raise AssertionError("reconciler loaded every pipeline run; use runs_awaiting_ci_result")
+
+        def deployments(self, *args, **kwargs):
+            raise AssertionError("reconciler loaded every deployment; use deployments_with_status")
+
+        def __getattr__(self, name):
+            return getattr(self._inner, name)
+
+    import contextlib
+
+    @contextlib.contextmanager
+    def guarded_transaction():
+        with engine.database.transaction() as inner:
+            yield _NoFullScanSession(inner)
+
+    engine._transaction = guarded_transaction
+
+    reconciler = Reconciler(engine, None, None)
+    assert reconciler.reconcile_runs(limit=5) == []
+    assert reconciler.reconcile_deployments(limit=5) == []

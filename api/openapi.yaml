@@ -725,6 +725,11 @@ paths:
             (`CANARY_RULES_NOT_APPLIED`, naming the module). The step is refused rather
             than reported as advanced, because a canary whose traffic split was never
             written is still sending every request to stable.
+        '500':
+          description: >-
+            The canary operation failed inside netCI (`CANARY_INTERNAL_ERROR`). The
+            detail is in the server log, not the response: answering 4xx for a server
+            fault tells the operator their request was wrong when it was not.
   /production-requests/{requestId}/canary/abort:
     post:
       operationId: abort_canary_step
@@ -756,6 +761,10 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '404':
           $ref: '#/components/responses/NotFound'
+        '500':
+          description: >-
+            The abort failed inside netCI (`CANARY_INTERNAL_ERROR`); the detail is in the
+            server log, not the response.
         '501':
           description: No traffic router is configured (NETCI_TRAFFIC_ROUTER)
   /servers:
