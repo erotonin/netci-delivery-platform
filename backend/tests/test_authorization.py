@@ -643,3 +643,32 @@ def test_me_reports_team_membership_so_the_portal_can_show_it(team_app):
     client, headers, _ = team_app
     assert client.get("/me", headers=headers["dana"]).json()["principal"]["teams"] == ["payments"]
     assert client.get("/me", headers=headers["pat"]).json()["principal"]["teams"] == []
+
+
+def test_a_body_that_names_a_server_owned_field_is_refused_not_quietly_dropped(token_app):
+    """A silent drop is indistinguishable from the override having worked.
+
+    Eleven request models still used pydantic's default, which ignores unknown fields.
+    So a browser could put `actor` in the body of a run request, get 202, and have no way
+    to tell whether netCI had accepted its choice of actor or thrown it away -- and this
+    repository's own gate client carries a docstring explaining that netCI "ignores any
+    actor a caller supplies, so sending one would only look like it worked". Refusing is
+    the answer that distinguishes the two.
+    """
+
+    client, headers, _ = token_app
+    application = _application(client, headers["dana"])
+
+    accepted = client.post(
+        f"/modules/{application['moduleId']}/pipeline-runs",
+        headers=headers["dana"],
+        json={"commitSha": "abcdef1234567", "environment": "staging"},
+    )
+    assert accepted.status_code == 202
+
+    refused = client.post(
+        f"/modules/{application['moduleId']}/pipeline-runs",
+        headers=headers["dana"],
+        json={"commitSha": "abcdef1234567", "environment": "staging", "actor": "someone-else"},
+    )
+    assert refused.status_code == 422, refused.text

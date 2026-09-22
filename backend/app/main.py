@@ -959,7 +959,7 @@ class ReconcileRequest(StrictBody):
     timeoutSeconds: int | None = Field(default=None, ge=1)
 
 
-class ApplicationCreate(BaseModel):
+class ApplicationCreate(StrictBody):
     name: str = Field(pattern=r"^[a-z0-9][a-z0-9-]{2,62}$")
     # The team accountable for this application. Optional while ownership is being
     # adopted; required once NETCI_REQUIRE_APPLICATION_OWNER is set.
@@ -994,7 +994,7 @@ def scm_integration_json(item: ScmIntegration) -> dict[str, object]:
     }
 
 
-class PipelineRunCreate(BaseModel):
+class PipelineRunCreate(StrictBody):
     # A commit SHA is hexadecimal. Accepting anything else means accepting something that
     # is not a commit, and this value reaches a `git checkout` in the CI template.
     commitSha: str = Field(min_length=7, max_length=64, pattern=r"^[0-9a-fA-F]+$")
@@ -1061,7 +1061,7 @@ class HeartbeatRequest(StrictBody):
     fencingToken: int = Field(ge=1)
 
 
-class RollbackRequest(BaseModel):
+class RollbackRequest(StrictBody):
     targetArtifactDigest: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
     reason: str = Field(min_length=3)
 
@@ -1158,7 +1158,7 @@ class ModuleEnvironmentCreate(StrictBody):
         return self
 
 
-class ModuleCreate(BaseModel):
+class ModuleCreate(StrictBody):
     name: str = Field(pattern=r"^[a-z0-9][a-z0-9-]{2,62}$")
     displayName: str | None = Field(default=None, min_length=1, max_length=255)
     repositoryUrl: HttpUrl
@@ -1299,13 +1299,13 @@ class VersionCreate(StrictBody):
     artifactDigest: str | None = Field(default=None, pattern=r"^sha256:[0-9a-f]{64}$")
 
 
-class SbomEvidence(BaseModel):
+class SbomEvidence(StrictBody):
     generatedBy: Literal["syft"]
     location: str = Field(min_length=1, max_length=1000)
     format: str = Field(default="cyclonedx-json", max_length=64)
 
 
-class VulnerabilityFinding(BaseModel):
+class VulnerabilityFinding(StrictBody):
     """One blocking finding, by identifier.
 
     A vulnerability exception waives a *named* CVE on a named digest, so evidence that
@@ -1320,7 +1320,7 @@ class VulnerabilityFinding(BaseModel):
     fixedVersion: str = Field(default="", max_length=128)
 
 
-class VulnerabilityScanEvidence(BaseModel):
+class VulnerabilityScanEvidence(StrictBody):
     scanner: Literal["trivy"]
     status: Literal["passed", "failed"]
     critical: int = Field(default=0, ge=0)
@@ -1333,21 +1333,21 @@ class VulnerabilityScanEvidence(BaseModel):
     reportLocation: str | None = Field(default=None, max_length=1000)
 
 
-class SignatureEvidence(BaseModel):
+class SignatureEvidence(StrictBody):
     provider: Literal["cosign"]
     verified: bool
     certificateIdentity: str | None = Field(default=None, max_length=500)
     bundleLocation: str | None = Field(default=None, max_length=1000)
 
 
-class RunCiReport(BaseModel):
+class RunCiReport(StrictBody):
     autoTest: Literal["passed", "failed", "skipped"]
     coverage: float | None = Field(default=None, ge=0, le=100)
     testsRun: int | None = Field(default=None, ge=0)
     runner: str | None = Field(default=None, max_length=64)
 
 
-class SecurityEvidenceRequest(BaseModel):
+class SecurityEvidenceRequest(StrictBody):
     """Supply-chain evidence a CI run publishes for one immutable artifact."""
 
     artifactDigest: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
@@ -1790,7 +1790,7 @@ def list_systems(principal: Principal = ReadAccess) -> list[dict[str, object]]:
     return portal.systems(_visible_application_ids(principal))
 
 
-class DcimProvisionRequest(BaseModel):
+class DcimProvisionRequest(StrictBody):
     systemId: str
     moduleId: str
     runtime: str = "docker"

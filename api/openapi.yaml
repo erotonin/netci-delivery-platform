@@ -3102,6 +3102,7 @@ components:
         expiresInSeconds: { type: integer }
     ModuleCreate:
       type: object
+      additionalProperties: false
       required: [name, repositoryUrl, pipelineTemplate, runtime, deploymentEnvironments]
       properties:
         name: { type: string, pattern: '^[a-z0-9][a-z0-9-]{2,62}$' }
@@ -3272,6 +3273,7 @@ components:
           additionalProperties: true
     SecurityEvidence:
       type: object
+      additionalProperties: false
       required: [artifactDigest, sbom, vulnerabilityScan, signature]
       properties:
         artifactDigest: { type: string, pattern: '^sha256:[0-9a-f]{64}$' }
@@ -3344,6 +3346,7 @@ components:
       enum: [dev, staging, prod]
     ApplicationCreate:
       type: object
+      additionalProperties: false
       required: [name, repositoryUrl, pipelineTemplate, runtime]
       properties:
         name: { type: string, pattern: '^[a-z0-9][a-z0-9-]{2,62}$' }
@@ -3427,6 +3430,7 @@ components:
         stageIds: { type: array, items: { type: string } }
     PipelineRunCreate:
       type: object
+      additionalProperties: false
       required: [commitSha, environment]
       properties:
         commitSha: { type: string, minLength: 7 }
@@ -3644,6 +3648,7 @@ components:
         comment: { type: string, maxLength: 1000 }
     RollbackRequest:
       type: object
+      additionalProperties: false
       required: [targetArtifactDigest, reason]
       properties:
         targetArtifactDigest: { type: string, pattern: '^sha256:[0-9a-f]{64}$' }
@@ -4012,6 +4017,7 @@ components:
         updatedAt: { type: string, format: date-time }
     DcimProvisionRequest:
       type: object
+      additionalProperties: false
       required: [systemId, moduleId]
       properties:
         systemId:
