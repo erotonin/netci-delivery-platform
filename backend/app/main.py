@@ -4060,7 +4060,11 @@ async def execute_agent_command(
             }
         )
     except Exception:
-        pass
+        # The ledger is supplementary -- `audit_events` in PostgreSQL is the record of
+        # authority -- so a failure here must not fail the command. It must still be
+        # visible: a ledger that quietly stopped recording is worth nothing at the
+        # moment someone goes looking.
+        logger.warning("audit ledger append failed for agent command %s", command.id, exc_info=True)
 
     return {
         "taskId": str(command.id),

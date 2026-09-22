@@ -1696,13 +1696,19 @@ class PortalService:
                 raise KeyError("module not found")
             existing = transaction.portal_version(module_id, tag)
             if existing is None:
-                stub = {
-                    "gitTagUrl": None,
-                    "artifactUrl": None,
-                    "createdBy": "netCI Pipeline",
-                    "createdAt": datetime.now(timezone.utc).isoformat(),
-                }
-                transaction.insert_portal_version(VersionRow(module_id, tag, stub))
+                # This used to insert a placeholder version with no artifactDigest and no
+                # pipelineRunId, so a CI report for a tag nobody had registered conjured a
+                # release row that never had a build -- and it then appeared in the module's
+                # version list beside real ones. `create_version` refuses exactly that, and
+                # the published contract says this endpoint writes into a version that is
+                # already registered. Refusing is also recoverable: the pipeline registers
+                # the version and posts the report again.
+                raise PortalError(
+                    "VERSION_NOT_REGISTERED",
+                    f"no registered version '{tag}' for module {module_id}: register the version "
+                    "with its artifact digest before publishing a CI report for it",
+                    404,
+                )
             transaction.insert_version_ci_report(module_id, tag, report)
             audit_unit = UnitOfWork(
                 audit=[

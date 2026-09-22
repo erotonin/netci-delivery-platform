@@ -23,7 +23,12 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.adapters.agent_daemon import NetCiAgentDaemon, validate_command_policy
-from app.audit_ledger import append_audit_entry, verify_audit_ledger, read_audit_entries
+from app.audit_ledger import (
+    LedgerCorrupted,
+    append_audit_entry,
+    read_audit_entries,
+    verify_audit_ledger,
+)
 from app.domain.dag import DagValidationError, compute_dag_waves
 from app.domain.models import (
     ConfigRevisionStatus,
@@ -774,3 +779,37 @@ def test_edge_agent_path_and_binary_safety():
     is_ok, reason, argv_segments = parse_and_validate_command("docker ps")
     assert is_ok is True
     assert argv_segments == [["docker", "ps"]]
+
+
+def test_an_unreadable_ledger_record_is_refused_not_written_over():
+    """Appending used to skip a corrupt line, forking the chain where tampering happened.
+
+    The new record chained onto an earlier hash and reused the damaged record's sequence
+    number, so the ledger kept growing while `verify_audit_ledger` -- which has always
+    refused an unparseable line -- reported it broken. The two must agree, and the one
+    that agrees with a tamper-evident ledger is the refusal.
+    """
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        ledger_file = Path(tmpdir) / "audit_ledger.jsonl"
+        first = append_audit_entry("module.create", "dana", "req-1", {"m": 1}, ledger_file)
+        append_audit_entry("config.apply", "rae", "req-2", {"m": 2}, ledger_file)
+
+        # Someone garbles the last record on disk.
+        lines = ledger_file.read_text(encoding="utf-8").splitlines()
+        lines[-1] = '{"seq": 2, "hash": "tru'
+        ledger_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+        is_valid, _ = verify_audit_ledger(ledger_file)
+        assert is_valid is False
+
+        with pytest.raises(LedgerCorrupted):
+            append_audit_entry("release.approve", "pat", "req-3", {"m": 3}, ledger_file)
+
+        # Reading must not present a clean ledger that verification calls broken.
+        with pytest.raises(LedgerCorrupted):
+            read_audit_entries(ledger_path=ledger_file)
+
+        # Nothing was appended on top of the damaged chain.
+        assert len(ledger_file.read_text(encoding="utf-8").splitlines()) == 2
+        assert first["seq"] == 1

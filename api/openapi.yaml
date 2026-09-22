@@ -492,7 +492,12 @@ paths:
       responses:
         '202': { description: CI report accepted }
         '401': { $ref: '#/components/responses/Unauthorized' }
-        '404': { $ref: '#/components/responses/NotFound' }
+        '404':
+          description: >-
+            The module does not exist (`MODULE_NOT_FOUND`), or no version with this tag
+            has been registered (`VERSION_NOT_REGISTERED`). A CI report is written into a
+            version that already carries an artifact digest and its originating run; it
+            never brings a version into existence.
         '422': { $ref: '#/components/responses/UnprocessableEntity' }
   /modules/{moduleId}/config-revisions:
     get:

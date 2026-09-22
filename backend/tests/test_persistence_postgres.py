@@ -1095,9 +1095,7 @@ def test_only_one_of_two_simultaneous_approvals_claims_a_production_request(port
             with lock:
                 outcomes.append(won)
         finally:
-            # Each thread owns a pool. Leaving it open held connections that the next
-            # test file's TRUNCATE then blocked on -- the failure looked like 200 broken
-            # tests elsewhere, which is exactly how long it takes to find.
+            # Each thread owns a pool; a test that opens one closes it.
             database.close()
 
     threads = [

@@ -743,3 +743,26 @@ def test_ci_report_fails_closed_without_mutating_the_projection(monkeypatch):
     )
 
     assert response.status_code == 503
+
+
+def test_a_ci_report_never_brings_a_version_into_existence(monkeypatch):
+    """It used to insert a placeholder version with no digest and no originating run.
+
+    That row then sat in the module's version list beside real releases, describing a
+    build that had never happened -- `create_version` refuses exactly that, so this
+    endpoint must not be the way around it.
+    """
+
+    monkeypatch.setenv('NETCI_PIPELINE_API_KEY', 'test-pipeline-key')
+
+    response = client.post(
+        '/modules/hello-container/versions/v99.0.0-never-registered/ci-report',
+        headers={'Authorization': 'Bearer test-pipeline-key'},
+        json={'coverage': 91, 'autoTest': 'passed', 'sast': 'passed', 'sastIssues': 0,
+              'vulnerabilities': {'critical': 0, 'high': 0, 'medium': 0}, 'commit': 'deadbee'},
+    )
+    assert response.status_code == 404, response.text
+    assert response.json()['code'] == 'VERSION_NOT_REGISTERED'
+
+    versions = client.get('/modules/hello-container/versions').json()['items']
+    assert not [v for v in versions if v['version'] == 'v99.0.0-never-registered']

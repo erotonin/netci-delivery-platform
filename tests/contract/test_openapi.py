@@ -102,3 +102,57 @@ def test_checked_in_contract_covers_every_live_http_operation():
     }
 
     assert documented == live
+
+
+#: Routes deliberately absent from `api/openapi.yaml`, each with the reason. Adding a
+#: name here is a decision someone has to write down; it is not something a route can do
+#: to itself by setting `include_in_schema=False`.
+UNPUBLISHED_ROUTES = {
+    ("get", "/metrics"): "Prometheus scrape: text/plain exposition, not part of the API contract",
+}
+
+
+def test_every_implemented_route_is_in_the_contract():
+    """netCI's rule is that OpenAPI is updated with the implementation, never after.
+
+    Nothing enforced it, so the rule was documentation -- the same shape of defect as an
+    authorization check that is written and never invoked. One route (`GET /metrics`) had
+    already drifted out of the contract before this test existed.
+    """
+
+    contract = load_contract()
+    published = {
+        (method.lower(), path)
+        for path, operations in (contract.get("paths") or {}).items()
+        for method in operations
+        if method.lower() in {"get", "post", "put", "patch", "delete"}
+    }
+
+    implemented = set()
+    for route in app.routes:
+        path = getattr(route, "path", None)
+        methods = getattr(route, "methods", None)
+        if not path or not methods:
+            continue
+        for method in methods:
+            if method.lower() in {"get", "post", "put", "patch", "delete"}:
+                implemented.add((method.lower(), path))
+
+    # FastAPI's own docs endpoints are not netCI's API.
+    implemented -= {("get", "/openapi.json"), ("get", "/docs"), ("get", "/redoc"),
+                    ("get", "/docs/oauth2-redirect")}
+
+    undocumented = sorted(implemented - published - set(UNPUBLISHED_ROUTES))
+    assert not undocumented, (
+        "implemented but missing from api/openapi.yaml: "
+        + ", ".join(f"{m.upper()} {p}" for m, p in undocumented)
+    )
+
+    phantom = sorted(published - implemented)
+    assert not phantom, (
+        "in api/openapi.yaml but not implemented: "
+        + ", ".join(f"{m.upper()} {p}" for m, p in phantom)
+    )
+
+    stale_exemptions = sorted(set(UNPUBLISHED_ROUTES) - implemented)
+    assert not stale_exemptions, f"exemption for a route that no longer exists: {stale_exemptions}"

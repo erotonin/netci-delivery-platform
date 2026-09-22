@@ -20,6 +20,10 @@ _LEDGER_LOCK = threading.Lock()
 GENESIS_HASH = "0" * 64
 
 
+class LedgerCorrupted(RuntimeError):
+    """The ledger holds a record that cannot be read, so its chain cannot be trusted."""
+
+
 def _canonical_json(data: Any) -> str:
     return json.dumps(data, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
 
@@ -41,16 +45,25 @@ def append_audit_entry(
 
         if path.exists() and path.stat().st_size > 0:
             with open(path, "r", encoding="utf-8") as f:
-                for line in f:
-                    line = line.strip()
+                for line_idx, raw in enumerate(f, start=1):
+                    line = raw.strip()
                     if not line:
                         continue
+                    # A line this cannot parse is the very thing a tamper-evident
+                    # ledger exists to surface. Skipping it used to chain the new record
+                    # onto an earlier hash and reuse the damaged record's sequence
+                    # number, forking the chain quietly -- and `verify_audit_ledger`
+                    # would then report the corruption that this path had decided to
+                    # write over. Refuse instead; the caller treats a ledger append as
+                    # best effort, so refusing costs the entry, not the request.
                     try:
                         record = json.loads(line)
-                        last_hash = record.get("hash", GENESIS_HASH)
-                        last_seq = int(record.get("seq", 0))
-                    except Exception:
-                        pass
+                    except json.JSONDecodeError as exc:
+                        raise LedgerCorrupted(
+                            f"audit ledger {path} has an unreadable record at line {line_idx}: {exc}"
+                        ) from exc
+                    last_hash = record.get("hash", GENESIS_HASH)
+                    last_seq = int(record.get("seq", 0))
 
         seq = last_seq + 1
         now_iso = datetime.now(timezone.utc).isoformat()
@@ -175,9 +188,14 @@ def read_audit_entries(limit: int = 100, ledger_path: Path | None = None) -> lis
             for line in f:
                 line = line.strip()
                 if line:
+                    # Dropping an unreadable record here would make this view disagree
+                    # with `verify_audit_ledger`, which refuses the same line -- an
+                    # operator would read a clean ledger and a failing verification.
                     try:
                         entries.append(json.loads(line))
-                    except Exception:
-                        pass
+                    except json.JSONDecodeError as exc:
+                        raise LedgerCorrupted(
+                            f"audit ledger {path} has an unreadable record: {exc}"
+                        ) from exc
 
     return entries[-limit:]
