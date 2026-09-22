@@ -83,7 +83,7 @@ from .policy.rules import (
 )
 from .portal import SERVER_OWNED_DELIVERY_KEYS, PortalError, PortalService
 from .persistence import AuditRecord, UnitOfWork
-from .readiness import probe_readiness
+from .readiness import probe_readiness, without_operator_detail
 from .reconciler import Reconciler
 from .retention import RetentionManager
 from .store import build_database
@@ -1466,7 +1466,10 @@ def readyz(response: Response) -> dict[str, object]:
     ready, details = probe_readiness(platform, portal, authenticator)
     if not ready:
         response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
-    return details
+    # Unauthenticated, and exempt from the rate limiter so a load balancer can poll it.
+    # A probe failure's own text names what failed -- the Jenkins URL, the DCIM endpoint,
+    # a secret file path -- and `/operator/health` is where that belongs.
+    return without_operator_detail(details)
 
 
 @app.get("/operator/health")

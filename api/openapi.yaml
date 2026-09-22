@@ -29,6 +29,11 @@ paths:
   /readyz:
     get:
       summary: Truthful readiness probe for accepting work
+      description: >-
+        Unauthenticated, and exempt from the rate limiter so a load balancer can poll it.
+        Each dependency reports its status and the *class* of any failure; the failure's
+        own text, which names the Jenkins URL, the DCIM endpoint or a secret file path,
+        is carried only by `GET /operator/health`, which requires a platform admin.
       operationId: readyz
       responses:
         '200':

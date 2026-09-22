@@ -39,7 +39,8 @@ def check_secrets() -> dict[str, Any]:
                     "warning": "world-writable" if world_writable else None,
                 }
             except OSError as exc:
-                results["authTokensFile"] = {"status": "error", "error": str(exc), "safe": False}
+                results["authTokensFile"] = {"status": "error", "error": type(exc).__name__,
+                                            "errorDetail": str(exc), "safe": False}
     else:
         results["authTokensFile"] = {"status": "not_configured", "safe": True}
 
@@ -145,7 +146,8 @@ def check_ci(launcher: Any) -> dict[str, Any]:
                 "ready": ready,
             }
         except Exception as exc:
-            return {"mode": "jenkins", "status": "unavailable", "error": str(exc), "ready": False}
+            return {"mode": "jenkins", "status": "unavailable", "error": type(exc).__name__,
+                    "errorDetail": str(exc), "ready": False}
     return {"mode": mode, "status": "not_configured", "optional": True, "ready": True}
 
 
@@ -226,7 +228,8 @@ def check_dcim(portal: Any) -> dict[str, Any]:
                 page = probe("")
                 return {"status": page.status, "source": page.source, "ready": page.status == "ready"}
             except Exception as exc:
-                return {"status": "unavailable", "error": str(exc), "ready": False}
+                return {"status": "unavailable", "error": type(exc).__name__,
+                        "errorDetail": str(exc), "ready": False}
     return {"status": "not_configured", "optional": True, "ready": True}
 
 
@@ -288,4 +291,26 @@ def check_traffic_router() -> dict[str, Any]:
     try:
         return describe()
     except Exception as exc:  # a kubectl that cannot run is a fact to report, not to raise from /readyz
-        return {"mode": getattr(default_traffic_router, "mode", "unknown"), "status": "unavailable", "ready": False, "error": str(exc)[-300:]}
+        return {"mode": getattr(default_traffic_router, "mode", "unknown"), "status": "unavailable",
+                "ready": False, "error": type(exc).__name__, "errorDetail": str(exc)[-300:]}
+
+
+#: Keys carrying an exception's own text. `/readyz` is unauthenticated -- it is exempt
+#: from the rate limiter too, because a load balancer polls it -- and a probe failure's
+#: text names the thing that failed: the Jenkins URL, the DCIM endpoint, a secret file
+#: path. `/operator/health` exists for exactly that detail and sits behind AdminAccess,
+#: so the split is the one the code already draws, not a new one.
+_OPERATOR_ONLY_KEYS = ("errorDetail",)
+
+
+def without_operator_detail(details: dict[str, Any]) -> dict[str, Any]:
+    """The readiness report with each probe's raw exception text removed."""
+
+    def strip(value: Any) -> Any:
+        if isinstance(value, dict):
+            return {k: strip(v) for k, v in value.items() if k not in _OPERATOR_ONLY_KEYS}
+        if isinstance(value, list):
+            return [strip(item) for item in value]
+        return value
+
+    return strip(details)

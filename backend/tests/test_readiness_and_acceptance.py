@@ -233,3 +233,39 @@ async def test_the_periodic_loop_calls_the_reconciler_and_survives_a_failing_pas
     with pytest.raises(asyncio.CancelledError):
         await task
     assert len(calls) >= 3, "the loop stopped after the failing pass"
+
+
+def test_readyz_does_not_hand_an_anonymous_caller_the_probe_failure_text(monkeypatch):
+    """`/readyz` is unauthenticated and exempt from the rate limiter; a load balancer polls it.
+
+    A probe failure's own text names the thing that failed -- the Jenkins URL, the DCIM
+    endpoint, a secret file path. `/operator/health` exists for that detail and sits
+    behind AdminAccess, so the split is the one the code already drew.
+    """
+
+    import json
+
+    from app import readiness
+
+    def exploding_probe(*args, **kwargs):
+        return False, {
+            "ci": {"mode": "jenkins", "status": "unavailable", "ready": False,
+                   "error": "URLError",
+                   "errorDetail": "<urlopen error [Errno 111] Connection refused> "
+                                  "http://jenkins.internal.corp:8080/api/json"},
+            "database": {"status": "ok"},
+        }
+
+    monkeypatch.setattr("app.main.probe_readiness", exploding_probe)
+
+    client = TestClient(app)
+    public = client.get("/readyz")
+    assert public.status_code == 503
+    assert "jenkins.internal.corp" not in public.text
+    assert "errorDetail" not in public.text
+    # The class of failure still reaches whoever is watching the endpoint.
+    assert public.json()["ci"]["error"] == "URLError"
+
+    # And nothing was lost: the operator view keeps the text.
+    kept = readiness.without_operator_detail(json.loads(json.dumps(exploding_probe()[1])))
+    assert "errorDetail" not in json.dumps(kept)
