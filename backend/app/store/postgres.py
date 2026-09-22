@@ -1408,6 +1408,29 @@ class PostgresSession:
         found = self._requests_where(" WHERE id = %s", (identifier,))
         return found[0] if found else None
 
+    def portal_request_for_update(self, request_id: str) -> RequestRow | None:
+        """The request, with its row locked until this transaction ends.
+
+        For the one caller that reads a release plan, decides a wave is finished, and
+        writes the plan back: a read-modify-write of a JSON document, which a conditional
+        UPDATE cannot express. Two deployment callbacks for the last two modules of a
+        wave used to arrive together, both see the wave complete, and both start the next
+        one -- dispatching a production wave twice. The lock is held for the length of
+        that decision and nothing else.
+        """
+
+        try:
+            identifier = UUID(str(request_id))
+        except ValueError:
+            return None
+        self._cursor.execute(
+            "SELECT id FROM production_requests WHERE id = %s FOR UPDATE", (identifier,)
+        )
+        if self._cursor.fetchone() is None:
+            return None
+        found = self._requests_where(" WHERE id = %s", (identifier,))
+        return found[0] if found else None
+
     def portal_request_by_idempotency_key(self, idempotency_key: str) -> RequestRow | None:
         found = self._requests_where(" WHERE idempotency_key = %s", (idempotency_key,))
         return found[0] if found else None

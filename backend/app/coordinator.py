@@ -279,7 +279,11 @@ class ReleasePlanCoordinator:
 
     def _check_and_advance_waves(self, request_id: str) -> None:
         with self.portal._session() as transaction:
-            request = transaction.portal_request(request_id)
+            # Locked: this reads the plan, decides a wave is finished and writes the plan
+            # back. Two callbacks for the last two modules of a wave arrive together, and
+            # without the lock both saw the wave complete and both started the next one
+            # -- one production wave, dispatched twice.
+            request = transaction.portal_request_for_update(request_id)
             if request is None:
                 return
             plan = dict(request.release_plan or {})
@@ -319,7 +323,7 @@ class ReleasePlanCoordinator:
                 plan["waves"] = waves
                 transaction.update_portal_request(
                     request_id,
-                    status="approved",
+                    status=request.status,
                     comment=f"wave {current_wave.get('wave')} succeeded, starting wave {waves[next_wave_idx].get('wave')}",
                     release_plan=plan,
                 )
@@ -343,7 +347,8 @@ class ReleasePlanCoordinator:
         logger.error("Release plan failed on module %s in request %s: %s. Initiating reverse rollback.", failed_module_id, request_id, reason)
 
         with self.portal._session() as transaction:
-            request = transaction.portal_request(request_id)
+            # Same read-modify-write of the plan, same lock.
+            request = transaction.portal_request_for_update(request_id)
             if request is None:
                 return
             plan = dict(request.release_plan or {})

@@ -458,6 +458,11 @@ class InMemorySession:
     def portal_request(self, request_id: str) -> RequestRow | None:
         return self._state.requests.get(str(request_id))
 
+    def portal_request_for_update(self, request_id: str) -> RequestRow | None:
+        # One process, one dictionary: there is no second writer to lock out. The
+        # PostgreSQL implementation explains what the lock is for.
+        return self.portal_request(request_id)
+
     def portal_request_by_idempotency_key(self, idempotency_key: str) -> RequestRow | None:
         return next(
             (

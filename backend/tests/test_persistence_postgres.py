@@ -1351,3 +1351,62 @@ def test_an_approval_and_a_rejection_racing_do_not_both_win(portal_database):
         with connection.cursor() as cursor:
             cursor.execute("SELECT status FROM production_requests WHERE id = %s", (request_id,))
             assert cursor.fetchone()[0] == winners[0]
+
+
+def test_the_wave_decision_is_serialised_by_a_row_lock(portal_database):
+    """Advancing a release wave is a read-modify-write of a JSON plan.
+
+    Two deployment callbacks for the last two modules of a wave arrive together. Both
+    used to read the plan, both see the wave complete, and both start the next one --
+    one production wave dispatched twice. A conditional UPDATE cannot express "the plan
+    I read is the plan that is still there", so the row is locked for the decision.
+    """
+
+    import threading
+    import time
+
+    from app.store import PostgresDatabase
+
+    module_id = f"wave-{uuid.uuid4().hex[:8]}"
+    request_id = uuid.uuid4()
+    _execute(
+        ("INSERT INTO systems (id, unit, description, owner, status) VALUES (%s,%s,%s,%s,%s)"
+         " ON CONFLICT (id) DO NOTHING",
+         (module_id, "wave", "wave decision", "tester", "healthy")),
+        ("INSERT INTO modules (id, system_id, name, module_type, description, runtime)"
+         " VALUES (%s,%s,%s,%s,%s,%s)",
+         (module_id, module_id, module_id, "Backend", "wave decision", "docker")),
+        ("INSERT INTO production_requests (id, module_id, requested_by, status, release_plan)"
+         " VALUES (%s,%s,%s,%s,%s::jsonb)",
+         (request_id, module_id, "dana", "approved",
+          '{"waves": [{"wave": 1, "status": "in_progress", "moduleIds": []}]}')),
+    )
+
+    order: list[str] = []
+    lock = threading.Lock()
+    started = threading.Barrier(2)
+
+    def decide(name: str) -> None:
+        database = PostgresDatabase(DATABASE_URL)
+        try:
+            started.wait(timeout=10)
+            with database.transaction() as transaction:
+                transaction.portal_request_for_update(str(request_id))
+                with lock:
+                    order.append(f"{name}-in")
+                time.sleep(0.2)
+                with lock:
+                    order.append(f"{name}-out")
+        finally:
+            database.close()
+
+    threads = [threading.Thread(target=decide, args=(n,)) for n in ("a", "b")]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=30)
+
+    # Neither holder's window overlaps the other's: whoever entered first also left
+    # first, so the second only read the plan after the first had written it.
+    assert order in (["a-in", "a-out", "b-in", "b-out"],
+                     ["b-in", "b-out", "a-in", "a-out"]), order
