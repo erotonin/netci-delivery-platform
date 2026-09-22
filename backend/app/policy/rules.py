@@ -51,6 +51,14 @@ def require_deployable_artifact(evidence: ArtifactEvidence) -> None:
         raise PolicyViolation("deployment requires verified artifact signature")
 
 
+#: Who may put a change into production. There is deliberately no environment variable
+#: that widens this set: an env-var override reaches production with no approver
+#: identity, no incident ticket and no audit record, which is the opposite of what the
+#: two-person rule is for. Emergencies go through `policy.break_glass`, whose bypass is
+#: dual-controlled, tied to an incident, time-bounded and written to the audit log.
+PROD_CD_ROLES: frozenset[Role] = frozenset({Role.REVIEWER, Role.PLATFORM_ADMIN})
+
+
 def require_environment_permission(environment: Environment, roles: frozenset[Role] | set[Role]) -> None:
     """Production is the environment that needs a second person, so it needs a role.
 
@@ -58,9 +66,8 @@ def require_environment_permission(environment: Environment, roles: frozenset[Ro
     previously written but never invoked, which made it documentation rather than a
     control; `backend/tests/test_authorization.py` now fails if that happens again.
     """
-    allow_dev = os.getenv("NETCI_ALLOW_DEVELOPER_PROD_CD", "false").strip().lower() in {"true", "1", "yes"}
-    allowed = {Role.REVIEWER, Role.PLATFORM_ADMIN, Role.DEVELOPER} if allow_dev else {Role.REVIEWER, Role.PLATFORM_ADMIN}
-    if environment == Environment.PROD and not allowed.intersection(roles):
+
+    if environment == Environment.PROD and not PROD_CD_ROLES.intersection(roles):
         raise PolicyViolation("production deployment requires reviewer or platform-admin role")
 
 

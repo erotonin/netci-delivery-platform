@@ -11,8 +11,8 @@ jenkins:
   controllerUrl: "http://jenkins.vtnet.viettel.vn:8080"
   # Service Account username with Job/Create, Job/Configure, Job/Build, Job/Read permissions:
   username: "netci-sa"
-  # API Token generated in Jenkins user configuration:
-  apiToken: "change-me-to-real-jenkins-api-token"
+  # API Token generated in Jenkins user configuration. No default: see templates/secrets.yaml.
+  apiToken: ""
   # Jenkins Agent Pod label defined on Jenkins Kubernetes Cloud:
   agentLabel: "netci-ephemeral"
   # Namespace on K8s where Jenkins provisions Ephemeral Pod Agents:
@@ -25,7 +25,7 @@ database:
   host: "postgres.netci.svc.cluster.local"
   port: 5432
   user: "netci"
-  password: "ChangeMeSecurePassword"
+  password: ""   # required unless database.url is set
   name: "netci"
   sslmode: "disable"
   # Alternatively provide the full connection URI:
@@ -42,15 +42,14 @@ registry:
   trivyDbRepository: "harbor.vtnet.viettel.vn/security/trivy-db"
 
 # Security & Secrets
+# Every value here must be supplied at install time (-f my-values.yaml). A default
+# would be a published credential, so the chart refuses to render without them.
 security:
-  pipelineApiKey: "netci-enterprise-production-key-change-me"
-  workloadTokenKeys: "k1:ChangeMeToA32CharacterSecureSigningKey!"
+  pipelineApiKey: ""
+  workloadTokenKeys: ""
   requireSecurityEvidence: true
   signatureVerifyMode: "cosign"
-  cosignPublicKey: |
-    -----BEGIN PUBLIC KEY-----
-    MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEexamplePublicKeyChangeMeToRealKey...
-    -----END PUBLIC KEY-----
+  cosignPublicKey: ""
 
 # netCI Backend (FastAPI Control Plane)
 backend:

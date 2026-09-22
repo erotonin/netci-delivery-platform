@@ -73,6 +73,7 @@ from .notifications import NotificationOutboxWorker
 from .policy.break_glass import BreakGlassError, BreakGlassService
 from .policy.engine import PolicyEngine
 from .policy.rules import (
+    PROD_CD_ROLES,
     PolicyViolation,
     Role,
     require_environment_permission,
@@ -529,8 +530,9 @@ def requires(*roles: Role, unauthenticated_code: str = "UNAUTHENTICATED"):
 ReadAccess = Depends(requires(Role.VIEWER, Role.DEVELOPER, Role.REVIEWER, Role.PLATFORM_ADMIN, Role.PIPELINE))
 DeveloperAccess = Depends(requires(Role.DEVELOPER, Role.PLATFORM_ADMIN))
 def _reviewer_access(principal: Principal = Depends(current_principal)) -> Principal:
-    allow_dev = os.getenv("NETCI_ALLOW_DEVELOPER_PROD_CD", "false").strip().lower() in {"true", "1", "yes"}
-    allowed = {Role.REVIEWER, Role.PLATFORM_ADMIN, Role.DEVELOPER} if allow_dev else {Role.REVIEWER, Role.PLATFORM_ADMIN}
+    # The same set the policy layer enforces, so the API cannot drift more permissive
+    # than the rule it is meant to apply.
+    allowed = PROD_CD_ROLES
     if principal.has_any(*allowed):
         return principal
     required = ", ".join(sorted(role.value for role in allowed))
@@ -2505,6 +2507,11 @@ def advance_canary_step(
         for m in modules:
             mod_id = m.get("moduleId")
             if mod_id:
+                # These rules are what splits production traffic. Swallowing a failure
+                # here used to return 202 while the split was never applied, so the
+                # canary "advanced" with every request still going to stable -- a green
+                # answer about a state that was never established. Refuse instead, and
+                # name the module, so the operator knows which one to look at.
                 try:
                     mod = portal.module(mod_id)
                     app_id = mod.get("applicationId")
@@ -2512,8 +2519,16 @@ def advance_canary_step(
                         default_traffic_router.set_canary_rules(str(app_id), "prod", payload.canaryRules)
                 except TrafficRoutingUnavailable:
                     raise
-                except Exception:
-                    pass
+                except HTTPException:
+                    raise
+                except Exception as exc:
+                    raise HTTPException(
+                        status_code=502,
+                        detail={
+                            "code": "CANARY_RULES_NOT_APPLIED",
+                            "message": f"canary traffic rules could not be applied for module {mod_id}: {type(exc).__name__}",
+                        },
+                    ) from exc
     coordinator = ReleasePlanCoordinator(portal, platform)
     try:
         return coordinator.advance_canary(requestId, UUID(str(deployment_id)), metrics_data, actor=principal.subject)

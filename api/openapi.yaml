@@ -714,6 +714,12 @@ paths:
           $ref: '#/components/responses/NotFound'
         '501':
           description: No traffic router is configured (NETCI_TRAFFIC_ROUTER); the weight is refused, not recorded
+        '502':
+          description: >-
+            `canaryRules` were supplied but could not be applied to the ingress
+            (`CANARY_RULES_NOT_APPLIED`, naming the module). The step is refused rather
+            than reported as advanced, because a canary whose traffic split was never
+            written is still sending every request to stable.
   /production-requests/{requestId}/canary/abort:
     post:
       operationId: abort_canary_step

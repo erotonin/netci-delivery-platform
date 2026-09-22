@@ -371,3 +371,37 @@ def test_colour_switch_is_refused_for_a_deployment_without_colours(client, auth_
     dep_id = client.post(f"/production-requests/{req_id}/approve", headers=reviewer_headers, json={"comment": "go"}).json()["modules"][0]["deploymentId"]
     refused = client.post(f"/deployments/{dep_id}/traffic/switch", headers=reviewer_headers, json={"activeColor": "green"})
     assert refused.status_code == 409 and refused.json()["code"] == "NOT_BLUE_GREEN"
+
+
+def test_canary_rules_that_cannot_be_applied_refuse_the_step(client, reviewer_headers, monkeypatch):
+    """A failure to write the traffic split must not be reported as an advanced canary.
+
+    This branch used to be `except Exception: pass`, so the step returned success while
+    every request still went to stable -- the canary looked advanced and was not. The
+    honest answer is a refusal naming the module the operator has to look at.
+    """
+
+    from backend.app import main as main_module
+
+    monkeypatch.setattr(
+        main_module.portal, "production_request",
+        lambda request_id: {"deploymentId": str(uuid4()), "modules": [{"moduleId": "m-1"}]},
+    )
+
+    def exploding_module(module_id):
+        raise RuntimeError("projection unavailable")
+
+    monkeypatch.setattr(main_module.portal, "module", exploding_module)
+
+    response = client.post(
+        "/production-requests/req-1/canary/advance",
+        headers=reviewer_headers,
+        json={"metrics": {"errorRate": 0.0},
+              "canaryRules": {"headerName": "x-canary", "headerValue": "yes"}},
+    )
+
+    assert response.status_code == 502, response.text
+    body = response.json()
+    assert body["code"] == "CANARY_RULES_NOT_APPLIED"
+    # Naming the module is the point: an operator cannot act on "something failed".
+    assert "m-1" in body["message"]

@@ -214,6 +214,49 @@ def test_a_developer_cannot_run_a_production_pipeline(token_app):
     assert refused.json()["code"] == "ENVIRONMENT_FORBIDDEN"
 
 
+def test_no_environment_variable_widens_who_may_reach_production(monkeypatch, token_app):
+    """A flag that let `developer` deploy prod lived here briefly; this is why it cannot return.
+
+    An env-var override reaches production with no approver identity, no incident ticket
+    and no audit record -- it is the two-person rule turned into a formality that nothing
+    records. `policy.break_glass` is the supported bypass precisely because it is
+    dual-controlled, tied to an incident, time-bounded and audited.
+    """
+
+    monkeypatch.setenv("NETCI_ALLOW_DEVELOPER_PROD_CD", "true")
+    monkeypatch.setenv("NETCI_ALLOW_DEVELOPER_PROD", "true")
+
+    client, headers, _ = token_app
+    application = _application(client, headers["dana"])
+    refused = client.post(
+        f"/modules/{application['moduleId']}/pipeline-runs",
+        headers=headers["dana"],
+        json={"commitSha": "abcdef1234567", "environment": "prod"},
+    )
+    assert refused.status_code == 403
+    assert refused.json()["code"] == "ENVIRONMENT_FORBIDDEN"
+
+
+def test_the_prod_role_set_is_stated_once(monkeypatch):
+    """The API dependency and the policy rule must not drift apart.
+
+    They were two separate literals once, so one could be widened without the other.
+    """
+
+    from app.policy.rules import (
+        PROD_CD_ROLES,
+        Environment,
+        PolicyViolation,
+        Role,
+        require_environment_permission,
+    )
+
+    assert PROD_CD_ROLES == frozenset({Role.REVIEWER, Role.PLATFORM_ADMIN})
+    monkeypatch.setenv("NETCI_ALLOW_DEVELOPER_PROD_CD", "true")
+    with pytest.raises(PolicyViolation):
+        require_environment_permission(Environment.PROD, frozenset({Role.DEVELOPER}))
+
+
 def test_a_reviewer_may_run_a_production_pipeline(token_app):
     client, headers, _ = token_app
     application = _application(client, headers["pat"])
