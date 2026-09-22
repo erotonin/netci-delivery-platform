@@ -1930,6 +1930,17 @@ class PortalService:
                         409,
                     )
 
+            # Claim the request before anything is dispatched. The status check above
+            # and this write are two statements: without the condition in the UPDATE,
+            # two reviewers approving at the same moment both pass the check and both
+            # start wave 1, which puts one release into production twice. Exactly one
+            # caller gets True; the loser is told the same thing a late approver is told.
+            if not transaction.claim_portal_request(
+                request_id, from_status="waiting_approval", to_status="approved",
+                comment=comment,
+            ):
+                raise ValueError("production request is not waiting for approval")
+
         # Coordinate multi-module wave execution
         coordinator = ReleasePlanCoordinator(self, self.platform)
         coordinator.start_release(request_id, actor)

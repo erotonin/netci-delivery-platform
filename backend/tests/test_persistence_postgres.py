@@ -1046,3 +1046,73 @@ def test_phase12_catalog_and_self_service_durability(database: str) -> None:
         assert updated_rreq.status == "provider_not_configured"
 
 
+
+
+def test_only_one_of_two_simultaneous_approvals_claims_a_production_request(portal_database):
+    """Two reviewers pressing approve at the same moment must not start wave 1 twice.
+
+    `approve_request` read the status, checked it was `waiting_approval`, and wrote the
+    new status in a separate statement. Between the read and the write a second approver
+    read the same status and passed the same check, so one release could be dispatched
+    into production twice. The condition now lives in the UPDATE, so the database picks
+    the winner. This runs against real PostgreSQL because it is a claim about what the
+    database refuses, not about what one process remembers.
+    """
+
+    import threading
+
+    import psycopg
+
+    from app.store import PostgresDatabase
+
+    module_id = f"race-{uuid.uuid4().hex[:8]}"
+    request_id = uuid.uuid4()
+    _execute(
+        ("INSERT INTO systems (id, unit, description, owner, status) VALUES (%s,%s,%s,%s,%s)"
+         " ON CONFLICT (id) DO NOTHING",
+         (module_id, "race", "approval race", "tester", "healthy")),
+        ("INSERT INTO modules (id, system_id, name, module_type, description, runtime)"
+         " VALUES (%s,%s,%s,%s,%s,%s)",
+         (module_id, module_id, module_id, "Backend", "approval race", "docker")),
+        ("INSERT INTO production_requests (id, module_id, requested_by, status)"
+         " VALUES (%s,%s,%s,%s)",
+         (request_id, module_id, "dana", "waiting_approval")),
+    )
+
+    started = threading.Barrier(2)
+    outcomes: list[bool] = []
+    lock = threading.Lock()
+
+    def claim(actor: str) -> None:
+        database = PostgresDatabase(DATABASE_URL)
+        try:
+            started.wait(timeout=10)
+            with database.transaction() as transaction:
+                won = transaction.claim_portal_request(
+                    str(request_id), from_status="waiting_approval",
+                    to_status="approved", comment=f"approved by {actor}",
+                )
+            with lock:
+                outcomes.append(won)
+        finally:
+            # Each thread owns a pool. Leaving it open held connections that the next
+            # test file's TRUNCATE then blocked on -- the failure looked like 200 broken
+            # tests elsewhere, which is exactly how long it takes to find.
+            database.close()
+
+    threads = [
+        threading.Thread(target=claim, args=("rae",)),
+        threading.Thread(target=claim, args=("pat",)),
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=30)
+
+    assert outcomes.count(True) == 1, outcomes
+    assert outcomes.count(False) == 1, outcomes
+
+    with psycopg.connect(DATABASE_URL) as connection:
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT status FROM production_requests WHERE id = %s", (request_id,))
+            assert cursor.fetchone()[0] == "approved"

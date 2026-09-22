@@ -193,6 +193,15 @@ class PlatformSession(Protocol):
         release_plan: dict[str, Any] | None = None,
     ) -> None: ...
 
+    def claim_portal_request(
+        self,
+        request_id: str,
+        *,
+        from_status: str,
+        to_status: str,
+        comment: str | None = None,
+    ) -> bool: ...
+
     def update_portal_request_module(
         self,
         request_id: str,

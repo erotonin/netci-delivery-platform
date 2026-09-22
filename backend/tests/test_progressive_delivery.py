@@ -405,3 +405,85 @@ def test_canary_rules_that_cannot_be_applied_refuse_the_step(client, reviewer_he
     assert body["code"] == "CANARY_RULES_NOT_APPLIED"
     # Naming the module is the point: an operator cannot act on "something failed".
     assert "m-1" in body["message"]
+
+
+class _StubTransaction:
+    """Just enough session for `start_release`: one request row, recorded writes."""
+
+    def __init__(self, row):
+        self.row = row
+        self.updates: list[dict] = []
+        self.audit: list = []
+
+    def portal_request(self, request_id):
+        return self.row
+
+    def update_portal_request(self, request_id, *, status, comment, release_plan=None, **_):
+        self.updates.append({"status": status, "comment": comment, "release_plan": release_plan})
+        from dataclasses import replace
+        self.row = replace(self.row, status=status, release_plan=release_plan or self.row.release_plan)
+
+    def apply(self, unit):
+        self.audit.extend(unit.audit)
+
+
+def _release_plan_request(status="approved"):
+    from datetime import datetime, timezone
+
+    from backend.app.store.records import RequestRow
+
+    return RequestRow(
+        id="req-idem", modules=(), requested_by="dana",
+        scheduled_for=datetime.now(timezone.utc), rollback_strategy="auto",
+        run_automation_tests=False, status=status,
+        release_plan={"waves": [{"moduleIds": [], "status": "pending"}]},
+    )
+
+
+def _coordinator_over(transaction):
+    import contextlib
+
+    from backend.app.coordinator import ReleasePlanCoordinator
+
+    class _Portal:
+        @contextlib.contextmanager
+        def _session(self):
+            yield transaction
+
+    return ReleasePlanCoordinator(_Portal(), None)
+
+
+def test_starting_a_release_twice_does_not_dispatch_wave_one_twice():
+    """A retried approval, or a replayed callback, must not put one release out twice."""
+
+    transaction = _StubTransaction(_release_plan_request())
+    coordinator = _coordinator_over(transaction)
+
+    first = coordinator.start_release("req-idem", "rae")
+    assert not first.get("alreadyStarted")
+
+    second = coordinator.start_release("req-idem", "rae")
+    assert second["alreadyStarted"] is True
+    assert second["dispatchedCount"] == 0
+    # The second call must not have written the plan again.
+    assert len(transaction.updates) == 1
+
+
+def test_starting_a_release_is_audited():
+    """The saga wrote nothing to the audit log, so a wave start left no trace at all."""
+
+    transaction = _StubTransaction(_release_plan_request())
+    _coordinator_over(transaction).start_release("req-idem", "rae")
+
+    assert [record.event_type for record in transaction.audit] == ["release_plan.wave_started"]
+    assert transaction.audit[0].actor == "rae"
+    assert transaction.audit[0].payload["requestId"] == "req-idem"
+
+
+def test_starting_a_release_does_not_force_the_status_back_to_approved():
+    """`status="approved"` was written unconditionally, dragging any state back to approved."""
+
+    transaction = _StubTransaction(_release_plan_request(status="cancelled"))
+    _coordinator_over(transaction).start_release("req-idem", "rae")
+
+    assert transaction.updates[0]["status"] == "cancelled"

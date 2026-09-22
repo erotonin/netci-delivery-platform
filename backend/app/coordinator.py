@@ -9,6 +9,7 @@ from typing import Any
 from uuid import UUID
 
 from .domain.models import DeploymentStatus, Environment
+from .persistence import AuditRecord, UnitOfWork
 from .traffic import CanaryAnalyzer, default_traffic_router
 
 logger = logging.getLogger(__name__)
@@ -27,7 +28,14 @@ class ReleasePlanCoordinator:
         self.traffic_router = traffic_router or default_traffic_router
 
     def start_release(self, request_id: str, actor: str) -> dict[str, Any]:
-        """Initiate Wave 1 execution for an approved production request."""
+        """Initiate Wave 1 execution for an approved production request.
+
+        Idempotent: a wave that is already under way is not started a second time. The
+        caller's claim on the request (`claim_portal_request`) is what makes two
+        simultaneous approvals impossible; this guard covers the rest -- a retried call,
+        a replayed callback -- where the status was legitimately already `approved`.
+        """
+
         with self.portal._session() as transaction:
             request = transaction.portal_request(request_id)
             if request is None:
@@ -38,10 +46,30 @@ class ReleasePlanCoordinator:
             if not waves:
                 raise ValueError("No release waves found in production request release plan")
 
-            # Mark wave 1 in progress
+            if waves[0].get("status") in ("in_progress", "succeeded", "failed"):
+                return {
+                    "requestId": request_id,
+                    "wave": 1,
+                    "dispatchedCount": 0,
+                    "dispatchedDeployments": [],
+                    "alreadyStarted": True,
+                }
+
+            # Mark wave 1 in progress. The status is not rewritten here: the approval
+            # path already set it, and writing "approved" unconditionally would drag a
+            # rejected or cancelled request back to approved.
             waves[0]["status"] = "in_progress"
             plan["waves"] = waves
-            transaction.update_portal_request(request_id, status="approved", comment=f"executing wave 1 by {actor}", release_plan=plan)
+            transaction.update_portal_request(
+                request_id, status=request.status,
+                comment=f"executing wave 1 by {actor}", release_plan=plan,
+            )
+            transaction.apply(UnitOfWork(audit=[AuditRecord(
+                event_type="release_plan.wave_started",
+                actor=actor,
+                payload={"requestId": request_id, "wave": 1,
+                         "moduleIds": list(waves[0].get("moduleIds", []))},
+            )]))
 
             wave_1_modules = waves[0].get("moduleIds", [])
 

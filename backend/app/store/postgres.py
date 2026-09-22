@@ -1523,6 +1523,29 @@ class PostgresSession:
                 (status, comment, deployment_id, UUID(str(request_id))),
             )
 
+    def claim_portal_request(
+        self,
+        request_id: str,
+        *,
+        from_status: str,
+        to_status: str,
+        comment: str | None = None,
+    ) -> bool:
+        """Move a request between statuses only if it is still in `from_status`.
+
+        Reading the status and then writing it are two statements, and between them a
+        second approver can read the same status and pass the same check -- which used
+        to let one production request dispatch its first wave twice. The condition lives
+        in the UPDATE so the database decides who won: exactly one caller sees True.
+        """
+
+        self._cursor.execute(
+            "UPDATE production_requests SET status = %s,"
+            " comment = COALESCE(%s, comment) WHERE id = %s AND status = %s",
+            (to_status, comment, UUID(str(request_id)), from_status),
+        )
+        return self._cursor.rowcount == 1
+
     def update_portal_request_module(
         self,
         request_id: str,

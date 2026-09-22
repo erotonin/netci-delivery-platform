@@ -539,6 +539,24 @@ class InMemorySession:
             release_plan=release_plan if release_plan is not None else current.release_plan,
         )
 
+    def claim_portal_request(
+        self,
+        request_id: str,
+        *,
+        from_status: str,
+        to_status: str,
+        comment: str | None = None,
+    ) -> bool:
+        current = self._state.requests.get(str(request_id))
+        if current is None or current.status != from_status:
+            return False
+        self._state.requests[str(request_id)] = replace(
+            current,
+            status=to_status,
+            comment=comment if comment is not None else current.comment,
+        )
+        return True
+
     def update_portal_request_module(
         self,
         request_id: str,
