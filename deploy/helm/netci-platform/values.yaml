@@ -1,0 +1,116 @@
+# Default values for netci-platform.
+# This is a YAML-formatted file.
+# Declare variables to be passed into your templates.
+
+global:
+  environment: "production"
+
+# Target company Jenkins integration
+jenkins:
+  # Base URL of the existing VTNet Jenkins instance:
+  controllerUrl: "http://jenkins.vtnet.viettel.vn:8080"
+  # Service Account username with Job/Create, Job/Configure, Job/Build, Job/Read permissions:
+  username: "netci-sa"
+  # API Token generated in Jenkins user configuration:
+  apiToken: "change-me-to-real-jenkins-api-token"
+  # Jenkins Agent Pod label defined on Jenkins Kubernetes Cloud:
+  agentLabel: "netci-ephemeral"
+  # Namespace on K8s where Jenkins provisions Ephemeral Pod Agents:
+  buildNamespace: "netci-build"
+  # Name of the Shared Library registered in Jenkins Global Pipeline Libraries:
+  sharedLibrary: "netci-shared-library"
+
+# Database Configuration (PostgreSQL)
+database:
+  host: "postgres.netci.svc.cluster.local"
+  port: 5432
+  user: "netci"
+  password: "ChangeMeSecurePassword"
+  name: "netci"
+  sslmode: "disable"
+  # Alternatively provide the full connection URI:
+  # url: "postgresql://netci:password@host:5432/netci?sslmode=disable"
+
+# Temporal Workflow Engine
+temporal:
+  host: "temporal-frontend.temporal.svc.cluster.local:7233"
+
+# Container Registry Configuration
+registry:
+  pushHost: "harbor.vtnet.viettel.vn"
+  pullHost: "harbor.vtnet.viettel.vn"
+  trivyDbRepository: "harbor.vtnet.viettel.vn/security/trivy-db"
+
+# Security & Secrets
+security:
+  pipelineApiKey: "netci-enterprise-production-key-change-me"
+  workloadTokenKeys: "k1:ChangeMeToA32CharacterSecureSigningKey!"
+  requireSecurityEvidence: true
+  signatureVerifyMode: "cosign"
+  cosignPublicKey: |
+    -----BEGIN PUBLIC KEY-----
+    MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEexamplePublicKeyChangeMeToRealKey...
+    -----END PUBLIC KEY-----
+
+# netCI Backend (FastAPI Control Plane)
+backend:
+  replicaCount: 2
+  image:
+    repository: harbor.vtnet.viettel.vn/netci/backend
+    pullPolicy: IfNotPresent
+    tag: "1.0.0"
+  service:
+    type: ClusterIP
+    port: 8000
+  resources:
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+    requests:
+      cpu: 200m
+      memory: 256Mi
+
+# netCI Frontend (React Single Page App)
+frontend:
+  replicaCount: 2
+  image:
+    repository: harbor.vtnet.viettel.vn/netci/frontend
+    pullPolicy: IfNotPresent
+    tag: "1.0.0"
+  service:
+    type: ClusterIP
+    port: 80
+  resources:
+    limits:
+      cpu: 200m
+      memory: 256Mi
+    requests:
+      cpu: 50m
+      memory: 64Mi
+
+# netCI Temporal Worker (Deployment Activities & Ansible)
+worker:
+  replicaCount: 2
+  image:
+    repository: harbor.vtnet.viettel.vn/netci/worker
+    pullPolicy: IfNotPresent
+    tag: "1.0.0"
+  resources:
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+    requests:
+      cpu: 200m
+      memory: 256Mi
+
+# Ingress Configuration
+ingress:
+  enabled: true
+  className: "nginx"
+  annotations:
+    ingress.kubernetes.io/ssl-redirect: "false"
+    nginx.ingress.kubernetes.io/proxy-body-size: "128m"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "600"
+  host: "netci.vtnet.viettel.vn"
+  tls: []

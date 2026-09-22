@@ -748,8 +748,28 @@ export function retryPipelineRun(pipelineRunId: string): Promise<PipelineRun> {
   })
 }
 
+export function autoProvisionDcimTargets(
+  systemId: string,
+  moduleId: string,
+  runtime = 'docker'
+): Promise<{ status: string; provisioned: number; devices: string[] }> {
+  return request<{ status: string; provisioned: number; devices: string[] }>('/dcim/auto-provision', {
+    method: 'POST',
+    body: JSON.stringify({ systemId, moduleId, runtime }),
+  })
+}
+
+
 export function getPipelineStages(pipelineRunId: string): Promise<{ pipelineRunId: string; items: PipelineStage[] }> {
   return request<{ pipelineRunId: string; items: PipelineStage[] }>(`/pipeline-runs/${encodeURIComponent(pipelineRunId)}/stages`)
+}
+
+export function approvePipelineRun(pipelineRunId: string, comment = ''): Promise<Deployment> {
+  return request<Deployment>(`/pipeline-runs/${encodeURIComponent(pipelineRunId)}/approve`, {
+    method: 'POST',
+    headers: { 'X-Correlation-Id': requestId() },
+    body: JSON.stringify({ comment }),
+  })
 }
 
 export function cancelDeployment(deploymentId: string, reason = ''): Promise<Deployment> {
@@ -757,6 +777,14 @@ export function cancelDeployment(deploymentId: string, reason = ''): Promise<Dep
     method: 'POST',
     headers: { 'X-Correlation-Id': requestId() },
     body: JSON.stringify({ reason }),
+  })
+}
+
+export function approveDeployment(deploymentId: string, comment = ''): Promise<Deployment> {
+  return request<Deployment>(`/deployments/${encodeURIComponent(deploymentId)}/approve`, {
+    method: 'POST',
+    headers: { 'X-Correlation-Id': requestId() },
+    body: JSON.stringify({ comment }),
   })
 }
 

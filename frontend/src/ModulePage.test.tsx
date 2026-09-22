@@ -29,8 +29,9 @@ describe('ModulePage pipeline contract', () => {
     await user.click(screen.getByRole('tab', { name: 'Pipeline' }))
 
     // One card per configured environment, carrying the branch the wizard configured for it.
-    expect(await screen.findByText(/nhánh release\/\*/)).toBeTruthy()
+    expect(await screen.findByText(/(?:nhánh|branch) release\/\*/)).toBeTruthy()
   })
+
 
   it('states how many delivery events the DORA figures came from', async () => {
     const user = userEvent.setup()

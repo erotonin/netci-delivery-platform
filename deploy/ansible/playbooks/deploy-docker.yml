@@ -18,7 +18,7 @@
     # check and the published port are the same number.
     netci_network_mode: "{{ network_mode | default('bridge') }}"
     netci_container_port: >-
-      {{ container_port | default(netci_host_port if netci_network_mode == 'host' else 8080) }}
+      {{ netci_host_port if netci_network_mode == 'host' else (container_port | default(8080)) }}
     netci_health_port: "{{ netci_container_port if netci_network_mode == 'host' else netci_host_port }}"
     # One Docker host may serve several environments (the lab does). A container name
     # that is only the application name collides across them, and the collision surfaces

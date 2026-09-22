@@ -1,0 +1,24 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "netci.fullname" . }}-config
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "netci.labels" . | nindent 4 }}
+data:
+  NETCI_ENVIRONMENT: {{ .Values.global.environment | default "production" | quote }}
+  NETCI_CI_MODE: "jenkins"
+  NETCI_JENKINS_CONTROLLERS: "A"
+  JENKINS_A_URL: {{ .Values.jenkins.controllerUrl | quote }}
+  NETCI_AGENT_LABEL: {{ .Values.jenkins.agentLabel | default "netci-ephemeral" | quote }}
+  NETCI_BUILD_NAMESPACE: {{ .Values.jenkins.buildNamespace | default "netci-build" | quote }}
+  REGISTRY_PUSH_HOST: {{ .Values.registry.pushHost | quote }}
+  REGISTRY_PULL_HOST: {{ .Values.registry.pullHost | quote }}
+  NETCI_TRIVY_DB_REPOSITORY: {{ .Values.registry.trivyDbRepository | quote }}
+  NETCI_API_URL: "http://{{ include "netci.fullname" . }}-backend.{{ .Release.Namespace }}.svc.cluster.local:8000"
+  TEMPORAL_HOST: {{ .Values.temporal.host | quote }}
+  NETCI_ALLOWED_ORIGINS: "*"
+  NETCI_REQUIRE_SECURITY_EVIDENCE: {{ .Values.security.requireSecurityEvidence | default true | quote }}
+  NETCI_SIGNATURE_VERIFY_MODE: {{ .Values.security.signatureVerifyMode | default "cosign" | quote }}
+  NETCI_RATE_LIMIT: "120"
+  NETCI_RATE_LIMIT_WINDOW: "60"

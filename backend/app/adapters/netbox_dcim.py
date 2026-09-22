@@ -98,6 +98,98 @@ class NetBoxDcimCatalog:
             url = payload.get("next") or ""
         return results
 
+    def _mutate(self, method: str, path: str, payload: dict[str, Any]) -> dict[str, Any]:
+        """Perform a mutating HTTP request (POST, PATCH, DELETE) against NetBox API."""
+        url = f"{self.base_url}{path}"
+        data = json.dumps(payload).encode("utf-8")
+        request = urllib.request.Request(
+            url,
+            data=data,
+            method=method,
+            headers={
+                "Authorization": f"Token {self.token}",
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+            },
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=self.timeout_seconds) as response:
+                return json.loads(response.read() or b"{}")
+        except urllib.error.HTTPError as exc:
+            try:
+                err_body = exc.read().decode("utf-8", errors="replace")
+            except Exception:
+                err_body = ""
+            logger.warning("NetBox %s %s failed (%s): %s", method, path, exc.code, err_body)
+            raise DcimUnavailable(f"NetBox {method} {path} returned HTTP {exc.code}: {err_body[:200]}") from exc
+        except Exception as exc:
+            raise DcimUnavailable(f"NetBox request failed: {exc}") from exc
+
+    def ensure_tenant(self, system_id: str, description: str = "") -> dict[str, Any]:
+        """Ensure NetBox tenant exists for system_id."""
+        existing = self._get("/tenancy/tenants/", {"slug": system_id})
+        if existing:
+            return existing[0]
+        groups = self._get("/tenancy/tenant-groups/", {"slug": "local-infrastructure"})
+        group_id = groups[0]["id"] if groups else None
+        body: dict[str, Any] = {
+            "name": system_id,
+            "slug": system_id,
+            "description": description or f"System {system_id}",
+        }
+        if group_id:
+            body["group"] = group_id
+        return self._mutate("POST", "/tenancy/tenants/", body)
+
+    def ensure_role(self, module_id: str) -> dict[str, Any]:
+        """Ensure NetBox device role exists for module_id."""
+        existing = self._get("/dcim/device-roles/", {"slug": module_id})
+        if existing:
+            return existing[0]
+        body = {
+            "name": module_id,
+            "slug": module_id,
+            "color": "10b981",
+            "description": f"Module {module_id}",
+        }
+        return self._mutate("POST", "/dcim/device-roles/", body)
+
+    def auto_provision_targets(
+        self, system_id: str, module_id: str, runtime: str = "docker"
+    ) -> list[dict[str, Any]]:
+        """Provision tenant, role, and standard dev/staging/prod target devices in NetBox."""
+        tenant = self.ensure_tenant(system_id)
+        role = self.ensure_role(module_id)
+        dtypes = self._get("/dcim/device-types/", {"slug": "linux-host"})
+        dtype_id = dtypes[0]["id"] if dtypes else 1
+
+        created_devices = []
+        for env in ("dev", "staging", "prod"):
+            sites = self._get("/dcim/sites/", {"slug": env})
+            if not sites:
+                continue
+            site_id = sites[0]["id"]
+            dev_name = f"{system_id}-{runtime}-{env}" if runtime != "kubernetes" else f"{system_id}-k8s-{env}"
+            existing_devs = self._get("/dcim/devices/", {"name": dev_name})
+            if not existing_devs:
+                dev = self._mutate(
+                    "POST",
+                    "/dcim/devices/",
+                    {
+                        "name": dev_name,
+                        "device_type": dtype_id,
+                        "role": role["id"],
+                        "tenant": tenant["id"],
+                        "site": site_id,
+                        "status": "active",
+                    },
+                )
+                created_devices.append(dev)
+            else:
+                created_devices.append(existing_devs[0])
+        return created_devices
+
+
     @staticmethod
     def _unknown_filter_values(exc: urllib.error.HTTPError) -> dict[str, str]:
         """NetBox's 400 body for a bad filter is {"tenant": ["Select a valid choice. x ..."]}."""

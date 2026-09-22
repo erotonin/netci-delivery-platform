@@ -188,19 +188,21 @@ def check_preflight_telemetry(server_name: str) -> TargetValidationResult:
         else None
     )
     if telemetry:
-        if telemetry.disk_percent > 90.0:
+        disk_threshold = float(os.getenv("NETCI_PREFLIGHT_DISK_THRESHOLD", "90.0"))
+        cpu_threshold = float(os.getenv("NETCI_PREFLIGHT_CPU_THRESHOLD", "95.0"))
+        if telemetry.disk_percent > disk_threshold:
             return TargetValidationResult(
                 valid=False,
                 status="resource_exhausted",
-                message=f"Target {server_name} disk usage ({telemetry.disk_percent:.1f}%) exceeds safety threshold (90%)",
+                message=f"Target {server_name} disk usage ({telemetry.disk_percent:.1f}%) exceeds safety threshold ({disk_threshold:.0f}%)",
                 server_name=server_name,
                 details=details,
             )
-        if telemetry.cpu_percent > 95.0:
+        if telemetry.cpu_percent > cpu_threshold:
             return TargetValidationResult(
                 valid=False,
                 status="resource_exhausted",
-                message=f"Target {server_name} CPU usage ({telemetry.cpu_percent:.1f}%) exceeds safety threshold (95%)",
+                message=f"Target {server_name} CPU usage ({telemetry.cpu_percent:.1f}%) exceeds safety threshold ({cpu_threshold:.0f}%)",
                 server_name=server_name,
                 details=details,
             )

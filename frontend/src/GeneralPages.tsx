@@ -370,31 +370,31 @@ export function ServersPage() {
   }
 
   return <>
-    <PageHeader title="Deployment targets & Inventory" description="Quản lý máy chủ triển khai, trạng thái bảo trì và đăng ký miễn trừ bảo mật VEX." action={<button className="secondary-button" disabled={syncing} onClick={syncServers}><CloudDownload size={16} />{syncing ? 'Refreshing…' : 'Refresh from API'}</button>} />
+    <PageHeader title="Deployment Targets & Inventory" description="Manage deployment target servers, maintenance mode, and VEX security waivers." action={<button className="secondary-button" disabled={syncing} onClick={syncServers}><CloudDownload size={16} />{syncing ? 'Refreshing…' : 'Refresh from API'}</button>} />
     <div className="sync-note"><CheckCircle2 size={15} />Last refresh: {lastSync} · {items.length} configured targets · {waivers.length} active VEX waivers</div>
     
     <section className="panel table-panel">
       <div className="table-toolbar server-filters">
-        <label className="input-with-icon"><Search size={16} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Tìm hostname, IP, hệ thống…" /></label>
+        <label className="input-with-icon"><Search size={16} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search hostname, IP, system…" /></label>
         <select value={environment} onChange={(event) => setEnvironment(event.target.value)}><option>All environments</option><option>Dev</option><option>Staging</option><option>Production</option></select>
         <select value={status} onChange={(event) => setStatus(event.target.value)}><option>All statuses</option><option>Unknown</option><option>Online</option><option>Maintenance</option><option>Offline</option></select>
       </div>
       <div className="data-table servers-table">
         <div className="table-row table-head">
-          <span><input type="checkbox" aria-label="Chọn tất cả trên trang" checked={visible.length > 0 && visible.every((item) => selectedIds.includes(item.id))} onChange={toggleAll} /></span>
+          <span><input type="checkbox" aria-label="Select all on page" checked={visible.length > 0 && visible.every((item) => selectedIds.includes(item.id))} onChange={toggleAll} /></span>
           <span>Server</span>
-          <span>Dùng bởi</span>
+          <span>Used By</span>
           <span>IP (NetBox)</span>
-          <span>Agent · telemetry</span>
+          <span>Agent · Telemetry</span>
           <span>Status</span>
-          <span>Chế độ bảo trì</span>
+          <span>Maintenance Mode</span>
           <span />
         </div>
         {visible.map((server) => {
           const isMaint = maintenanceMap[server.id] ?? (server.status === 'Maintenance')
           return (
             <div className="table-row" key={server.id}>
-              <span><input type="checkbox" aria-label={`Chọn ${server.id}`} checked={selectedIds.includes(server.id)} onChange={() => setSelectedIds((current) => current.includes(server.id) ? current.filter((id) => id !== server.id) : [...current, server.id])} /></span>
+              <span><input type="checkbox" aria-label={`Select ${server.id}`} checked={selectedIds.includes(server.id)} onChange={() => setSelectedIds((current) => current.includes(server.id) ? current.filter((id) => id !== server.id) : [...current, server.id])} /></span>
               <span className="strong-cell">
                 <Server size={16} />{server.id}
                 {agentMap[server.id] && (
@@ -404,8 +404,8 @@ export function ServersPage() {
                 )}
               </span>
               <span className="used-by">{server.usedBy.map((u) => <em key={`${u.moduleId}-${u.environment}`} className={`env-badge env-${u.environment}`} title={`${u.systemId} / ${u.moduleId}`}>{u.moduleId} · {u.environment}</em>)}</span>
-              <span className="mono" title={server.dcim?.message ?? ''}>{server.ip || <i className="muted">{server.dcim && server.dcim.status !== 'not_found' && server.dcim.status !== 'error' ? 'trong NetBox, chưa gán IP' : server.dcim?.status === 'error' ? 'NetBox không trả lời' : 'không có trong NetBox'}</i>}</span>
-              <span className="mono" title={server.agent ? `agent qua ${server.agent.replicaId}, thấy lần cuối ${server.agent.lastSeenAt}` : 'chưa có edge agent trên host này'}>{server.agent ? (server.agent.stale ? 'agent mất kết nối' : 'agent online') : '—'}{server.telemetry ? ` · cpu ${server.telemetry.cpuPercent}% · mem ${server.telemetry.memPercent}% · disk ${server.telemetry.diskPercent}%` : ''}</span>
+              <span className="mono" title={server.dcim?.message ?? ''}>{server.ip || <i className="muted">{server.dcim && server.dcim.status !== 'not_found' && server.dcim.status !== 'error' ? 'in NetBox, no IP assigned' : server.dcim?.status === 'error' ? 'NetBox unreachable' : 'not registered in NetBox'}</i>}</span>
+              <span className="mono" title={server.agent ? `agent via ${server.agent.replicaId}, last seen ${server.agent.lastSeenAt}` : 'no edge agent on host'}>{server.agent ? (server.agent.stale ? 'agent disconnected' : 'agent online') : '—'}{server.telemetry ? ` · cpu ${server.telemetry.cpuPercent}% · mem ${server.telemetry.memPercent}% · disk ${server.telemetry.diskPercent}%` : ''}</span>
               <span className="status-stack"><StatusPill status={isMaint ? 'Maintenance' : server.status} />{server.dcim && !server.dcim.valid && !isMaint && <small className="gate-note" title={server.dcim.message}>gate: {server.dcim.status.replace(/_/g, ' ')}</small>}</span>
               <span>
                 <button
@@ -417,17 +417,18 @@ export function ServersPage() {
                       await toggleServerMaintenance(server.id, !isMaint, isMaint ? 'Exit maintenance' : 'Scheduled maintenance')
                       setMaintenanceMap((prev) => ({ ...prev, [server.id]: !isMaint }))
                       setItems((prev) => prev.map((s) => s.id === server.id ? { ...s, status: !isMaint ? 'Maintenance' : 'Online' } : s))
-                      notify(`Đã cập nhật chế độ bảo trì cho ${server.id}`)
+                      notify(`Updated maintenance status for ${server.id}`)
                     } catch {
-                      notify('Không thể cập nhật trạng thái bảo trì.', 'error')
+                      notify('Failed to update maintenance status.', 'error')
                     }
                   }}
                 >
-                  {isMaint ? 'Bỏ bảo trì' : 'Bảo trì'}
+                  {isMaint ? 'Exit Maintenance' : 'Set Maintenance'}
                 </button>
               </span>
-              <span className="row-actions"><button aria-label={`Chi tiết ${server.id}`} onClick={() => openServerDetails(server)}><MoreHorizontal size={16} /></button></span>
+              <span className="row-actions"><button aria-label={`Details ${server.id}`} onClick={() => openServerDetails(server)}><MoreHorizontal size={16} /></button></span>
             </div>
+
           )
         })}
       </div>
@@ -471,10 +472,10 @@ export function ServersPage() {
         {waivers.map((w) => (
           <div className="table-row" key={w.id}>
             <span className="strong-cell mono" style={{ color: '#e11d48' }}>{w.cveId}</span>
-            <span>{w.moduleId || 'Tất cả module'}</span>
+            <span>{w.moduleId || 'All Modules'}</span>
             <span>{w.reason}</span>
             <span>{w.approvedBy}</span>
-            <span>{new Date(w.expiresAt).toLocaleDateString('vi-VN')}</span>
+            <span>{new Date(w.expiresAt).toLocaleDateString('en-US')}</span>
             <span>
               {w.status === 'active' ? (
                 <button
@@ -485,16 +486,16 @@ export function ServersPage() {
                     try {
                       await revokeSecurityWaiver(w.id)
                       setWaivers((prev) => prev.filter((item) => item.id !== w.id))
-                      notify(`Đã thu hồi miễn trừ cho ${w.cveId}`)
+                      notify(`Revoked waiver for ${w.cveId}`)
                     } catch {
-                      notify('Không thể thu hồi miễn trừ', 'error')
+                      notify('Failed to revoke waiver', 'error')
                     }
                   }}
                 >
-                  Thu hồi
+                  Revoke
                 </button>
               ) : (
-                <span className="muted">Đã thu hồi</span>
+                <span className="muted">Revoked</span>
               )}
             </span>
           </div>
@@ -502,8 +503,8 @@ export function ServersPage() {
         {!waivers.length && (
           <div className="empty-table" style={{ padding: '20px' }}>
             <ShieldCheck size={24} color="#16a34a" />
-            <strong>Không có miễn trừ nào đang kích hoạt</strong>
-            <span>Mọi lỗ hổng Critical phát hiện qua Trivy scan sẽ kích hoạt hard gate bảo vệ môi trường Production.</span>
+            <strong>No active security waivers</strong>
+            <span>All Critical CVEs detected by Trivy scanner will trigger automated deployment gate.</span>
           </div>
         )}
       </div>
@@ -511,12 +512,12 @@ export function ServersPage() {
 
     {waiverModal && (
       <Modal
-        title="Tạo miễn trừ bảo mật VEX"
-        description="Cho phép pipeline tiếp tục triển khai khi gặp CVE đã có kế hoạch xử lý hoặc nằm ngoài attack surface."
+        title="Create VEX Security Waiver"
+        description="Allows pipeline deployment to proceed when a known CVE is documented with compensating controls or outside the attack surface."
         onClose={() => setWaiverModal(false)}
         footer={
           <>
-            <button className="secondary-button" onClick={() => setWaiverModal(false)}>Hủy</button>
+            <button className="secondary-button" onClick={() => setWaiverModal(false)}>Cancel</button>
             <button className="primary-button" disabled={savingWaiver} onClick={handleCreateWaiver}>
               {savingWaiver ? 'Đang lưu…' : 'Xác nhận miễn trừ'}
             </button>

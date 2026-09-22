@@ -240,6 +240,28 @@ paths:
         '200': { description: DCIM servers and source metadata }
         '404': { $ref: '#/components/responses/NotFound' }
         '503': { description: Configured DCIM integration is unreachable or returned an invalid response }
+  /dcim/auto-provision:
+    post:
+      operationId: autoProvisionDcimTargets
+      summary: Dedicated infrastructure admin endpoint for provisioning targets in DCIM
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DcimProvisionRequest'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
   /systems:
     get:
       operationId: listSystems
@@ -958,6 +980,46 @@ paths:
           $ref: '#/components/responses/NotFound'
         '413':
           description: Webhook payload exceeds 1MB limit
+  /webhooks/netbox:
+    post:
+      operationId: receiveNetboxWebhook
+      summary: Receive NetBox DCIM webhook
+      description: "Bidirectional webhook from NetBox DCIM: locks or unlocks targets when device status changes."
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/BadRequest'
+  /webhooks/dcim/netbox:
+    post:
+      operationId: receiveNetboxDcimWebhook
+      summary: Receive NetBox DCIM webhook alias
+      description: "Bidirectional webhook from NetBox DCIM: locks or unlocks targets when device status changes."
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/BadRequest'
   /pipeline-runs/{pipelineRunId}/callback-token:
     post:
       operationId: issuePipelineCallbackToken
@@ -1029,6 +1091,52 @@ paths:
                   lines: { type: array, items: { type: string } }
         '404':
           $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+  /pipeline-runs/{pipelineRunId}/logs/stream:
+    get:
+      operationId: streamPipelineLogs
+      summary: Server-Sent Events (SSE) live log stream for real-time console rendering
+      parameters:
+        - $ref: '#/components/parameters/PipelineRunId'
+        - $ref: '#/components/parameters/CorrelationId'
+      responses:
+        '200':
+          description: Live log stream
+          content:
+            text/event-stream:
+              schema:
+                type: string
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+  /pipeline-runs/{pipelineRunId}/approve:
+    post:
+      operationId: approvePipelineRunDeployment
+      summary: Release a deployment waiting for human approval associated with a pipeline run
+      parameters:
+        - $ref: '#/components/parameters/PipelineRunId'
+        - $ref: '#/components/parameters/CorrelationId'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ApprovalRequest'
+      responses:
+        '202':
+          description: Approval accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Deployment'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
         '422':
           $ref: '#/components/responses/UnprocessableEntity'
   /pipeline-runs/{pipelineRunId}/cancel:
@@ -3882,4 +3990,16 @@ components:
         approvedBy: { type: string, nullable: true }
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
+    DcimProvisionRequest:
+      type: object
+      required: [systemId, moduleId]
+      properties:
+        systemId:
+          type: string
+        moduleId:
+          type: string
+        runtime:
+          type: string
+          default: docker
+
 

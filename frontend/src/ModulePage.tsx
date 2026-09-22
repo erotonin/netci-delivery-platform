@@ -5,7 +5,7 @@ import {
   TerminalSquare, XCircle, Zap, ZoomIn, ZoomOut,
 } from 'lucide-react'
 import {
-  approveConfigRevision, cancelPipelineRun, createModuleVersion, detectDrift,
+  approveConfigRevision, approvePipelineRun, cancelPipelineRun, createModuleVersion, detectDrift,
   diffConfigRevisions, getDora, getModule, getModuleGitRefs, getModuleOverview, getPipelineLogs,
   getPipelineStages, listConfigRevisions, listModulePipelineRuns, listModuleVersions,
   proposeConfigRevision, rejectConfigRevision, retryPipelineRun, rollbackConfigRevision,
@@ -215,6 +215,29 @@ function PipelineRunView({
     }
   }
 
+  const [approving, setApproving] = useState(false)
+
+  const handleApprove = async () => {
+    if (!liveRun) return
+    setApproving(true)
+    try {
+      await approvePipelineRun(liveRun.id)
+      notify('Đã phê duyệt triển khai Production! CD workflow đã bắt đầu.')
+      if (moduleId) {
+        listModulePipelineRuns(moduleId)
+          .then((res) => {
+            const matched = res.items.find((r) => r.id === liveRun.id)
+            if (matched) onRunUpdated(matched)
+          })
+          .catch(() => {})
+      }
+    } catch (error) {
+      notify(error instanceof Error ? error.message : 'Không thể phê duyệt triển khai.', 'error')
+    } finally {
+      setApproving(false)
+    }
+  }
+
   const canCancel = !!liveRun && (liveRun.status === 'queued' || liveRun.status === 'running' || liveRun.status === 'waiting_approval')
   const canRetry = !!liveRun && (liveRun.status === 'failed' || liveRun.status === 'cancelled' || liveRun.status === 'rolled_back' || liveRun.status === 'succeeded')
 
@@ -230,6 +253,16 @@ function PipelineRunView({
         <p>{liveRun ? `${liveRun.branch} · ${liveRun.commitSha} · triggered by ${liveRun.startedBy ?? 'unknown actor'}` : 'No pipeline run selected.'}{liveRun?.jenkinsRunId && <><br /><span className="mono" style={{ opacity: 0.7 }}>Jenkins: {liveRun.jenkinsRunId}</span></>}</p>
       </div>
       <div className="run-actions">
+        {liveRun?.status === 'waiting_approval' && (
+          <button
+            className="primary-button"
+            style={{ backgroundColor: '#10b981', color: '#fff' }}
+            disabled={approving}
+            onClick={handleApprove}
+          >
+            <Check size={15} />{approving ? 'Approving…' : 'Approve & Deploy'}
+          </button>
+        )}
         {canCancel && (
           <button className="secondary-button" disabled={cancelling} onClick={handleCancel}>
             <XCircle size={15} />{cancelling ? 'Cancelling…' : 'Cancel'}
@@ -260,9 +293,10 @@ function PipelineRunView({
           const name = stageLabels[stageId] ?? stageId
           const observed = stageObjMap.get(stageId.toLowerCase()) || stageObjMap.get(name.toLowerCase().replace(/\s+/g, '-'))
           const statusText = observed ? `${observed.status}${observed.durationMs != null ? ` (${(observed.durationMs / 1000).toFixed(1)}s)` : ''}` : 'Pending'
+          const observedStatus = observed ? observed.status.toLowerCase() : 'pending'
           return (
             <button
-              className={`stage-node category-${stageCategory(stageId)} ${stage === stageId ? 'selected' : ''}`}
+              className={`stage-node category-${stageCategory(stageId)} status-${observedStatus} ${stage === stageId ? 'selected' : ''}`}
               onClick={() => setStage(stageId)}
               key={`${stageId}-${index}`}
             >
@@ -382,11 +416,11 @@ function PipelineTab({ moduleId, pipelineConfig, deploymentEnvironments, initial
       })
       setLiveRuns((current) => [next, ...current.filter((item) => item.id !== next.id)])
       setTriggered(runModalPipeline.name)
-      notify(`Đã đưa vào hàng đợi: build ${rev.slice(0, 8)} → ${modalEnv}.`)
+      notify(`Queued build ${rev.slice(0, 8)} → ${modalEnv}.`)
       setRunModalPipeline(null)
       setRun({ pipeline: runModalPipeline, liveRun: next })
     } catch (error) {
-      setModalError(error instanceof Error ? error.message : 'Không thể trigger pipeline.')
+      setModalError(error instanceof Error ? error.message : 'Unable to trigger pipeline.')
     } finally {
       setBusyPipeline(null)
     }
@@ -407,51 +441,52 @@ function PipelineTab({ moduleId, pipelineConfig, deploymentEnvironments, initial
       />
     )
   }
-  if (historyPipeline) { const historyRuns = runsForPipeline(historyPipeline); return <section className="history-view"><button className="back-button" onClick={() => setHistoryPipeline(null)}><ArrowLeft size={16} />Tất cả môi trường</button><div className="run-heading"><div><h2>{historyPipeline.name} · lịch sử build</h2><p>Các lượt chạy tới môi trường này, mới nhất trước; trạng thái do Jenkins và worker báo về.</p></div><button className="primary-button" disabled={busyPipeline === historyPipeline.id} onClick={() => openRunModal(historyPipeline)}><Play size={15} />{busyPipeline === historyPipeline.id ? 'Đang xếp hàng…' : 'Chạy pipeline'}</button></div><section className="panel table-panel"><div className="data-table history-table"><div className="table-row table-head"><span>Build</span><span>Commit</span><span>Nhánh</span><span>Bởi</span><span>Bắt đầu</span><span>Trạng thái</span><span /></div>{historyRuns.map((item) => <button className="table-row table-button" onClick={() => setRun({ pipeline: historyPipeline, liveRun: item })} key={item.id}><span className="request-id" title={item.jenkinsRunId ?? item.id}>#{item.jenkinsRunId ? item.jenkinsRunId.split('#').pop() : item.id.slice(0, 8)}</span><span className="mono" title={item.commitSha}>{shortSha(item.commitSha)}</span><span>{item.branch}</span><span title={item.startedBy ?? ''}>{person(item.startedBy)}</span><span title={item.createdAt}>{new Date(item.createdAt).toLocaleString('vi-VN')}</span><StatusPill status={item.status.replace('_', ' ')} /><ExternalLink size={15} /></button>)}</div>{!historyRuns.length && <div className="empty-table"><History size={22} /><strong>Chưa có lượt chạy nào tới môi trường này</strong><span>Bấm "Chạy pipeline" để build một commit và triển khai.</span></div>}</section>{triggered && <div className="toast success-toast"><CheckCircle2 size={17} />{triggered} đã được xếp hàng.</div>}</section> }
-  return <><section className="panel repo-strip"><div><span>Repository</span><strong className="mono">{refs?.repositoryUrl ?? '…'}</strong></div>{refs?.error ? <div className="repo-error"><ShieldAlert size={14} />Không đọc được nhánh từ repository: {refs.error}</div> : <div><span>Nhánh</span><strong>{refs ? refs.branches.map((b) => `${b.name} @ ${b.sha.slice(0, 7)}`).join(' · ') || 'không có nhánh' : 'đang đọc…'}</strong></div>}{refs && refs.tags.length > 0 && <div><span>Tag mới nhất</span><strong>{refs.tags.slice(0, 3).map((t) => t.name).join(' · ')}</strong></div>}</section><div className="pipeline-card-grid">{definitions.map((pipeline) => {
+  if (historyPipeline) { const historyRuns = runsForPipeline(historyPipeline); return <section className="history-view"><button className="back-button" onClick={() => setHistoryPipeline(null)}><ArrowLeft size={16} />All Environments</button><div className="run-heading"><div><h2>{historyPipeline.name} · Build History</h2><p>Runs targeting this environment, newest first; status reported by Jenkins and worker.</p></div><button className="primary-button" disabled={busyPipeline === historyPipeline.id} onClick={() => openRunModal(historyPipeline)}><Play size={15} />{busyPipeline === historyPipeline.id ? 'Queuing…' : 'Run Pipeline'}</button></div><section className="panel table-panel"><div className="data-table history-table"><div className="table-row table-head"><span>Build</span><span>Commit</span><span>Branch</span><span>Triggered By</span><span>Started</span><span>Status</span><span /></div>{historyRuns.map((item) => <button className="table-row table-button" onClick={() => setRun({ pipeline: historyPipeline, liveRun: item })} key={item.id}><span className="request-id" title={item.jenkinsRunId ?? item.id}>#{item.jenkinsRunId ? item.jenkinsRunId.split('#').pop() : item.id.slice(0, 8)}</span><span className="mono" title={item.commitSha}>{shortSha(item.commitSha)}</span><span>{item.branch}</span><span title={item.startedBy ?? ''}>{person(item.startedBy)}</span><span title={item.createdAt}>{new Date(item.createdAt).toLocaleString('en-US')}</span><StatusPill status={item.status.replace('_', ' ')} /><ExternalLink size={15} /></button>)}</div>{!historyRuns.length && <div className="empty-table"><History size={22} /><strong>No pipeline runs for this environment yet</strong><span>Click "Run Pipeline" to build a commit and deploy.</span></div>}</section>{triggered && <div className="toast success-toast"><CheckCircle2 size={17} />{triggered} has been queued.</div>}</section> }
+  return <><section className="panel repo-strip"><div><span>Repository</span><strong className="mono">{refs?.repositoryUrl ?? '…'}</strong></div>{refs?.error ? <div className="repo-error"><ShieldAlert size={14} />Failed to read branches from repository: {refs.error}</div> : <div><span>Branch</span><strong>{refs ? refs.branches.map((b) => `${b.name} @ ${b.sha.slice(0, 7)}`).join(' · ') || 'no branches' : 'loading…'}</strong></div>}{refs && refs.tags.length > 0 && <div><span>Latest Tags</span><strong>{refs.tags.slice(0, 3).map((t) => t.name).join(' · ')}</strong></div>}</section><div className="pipeline-card-grid">{definitions.map((pipeline) => {
     const live = runsForPipeline(pipeline)[0]
     const env = pipeline.id.replace('cd-', '')
-    return <article className="pipeline-card panel" key={pipeline.id}><div className="pipeline-card-title"><span className={`pipeline-icon pipeline-${pipeline.id}`}><GitBranch size={18} /></span><div><h3>{pipeline.name}</h3><p>build → publish → deploy tới <b>{env}</b> · nhánh {pipeline.branch}{env === 'prod' ? ' · cần phê duyệt' : ''}</p></div><button aria-label={`Mở lịch sử ${pipeline.name}`} onClick={() => setHistoryPipeline(pipeline)}><MoreHorizontal size={18} /></button></div><div className="last-build"><span>Lượt chạy gần nhất</span><strong title={live?.jenkinsRunId ?? live?.id}>{live ? `#${live.jenkinsRunId ? live.jenkinsRunId.split('#').pop() : live.id.slice(0, 8)}` : '—'}</strong><StatusPill status={live?.status.replace('_', ' ') ?? 'chưa chạy'} /></div><dl><div><dt>Commit</dt><dd className="mono" title={live?.commitSha}>{shortSha(live?.commitSha)}{live?.branch ? ` (${live.branch})` : ''}</dd></div><div><dt>Artifact</dt><dd className="mono" title={live?.artifactDigest ?? ''}>{shortDigest(live?.artifactDigest)}</dd></div><div><dt>Bởi</dt><dd title={live?.startedBy ?? ''}>{person(live?.startedBy)}</dd></div><div><dt>Khi nào</dt><dd title={live?.createdAt}>{live ? timeAgo(live.createdAt) : 'chưa có'}</dd></div></dl><footer><button className="secondary-button" onClick={() => setHistoryPipeline(pipeline)}><History size={15} />Lịch sử</button><button className="primary-button" style={{ height: '32px', padding: '0 12px', fontSize: '0.82rem', display: 'flex', alignItems: 'center', gap: '6px' }} disabled={busyPipeline === pipeline.id} aria-label={`Run ${pipeline.name}`} onClick={() => openRunModal(pipeline)}><Play size={14} />Chạy</button></footer></article>
+    return <article className="pipeline-card panel" key={pipeline.id}><div className="pipeline-card-title"><span className={`pipeline-icon pipeline-${pipeline.id}`}><GitBranch size={18} /></span><div><h3>{pipeline.name}</h3><p>build → publish → deploy to <b>{env}</b> · branch {pipeline.branch}{env === 'prod' ? ' · approval required' : ''}</p></div><button aria-label={`Open history ${pipeline.name}`} onClick={() => setHistoryPipeline(pipeline)}><MoreHorizontal size={18} /></button></div><div className="last-build" style={live ? { cursor: 'pointer' } : undefined} title={live ? "Click để mở chi tiết Pipeline Run này" : undefined} onClick={() => { if (live) setRun({ pipeline, liveRun: live }) }}><span>Latest Run</span><strong title={live?.jenkinsRunId ?? live?.id}>{live ? `#${live.jenkinsRunId ? live.jenkinsRunId.split('#').pop() : live.id.slice(0, 8)}` : '—'}</strong><StatusPill status={live?.status.replace('_', ' ') ?? 'idle'} /></div>{live?.status === 'waiting_approval' && <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: '#fff4df', border: '1px solid #dda11d', borderRadius: '6px', padding: '6px 10px', margin: '8px 0', fontSize: '0.82rem', color: '#9d6b0c', cursor: 'pointer' }} onClick={() => setRun({ pipeline, liveRun: live })}><span>⏳ <strong>Chờ phê duyệt</strong> để deploy Prod</span><span style={{ textDecoration: 'underline', fontWeight: 600 }}>Duyệt ngay →</span></div>}<dl><div><dt>Commit</dt><dd className="mono" title={live?.commitSha}>{shortSha(live?.commitSha)}{live?.branch ? ` (${live.branch})` : ''}</dd></div><div><dt>Artifact</dt><dd className="mono" title={live?.artifactDigest ?? ''}>{shortDigest(live?.artifactDigest)}</dd></div><div><dt>Triggered By</dt><dd title={live?.startedBy ?? ''}>{person(live?.startedBy)}</dd></div><div><dt>Started</dt><dd title={live?.createdAt}>{live ? timeAgo(live.createdAt) : 'none'}</dd></div></dl><footer><button className="secondary-button" onClick={() => setHistoryPipeline(pipeline)}><History size={15} />History</button><button className="primary-button" style={{ height: '32px', padding: '0 12px', fontSize: '0.82rem', display: 'flex', alignItems: 'center', gap: '6px' }} disabled={busyPipeline === pipeline.id} aria-label={`Run ${pipeline.name}`} onClick={() => openRunModal(pipeline)}><Play size={14} />Run Pipeline</button></footer></article>
   })}</div>
   {runModalPipeline && (
     <Modal
-      title={`Chạy pipeline → ${runModalPipeline.name}`}
-      description={`Build commit đã chọn trên Jenkins (pod tạm cho mỗi build), ký & quét artifact, rồi triển khai tới ${modalEnv}${modalEnv === 'prod' ? ' sau khi được phê duyệt' : ''}.`}
+      title={`Run Pipeline → ${runModalPipeline.name}`}
+      description={`Build selected commit on Jenkins (ephemeral pod), sign & scan artifact, then deploy to ${modalEnv}${modalEnv === 'prod' ? ' after approval' : ''}.`}
       onClose={() => setRunModalPipeline(null)}
       footer={
         <>
-          <button className="secondary-button" onClick={() => setRunModalPipeline(null)}>Hủy</button>
+          <button className="secondary-button" onClick={() => setRunModalPipeline(null)}>Cancel</button>
           <button className="primary-button" disabled={busyPipeline === runModalPipeline.id || !modalRevision.trim()} onClick={executeModalRun}>
-            <Play size={15} />{busyPipeline === runModalPipeline.id ? 'Đang xếp hàng…' : 'Chạy pipeline'}
+            <Play size={15} />{busyPipeline === runModalPipeline.id ? 'Queuing…' : 'Run Pipeline'}
           </button>
         </>
       }
     >
       <div className="form-grid" style={{ gap: '14px' }}>
         <label className="field full">
-          <span>Nhánh</span>
+          <span>Branch</span>
           {refs && refs.branches.length > 0 ? <select value={modalBranch} onChange={(e) => { setModalBranch(e.target.value); setModalRevision(branchSha(e.target.value)) }}>
             {refs.branches.map((b) => <option key={b.name} value={b.name}>{b.name} — {b.sha.slice(0, 7)}</option>)}
             {refs.tags.slice(0, 20).map((t) => <option key={`tag:${t.name}`} value={t.name}>tag {t.name} — {t.sha.slice(0, 7)}</option>)}
           </select> : <input value={modalBranch} onChange={(e) => setModalBranch(e.target.value)} placeholder="main" />}
-          <small>{refs?.error ? `Không đọc được repository (${refs.error}); nhập commit thủ công.` : 'Chọn nhánh hoặc tag: netCI điền commit đầu nhánh, đọc từ repository của module.'}</small>
+          <small>{refs?.error ? `Unable to read repository (${refs.error}); enter commit manually.` : 'Select branch or tag: netCI auto-fills head commit SHA.'}</small>
         </label>
         <label className="field full">
           <span>Commit SHA</span>
-          <input className="mono" value={modalRevision} onChange={(e) => setModalRevision(e.target.value)} placeholder="7–64 ký tự hex" />
-          <small>Commit bất biến được ghi vào lượt chạy và gửi tới Jenkins; có thể sửa để build một commit cũ hơn của nhánh.</small>
+          <input className="mono" value={modalRevision} onChange={(e) => setModalRevision(e.target.value)} placeholder="7–64 hex characters" />
+          <small>Immutable commit recorded for this run and sent to Jenkins; can be overridden to build an earlier commit.</small>
         </label>
         <label className="field full">
-          <span>Môi trường</span>
+          <span>Environment</span>
           <select value={modalEnv} onChange={(e) => setModalEnv(e.target.value as Environment)}>
-            {definitions.map((d) => { const env = d.id.replace('cd-', '') as Environment; return <option key={env} value={env}>{environmentLabel[env] ?? env}{env === 'prod' ? ' (cần phê duyệt)' : ''}</option> })}
+            {definitions.map((d) => { const env = d.id.replace('cd-', '') as Environment; return <option key={env} value={env}>{environmentLabel[env] ?? env}{env === 'prod' ? ' (approval required)' : ''}</option> })}
           </select>
         </label>
         {modalError && <div className="login-error" role="alert">{modalError}</div>}
       </div>
     </Modal>
   )}
-  {triggered && <div className="toast success-toast"><CheckCircle2 size={17} />{triggered} was queued successfully.<button aria-label="Đóng thông báo" onClick={() => setTriggered(null)}>×</button></div>}</>
+  {triggered && <div className="toast success-toast"><CheckCircle2 size={17} />{triggered} was queued successfully.<button aria-label="Close notification" onClick={() => setTriggered(null)}>×</button></div>}</>
+
 }
 
 type VersionRow = { tag: string; date: string; user: string; commit: string; coverage: number | null; dev: string; staging: string; prod: string; autoTest: string; signed: boolean; sbom: string; scan: string; promotable: boolean }

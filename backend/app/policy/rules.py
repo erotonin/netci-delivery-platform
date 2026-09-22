@@ -58,8 +58,9 @@ def require_environment_permission(environment: Environment, roles: frozenset[Ro
     previously written but never invoked, which made it documentation rather than a
     control; `backend/tests/test_authorization.py` now fails if that happens again.
     """
-
-    if environment == Environment.PROD and not {Role.REVIEWER, Role.PLATFORM_ADMIN}.intersection(roles):
+    allow_dev = os.getenv("NETCI_ALLOW_DEVELOPER_PROD_CD", "false").strip().lower() in {"true", "1", "yes"}
+    allowed = {Role.REVIEWER, Role.PLATFORM_ADMIN, Role.DEVELOPER} if allow_dev else {Role.REVIEWER, Role.PLATFORM_ADMIN}
+    if environment == Environment.PROD and not allowed.intersection(roles):
         raise PolicyViolation("production deployment requires reviewer or platform-admin role")
 
 

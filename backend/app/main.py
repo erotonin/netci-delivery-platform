@@ -25,7 +25,8 @@ from pathlib import Path
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response, status, WebSocket, WebSocketDisconnect
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, Response as PlainResponse
+from fastapi.responses import JSONResponse, Response as PlainResponse, StreamingResponse
+
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator, model_validator
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
@@ -36,6 +37,7 @@ from .adapters.dcim import (
     DcimUnavailable,
     configure_server_state,
     get_server_telemetry as stored_server_telemetry,
+    set_server_maintenance,
     update_server_telemetry,
 )
 from .auth import AuthError, Principal, build_authenticator
@@ -526,7 +528,25 @@ def requires(*roles: Role, unauthenticated_code: str = "UNAUTHENTICATED"):
 # Read access is the lowest bar; everything else is named where it is used.
 ReadAccess = Depends(requires(Role.VIEWER, Role.DEVELOPER, Role.REVIEWER, Role.PLATFORM_ADMIN, Role.PIPELINE))
 DeveloperAccess = Depends(requires(Role.DEVELOPER, Role.PLATFORM_ADMIN))
-ReviewerAccess = Depends(requires(Role.REVIEWER, Role.PLATFORM_ADMIN))
+def _reviewer_access(principal: Principal = Depends(current_principal)) -> Principal:
+    allow_dev = os.getenv("NETCI_ALLOW_DEVELOPER_PROD_CD", "false").strip().lower() in {"true", "1", "yes"}
+    allowed = {Role.REVIEWER, Role.PLATFORM_ADMIN, Role.DEVELOPER} if allow_dev else {Role.REVIEWER, Role.PLATFORM_ADMIN}
+    if principal.has_any(*allowed):
+        return principal
+    required = ", ".join(sorted(role.value for role in allowed))
+    if principal.is_anonymous:
+        raise HTTPException(
+            status_code=401,
+            detail={"code": "UNAUTHENTICATED", "message": f"this action requires one of: {required}"},
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    held = ", ".join(sorted(role.value for role in principal.roles)) or "no roles"
+    raise HTTPException(
+        status_code=403,
+        detail={"code": "FORBIDDEN", "message": f"this action requires one of: {required}; {principal.subject} holds: {held}"},
+    )
+
+ReviewerAccess = Depends(_reviewer_access)
 AdminAccess = Depends(requires(Role.PLATFORM_ADMIN))
 PipelineStartAccess = Depends(requires(Role.DEVELOPER, Role.REVIEWER, Role.PLATFORM_ADMIN))
 # The application-scoped run endpoint skips the Portal lookup that binds a run to its
@@ -1767,6 +1787,26 @@ def list_systems(principal: Principal = ReadAccess) -> list[dict[str, object]]:
     return portal.systems(_visible_application_ids(principal))
 
 
+class DcimProvisionRequest(BaseModel):
+    systemId: str
+    moduleId: str
+    runtime: str = "docker"
+
+
+@app.post("/dcim/auto-provision", status_code=status.HTTP_200_OK)
+def auto_provision_dcim_targets(
+    payload: DcimProvisionRequest, principal: Principal = AdminAccess
+) -> dict[str, object]:
+    """Dedicated infrastructure admin endpoint for provisioning targets in DCIM."""
+    if not hasattr(portal.dcim_catalog, "auto_provision_targets"):
+        raise HTTPException(status_code=400, detail={"code": "DCIM_NOT_NETBOX", "message": "DCIM provider is not NetBox"})
+    try:
+        devices = portal.dcim_catalog.auto_provision_targets(payload.systemId, payload.moduleId, payload.runtime)
+        return {"status": "ok", "provisioned": len(devices), "devices": [d.get("name") for d in devices]}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail={"code": "PROVISION_FAILED", "message": str(exc)}) from exc
+
+
 @app.post("/systems", status_code=status.HTTP_201_CREATED)
 def create_system(payload: SystemCreate, principal: Principal = DeveloperAccess) -> dict[str, object]:
     try:
@@ -1778,6 +1818,7 @@ def create_system(payload: SystemCreate, principal: Principal = DeveloperAccess)
         )
     except ValueError as exc:
         raise HTTPException(status_code=409, detail={"code": "SYSTEM_EXISTS", "message": str(exc)}) from exc
+
 
 
 @app.get("/systems/{systemId}")
@@ -1870,7 +1911,7 @@ def create_module(
                 # the module written in that same transaction is still there. This is the
                 # retry-after-timeout case: answer with the resource, not MODULE_EXISTS.
                 return portal.module(existing.id, session=transaction)
-            return portal.attach_module(
+            created_module = portal.attach_module(
                 system_id=systemId,
                 module_id=payload.name,
                 name=payload.displayName or payload.name,
@@ -1886,6 +1927,9 @@ def create_module(
                 else {},
                 session=transaction,
             )
+            return created_module
+
+
     except KeyError as exc:
         raise HTTPException(status_code=404, detail={"code": "SYSTEM_NOT_FOUND", "message": str(exc)}) from exc
     except ValueError as exc:
@@ -3047,6 +3091,58 @@ async def receive_scm_webhook(
     )
 
 
+@app.post("/webhooks/dcim/netbox", status_code=status.HTTP_200_OK)
+@app.post("/webhooks/netbox", status_code=status.HTTP_200_OK)
+async def receive_netbox_webhook(request: Request) -> dict[str, object]:
+    """Bidirectional webhook from NetBox DCIM: locks or unlocks targets when device status changes."""
+    try:
+        payload = await request.json()
+    except Exception as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, f"invalid JSON payload: {exc}") from exc
+
+    event = str(payload.get("event") or "").strip().lower()
+    data = payload.get("data")
+    if not isinstance(data, dict):
+        return {"status": "ignored", "reason": "missing data block"}
+
+    server_name = str(data.get("name") or "").strip()
+    if not server_name:
+        return {"status": "ignored", "reason": "no device name in data"}
+
+    raw_status = data.get("status")
+    status_str = (
+        raw_status.get("value")
+        if isinstance(raw_status, dict)
+        else str(raw_status or "")
+    ).strip().lower()
+
+    user = str(payload.get("username") or "netbox")
+    blocking_statuses = {"offline", "failed", "decommissioning", "maintenance", "staged", "planned"}
+
+    if event == "deleted" or status_str in blocking_statuses:
+        reason = f"NetBox DCIM event '{event}': device status is '{status_str}'"
+        state = set_server_maintenance(server_name, in_maintenance=True, reason=reason, operator=f"netbox:{user}")
+        logger.warning("NetBox Webhook: locked server %s from deployments (%s)", server_name, reason)
+        return {
+            "status": "ok",
+            "action": "locked",
+            "server": server_name,
+            "inMaintenance": state.in_maintenance,
+            "reason": reason,
+        }
+    elif status_str == "active":
+        state = set_server_maintenance(server_name, in_maintenance=False, reason="NetBox DCIM status: active", operator=f"netbox:{user}")
+        logger.info("NetBox Webhook: unlocked server %s for deployments", server_name)
+        return {
+            "status": "ok",
+            "action": "unlocked",
+            "server": server_name,
+            "inMaintenance": state.in_maintenance,
+        }
+
+    return {"status": "ok", "action": "noop", "server": server_name, "device_status": status_str}
+
+
 @app.post("/applications/{applicationId}/pipeline-runs", status_code=status.HTTP_202_ACCEPTED, response_model=None)
 def start_pipeline_run(
     applicationId: UUID,
@@ -3130,6 +3226,47 @@ def get_pipeline_logs(pipelineRunId: UUID, principal: Principal = ReadAccess) ->
     run, lines = platform.get_pipeline_logs(pipelineRunId)
     _require_application_access(platform.get_application(run.application_id), principal)
     return {"pipelineRunId": str(pipelineRunId), "correlationId": run.correlation_id, "lines": list(lines)}
+
+
+@app.get("/pipeline-runs/{pipelineRunId}/logs/stream")
+async def stream_pipeline_logs(pipelineRunId: UUID, principal: Principal = ReadAccess):
+    """Server-Sent Events (SSE) live log stream for real-time console rendering."""
+    run = platform.get_pipeline(pipelineRunId)
+    _require_application_access(platform.get_application(run.application_id), principal)
+
+    async def event_generator():
+        last_index = 0
+        terminal_statuses = {"succeeded", "failed", "cancelled", "rolled_back"}
+        ticks = 0
+        while ticks < 240:  # stream for up to 120s
+            try:
+                current_run, lines = platform.get_pipeline_logs(pipelineRunId)
+                lines_list = list(lines)
+                new_lines = lines_list[last_index:]
+                if new_lines:
+                    for line in new_lines:
+                        payload = json.dumps({"line": line, "status": current_run.status})
+                        yield f"data: {payload}\n\n"
+                    last_index = len(lines_list)
+                if current_run.status in terminal_statuses:
+                    yield f"data: {json.dumps({'status': current_run.status, 'done': True})}\n\n"
+                    break
+            except Exception as e:
+                yield f"data: {json.dumps({'error': str(e)})}\n\n"
+                break
+            await asyncio.sleep(0.5)
+            ticks += 1
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
 
 
 @app.post("/pipeline-runs/{pipelineRunId}/cancel", status_code=status.HTTP_200_OK)
@@ -3353,6 +3490,34 @@ def approve_deployment(
                 status_code=403, detail={"code": "SEPARATION_OF_DUTIES", "message": str(exc)}
             ) from exc
     return deployment_json(platform.approve_deployment(deploymentId, principal.subject))
+
+
+@app.post("/pipeline-runs/{pipelineRunId}/approve", status_code=status.HTTP_202_ACCEPTED, response_model=None)
+def approve_pipeline_run_deployment(
+    pipelineRunId: UUID, payload: ApprovalRequest | None = None, principal: Principal = ReviewerAccess
+) -> JSONResponse | dict[str, object]:
+    """Release a deployment waiting for human approval associated with a pipeline run."""
+    run = platform.get_pipeline(pipelineRunId)
+    _require_environment_role(run.environment, principal)
+    _require_application_access(platform.get_application(run.application_id), principal)
+
+    with database.transaction() as session:
+        deps = session.deployments(pipeline_run_id=pipelineRunId)
+    pending = [d for d in deps if d.status == DeploymentStatus.PENDING_APPROVAL]
+    if not pending:
+        raise HTTPException(
+            status_code=404, detail={"code": "NO_PENDING_DEPLOYMENT", "message": "no pending deployment for this run"}
+        )
+
+    deployment_id = pending[0].id
+    if separation_of_duties_enabled(principal):
+        try:
+            require_separation_of_duties(platform.deployment_requested_by(deployment_id), principal.subject)
+        except PolicyViolation as exc:
+            raise HTTPException(
+                status_code=403, detail={"code": "SEPARATION_OF_DUTIES", "message": str(exc)}
+            ) from exc
+    return deployment_json(platform.approve_deployment(deployment_id, principal.subject))
 
 
 @app.get("/deployments/{deploymentId}")

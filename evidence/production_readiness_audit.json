@@ -1,18 +1,18 @@
 {
-  "timestamp": "2026-09-05T02:58:29.794488+00:00",
+  "timestamp": "2026-09-22T05:10:06.208185+00:00",
   "platform": "netCI Delivery Platform",
   "release": "netci-local-rc1",
-  "totalChecks": 28,
-  "passedChecks": 28,
+  "totalChecks": 27,
+  "passedChecks": 27,
   "failedChecks": 0,
   "checks": [
     {
       "id": "p1-migrations-count",
       "phase": "Phase 1",
-      "description": "Exactly 18 ordered SQL migrations exist in backend/migrations",
+      "description": "Migrations in backend/migrations are contiguous and schema.sql matches them",
       "verdict": "PASS",
       "details": {
-        "count": 18,
+        "count": 25,
         "migrations": [
           "0001_baseline.sql",
           "0002_delivery_events_and_concurrency.sql",
@@ -31,7 +31,14 @@
           "0015_observability_and_notifications.sql",
           "0016_multi_module_dag_and_progressive_delivery.sql",
           "0017_policy_engine_governance_and_admission.sql",
-          "0018_service_catalog_and_self_service.sql"
+          "0018_service_catalog_and_self_service.sql",
+          "0019_security_waivers_and_telemetry.sql",
+          "0020_server_telemetry.sql",
+          "0021_stage_catalog.sql",
+          "0022_stage_catalog_governance_and_parameters.sql",
+          "0023_agent_fleet_and_replica_coordination.sql",
+          "0024_production_request_cancelled.sql",
+          "0025_supersede_replaced_config_revisions.sql"
         ]
       }
     },
@@ -42,16 +49,6 @@
       "verdict": "PASS",
       "details": {
         "count": 34
-      }
-    },
-    {
-      "id": "p1-database-live-tables",
-      "phase": "Phase 1",
-      "description": "All 34 critical tables exist on canonical PostgreSQL instance",
-      "verdict": "PASS",
-      "details": {
-        "discoveredCount": 34,
-        "missing": []
       }
     },
     {
@@ -70,11 +67,11 @@
       "verdict": "PASS",
       "details": {
         "jenkins_scopes": [
-          "ci:logs",
           "ci:report",
-          "ci:stage",
           "ci:result",
-          "ci:evidence"
+          "ci:evidence",
+          "ci:stage",
+          "ci:logs"
         ]
       }
     },
@@ -99,9 +96,9 @@
       "verdict": "PASS",
       "details": {
         "queued_transitions": [
-          "cancelled",
+          "failed",
           "running",
-          "failed"
+          "cancelled"
         ]
       }
     },
@@ -112,9 +109,9 @@
       "verdict": "PASS",
       "details": {
         "pending_transitions": [
+          "failed",
           "deploying",
-          "cancelled",
-          "failed"
+          "cancelled"
         ]
       }
     },
@@ -300,7 +297,7 @@
       "description": "Authoritative OpenAPI 3.1.0 contract file exists at api/openapi.yaml",
       "verdict": "PASS",
       "details": {
-        "sizeBytes": 111459
+        "sizeBytes": 149514
       }
     },
     {
@@ -316,9 +313,10 @@
       "description": "ADR corpus contains comprehensive architecture decisions (>= 25 records)",
       "verdict": "PASS",
       "details": {
-        "adrCount": 26
+        "adrCount": 37
       }
     }
   ],
-  "verdict": "CERTIFIED"
+  "verdict": "SELF_CHECK_PASSED",
+  "scope": "in-process code invariants; no external infrastructure contacted"
 }

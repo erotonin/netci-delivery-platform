@@ -10,8 +10,11 @@ errors: list[str] = []
 
 compose_text = (ROOT / 'docker-compose.yml').read_text(encoding='utf-8')
 compose = yaml.safe_load(compose_text)
-for service in {'postgres', 'registry', 'minio', 'temporalite', 'netci-api', 'jenkins-a', 'jenkins-b'}:
-    if service not in compose.get('services', {}):
+compose_services = compose.get('services', {})
+if not ({'temporal', 'temporalite'} & set(compose_services)):
+    errors.append('missing compose service: temporal or temporalite')
+for service in {'postgres', 'registry', 'minio', 'netci-api', 'jenkins-a', 'jenkins-b'}:
+    if service not in compose_services:
         errors.append(f'missing compose service: {service}')
 for controller in ('a', 'b'):
     expected = '/var/jenkins_home/casc/ephemeral-agent.yaml'

@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: netci
+  labels:
+    app.kubernetes.io/part-of: netci-platform
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: netci-build
+  labels:
+    app.kubernetes.io/part-of: netci-platform
+    netci.io/purpose: ephemeral-builds
