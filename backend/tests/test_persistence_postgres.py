@@ -1233,3 +1233,61 @@ def test_both_stores_agree_on_what_an_environment_is_running(portal_database):
         from_memory = session.digest_in_service(application_id, "prod")
 
     assert from_postgres == from_memory == newest_healthy.artifact_digest
+
+
+def test_only_one_of_two_simultaneous_config_approvals_activates_the_revision(portal_database):
+    """Activating a configuration revision supersedes the previous one and notifies.
+
+    `approve_config_revision` read the revision, checked it was `pending_approval`, and
+    wrote `active` in a separate statement. That is inside one transaction, but READ
+    COMMITTED lets a second approver read the same `pending_approval` between the two, so
+    both passed the check and both activated -- superseding twice and sending the
+    approval notification twice. The precondition is in the UPDATE now.
+    """
+
+    import threading
+
+    from app.domain.models import ConfigRevisionStatus
+    from app.store import PostgresDatabase
+
+    module_id = f"cfgrace-{uuid.uuid4().hex[:8]}"
+    revision_id = uuid.uuid4()
+    _execute(
+        ("INSERT INTO systems (id, unit, description, owner, status) VALUES (%s,%s,%s,%s,%s)"
+         " ON CONFLICT (id) DO NOTHING",
+         (module_id, "cfg", "config approval race", "tester", "healthy")),
+        ("INSERT INTO modules (id, system_id, name, module_type, description, runtime)"
+         " VALUES (%s,%s,%s,%s,%s,%s)",
+         (module_id, module_id, module_id, "Backend", "config approval race", "docker")),
+        ("INSERT INTO module_config_revisions (id, module_id, revision_number, status,"
+         " created_by, deployment_config, pipeline_config)"
+         " VALUES (%s,%s,%s,%s,%s,%s::jsonb,%s::jsonb)",
+         (revision_id, module_id, 1, "pending_approval", "dana", "[]", "{}")),
+    )
+
+    started = threading.Barrier(2)
+    outcomes: list[bool] = []
+    lock = threading.Lock()
+
+    def approve(actor: str) -> None:
+        database = PostgresDatabase(DATABASE_URL)
+        try:
+            started.wait(timeout=10)
+            with database.transaction() as transaction:
+                won = transaction.update_config_revision_status(
+                    revision_id, ConfigRevisionStatus.ACTIVE, approved_by=actor,
+                    expected_status=ConfigRevisionStatus.PENDING_APPROVAL,
+                ) is not None
+            with lock:
+                outcomes.append(won)
+        finally:
+            database.close()
+
+    threads = [threading.Thread(target=approve, args=(name,)) for name in ("rae", "pat")]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=30)
+
+    assert outcomes.count(True) == 1, outcomes
+    assert outcomes.count(False) == 1, outcomes

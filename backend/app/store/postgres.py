@@ -1895,18 +1895,42 @@ class PostgresSession:
         approved_by: str | None = None,
         approved_at: datetime | None = None,
         rejection_reason: str | None = None,
+        expected_status: ConfigRevisionStatus | None = None,
     ) -> ModuleConfigRevision | None:
-        self._cursor.execute(
-            f"""
-            UPDATE module_config_revisions
-               SET status = %s, approved_by = COALESCE(%s, approved_by),
-                   approved_at = COALESCE(%s, approved_at),
-                   rejection_reason = COALESCE(%s, rejection_reason)
-             WHERE id = %s
-            RETURNING {CONFIG_REVISION_COLUMNS}
-            """,
-            (status.value, approved_by, approved_at, rejection_reason, revision_id),
-        )
+        """Move a revision, optionally only from the status the caller checked.
+
+        With `expected_status` the precondition lives in the UPDATE. Reading the status
+        and then writing it are two statements, and READ COMMITTED lets a second approver
+        read the same `pending_approval` between them: both passed the check, both
+        activated, and activation supersedes the previous revision and sends a
+        notification each time. Returning None means someone else got there first.
+        """
+
+        if expected_status is None:
+            self._cursor.execute(
+                f"""
+                UPDATE module_config_revisions
+                   SET status = %s, approved_by = COALESCE(%s, approved_by),
+                       approved_at = COALESCE(%s, approved_at),
+                       rejection_reason = COALESCE(%s, rejection_reason)
+                 WHERE id = %s
+                RETURNING {CONFIG_REVISION_COLUMNS}
+                """,
+                (status.value, approved_by, approved_at, rejection_reason, revision_id),
+            )
+        else:
+            self._cursor.execute(
+                f"""
+                UPDATE module_config_revisions
+                   SET status = %s, approved_by = COALESCE(%s, approved_by),
+                       approved_at = COALESCE(%s, approved_at),
+                       rejection_reason = COALESCE(%s, rejection_reason)
+                 WHERE id = %s AND status = %s
+                RETURNING {CONFIG_REVISION_COLUMNS}
+                """,
+                (status.value, approved_by, approved_at, rejection_reason,
+                 revision_id, expected_status.value),
+            )
         row = self._cursor.fetchone()
         return _config_revision(row) if row else None
 

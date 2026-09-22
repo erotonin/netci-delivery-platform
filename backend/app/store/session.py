@@ -288,6 +288,7 @@ class PlatformSession(Protocol):
         approved_by: str | None = None,
         approved_at: datetime | None = None,
         rejection_reason: str | None = None,
+        expected_status: ConfigRevisionStatus | None = None,
     ) -> ModuleConfigRevision | None: ...
 
     def replace_portal_module_config(

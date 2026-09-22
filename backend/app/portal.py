@@ -742,12 +742,22 @@ class PortalService:
                     "a configuration revision must be approved by someone other than its author",
                     403,
                 )
-            transaction.update_config_revision_status(
+            # The status check above and this write are two statements: without the
+            # precondition in the UPDATE, two reviewers approving at the same moment both
+            # pass the check, both activate, and activation supersedes the previous
+            # revision and sends a notification each time.
+            if transaction.update_config_revision_status(
                 revision_id,
                 ConfigRevisionStatus.ACTIVE,
                 approved_by=actor,
                 approved_at=datetime.now(timezone.utc),
-            )
+                expected_status=ConfigRevisionStatus.PENDING_APPROVAL,
+            ) is None:
+                raise PortalError(
+                    "INVALID_REVISION_STATE",
+                    f"revision {revision.revision_number} is no longer waiting for approval",
+                    409,
+                )
             self._activate(transaction, module, revision, actor, approved_by=actor)
             transaction.record_notification(
                 NotificationRecord(
@@ -780,9 +790,15 @@ class PortalService:
                 raise PortalError(
                     "INVALID_REVISION_STATE", "revision is not waiting for approval", 409
                 )
-            transaction.update_config_revision_status(
-                revision_id, ConfigRevisionStatus.REJECTED, rejection_reason=reason
-            )
+            # Same reason as the approval path: the precondition belongs in the UPDATE,
+            # so an approval and a rejection racing cannot both win.
+            if transaction.update_config_revision_status(
+                revision_id, ConfigRevisionStatus.REJECTED, rejection_reason=reason,
+                expected_status=ConfigRevisionStatus.PENDING_APPROVAL,
+            ) is None:
+                raise PortalError(
+                    "INVALID_REVISION_STATE", "revision is no longer waiting for approval", 409
+                )
             transaction.record_notification(
                 NotificationRecord(
                     id=uuid4(),

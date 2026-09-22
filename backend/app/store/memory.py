@@ -759,10 +759,13 @@ class InMemorySession:
         approved_by: str | None = None,
         approved_at: datetime | None = None,
         rejection_reason: str | None = None,
+        expected_status: ConfigRevisionStatus | None = None,
     ) -> ModuleConfigRevision | None:
         rev = self._state.config_revisions.get(revision_id)
         if not rev:
             return None
+        if expected_status is not None and rev.status != expected_status:
+            return None  # see the PostgreSQL implementation for why this is conditional
         updated = replace(
             rev,
             status=status,
