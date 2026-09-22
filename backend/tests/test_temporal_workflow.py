@@ -9,6 +9,17 @@ from app.workflows.activities import DeliveryActivities
 from app.workflows.provision_and_deploy import DeliveryInput, ProvisionAndDeployWorkflow, RollbackWorkflow
 
 
+#: These run by default. They were opt-in behind NETCI_RUN_TEMPORAL_TEST=1, which meant
+#: the delivery workflow -- the thing that actually drives a deployment -- had no executed
+#: test on any host where nobody remembered to set it, and a skip reads exactly like a
+#: pass in the summary line. The opt-out is for a host that cannot fetch Temporal's
+#: time-skipping test server; on such a host the run says so rather than going quiet.
+needs_temporal_test_server = pytest.mark.skipif(
+    os.getenv("NETCI_SKIP_TEMPORAL_TEST") == "1",
+    reason="NETCI_SKIP_TEMPORAL_TEST=1: Temporal time-skipping test server not available here",
+)
+
+
 class InMemoryEvidenceStore:
     def __init__(self, digest: str) -> None:
         self.digest = digest
@@ -47,10 +58,7 @@ class RecordingDeploymentReporter:
         self.rollbacks.append(result)
 
 
-@pytest.mark.skipif(
-    os.getenv("NETCI_RUN_TEMPORAL_TEST") != "1",
-    reason="Temporal time-skipping test server download is opt-in",
-)
+@needs_temporal_test_server
 @pytest.mark.asyncio
 async def test_temporal_delivery_reaches_healthy_without_production_approval():
     digest = "sha256:" + "c" * 64
@@ -116,10 +124,7 @@ class RollbackRuntimeRunner:
         self.rolled_back.append(delivery.artifact_digest)
 
 
-@pytest.mark.skipif(
-    os.getenv("NETCI_RUN_TEMPORAL_TEST") != "1",
-    reason="Temporal time-skipping test server download is opt-in",
-)
+@needs_temporal_test_server
 @pytest.mark.asyncio
 @pytest.mark.parametrize("healthy_after", [True, False])
 async def test_rollback_workflow_executes_the_rollback_and_reports_what_the_health_check_said(healthy_after):
@@ -164,10 +169,7 @@ async def test_rollback_workflow_executes_the_rollback_and_reports_what_the_heal
     assert reporter.results == [], "a rollback reports on /rollback-result, never as a deployment result"
 
 
-@pytest.mark.skipif(
-    os.getenv("NETCI_RUN_TEMPORAL_TEST") != "1",
-    reason="Temporal time-skipping test server download is opt-in",
-)
+@needs_temporal_test_server
 @pytest.mark.asyncio
 async def test_rollback_workflow_refuses_an_unverifiable_target_and_reports_the_reason():
     """A rollback is a deployment of an older digest; the signature gate applies to it."""

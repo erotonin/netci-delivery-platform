@@ -39,3 +39,8 @@ frontend/playwright-report/
 frontend/blob-report/
 infra/lab-prod-host/agent_daemon.py
 frontend/e2e/.explore/
+
+# Local exploration scripts. Nine of these accumulated as untracked `test_*.py` under
+# scratch/, which reads like a test suite and is not one -- the 2026-09-15 audit left
+# "keep or drop" open. They stay on disk and out of the repository until someone decides.
+scratch/
