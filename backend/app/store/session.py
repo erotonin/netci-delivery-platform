@@ -67,6 +67,11 @@ class PlatformSession(Protocol):
 
     def runs_awaiting_ci_result(self, limit: int = 50) -> tuple[PipelineRun, ...]: ...
 
+    def digest_in_service(
+        self, application_id: UUID, environment: str
+    ) -> str | None: ...
+
+
     def deployments_with_status(
         self, status: DeploymentStatus, limit: int = 50
     ) -> tuple[Deployment, ...]: ...

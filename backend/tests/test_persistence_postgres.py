@@ -1168,3 +1168,68 @@ def test_postgres_resolves_a_digest_to_the_same_run_the_memory_store_does(portal
         from_memory = session.pipeline_run_by_artifact_digest(digest)
 
     assert from_postgres.id == from_memory.id == newer.id
+
+
+def test_both_stores_agree_on_what_an_environment_is_running(portal_database):
+    """"What is this environment running?" is asked on every deployment netCI creates.
+
+    It used to load every deployment the application ever had and pick the newest settled
+    one in Python; migration 0027 indexes it. The suite runs on the in-memory store and
+    releases run against PostgreSQL, so the two must answer identically -- this decides
+    what a rollback restores.
+    """
+
+    from datetime import datetime, timedelta, timezone
+
+    from app.domain.models import Deployment, DeploymentStatus, Environment, PipelineRun, PipelineStatus, Runtime
+    from app.persistence import UnitOfWork
+    from app.store import PostgresDatabase
+    from app.store.memory import InMemoryDatabase
+
+    application_id = uuid.uuid4()
+    _execute(
+        ("INSERT INTO applications (id, name, repository_url, pipeline_template, runtime,"
+         " default_environment) VALUES (%s,%s,%s,%s,%s,%s)",
+         (application_id, f"serving-{uuid.uuid4().hex[:8]}", "https://example.invalid/r",
+          "container-ci-cd-v1", "docker", "dev")),
+    )
+    run = PipelineRun(
+        application_id=application_id, commit_sha="a" * 40, environment=Environment.PROD,
+        status=PipelineStatus.SUCCEEDED, artifact_digest="sha256:" + "1" * 64,
+    )
+    base = datetime(2026, 3, 1, tzinfo=timezone.utc)
+
+    def deployment(digest: str, status: DeploymentStatus, minutes: int) -> Deployment:
+        return Deployment(
+            application_id=application_id, pipeline_run_id=run.id, environment=Environment.PROD,
+            runtime=Runtime.DOCKER, artifact_digest=digest, status=status,
+            created_at=base, updated_at=base + timedelta(minutes=minutes),
+        )
+
+    older_healthy = deployment("sha256:" + "a" * 64, DeploymentStatus.HEALTHY, 10)
+    newest_healthy = deployment("sha256:" + "b" * 64, DeploymentStatus.HEALTHY, 30)
+    # A failure after the newest healthy release must not be read as what is serving.
+    later_failure = deployment("sha256:" + "c" * 64, DeploymentStatus.FAILED, 40)
+
+    unit = UnitOfWork(
+        runs=[(run, None)],
+        deployments=[(older_healthy, None), (newest_healthy, None), (later_failure, None)],
+    )
+
+    postgres = PostgresDatabase(DATABASE_URL)
+    try:
+        with postgres.transaction() as session:
+            session.apply(unit)
+        with postgres.transaction() as session:
+            from_postgres = session.digest_in_service(application_id, "prod")
+            assert session.digest_in_service(application_id, "staging") is None
+    finally:
+        postgres.close()
+
+    memory = InMemoryDatabase()
+    with memory.transaction() as session:
+        session.apply(unit)
+    with memory.transaction() as session:
+        from_memory = session.digest_in_service(application_id, "prod")
+
+    assert from_postgres == from_memory == newest_healthy.artifact_digest

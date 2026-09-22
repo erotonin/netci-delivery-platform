@@ -187,6 +187,17 @@ class InMemorySession:
         # Same tie-break as PostgreSQL: the newest run carrying the digest.
         return max(matches, key=lambda r: (r.created_at, str(r.id)))
 
+    def digest_in_service(self, application_id: UUID, environment: str) -> str | None:
+        settled = [
+            d for d in self._state.deployments.values()
+            if d.application_id == application_id
+            and d.environment.value == environment
+            and d.status in {DeploymentStatus.HEALTHY, DeploymentStatus.ROLLED_BACK}
+        ]
+        if not settled:
+            return None
+        return max(settled, key=lambda d: d.updated_at).artifact_digest
+
     def runs_awaiting_ci_result(self, limit: int = 50) -> tuple[PipelineRun, ...]:
         ordered = sorted(self._state.runs.values(), key=lambda r: (r.created_at, str(r.id)))
         return tuple(

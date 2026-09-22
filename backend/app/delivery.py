@@ -294,15 +294,10 @@ class DeliveryPlatform:
         fact the platform holds rather than something an operator reconstructs from logs.
         """
 
-        settled = [
-            item
-            for item in transaction.deployments(application_id)
-            if item.environment == environment
-            and item.status in {DeploymentStatus.HEALTHY, DeploymentStatus.ROLLED_BACK}
-        ]
-        if not settled:
-            return None
-        return max(settled, key=lambda item: item.updated_at).artifact_digest
+        # Indexed (migration 0027). This used to load every deployment the application
+        # ever had and pick the newest settled one here, on every deployment netCI
+        # creates -- so each release of a long-lived service read every release before it.
+        return transaction.digest_in_service(application_id, environment.value)
 
     @staticmethod
     def lease_target(deployment: Deployment, run: PipelineRun | None) -> str:

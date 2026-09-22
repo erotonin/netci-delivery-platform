@@ -656,6 +656,25 @@ class PostgresSession:
         row = self._cursor.fetchone()
         return _run(row) if row else None
 
+    def digest_in_service(self, application_id: UUID, environment: str) -> str | None:
+        """The digest this environment is running, as far as netCI has established.
+
+        The newest deployment that ended with a release serving traffic: `healthy`, or
+        `rolled_back` (which serves the digest it restored). Asked on every deployment
+        netCI creates, and answered by loading every deployment the application ever had
+        until migration 0027 gave it an index.
+        """
+
+        self._cursor.execute(
+            "SELECT artifact_digest FROM deployments"
+            " WHERE application_id = %s AND environment = %s"
+            "   AND status IN ('healthy', 'rolled_back')"
+            " ORDER BY updated_at DESC LIMIT 1",
+            (application_id, environment),
+        )
+        row = self._cursor.fetchone()
+        return row["artifact_digest"] if row else None
+
     def runs_awaiting_ci_result(self, limit: int = 50) -> tuple[PipelineRun, ...]:
         """The runs the reconciler has to ask Jenkins about, filtered and capped in SQL.
 
