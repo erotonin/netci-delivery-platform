@@ -166,11 +166,21 @@ def test_two_concurrent_approvals_for_one_target_leave_exactly_one_deploying(dat
     assert DeploymentStatus.PENDING_APPROVAL in statuses
 
 
-def test_two_releases_to_different_targets_do_not_collide(database):
-    """The lock is over the target, not over the application.
+def test_two_host_releases_of_one_application_serialise(database):
+    """Host deployments of one application in one environment take turns.
 
-    One service with a blue and a green host set can deploy to both at once; the same
-    service twice to the same hosts cannot.
+    This test used to assert the opposite -- that "one service with a blue and a green
+    host set can deploy to both at once" -- and the lease key was the sorted host list to
+    allow it. That key only ever caught *identical* sets, so two releases whose lists
+    merely overlapped both got a lease and both wrote to the shared host.
+
+    The capability it protected is not one netCI can reach. `target_hosts` is the servers
+    registered for one module in one environment (`portal.py`: `configured_servers =
+    list(target.get("servers") or [])`), so two concurrent runs of that module in that
+    environment always carry the same list -- unless the configuration changed between
+    them, which is precisely the overlap this refuses. The strategies that do run a
+    second release beside a live one, canary and blue/green, are Kubernetes-only and key
+    on the namespace instead (ADR-031, ADR-035). See ADR-041.
     """
 
     engine, application = new_application("lease-targets")
@@ -178,10 +188,36 @@ def test_two_releases_to_different_targets_do_not_collide(database):
     _, green = release(engine, application, ["prod-green"], commit="bbb2222")
 
     engine.approve_deployment(blue.id, "reviewer-1")
-    engine.approve_deployment(green.id, "reviewer-2")
+    with pytest.raises(DeliveryError) as refused:
+        engine.approve_deployment(green.id, "reviewer-2")
+    assert refused.value.code == "DEPLOYMENT_TARGET_BUSY"
 
     assert engine.get_deployment(blue.id).status == DeploymentStatus.DEPLOYING
-    assert engine.get_deployment(green.id).status == DeploymentStatus.DEPLOYING
+
+
+def test_two_namespaces_of_one_application_still_do_not_collide(database):
+    """The namespace key is untouched: Kubernetes releases beside each other still work."""
+
+    engine, application = new_application("lease-namespaces")
+
+    def namespaced(namespace: str, commit: str):
+        run = engine.start_pipeline(
+            application.id, commit_sha=commit, branch="main", environment=Environment.PROD,
+            parameters={"target_namespace": namespace}, correlation_id="lease-test",
+            idempotency_key=None,
+        )
+        engine.record_ci_result(run.id, PipelineStatus.RUNNING.value, None, [])
+        engine.record_security_evidence(run.id, evidence(run))
+        return engine.record_ci_result(run.id, PipelineStatus.SUCCEEDED.value, DIGEST, []).deployment
+
+    first = namespaced("prod-blue", "aaa1111")
+    second = namespaced("prod-green", "bbb2222")
+
+    engine.approve_deployment(first.id, "reviewer-1")
+    engine.approve_deployment(second.id, "reviewer-2")
+
+    assert engine.get_deployment(first.id).status == DeploymentStatus.DEPLOYING
+    assert engine.get_deployment(second.id).status == DeploymentStatus.DEPLOYING
 
 
 def test_two_applications_sharing_a_host_are_not_treated_as_a_collision(database):
@@ -518,3 +554,27 @@ def test_a_redeploy_writes_the_deployment_before_its_lease(database):
     stored = platform().get_deployment(redeployed.id)
     assert stored.fencing_token == redeployed.fencing_token
     assert stored.previous_artifact_digest == DIGEST
+
+
+def test_two_releases_whose_host_sets_overlap_do_not_both_get_to_deploy(database):
+    """The lease is supposed to stop two deployments touching the same host.
+
+    It keyed on the exact set of hosts, so it only ever caught *identical* sets. A module
+    whose registered configuration changed between two releases -- a host added, a host
+    retired -- produces two runs with different-but-overlapping target_hosts, and both
+    were granted a lease. Both then wrote to the host in both lists, which is the defect
+    migration 0010 exists to prevent: "two workflows writing to the same hosts, and the
+    surviving state was whichever finished last".
+    """
+
+    engine, application = new_application("lease-overlap")
+    # Configuration revision 1 targets prod-a and prod-b.
+    _, first = release(engine, application, ["prod-a", "prod-b"], commit="aaa1111")
+    # Revision 2 retires prod-b and adds prod-c. prod-a is in both.
+    _, second = release(engine, application, ["prod-a", "prod-c"], commit="bbb2222")
+
+    engine.approve_deployment(first.id, "reviewer-1")
+
+    with pytest.raises(DeliveryError) as refused:
+        engine.approve_deployment(second.id, "reviewer-2")
+    assert refused.value.code == "DEPLOYMENT_TARGET_BUSY"

@@ -308,11 +308,25 @@ class DeliveryPlatform:
     def lease_target(deployment: Deployment, run: PipelineRun | None) -> str:
         """The logical thing a deployment writes to.
 
-        Two deployments collide when they would touch the same hosts or the same
-        namespace, not merely when they share an application. Taking the target from the
-        run's server-managed parameters -- which the Portal computed from the module's
-        registered configuration, and which a caller cannot supply -- means the lock is
-        over the real resource rather than over a name someone chose.
+        Taking the target from the run's server-managed parameters -- which the Portal
+        computed from the module's registered configuration, and which a caller cannot
+        supply -- means the lock is over the real resource rather than over a name
+        someone chose.
+
+        A host-based deployment locks every host-based deployment of the same application
+        in the same environment, not just one that names the identical host set. The key
+        used to be the sorted host list, which only ever caught *identical* sets: a module
+        whose configuration changed between two releases -- a host added, one retired --
+        produced runs with overlapping-but-different lists, so both were granted a lease
+        and both wrote to the host that appeared in both. That is exactly the failure
+        migration 0010 was written to stop.
+
+        One key per application+environment is coarser than per-host locking and is the
+        right invariant here, because netCI never puts two concurrent host deployments of
+        one application in one environment on purpose: a rolling release covers all of
+        that environment's registered servers, and the strategies that do deploy
+        alongside a running release -- canary and blue/green -- are Kubernetes-only and
+        key on the namespace below. The host list still reaches the audit record.
         """
 
         parameters = dict(run.parameters) if run else {}
@@ -321,9 +335,18 @@ class DeliveryPlatform:
             return f"namespace:{namespace}"
         hosts = parameters.get("target_hosts")
         if isinstance(hosts, (list, tuple)) and hosts:
-            return "hosts:" + ",".join(sorted(str(item) for item in hosts))[:200]
+            return f"hosts:{deployment.application_id}"
         # No registered target: the whole application in this environment is the resource.
         return f"application:{deployment.application_id}"
+
+    @staticmethod
+    def _lease_hosts(run: PipelineRun | None) -> list[str]:
+        """The hosts a lease covers, for the audit record the key no longer carries."""
+
+        hosts = (dict(run.parameters) if run else {}).get("target_hosts")
+        if isinstance(hosts, (list, tuple)):
+            return sorted(str(item) for item in hosts)
+        return []
 
     def _acquire_lease(
         self,
@@ -384,6 +407,7 @@ class DeliveryPlatform:
                 actor=owner,
                 payload={
                     "target": target,
+                    "hosts": self._lease_hosts(run),
                     "environment": deployment.environment.value,
                     "fencingToken": lease.fencing_token,
                     "expiresAt": lease.expires_at.isoformat(),
