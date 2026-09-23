@@ -170,6 +170,8 @@ def validate_build_inputs(supplied: dict[str, Any] | None) -> dict[str, Any]:
             )
         else:
             _check_scalar(key, value)
+        if key == "NETCI_APP_DIR":
+            value = application_directory(value)
         cleaned[key] = value
 
     total = _approximate_size(cleaned)
@@ -179,6 +181,34 @@ def validate_build_inputs(supplied: dict[str, Any] | None) -> dict[str, Any]:
             f"parameters exceed {MAX_TOTAL_BYTES} bytes in total",
         )
     return cleaned
+
+
+def application_directory(value: Any) -> str:
+    """The directory to build, inside the module's repository at the recorded commit.
+
+    It chooses *what* is built from the module's own source, never where it goes, which
+    is why a caller may set it at all. Relative and inside the checkout: a `..` segment or
+    a leading `/` would point the build at the agent's filesystem instead -- including a
+    previous build's workspace on a shared agent.
+    """
+
+    if not isinstance(value, str):
+        raise BuildInputError("BUILD_INPUT_TYPE_NOT_ALLOWED", "NETCI_APP_DIR must be a string")
+    path = value.strip().strip("/") if value.strip() not in {"", "."} else "."
+    if path == ".":
+        return "."
+    if value.strip().startswith("/"):
+        raise BuildInputError("BUILD_INPUT_INVALID", "NETCI_APP_DIR must be relative to the repository root")
+    segments = path.split("/")
+    if any(segment in {"", ".", ".."} for segment in segments) or not all(
+        segment.replace("-", "").replace("_", "").replace(".", "").isalnum() for segment in segments
+    ):
+        raise BuildInputError(
+            "BUILD_INPUT_INVALID",
+            "NETCI_APP_DIR must be a plain relative path (letters, digits, '.', '_', '-' and "
+            "'/'), with no '..' segment",
+        )
+    return path
 
 
 def _approximate_size(value: Any) -> int:

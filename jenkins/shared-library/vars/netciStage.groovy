@@ -34,7 +34,7 @@ private void report(String callbackCredentialsId, String arguments) {
     try {
         netciInBuilder {
             netciCallbackAuth(callbackCredentialsId) {
-                sh "python3 scripts/netci_callback.py ${arguments} >/dev/null"
+                sh "python3 \"\${NETCI_TOOLING_DIR}/scripts/netci_callback.py\" ${arguments} >/dev/null"
             }
         }
     } catch (ignored) {

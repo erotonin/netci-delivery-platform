@@ -13,7 +13,8 @@ def call(Map config = [:]) {
         'checkout', 'unit-test', 'build', 'sbom',
         'vulnerability-scan', 'sign', 'publish'
     ]
-    def ciScriptDir = config.get('ciScriptDir', "templates/${template}/scripts/ci")
+    // Relative to the tooling netciTooling() writes, unless a job overrides it.
+    def ciScriptDirOverride = config.get('ciScriptDir', '')
     def callbackCredentialsId = config.get('callbackCredentialsId', 'netci-pipeline-api-key')
     def cosignCredentialsId = config.get('cosignCredentialsId', 'netci-cosign-key')
 
@@ -55,7 +56,6 @@ def call(Map config = [:]) {
         }
         environment {
             NETCI_TEMPLATE = "${params.NETCI_TEMPLATE ?: template}"
-            NETCI_CI_SCRIPT_DIR = "${ciScriptDir}"
             NETCI_OUTPUT_DIR = "${env.WORKSPACE}/.netci-out"
             // netCI is the source of the correlation id; only fall back when a build
             // is started by hand from the Jenkins UI.
@@ -76,6 +76,23 @@ def call(Map config = [:]) {
         stages {
             stage('Checkout') {
                 steps {
+                    script {
+                        def tooling = netciTooling()
+                        env.NETCI_CI_SCRIPT_DIR = ciScriptDirOverride ?: "${tooling}/templates/${env.NETCI_TEMPLATE}/scripts/ci"
+                        // What to build and what to call it, both from netCI. They never
+                        // reached the build before, so the CI scripts fell back to
+                        // sample-apps/hello-container and every container module in the lab
+                        // built and pushed that one sample app. Set here rather than in
+                        // `environment {}`, whose restricted interpolation rejects `?.`.
+                        env.NETCI_APP_DIR = "${env.WORKSPACE}/${params.NETCI_APP_DIR?.trim() ?: '.'}"
+                        env.NETCI_IMAGE_NAME = params.NETCI_IMAGE_NAME?.trim() ?: ''
+                        // A build netCI dispatched always says what it is building. Without
+                        // a name the scripts would publish under their sample default --
+                        // exactly the defect this replaces -- so refuse instead.
+                        if (env.NETCI_PIPELINE_RUN_ID?.trim() && !env.NETCI_IMAGE_NAME?.trim()) {
+                            error('NETCI_IMAGE_NAME was not supplied: this netCI predates it, or the job was edited by hand')
+                        }
+                    }
                     // On the agent's own container, not through `container()`: the git
                     // plugin runs ~30 git commands for one checkout and each exec into
                     // the builder costs ~0.4 s of round trip (JENKINS-30600). Measured:
@@ -124,18 +141,17 @@ def call(Map config = [:]) {
                     sh 'mkdir -p "${NETCI_OUTPUT_DIR}"'
                 }
             }
-            // Reported after checkout, not before: netci_callback.py ships in the
-            // repository, so there is nothing to report with until the agent has it.
+            // Reported after checkout: the start and the checkout result go out together.
             stage('Report Start') {
                 when { expression { env.NETCI_PIPELINE_RUN_ID?.trim() && env.NETCI_API_URL?.trim() } }
                 steps {
                     netciInBuilder {
                         netciCallbackAuth(callbackCredentialsId) {
                             sh 'mkdir -p "${NETCI_OUTPUT_DIR}"'
-                            sh 'python3 scripts/netci_callback.py status --status running --log "jenkins build ${BUILD_TAG} started"'
+                            sh 'python3 "${NETCI_TOOLING_DIR}/scripts/netci_callback.py" status --status running --log "jenkins build ${BUILD_TAG} started"'
                             // Checkout itself finished before the callback script existed;
                             // its result is reported here, once, after the fact.
-                            sh 'python3 scripts/netci_callback.py stage --id checkout --name Checkout --status succeeded >/dev/null'
+                            sh 'python3 "${NETCI_TOOLING_DIR}/scripts/netci_callback.py" stage --id checkout --name Checkout --status succeeded >/dev/null'
                         }
                     }
                 }
@@ -242,7 +258,7 @@ def call(Map config = [:]) {
                         netciCallbackAuth(callbackCredentialsId) {
                             // Exits non-zero when netCI denies the artifact, so a
                             // policy failure fails the build instead of being logged.
-                            sh 'python3 scripts/netci_callback.py evidence'
+                            sh 'python3 "${NETCI_TOOLING_DIR}/scripts/netci_callback.py" evidence'
                         }
                     }
                 }
@@ -270,7 +286,7 @@ def call(Map config = [:]) {
                     if (env.NETCI_PIPELINE_RUN_ID?.trim() && env.NETCI_API_URL?.trim()) {
                         netciInBuilder {
                             netciCallbackAuth(callbackCredentialsId) {
-                                sh 'python3 scripts/netci_callback.py status --status succeeded --log "jenkins build ${BUILD_TAG} succeeded"'
+                                sh 'python3 "${NETCI_TOOLING_DIR}/scripts/netci_callback.py" status --status succeeded --log "jenkins build ${BUILD_TAG} succeeded"'
                             }
                         }
                     }
@@ -283,7 +299,7 @@ def call(Map config = [:]) {
                             netciCallbackAuth(callbackCredentialsId) {
                                 // Best effort: a failed build must not be hidden by a
                                 // failing callback, but netCI must still learn about it.
-                                sh(script: 'python3 scripts/netci_callback.py status --status failed --log "jenkins build ${BUILD_TAG} failed"', returnStatus: true)
+                                sh(script: 'python3 "${NETCI_TOOLING_DIR}/scripts/netci_callback.py" status --status failed --log "jenkins build ${BUILD_TAG} failed"', returnStatus: true)
                             }
                         }
                     }

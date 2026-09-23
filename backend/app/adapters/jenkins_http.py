@@ -123,6 +123,12 @@ JOB_PARAMETERS: tuple[str, ...] = (
     "GIT_URL",
     "GIT_BRANCH",
     "COMMIT_SHA",
+    # What to build and what to call it. Neither reached Jenkins before, so the CI scripts
+    # fell back to their defaults -- sample-apps/hello-container, image `hello-container`
+    # -- and every container module in the lab built and pushed the same sample app under
+    # that one name, whatever its own repository held.
+    "NETCI_APP_DIR",
+    "NETCI_IMAGE_NAME",
     # Lets the same job be sent to a shared or an ephemeral agent, which is what the
     # benchmark compares. Empty means "use the template default".
     "NETCI_AGENT_LABEL",
@@ -136,6 +142,20 @@ JOB_PARAMETERS: tuple[str, ...] = (
     "REGISTRY_PULL_HOST",
     "NETCI_TRIVY_DB_REPOSITORY",
 )
+
+
+def image_name_for(application_name: str) -> str:
+    """An OCI repository name component for an application: lowercase, [a-z0-9._-].
+
+    Application names are already slugs, so this normally returns them unchanged; it is
+    here so a name that is not one cannot produce a reference the registry rejects late,
+    after a build has spent its time.
+    """
+
+    name = re.sub(r"[^a-z0-9._-]+", "-", application_name.strip().lower()).strip("._-")
+    if not name:
+        raise ValueError(f"application name {application_name!r} has no usable image name")
+    return name[:128]
 
 
 class JenkinsHttpAdapter:
@@ -365,6 +385,12 @@ class JenkinsHttpAdapter:
                 "GIT_URL": request.repository_url,
                 "GIT_BRANCH": request.branch,
                 "COMMIT_SHA": request.commit_sha,
+                # A build input, validated by build_inputs.application_directory; the
+                # repository root unless the module lives in a subdirectory.
+                "NETCI_APP_DIR": str(request.parameters.get("NETCI_APP_DIR") or "."),
+                # Decided here, not by the caller: the image repository is where the
+                # artifact lands, and one module must not be able to publish as another.
+                "NETCI_IMAGE_NAME": image_name_for(request.application_name),
                 "NETCI_AGENT_LABEL": str(request.parameters.get("agentLabel", "")),
                 **(request.isolation.as_parameters() if request.isolation else {
                     "NETCI_BUILD_NAMESPACE": "", "NETCI_BUILD_SERVICE_ACCOUNT": "", "NETCI_BUILD_CACHE_CLAIM": "",
