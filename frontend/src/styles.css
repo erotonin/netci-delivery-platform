@@ -168,6 +168,12 @@ svg { flex: 0 0 auto; }
 .danger-button { border: 1px solid #f1b7be; background: #fff; color: var(--red); }
 .trigger-button { width: 34px; padding: 0; border: 1px solid var(--accent); background: var(--accent); color: #fff; }
 .back-button { min-height: 30px; border: 0; background: transparent; color: var(--muted); display: inline-flex; align-items: center; gap: 7px; padding: 0; font-size: 12px; font-weight: 600; }
+.back-button:hover { color: var(--text); text-decoration: underline; }
+/* The trail out of a run. The full way back reads first because it is what people
+   reach for; each hop stays clickable so the middle step is not lost. */
+.run-breadcrumb { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
+.run-breadcrumb > span[aria-hidden] { color: var(--muted); font-size: 12px; }
+.run-breadcrumb-current { color: var(--text); font-size: 12px; font-weight: 600; }
 
 .panel { border: 1px solid var(--border); border-radius: 8px; background: var(--surface); }
 .panel-heading { min-height: 64px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 13px 18px; }

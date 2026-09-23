@@ -120,12 +120,15 @@ function PipelineRunView({
   liveRun,
   moduleId,
   onBack,
+  onBackToEnvironments,
   onRunUpdated,
 }: {
   pipeline: PipelineDefinition
   liveRun: PipelineRun | null
   moduleId?: string
   onBack: () => void
+  /** Straight back to the environment list. Without it, leaving a run took two hops. */
+  onBackToEnvironments: () => void
   onRunUpdated: (updated: PipelineRun) => void
 }) {
   const { notify } = usePortalFeedback()
@@ -242,7 +245,16 @@ function PipelineRunView({
   const canRetry = !!liveRun && (liveRun.status === 'failed' || liveRun.status === 'cancelled' || liveRun.status === 'rolled_back' || liveRun.status === 'succeeded')
 
   return <section className="run-view">
-    <button className="back-button" onClick={onBack}><ArrowLeft size={16} />Back to build history</button>
+    {/* Leaving a run used to mean two hops: back to build history, then back to the
+        environment list. Each step is its own control now, and the one people want most
+        -- all the way out -- is first. */}
+    <nav className="run-breadcrumb" aria-label="Breadcrumb">
+      <button className="back-button" onClick={onBackToEnvironments}><ArrowLeft size={16} />All environments</button>
+      <span aria-hidden="true">/</span>
+      <button className="back-button" onClick={onBack}>{pipeline.name}</button>
+      <span aria-hidden="true">/</span>
+      <span className="run-breadcrumb-current">{liveRun ? `build ${buildLabel(liveRun)}` : 'new run'}</span>
+    </nav>
     <div className="run-heading">
       <div>
         <div className="title-status">
@@ -371,6 +383,10 @@ function PipelineTab({ moduleId, pipelineConfig, deploymentEnvironments, initial
   const [busyPipeline, setBusyPipeline] = useState<string | null>(null)
   const [triggered, setTriggered] = useState<string | null>(null)
   const [refs, setRefs] = useState<GitRefs | null>(null)
+  // 'loading' until the request settles. A failed request used to leave `refs`
+  // null and the hint still promising that netCI would fill the commit in, which
+  // it then could not do -- an empty field and a sentence that was not true.
+  const [refsState, setRefsState] = useState<'loading' | 'ready' | 'unreachable'>('loading')
 
   useEffect(() => {
     let active = true
@@ -378,7 +394,9 @@ function PipelineTab({ moduleId, pipelineConfig, deploymentEnvironments, initial
     // Branches and tags come from the module's own repository, read by the server. The
     // Portal used to offer netCI's *own* build commit here, which does not exist in the
     // module's repository, so the default "Run" failed at checkout.
-    getModuleGitRefs(moduleId).then((result) => { if (active) setRefs(result) }).catch(() => { if (active) setRefs(null) })
+    getModuleGitRefs(moduleId)
+      .then((result) => { if (active) { setRefs(result); setRefsState('ready') } })
+      .catch(() => { if (active) { setRefs(null); setRefsState('unreachable') } })
     return () => { active = false }
   }, [moduleId])
   const [runModalPipeline, setRunModalPipeline] = useState<PipelineDefinition | null>(null)
@@ -433,7 +451,8 @@ function PipelineTab({ moduleId, pipelineConfig, deploymentEnvironments, initial
         pipeline={run.pipeline}
         liveRun={run.liveRun}
         moduleId={moduleId}
-        onBack={() => setRun(null)}
+        onBack={() => { setRun(null); setHistoryPipeline(run.pipeline) }}
+        onBackToEnvironments={() => { setRun(null); setHistoryPipeline(null) }}
         onRunUpdated={(updated) => {
           setRun({ pipeline: run.pipeline, liveRun: updated })
           setLiveRuns((current) => [updated, ...current.filter((item) => item.id !== updated.id)])
@@ -468,7 +487,13 @@ function PipelineTab({ moduleId, pipelineConfig, deploymentEnvironments, initial
             {refs.branches.map((b) => <option key={b.name} value={b.name}>{b.name} — {b.sha.slice(0, 7)}</option>)}
             {refs.tags.slice(0, 20).map((t) => <option key={`tag:${t.name}`} value={t.name}>tag {t.name} — {t.sha.slice(0, 7)}</option>)}
           </select> : <input value={modalBranch} onChange={(e) => setModalBranch(e.target.value)} placeholder="main" />}
-          <small>{refs?.error ? `Unable to read repository (${refs.error}); enter commit manually.` : 'Select branch or tag: netCI auto-fills head commit SHA.'}</small>
+          <small>{refs?.error
+            ? `Unable to read repository (${refs.error}); enter commit manually.`
+            : refsState === 'loading'
+              ? 'Reading branches from the module\u2019s repository\u2026'
+              : refsState === 'unreachable'
+                ? 'Could not reach netCI to list branches; enter the commit SHA manually.'
+                : 'Select branch or tag: netCI auto-fills head commit SHA.'}</small>
         </label>
         <label className="field full">
           <span>Commit SHA</span>

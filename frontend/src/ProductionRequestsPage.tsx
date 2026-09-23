@@ -7,7 +7,8 @@ import {
 import {
   approveProductionRequest, createProductionRequest, listProductionRequests, listSystems,
   getSystem, rejectProductionRequest, getProductionRequestPlan, advanceCanary, abortCanary,
-  getDeploymentTraffic, cancelDeployment, type ProductionRequest, type ProductionRequestCreate,
+  getDeploymentTraffic, cancelDeployment, whoami,
+  type ProductionRequest, type ProductionRequestCreate,
 } from './api/netciClient'
 import { Modal, PageHeader, StatusPill } from './PortalShell'
 import { usePortalFeedback } from './PortalFeedback'
@@ -57,6 +58,7 @@ function toOffsetIso(localValue: string): string {
 function RequestDetails({
   request,
   busy,
+  viewerSubject,
   onClose,
   onApprove,
   onReject,
@@ -64,12 +66,15 @@ function RequestDetails({
 }: {
   request: ProductionRequest
   busy: boolean
+  /** Who is looking. Only to reflect the server's rule, never to decide it. */
+  viewerSubject: string | null
   onClose: () => void
   onApprove: () => void
   onReject: () => void
   onRefresh?: () => void
 }) {
   const { notify } = usePortalFeedback()
+  const isOwnRequest = Boolean(viewerSubject) && viewerSubject === request.requestedBy
   const [currentReq, setCurrentReq] = useState<ProductionRequest>(request)
   const [canaryBusy, setCanaryBusy] = useState(false)
   const [trafficInfo, setTrafficInfo] = useState<{ trafficWeight: number; canaryStep: number } | null>(null)
@@ -189,7 +194,18 @@ function RequestDetails({
               <button className="danger-button" disabled={busy} onClick={onReject}>
                 <XCircle size={16} />Reject
               </button>
-              <button className="primary-button" disabled={busy} onClick={onApprove}>
+              {/* Separation of duties is enforced by the API, which answers 403; this
+                  only shows the same rule before the click instead of after it. The
+                  button is never the control -- removing it changes nothing server-side. */}
+              <button
+                className="primary-button"
+                disabled={busy || isOwnRequest}
+                title={isOwnRequest
+                  ? 'You raised this request; production needs a different reviewer to approve it'
+                  : undefined}
+                data-testid="request-approve"
+                onClick={onApprove}
+              >
                 <ShieldCheck size={16} />Approve
               </button>
             </>
@@ -414,8 +430,14 @@ function NewRequest({
   onClose: () => void
   onCreate: (payload: ProductionRequestCreate) => Promise<void>
 }) {
-  const firstVersionedModule = availableModules.find((module) => module.versions.length > 0)
-  const [selected, setSelected] = useState<string[]>(firstVersionedModule ? [firstVersionedModule.id] : [])
+  const versionedModules = availableModules.filter((module) => module.versions.length > 0)
+  // A production request may cover several modules -- that is what the release waves
+  // are for -- so this is a multi-select. Pre-selecting the first one made the first
+  // click on it read as a de-selection, which is the opposite of what the user meant.
+  // Pre-select only when there is exactly one candidate and nothing to mistake it for.
+  const [selected, setSelected] = useState<string[]>(
+    versionedModules.length === 1 ? [versionedModules[0].id] : []
+  )
   const [drafts, setDrafts] = useState<Record<string, DraftModule>>(() =>
     Object.fromEntries(
       availableModules.map((module, index) => [
@@ -828,6 +850,16 @@ function NewRequest({
 
 export function ProductionRequestsPage({ systemId }: { systemId: string }) {
   const { notify } = usePortalFeedback()
+  // Who the *server* says we are. The Portal never decides this for itself, and this is
+  // used only to show the separation-of-duties rule before the click rather than after.
+  const [viewerSubject, setViewerSubject] = useState<string | null>(null)
+  useEffect(() => {
+    let active = true
+    whoami()
+      .then((identity) => { if (active) setViewerSubject(identity.principal.subject) })
+      .catch(() => { if (active) setViewerSubject(null) })
+    return () => { active = false }
+  }, [])
   const [items, setItems] = useState<ProductionRequest[]>([])
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState('')
@@ -1100,6 +1132,7 @@ export function ProductionRequestsPage({ systemId }: { systemId: string }) {
         <RequestDetails
           request={details}
           busy={commandBusy}
+          viewerSubject={viewerSubject}
           onClose={() => { setDetails(null); void load() }}
           onApprove={() => updateStatus('approve')}
           onReject={() => updateStatus('reject')}

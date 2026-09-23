@@ -26,6 +26,7 @@ import {
   type PreviewEnvironment,
   type ResourceRequest,
   type ServiceDependencyGraph,
+  registerCatalogTemplate,
   type TemplateInstantiatedPlan,
 } from './api/netciClient'
 import { Modal, PageHeader, StatusPill } from './PortalShell'
@@ -102,6 +103,16 @@ export function CatalogPage({
   const [showAddDependency, setShowAddDependency] = useState(false)
   const [showCreatePreview, setShowCreatePreview] = useState(false)
   const [showRequestResource, setShowRequestResource] = useState(false)
+  // Registering a Golden Path template was the one catalog action with an API, a client
+  // function and no way to reach it from the browser: a platform admin had to POST by
+  // hand. There is deliberately no delete -- modules carry the template they were
+  // instantiated from, so a template is retired by marking it deprecated, not removed.
+  const [showRegisterTemplate, setShowRegisterTemplate] = useState(false)
+  const [templateForm, setTemplateForm] = useState({
+    templateId: '', version: 'v1.0.0', name: '', description: '', category: 'backend',
+    parametersSchema: '{}', pipelineDefinition: '{}', isDeprecated: false,
+  })
+  const [templateFormError, setTemplateFormError] = useState('')
 
   // Service form
   const [serviceForm, setServiceForm] = useState<CatalogServiceCreate>({
@@ -253,6 +264,39 @@ export function CatalogPage({
     }
   }
 
+  const handleRegisterTemplate = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setTemplateFormError('')
+    let parametersSchema: Record<string, unknown>
+    let pipelineDefinition: Record<string, unknown>
+    try {
+      parametersSchema = JSON.parse(templateForm.parametersSchema || '{}')
+      pipelineDefinition = JSON.parse(templateForm.pipelineDefinition || '{}')
+    } catch (err: unknown) {
+      // Refuse here rather than send something the server will reject less clearly.
+      setTemplateFormError(`Parameters schema and pipeline definition must be JSON: ${String(err)}`)
+      return
+    }
+    try {
+      await registerCatalogTemplate({
+        templateId: templateForm.templateId.trim(),
+        version: templateForm.version.trim(),
+        name: templateForm.name.trim(),
+        description: templateForm.description.trim(),
+        category: templateForm.category.trim() || 'backend',
+        parametersSchema,
+        pipelineDefinition,
+        isDeprecated: templateForm.isDeprecated,
+      })
+      feedback.notify(`Template ${templateForm.templateId} ${templateForm.version} registered.`, 'success')
+      setShowRegisterTemplate(false)
+      setTemplateForm({ templateId: '', version: 'v1.0.0', name: '', description: '', category: 'backend', parametersSchema: '{}', pipelineDefinition: '{}', isDeprecated: false })
+      refreshData()
+    } catch (err: unknown) {
+      setTemplateFormError(String(err))
+    }
+  }
+
   const handleCreatePreview = async (e: React.FormEvent) => {
     e.preventDefault()
     try {
@@ -378,13 +422,18 @@ export function CatalogPage({
                 <Plus size={16} /> Register Service
               </button>
             )}
+            {tab === 'templates' && (
+              <button className="primary-button" data-testid="catalog-register-template" onClick={() => setShowRegisterTemplate(true)}>
+                <Plus size={16} /> Register Template
+              </button>
+            )}
             {tab === 'previews' && (
               <button className="primary-button" onClick={() => setShowCreatePreview(true)}>
                 <Plus size={16} /> Create Preview
               </button>
             )}
             {tab === 'resources' && (
-              <button className="primary-button" onClick={() => setShowRequestResource(true)}>
+              <button className="primary-button" data-testid="catalog-header-request-resource" onClick={() => setShowRequestResource(true)}>
                 <Plus size={16} /> Request Resource
               </button>
             )}
@@ -897,7 +946,7 @@ export function CatalogPage({
               <Database size={40} style={{ opacity: 0.4, margin: '0 auto 1rem' }} />
               <h3>No resource requests found</h3>
               <p>Request managed databases, caches, buckets, and cloud resources with automated dual-control enforcement.</p>
-              <button className="primary-button" onClick={() => setShowRequestResource(true)} style={{ marginTop: '1rem' }}>
+              <button className="primary-button" data-testid="catalog-empty-request-resource" onClick={() => setShowRequestResource(true)} style={{ marginTop: '1rem' }}>
                 Request Resource
               </button>
             </div>
@@ -1249,6 +1298,76 @@ export function CatalogPage({
       )}
 
       {/* MODAL: Create Preview Environment */}
+      {showRegisterTemplate && (
+        <Modal
+          title="Register Golden Path Template"
+          description="A template is a versioned pipeline definition other teams instantiate. Registering a new version leaves earlier ones in place, so anything already built from them keeps its provenance."
+          onClose={() => setShowRegisterTemplate(false)}
+          footer={
+            <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end' }}>
+              <button className="secondary-button" onClick={() => setShowRegisterTemplate(false)}>Cancel</button>
+              <button className="primary-button" form="register-template-form" type="submit" data-testid="catalog-register-template-submit">Register Template</button>
+            </div>
+          }
+        >
+          <form id="register-template-form" onSubmit={handleRegisterTemplate} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+              <div>
+                <label style={{ display: 'block', fontWeight: 600, fontSize: '0.85rem', marginBottom: '0.3rem' }} htmlFor="tpl-id">Template ID</label>
+                <input required type="text" id="tpl-id" placeholder="e.g. fastapi-service" value={templateForm.templateId}
+                  onChange={(e) => setTemplateForm((f) => ({ ...f, templateId: e.target.value }))}
+                  style={{ width: '100%', padding: '0.5rem', borderRadius: '4px', border: '1px solid #cbd5e1' }} />
+              </div>
+              <div>
+                <label style={{ display: 'block', fontWeight: 600, fontSize: '0.85rem', marginBottom: '0.3rem' }} htmlFor="tpl-version">Version</label>
+                <input required type="text" id="tpl-version" placeholder="v1.0.0" value={templateForm.version}
+                  onChange={(e) => setTemplateForm((f) => ({ ...f, version: e.target.value }))}
+                  style={{ width: '100%', padding: '0.5rem', borderRadius: '4px', border: '1px solid #cbd5e1' }} />
+                <small style={{ color: 'var(--text-muted)' }}>Semantic version; the server refuses anything else.</small>
+              </div>
+            </div>
+            <div>
+              <label style={{ display: 'block', fontWeight: 600, fontSize: '0.85rem', marginBottom: '0.3rem' }} htmlFor="tpl-name">Display name</label>
+              <input required type="text" id="tpl-name" placeholder="FastAPI Service" value={templateForm.name}
+                onChange={(e) => setTemplateForm((f) => ({ ...f, name: e.target.value }))}
+                style={{ width: '100%', padding: '0.5rem', borderRadius: '4px', border: '1px solid #cbd5e1' }} />
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '1rem' }}>
+              <div>
+                <label style={{ display: 'block', fontWeight: 600, fontSize: '0.85rem', marginBottom: '0.3rem' }} htmlFor="tpl-description">Description</label>
+                <input type="text" id="tpl-description" value={templateForm.description}
+                  onChange={(e) => setTemplateForm((f) => ({ ...f, description: e.target.value }))}
+                  style={{ width: '100%', padding: '0.5rem', borderRadius: '4px', border: '1px solid #cbd5e1' }} />
+              </div>
+              <div>
+                <label style={{ display: 'block', fontWeight: 600, fontSize: '0.85rem', marginBottom: '0.3rem' }} htmlFor="tpl-category">Category</label>
+                <input type="text" id="tpl-category" placeholder="backend" value={templateForm.category}
+                  onChange={(e) => setTemplateForm((f) => ({ ...f, category: e.target.value }))}
+                  style={{ width: '100%', padding: '0.5rem', borderRadius: '4px', border: '1px solid #cbd5e1' }} />
+              </div>
+            </div>
+            <div>
+              <label style={{ display: 'block', fontWeight: 600, fontSize: '0.85rem', marginBottom: '0.3rem' }} htmlFor="tpl-parameters">Parameters schema (JSON)</label>
+              <textarea rows={4} className="mono" id="tpl-parameters" value={templateForm.parametersSchema}
+                onChange={(e) => setTemplateForm((f) => ({ ...f, parametersSchema: e.target.value }))}
+                style={{ width: '100%', padding: '0.5rem', borderRadius: '4px', border: '1px solid #cbd5e1', fontFamily: 'monospace' }} />
+            </div>
+            <div>
+              <label style={{ display: 'block', fontWeight: 600, fontSize: '0.85rem', marginBottom: '0.3rem' }} htmlFor="tpl-pipeline">Pipeline definition (JSON)</label>
+              <textarea rows={5} className="mono" id="tpl-pipeline" value={templateForm.pipelineDefinition}
+                onChange={(e) => setTemplateForm((f) => ({ ...f, pipelineDefinition: e.target.value }))}
+                style={{ width: '100%', padding: '0.5rem', borderRadius: '4px', border: '1px solid #cbd5e1', fontFamily: 'monospace' }} />
+            </div>
+            <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.85rem' }}>
+              <input type="checkbox" checked={templateForm.isDeprecated}
+                onChange={(e) => setTemplateForm((f) => ({ ...f, isDeprecated: e.target.checked }))} />
+              Mark deprecated — retires this version without removing it, so modules built from it keep their provenance.
+            </label>
+            {templateFormError && <div className="inline-error" role="alert">{templateFormError}</div>}
+          </form>
+        </Modal>
+      )}
+
       {showCreatePreview && (
         <Modal
           title="Create Ephemeral Preview Environment"

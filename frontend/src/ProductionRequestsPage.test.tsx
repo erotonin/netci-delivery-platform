@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 
 vi.mock('./api/netciClient', async (importOriginal) => {
@@ -62,6 +62,13 @@ vi.mock('./api/netciClient', async (importOriginal) => {
       rolledBack: true,
     }),
     listSystems: vi.fn().mockResolvedValue([]),
+    // The page asks the server who is looking, to reflect separation of duties before
+    // the click. A default that resolves keeps every other test unaffected.
+    whoami: vi.fn().mockResolvedValue({
+      principal: { subject: 'viewer', displayName: 'Viewer', email: '', roles: ['viewer'], teams: [], method: 'oidc' },
+      authMode: 'oidc',
+      separationOfDuties: true,
+    }),
   }
 })
 
@@ -89,5 +96,66 @@ describe('ProductionRequestsPage (Phase 10)', () => {
     expect(screen.getByText(/Canary Traffic Allocation/i)).toBeTruthy()
     expect(screen.getByText(/Advance Step/i)).toBeTruthy()
     expect(screen.getByText(/Abort Canary/i)).toBeTruthy()
+  })
+})
+
+
+describe('separation of duties in the browser', () => {
+  // The fixture the whole file shares is raised by `alice` and already approved. These
+  // tests need one that is still waiting, so they install their own and put the shared
+  // one back afterwards -- otherwise they would decide what the tests above see.
+  const waiting = {
+    id: 'req-sod-1',
+    modules: [
+      { moduleId: 'search-api', moduleName: 'search-api', version: 'v2.0.0', deploymentOrder: 1, dependencies: [], status: 'pending' },
+    ],
+    requestedBy: 'alice',
+    scheduledFor: '2026-09-04T12:00:00+07:00',
+    rollbackStrategy: 'automatic',
+    runAutomationTests: true,
+    status: 'waiting_approval',
+    strategy: 'rolling',
+    strategyConfig: {},
+  }
+
+  let restore: unknown
+  beforeEach(async () => {
+    const client = await import('./api/netciClient')
+    restore = vi.mocked(client.listProductionRequests).getMockImplementation()
+    vi.mocked(client.listProductionRequests).mockResolvedValue([waiting] as never)
+  })
+  afterEach(async () => {
+    const client = await import('./api/netciClient')
+    vi.mocked(client.listProductionRequests).mockReset()
+    if (restore) vi.mocked(client.listProductionRequests).mockImplementation(restore as never)
+  })
+
+  async function openDetailsAs(subject: string) {
+    const client = await import('./api/netciClient')
+    // The server decides who we are; the Portal only reflects it.
+    vi.mocked(client.whoami).mockResolvedValue({
+      principal: { subject, displayName: subject, email: '', roles: ['reviewer'], teams: [], method: 'oidc' },
+      authMode: 'oidc',
+      separationOfDuties: true,
+    } as never)
+
+    render(
+      <PortalFeedbackProvider>
+        <ProductionRequestsPage systemId="" />
+      </PortalFeedbackProvider>
+    )
+    fireEvent.click(await screen.findByLabelText(/^Xem /))
+    return screen.findByTestId('request-approve')
+  }
+
+  it('disables Approve for the person who raised the request, and says why', async () => {
+    const approve = await openDetailsAs('alice')
+    await waitFor(() => expect((approve as HTMLButtonElement).disabled).toBe(true))
+    expect(approve.getAttribute('title')).toContain('different reviewer')
+  })
+
+  it('leaves Approve enabled for a different reviewer', async () => {
+    const approve = await openDetailsAs('rae')
+    await waitFor(() => expect((approve as HTMLButtonElement).disabled).toBe(false))
   })
 })

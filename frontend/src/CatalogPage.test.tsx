@@ -39,6 +39,7 @@ vi.mock('./api/netciClient', async (importOriginal) => {
       hasCycle: false,
       cycles: [],
     }),
+    registerCatalogTemplate: vi.fn().mockResolvedValue({ id: 'fastapi-service', version: 'v1.0.0' }),
     listCatalogTemplates: vi.fn().mockResolvedValue({
       items: [
         {
@@ -227,6 +228,41 @@ describe('CatalogPage (Phase 12)', () => {
 
     await waitFor(() => {
       expect(screen.getByText(/Resource request approved!/i)).toBeTruthy()
+    })
+  })
+})
+
+describe('registering a Golden Path template from the browser', () => {
+  it('sends the form to the API, and refuses malformed JSON before it gets there', async () => {
+    const client = await import('./api/netciClient')
+    render(
+      <PortalFeedbackProvider>
+        <CatalogPage />
+      </PortalFeedbackProvider>
+    )
+
+    fireEvent.click(await screen.findByRole('tab', { name: /templates/i }))
+    fireEvent.click(await screen.findByTestId('catalog-register-template'))
+
+    fireEvent.change(screen.getByPlaceholderText('e.g. fastapi-service'), { target: { value: 'fastapi-service' } })
+    fireEvent.change(screen.getByPlaceholderText('FastAPI Service'), { target: { value: 'FastAPI Service' } })
+
+    // Malformed JSON is refused here rather than sent for the server to reject less clearly.
+    const schema = screen.getByLabelText(/Parameters schema/i)
+    fireEvent.change(schema, { target: { value: '{not json' } })
+    fireEvent.click(screen.getByTestId('catalog-register-template-submit'))
+    await waitFor(() => expect(screen.getByRole('alert')).toBeTruthy())
+    expect(vi.mocked(client.registerCatalogTemplate)).not.toHaveBeenCalled()
+
+    fireEvent.change(schema, { target: { value: '{"port": {"type": "integer"}}' } })
+    fireEvent.click(screen.getByTestId('catalog-register-template-submit'))
+
+    await waitFor(() => expect(vi.mocked(client.registerCatalogTemplate)).toHaveBeenCalledTimes(1))
+    expect(vi.mocked(client.registerCatalogTemplate).mock.calls[0][0]).toMatchObject({
+      templateId: 'fastapi-service',
+      version: 'v1.0.0',
+      name: 'FastAPI Service',
+      parametersSchema: { port: { type: 'integer' } },
     })
   })
 })
