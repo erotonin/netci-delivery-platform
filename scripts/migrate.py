@@ -98,10 +98,25 @@ def applied_versions(connection) -> dict[str, str]:
         return {row["version"]: row["checksum"] for row in cursor.fetchall()}
 
 
+#: One key for every migration runner against a database. Arbitrary, but fixed: it is
+#: what makes two runners wait for each other rather than race.
+MIGRATION_LOCK_KEY = 7_265_322_000_001
+
+
 def run(url: str, *, dry_run: bool) -> int:
     files = migration_files()
     with connect(url) as connection:
         connection.autocommit = False
+        # Serialise runners before reading what is applied. Two of them -- a Kubernetes
+        # Job retried beside its predecessor, two operators, a rollout that starts one per
+        # replica -- used to read the same empty `schema_migrations`, both treat every file
+        # as pending, and the second then died mid-way on a relation or a primary key the
+        # first had just created. With the lock the second waits, reads the list after the
+        # first has committed, and has nothing left to do. Session-scoped: released when
+        # this connection closes, including when the process dies.
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT pg_advisory_lock(%s)", (MIGRATION_LOCK_KEY,))
+        connection.commit()
         applied = applied_versions(connection)
         connection.commit()
         pending = []

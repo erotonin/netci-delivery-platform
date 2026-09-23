@@ -1,0 +1,95 @@
+{{- $component := "worker" -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "netci.fullname" . }}-worker
+  labels:
+    {{- include "netci.labels" . | nindent 4 }}
+    app.kubernetes.io/component: {{ $component }}
+spec:
+  replicas: {{ .Values.worker.replicas }}
+  selector:
+    matchLabels:
+      {{- include "netci.selectorLabels" (dict "root" . "component" $component) | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "netci.selectorLabels" (dict "root" . "component" $component) | nindent 8 }}
+        {{- include "netci.labels" . | nindent 8 }}
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+    spec:
+      {{- with .Values.image.pullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      automountServiceAccountToken: false
+      # A deployment the worker is running when it is told to stop is finished or failed
+      # by Temporal on another worker; the grace period is for the one in flight to report.
+      terminationGracePeriodSeconds: 120
+      securityContext:
+        {{- include "netci.podSecurityContext" . | nindent 8 }}
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+      containers:
+        - name: worker
+          image: {{ include "netci.image" (dict "root" . "component" "worker") }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          envFrom:
+            - configMapRef:
+                name: {{ include "netci.fullname" . }}-config
+          env:
+            # ansible keeps ~/.ansible/tmp and helm its cache under $HOME.
+            - {name: HOME, value: /tmp}
+            {{- with .Values.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          securityContext:
+            {{- include "netci.containerSecurityContext" . | nindent 12 }}
+          resources:
+            {{- toYaml .Values.worker.resources | nindent 12 }}
+          volumeMounts:
+            # Only the public key it verifies signatures with. The worker never reads the
+            # database, the workload signing key or a Jenkins token, so it is not given them.
+            - {name: cosign-public-key, mountPath: /run/secrets/netci-app, readOnly: true}
+            - {name: ansible-inventory, mountPath: /etc/netci/ansible, readOnly: true}
+            {{- if .Values.deployTargets.existingSecret }}
+            - {name: deploy-targets, mountPath: /run/secrets/netci, readOnly: true}
+            {{- end }}
+            # Verified evidence and cached artifact blobs: the only things it writes.
+            - {name: state, mountPath: /var/lib/netci}
+            - {name: tmp, mountPath: /tmp}
+      volumes:
+        - name: cosign-public-key
+          secret:
+            secretName: {{ include "netci.secretName" . }}
+            defaultMode: 0400
+            items:
+              - {key: cosign.pub, path: cosign.pub}
+        - name: ansible-inventory
+          configMap:
+            name: {{ include "netci.fullname" . }}-ansible-inventory
+        {{- if .Values.deployTargets.existingSecret }}
+        - name: deploy-targets
+          secret:
+            secretName: {{ .Values.deployTargets.existingSecret }}
+            defaultMode: 0400
+        {{- end }}
+        - name: state
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}
+      {{- with .Values.worker.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.worker.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.worker.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

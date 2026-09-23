@@ -13,3 +13,18 @@ frontend/dist
 evidence/raw
 evidence/failure-drill
 evidence/screenshots
+
+# The lab's rendered profile, Jenkins secrets and signing keys live here (chmod 600).
+# The API and worker images build from the repository root, so without this line every
+# build shipped those files to the Docker daemon as context -- one `COPY . .` away from
+# being baked into a layer that would then be pushed to a registry.
+.netci-gate
+# Local-only and exploratory material, never part of an image.
+scratch
+.claude
+CLAUDE.md
+**/node_modules
+backstage/node_modules
+frontend/test-results
+frontend/playwright-report
+dist

@@ -1,0 +1,9 @@
+# Rendered by the nginx image's entrypoint (20-envsubst-on-templates.sh) into /tmp at
+# start-up, so the API address is configuration rather than something baked into the
+# image. It used to be the literal `netci-api:8000`: right for compose, and in Kubernetes
+# -- where the Service is named after the release -- nginx could not resolve it and the
+# container never started.
+upstream netci_api {
+    server ${NETCI_API_UPSTREAM};
+    keepalive 16;
+}

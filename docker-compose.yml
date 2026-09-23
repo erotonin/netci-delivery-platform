@@ -87,7 +87,9 @@ services:
         condition: service_healthy
 
   netci-api:
-    build: ./backend
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
     environment:
       DATABASE_URL: postgresql://netci:${POSTGRES_PASSWORD:-netci-local-only}@postgres:5432/netci
       REGISTRY_URL: http://registry:5000

@@ -1,115 +1,186 @@
-# Default values for netci-platform.
-# This is a YAML-formatted file.
-# Declare variables to be passed into your templates.
+# netCI on Kubernetes.
+#
+# Every block below is one integration netCI talks to. Outside local mode netCI refuses
+# to start with an integration missing -- it will not quietly run in a fake mode -- so a
+# value left empty here shows up as a failed install naming the value, not as a portal
+# that looks configured and is not.
+#
+# Connecting to an existing Jenkins is the `jenkins:` block: change `controllers[].url`
+# and `username`, put the API token in the secret, and run
+# `scripts/jenkins_preflight.py` against it first (see docs/DEPLOY-KUBERNETES.md).
 
 global:
-  environment: "production"
+  environment: production
+  # The address people and machines reach netCI at, without a trailing slash. The portal
+  # is served here, the API under /api, and Jenkins calls back to <externalUrl>/api unless
+  # `jenkins.callbackUrl` says otherwise.
+  externalUrl: ""
 
-# Target company Jenkins integration
+image:
+  # Where the three netCI images live: <registry>/backend, <registry>/worker,
+  # <registry>/frontend. Build and push them with scripts/build_images.sh.
+  registry: ""
+  tag: ""                      # defaults to .Chart.AppVersion
+  pullPolicy: IfNotPresent
+  pullSecrets: []              # [{name: harbor-pull}]
+
+# ---------------------------------------------------------------- secrets
+#
+# Production: create the Secret yourself (Vault, External Secrets, Sealed Secrets) and
+# name it here. The keys it must hold are listed in docs/DEPLOY-KUBERNETES.md and checked
+# at install time. The chart then renders no credential at all.
+existingSecret: ""
+#
+# Without `existingSecret`, the chart renders the Secret from these. Every one is
+# required: a default would be a credential published in this repository.
+secrets:
+  databaseUrl: ""              # postgresql://netci:<password>@host:5432/netci?sslmode=require
+  workloadTokenKeys: ""        # "k1:<32+ random chars>"; see ADR-015
+  cosignPublicKey: ""          # the public half of the key the pipeline signs with
+  jenkinsApiTokens: {}         # {A: "<token for controllers[id=A]>"}
+  dcimApiToken: ""             # only when dcim.provider is set
+  buildClusterKubeconfig: ""   # only when buildIsolation.mode is kubernetes
+  trafficKubeconfig: ""        # only when traffic.router is nginx-ingress
+
+# ---------------------------------------------------------------- CI: Jenkins
 jenkins:
-  # Base URL of the existing VTNet Jenkins instance:
-  controllerUrl: "http://jenkins.vtnet.viettel.vn:8080"
-  # Service Account username with Job/Create, Job/Configure, Job/Build, Job/Read permissions:
-  username: "netci-sa"
-  # API Token generated in Jenkins user configuration. No default: see templates/secrets.yaml.
-  apiToken: ""
-  # Jenkins Agent Pod label defined on Jenkins Kubernetes Cloud:
-  agentLabel: "netci-ephemeral"
-  # Namespace on K8s where Jenkins provisions Ephemeral Pod Agents:
-  buildNamespace: "netci-build"
-  # Name of the Shared Library registered in Jenkins Global Pipeline Libraries:
-  sharedLibrary: "netci-shared-library"
+  # One or more controllers; netCI routes builds across them. It creates and updates its
+  # own jobs (netci-<application-id>) through the API, so the service account needs
+  # Job/Create, Job/Configure, Job/Build, Job/Read and Overall/Read.
+  controllers:
+    - id: A
+      url: ""                  # https://jenkins.example.com
+      username: ""             # the service account
+      executors: 2
+  # What the generated jobs ask the controller for. These must exist on the controller:
+  # scripts/jenkins_preflight.py checks each one.
+  agentLabel: netci-ephemeral
+  sharedLibrary: netci-shared-library
+  callbackCredentialsId: netci-pipeline-api-key
+  cosignCredentialsId: netci-cosign-key
+  # Where builds report back. Defaults to <externalUrl>/api. Set it when Jenkins reaches
+  # netCI by another route than people do (inside the cluster, through a private LB).
+  callbackUrl: ""
 
-# Database Configuration (PostgreSQL)
-database:
-  host: "postgres.netci.svc.cluster.local"
-  port: 5432
-  user: "netci"
-  password: ""   # required unless database.url is set
-  name: "netci"
-  sslmode: "disable"
-  # Alternatively provide the full connection URI:
-  # url: "postgresql://netci:password@host:5432/netci?sslmode=disable"
-
-# Temporal Workflow Engine
+# ---------------------------------------------------------------- CD: Temporal
 temporal:
-  host: "temporal-frontend.temporal.svc.cluster.local:7233"
+  address: ""                  # temporal-frontend.temporal.svc:7233
+  namespace: default
+  # One queue per netCI installation. Two installations polling the same queue take each
+  # other's deployments.
+  taskQueue: netci-delivery
 
-# Container Registry Configuration
+# ---------------------------------------------------------------- people: OIDC
+auth:
+  mode: oidc                   # oidc | token
+  oidc:
+    issuer: ""                 # https://sso.example.com/realms/netci
+    audience: netci
+    jwksUrl: ""                # defaults to <issuer>/.well-known/jwks.json
+    browserClientId: netci-portal
+    rolesClaim: groups
+    teamsClaim: groups
+    # IdP group -> netCI role. Roles: platform-admin, reviewer, developer, viewer.
+    roleMap: ""                # "netci-admins=platform-admin,release-managers=reviewer,engineers=developer"
+  requireSeparationOfDuties: true
+
+# ---------------------------------------------------------------- artifacts
 registry:
-  pushHost: "harbor.vtnet.viettel.vn"
-  pullHost: "harbor.vtnet.viettel.vn"
-  trivyDbRepository: "harbor.vtnet.viettel.vn/security/trivy-db"
+  pushHost: ""                 # where builds push, e.g. harbor.example.com
+  pullHost: ""                 # where clusters and hosts pull from (often the same)
+  allowHttp: false             # plain-HTTP registry; lab only
+  buildBaseImage: ""           # base image mirrored into the registry
+  trivyDbRepository: ""        # Trivy DB mirror for build farms without internet
 
-# Security & Secrets
-# Every value here must be supplied at install time (-f my-values.yaml). A default
-# would be a published credential, so the chart refuses to render without them.
-security:
-  pipelineApiKey: ""
-  workloadTokenKeys: ""
+supplyChain:
   requireSecurityEvidence: true
-  signatureVerifyMode: "cosign"
-  cosignPublicKey: ""
+  signatureVerifyMode: cosign  # cosign | none is refused outside local mode
+  signatureRequireTlog: true   # false only for keys with no transparency log (air-gapped)
 
-# netCI Backend (FastAPI Control Plane)
-backend:
-  replicaCount: 2
-  image:
-    repository: harbor.vtnet.viettel.vn/netci/backend
-    pullPolicy: IfNotPresent
-    tag: "1.0.0"
-  service:
-    type: ClusterIP
-    port: 8000
+# ---------------------------------------------------------------- inventory: DCIM
+dcim:
+  provider: ""                 # netbox | http | "" (none: manual hostnames, unvalidated)
+  baseUrl: ""                  # https://netbox.example.com/api
+  requireRevalidation: true
+
+# ---------------------------------------------------------------- builds
+buildIsolation:
+  # kubernetes: a namespace, service account, NetworkPolicy and cache volume per project
+  #             on the build cluster (needs secrets.buildClusterKubeconfig).
+  # none:       builds share the agent namespace -- stated, not defaulted to.
+  mode: none
+  controllerServiceAccount: netci-build/jenkins-controller
+  cacheSize: 2Gi
+  cacheStorageClass: ""
+
+# ---------------------------------------------------------------- progressive delivery
+traffic:
+  router: ""                   # nginx-ingress | "" (canary and blue/green refused)
+
+# ---------------------------------------------------------------- deployment targets
+deployTargets:
+  # Secret holding what the worker needs to reach targets, mounted at /run/secrets/netci:
+  #   id_ed25519       SSH key for docker/systemd hosts
+  #   known_hosts      their host keys (StrictHostKeyChecking=yes)
+  #   <name>           kubeconfigs that modules name as `kubeconfigRef`
+  existingSecret: ""
+  # Key names inside that Secret. Set them once the Secret holds the files: the worker
+  # refuses to start a playbook with a key file that is named but missing.
+  sshPrivateKeyFile: ""        # id_ed25519
+  knownHostsFile: ""           # known_hosts
+  # Ansible inventory (INI) naming every docker/systemd host a module may target. Hosts
+  # are chosen per deployment with --limit, so a host missing here is refused, not
+  # silently skipped.
+  inventory: |
+    [all]
+
+# ---------------------------------------------------------------- workloads
+api:
+  replicas: 2
   resources:
-    limits:
-      cpu: 1000m
-      memory: 1Gi
-    requests:
-      cpu: 200m
-      memory: 256Mi
+    requests: {cpu: 250m, memory: 384Mi}
+    limits: {cpu: "2", memory: 1Gi}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
 
-# netCI Frontend (React Single Page App)
-frontend:
-  replicaCount: 2
-  image:
-    repository: harbor.vtnet.viettel.vn/netci/frontend
-    pullPolicy: IfNotPresent
-    tag: "1.0.0"
-  service:
-    type: ClusterIP
-    port: 80
-  resources:
-    limits:
-      cpu: 200m
-      memory: 256Mi
-    requests:
-      cpu: 50m
-      memory: 64Mi
-
-# netCI Temporal Worker (Deployment Activities & Ansible)
 worker:
-  replicaCount: 2
-  image:
-    repository: harbor.vtnet.viettel.vn/netci/worker
-    pullPolicy: IfNotPresent
-    tag: "1.0.0"
+  replicas: 2
   resources:
-    limits:
-      cpu: 1000m
-      memory: 1Gi
-    requests:
-      cpu: 200m
-      memory: 256Mi
+    requests: {cpu: 250m, memory: 512Mi}
+    limits: {cpu: "2", memory: 2Gi}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
 
-# Ingress Configuration
+portal:
+  replicas: 2
+  resources:
+    requests: {cpu: 50m, memory: 64Mi}
+    limits: {cpu: 500m, memory: 256Mi}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+migrations:
+  # Each API pod applies backend/migrations in an init container before the API starts,
+  # so new code never runs against an old schema. scripts/migrate.py takes an advisory
+  # lock: the first pod applies what is pending, the rest find the database up to date.
+  # (Not a Helm pre-install hook: that runs before this release's Secret exists, so it
+  # could not read the database URL.) Disable only if migrations run some other way.
+  enabled: true
+
 ingress:
   enabled: true
-  className: "nginx"
-  annotations:
-    ingress.kubernetes.io/ssl-redirect: "false"
-    nginx.ingress.kubernetes.io/proxy-body-size: "128m"
-    nginx.ingress.kubernetes.io/proxy-read-timeout: "600"
-    nginx.ingress.kubernetes.io/proxy-send-timeout: "600"
-  host: "netci.vtnet.viettel.vn"
-  tls: []
+  className: nginx
+  annotations: {}
+  # TLS secret for the host in global.externalUrl. Empty: no TLS block (terminate TLS
+  # in front of the cluster instead).
+  tlsSecretName: ""
+
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+
+# Extra environment for the API and worker, for settings this file does not name.
+extraEnv: []                   # [{name: NETCI_RATE_LIMIT, value: "240"}]

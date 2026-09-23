@@ -1,6 +1,6 @@
 # ADR-040: netCI ships two ways to deploy itself, and neither starts on placeholders
 
-Status: Accepted.
+Status: Superseded in part by ADR-042: the plain manifests are now rendered from the chart, not maintained beside it.
 
 ## Context
 

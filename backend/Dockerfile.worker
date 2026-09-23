@@ -1,5 +1,14 @@
 FROM ghcr.io/sigstore/cosign/cosign:v3.1.2 AS cosign
 
+# kubernetes.core.helm shells out to the helm binary. Pinned and checked against the
+# published digest, for the same reason as kubectl in the API image.
+FROM debian:bookworm-slim AS helm
+ARG HELM_VERSION=v3.21.2
+ARG HELM_SHA256=0a745198de24545d0055cd8414bc8d2ba10363ef5f5d38369ea1b399671cc083
+ADD https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz /helm.tar.gz
+RUN echo "${HELM_SHA256}  /helm.tar.gz" | sha256sum -c - \
+    && tar -xzf /helm.tar.gz -C / linux-amd64/helm && chmod 0755 /linux-amd64/helm
+
 FROM python:3.12.10-slim-bookworm
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -23,10 +32,26 @@ RUN pip install --no-cache-dir \
       --collections-path /opt/ansible/collections
 
 COPY --from=cosign /ko-app/cosign /usr/local/bin/cosign
+COPY --from=helm /linux-amd64/helm /usr/local/bin/helm
 COPY backend/app ./app
+# The worker runs `ansible-playbook <project_root>/deploy/ansible/playbooks/...`. The
+# image used to carry only the Python package, so outside the compose stack -- which
+# bind-mounts the checkout -- every deployment failed on a playbook that was not there.
+COPY deploy/ansible ./deploy/ansible
+# deploy-kubernetes.yml installs every Kubernetes module with this chart (the portal
+# never passes another chart_path), so it has to be in the image too.
+COPY deploy/helm/sample-kubernetes-app ./deploy/helm/sample-kubernetes-app
+
+# Runtime state goes to /var/lib/netci so the root filesystem can be read-only: evidence
+# the worker verifies and artifact blobs it caches are the only things it writes.
+ENV NETCI_PROJECT_ROOT=/app \
+    NETCI_COSIGN_EXECUTABLE=/usr/local/bin/cosign \
+    NETCI_SECURITY_EVIDENCE_DIR=/var/lib/netci/evidence \
+    NETCI_ARTIFACT_CACHE_DIR=/var/lib/netci/artifacts
 
 RUN useradd --create-home --uid 10001 netci \
-    && chown -R netci:netci /app /opt/ansible
+    && mkdir -p /var/lib/netci/evidence /var/lib/netci/artifacts \
+    && chown -R netci:netci /app /opt/ansible /var/lib/netci
 
 USER 10001
 CMD ["python", "-m", "app.workflows.worker"]

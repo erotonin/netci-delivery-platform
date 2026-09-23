@@ -1,15 +1,13 @@
 apiVersion: v2
 name: netci-platform
-description: netCI Delivery Platform - Developer Portal & Control Plane for Enterprise CI/CD
+description: netCI control plane -- API, Temporal worker and portal -- for an existing Jenkins
 type: application
-version: 1.0.0
-appVersion: "1.0.0"
-keywords:
-  - ci-cd
-  - delivery-platform
-  - developer-portal
-  - jenkins-controller
-  - vtnet
-home: https://github.com/erotonin/netci-delivery-platform
+# 1.1.0: rebuilt from the configuration the lab actually runs (ADR-042). 1.0.0 could not
+# start: it omitted NETCI_AUTH_MODE and NETCI_CD_MODE, named Temporal and the registry
+# with variables the code does not read, and shipped no migrations.
+version: 1.1.0
+appVersion: "0.2.0"
+kubeVersion: ">=1.27.0-0"
+keywords: [ci-cd, delivery-platform, developer-portal, jenkins, temporal]
 maintainers:
   - name: netci-team

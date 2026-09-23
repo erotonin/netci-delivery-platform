@@ -1,0 +1,101 @@
+{{- $component := "portal" -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "netci.fullname" . }}-portal
+  labels:
+    {{- include "netci.labels" . | nindent 4 }}
+    app.kubernetes.io/component: {{ $component }}
+spec:
+  replicas: {{ .Values.portal.replicas }}
+  selector:
+    matchLabels:
+      {{- include "netci.selectorLabels" (dict "root" . "component" $component) | nindent 6 }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: {maxUnavailable: 0, maxSurge: 1}
+  template:
+    metadata:
+      labels:
+        {{- include "netci.selectorLabels" (dict "root" . "component" $component) | nindent 8 }}
+        {{- include "netci.labels" . | nindent 8 }}
+    spec:
+      {{- with .Values.image.pullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      automountServiceAccountToken: false
+      securityContext:
+        {{- include "netci.podSecurityContext" . | nindent 8 }}
+        # The nginx user of the official image.
+        runAsUser: 101
+        runAsGroup: 101
+        fsGroup: 101
+      containers:
+        - name: portal
+          image: {{ include "netci.image" (dict "root" . "component" "frontend") }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          env:
+            # The portal serves the browser and proxies /api to this Service, so the browser
+            # and the API share one origin. The image's default names the compose service;
+            # left there, nginx could not resolve it and never started.
+            - name: NETCI_API_UPSTREAM
+              value: {{ printf "%s-api:8000" (include "netci.fullname" .) | quote }}
+          ports:
+            - {name: http, containerPort: 8080, protocol: TCP}
+          securityContext:
+            {{- include "netci.containerSecurityContext" . | nindent 12 }}
+          resources:
+            {{- toYaml .Values.portal.resources | nindent 12 }}
+          livenessProbe:
+            httpGet: {path: /healthz, port: http}
+            periodSeconds: 10
+          readinessProbe:
+            httpGet: {path: /healthz, port: http}
+            periodSeconds: 5
+          volumeMounts:
+            # pid file, proxy buffers and the rendered upstream all live under /tmp.
+            - {name: tmp, mountPath: /tmp}
+      volumes:
+        - name: tmp
+          emptyDir: {}
+      {{- with .Values.portal.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.portal.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.portal.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "netci.fullname" . }}-portal
+  labels:
+    {{- include "netci.labels" . | nindent 4 }}
+    app.kubernetes.io/component: {{ $component }}
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "netci.selectorLabels" (dict "root" . "component" $component) | nindent 4 }}
+  ports:
+    - {name: http, port: 8080, targetPort: http, protocol: TCP}
+{{- if and .Values.podDisruptionBudget.enabled (gt (int .Values.portal.replicas) 1) }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "netci.fullname" . }}-portal
+  labels:
+    {{- include "netci.labels" . | nindent 4 }}
+spec:
+  minAvailable: {{ .Values.podDisruptionBudget.minAvailable }}
+  selector:
+    matchLabels:
+      {{- include "netci.selectorLabels" (dict "root" . "component" $component) | nindent 6 }}
+{{- end }}

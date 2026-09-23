@@ -1,60 +1,45 @@
-{{- if .Values.ingress.enabled -}}
+{{- if .Values.ingress.enabled }}
+{{- $url := urlParse (include "netci.externalUrl" .) }}
+{{- $host := regexReplaceAll ":[0-9]+$" $url.host "" }}
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: {{ include "netci.fullname" . }}-ingress
-  namespace: {{ .Release.Namespace }}
+  name: {{ include "netci.fullname" . }}
   labels:
     {{- include "netci.labels" . | nindent 4 }}
-  {{- with .Values.ingress.annotations }}
   annotations:
+    {{- if eq .Values.ingress.className "nginx" }}
+    # Console output is Server-Sent Events: buffered, it arrives in one lump when the
+    # build ends, and the default 60s read timeout cuts it off before most builds do.
+    nginx.ingress.kubernetes.io/proxy-buffering: "off"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-body-size: "10m"
+    {{- end }}
+    {{- with .Values.ingress.annotations }}
     {{- toYaml . | nindent 4 }}
-  {{- end }}
+    {{- end }}
 spec:
-  {{- if .Values.ingress.className }}
-  ingressClassName: {{ .Values.ingress.className }}
+  {{- with .Values.ingress.className }}
+  ingressClassName: {{ . }}
   {{- end }}
-  {{- if .Values.ingress.tls }}
+  {{- with .Values.ingress.tlsSecretName }}
   tls:
-    {{- toYaml .Values.ingress.tls | nindent 4 }}
+    - hosts: [{{ $host | quote }}]
+      secretName: {{ . }}
   {{- end }}
   rules:
-    - host: {{ .Values.ingress.host | quote }}
+    # One entry point. The portal serves the browser and proxies /api to the API, so the
+    # two share an origin. The previous chart also sent /api straight to the API without
+    # stripping the prefix -- the API serves /me, not /api/me, so every call 404'd -- and
+    # published /metrics, which runs every readiness probe on each request, to the world.
+    - host: {{ $host | quote }}
       http:
         paths:
-          - path: /api
-            pathType: Prefix
-            backend:
-              service:
-                name: {{ include "netci.fullname" . }}-backend
-                port:
-                  number: {{ .Values.backend.service.port }}
-          - path: /docs
-            pathType: Prefix
-            backend:
-              service:
-                name: {{ include "netci.fullname" . }}-backend
-                port:
-                  number: {{ .Values.backend.service.port }}
-          - path: /openapi.json
-            pathType: Exact
-            backend:
-              service:
-                name: {{ include "netci.fullname" . }}-backend
-                port:
-                  number: {{ .Values.backend.service.port }}
-          - path: /metrics
-            pathType: Exact
-            backend:
-              service:
-                name: {{ include "netci.fullname" . }}-backend
-                port:
-                  number: {{ .Values.backend.service.port }}
           - path: /
             pathType: Prefix
             backend:
               service:
-                name: {{ include "netci.fullname" . }}-frontend
-                port:
-                  number: {{ .Values.frontend.service.port }}
+                name: {{ include "netci.fullname" . }}-portal
+                port: {name: http}
 {{- end }}
