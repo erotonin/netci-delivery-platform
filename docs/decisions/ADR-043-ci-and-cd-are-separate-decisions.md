@@ -100,7 +100,15 @@ control plane built for Kubernetes and Argo, and netCI deploys to hosts through 
   `forkPullRequests: verify`.
 - A retention job that removed old deployments would also remove their soak evidence.
   That errs toward refusing a promotion, not toward allowing one.
-- **Not verified live.** The lab's git server is plain HTTP with no pull requests, and no
-  run with these rules has been made against the lab's Jenkins. The tests drive the
+- **Live evidence (2026-09-23, Kubernetes install 0.2.0-rc6, library `netci-0.2`
+  7a6b3fc):** two API pods migrated 0028-0029 concurrently. A build-only run of the
+  standalone `payments-api` ran on the lab's Jenkins A (build #3), passed all seven
+  stages and ended `succeeded` with `sha256:7d39140d…` and no deployment. Promoting that
+  run to dev produced a deployment that turned healthy with `healthy_at` recorded, and
+  the container on `netci-prod-02` reports that digest. Promotion to prod was refused
+  with 422, and promotion to staging was refused because the module has no staging
+  target.
+- **Not verified live:** SCM webhooks (the lab's git server is plain HTTP and sends
+  none), pull requests and forks, tag registration, and a soak rule. The tests drive the
   webhook, the CI callback and the promotion route, and PostgreSQL for the new columns
   and the constraint.
