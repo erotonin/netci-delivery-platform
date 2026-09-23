@@ -32,6 +32,19 @@ class ScmParsedEvent:
     sender: str
     tag: str | None = None
     action: str | None = None
+    #: Pull/merge requests only: the branch the change would merge into, whether its head
+    #: lives in another repository, and its number.
+    base_branch: str | None = None
+    from_fork: bool = False
+    pull_request_number: int | None = None
+
+    @property
+    def kind(self) -> str:
+        """push, tag or pull_request -- the vocabulary delivery rules are written in."""
+
+        if self.pull_request_number is not None or self.event_type in ("pull_request", "Merge Request Hook"):
+            return "pull_request"
+        return "tag" if self.tag else "push"
 
 
 class ScmProvider(Protocol):
@@ -153,6 +166,9 @@ class GitHubScmProvider:
                 return None
             branch = head.get("ref", "main")
             ref = f"refs/pull/{pr.get('number', 0)}/head"
+            base = pr.get("base", {})
+            head_repo = (head.get("repo") or {}).get("full_name")
+            base_repo = (base.get("repo") or {}).get("full_name") or repo_identity
             return ScmParsedEvent(
                 delivery_id=delivery_id,
                 event_type=event_type,
@@ -162,6 +178,11 @@ class GitHubScmProvider:
                 branch=branch,
                 sender=sender,
                 action=action,
+                base_branch=str(base.get("ref") or "main"),
+                # A head repository GitHub no longer knows (a deleted fork) is not this
+                # repository either; absence is not evidence of being trusted.
+                from_fork=head_repo != base_repo,
+                pull_request_number=int(pr.get("number") or 0),
             )
 
         return None
@@ -281,6 +302,8 @@ class GitLabScmProvider:
                 return None
             branch = attrs.get("source_branch", "main")
             ref = f"refs/merge-requests/{attrs.get('iid', 0)}/head"
+            source_project = attrs.get("source_project_id")
+            target_project = attrs.get("target_project_id")
             if not delivery_id:
                 delivery_id = hashlib.sha256(
                     f"{repo_identity}:mr-{attrs.get('id')}:{commit_sha}".encode()
@@ -294,6 +317,9 @@ class GitLabScmProvider:
                 branch=branch,
                 sender=sender,
                 action=action,
+                base_branch=str(attrs.get("target_branch") or "main"),
+                from_fork=source_project is None or source_project != target_project,
+                pull_request_number=int(attrs.get("iid") or 0),
             )
 
         return None

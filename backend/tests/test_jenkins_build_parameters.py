@@ -88,3 +88,34 @@ def test_image_names_are_registry_safe():
     assert image_name_for("Payment Gateway") == "payment-gateway"
     with pytest.raises(ValueError):
         image_name_for("---")
+
+
+# ---------------------------------------------------------------- verify-only builds (ADR-043)
+
+
+def test_a_verify_only_build_is_told_so_and_names_no_stage_that_signs_or_publishes():
+    sent = _sent_query(_request(publish_artifact=False, stages=("checkout", "unit-test", "build", "sign", "publish")))
+    assert sent["NETCI_PUBLISH"] == "false"
+    # An older library ignores NETCI_PUBLISH but has always honoured NETCI_STAGES.
+    assert sent["NETCI_STAGES"].split(",") == ["checkout", "unit-test", "build"]
+
+
+def test_a_verify_only_build_with_no_stage_list_still_names_one_without_sign():
+    sent = _sent_query(_request(publish_artifact=False, stages=()))
+    stages = sent["NETCI_STAGES"].split(",")
+    assert "sign" not in stages and "publish" not in stages and "build" in stages
+
+
+def test_a_published_build_keeps_its_stages_and_is_told_to_publish():
+    sent = _sent_query(_request(stages=("checkout", "build", "sign", "publish")))
+    assert sent["NETCI_PUBLISH"] == "true"
+    assert sent["NETCI_STAGES"] == "checkout,build,sign,publish"
+
+
+def test_the_pull_request_ref_reaches_jenkins_only_in_its_validated_form():
+    assert _sent_query(_request(source_ref="refs/pull/12/head"))["NETCI_GIT_REF"] == "refs/pull/12/head"
+    assert _sent_query(_request())["NETCI_GIT_REF"] == ""
+
+
+def test_the_job_declares_the_new_parameters():
+    assert {"NETCI_PUBLISH", "NETCI_GIT_REF"} <= set(JOB_PARAMETERS)

@@ -45,6 +45,11 @@ from .auth import AuthError, Principal, build_authenticator
 from .build_inputs import BuildInputError, validate_build_inputs
 from .client_address import LOOPBACK_HOSTS, resolve_client
 from .ratelimit import build_rate_limiter
+from .domain.delivery_rules import (
+    ScmEvent,
+    decide as decide_trigger,
+    default_rules as default_delivery_rules,
+)
 from .domain.models import (
     DeploymentStatus,
     Application,
@@ -813,6 +818,10 @@ def pipeline_json(item: PipelineRun) -> dict[str, object]:
         "retryOf": str(item.retry_of) if item.retry_of else None,
         "configRevisionId": str(item.config_revision_id) if item.config_revision_id else None,
         "startedBy": item.started_by,
+        "deployAfterBuild": item.deploy_after_build,
+        "publishArtifact": item.publish_artifact,
+        "releaseTag": item.release_tag,
+        "trigger": dict(item.trigger),
         "createdAt": item.created_at.isoformat(),
         "updatedAt": item.updated_at.isoformat(),
     }
@@ -1008,6 +1017,10 @@ class PipelineRunCreate(StrictBody):
     #: runtime commands come from the module's registered configuration -- see
     #: `app.build_inputs` for the boundary and why naming one of those keys is a 422.
     parameters: dict[str, object] = Field(default_factory=dict)
+    #: False builds, tests, signs and publishes the commit without deploying it; the
+    #: artifact can then be promoted (ADR-043). `environment` still says whose build
+    #: configuration applies and where a promotion of it would start.
+    deploy: bool = True
 
     @model_validator(mode="after")
     def validate_parameters(self) -> "PipelineRunCreate":
@@ -1131,6 +1144,13 @@ class ModulePipelineConfig(StrictBody):
     runner: str = Field(min_length=1, max_length=255)
     strategy: Literal["Gitflow", "Trunk-based", "Custom Pipeline"]
     pipelines: dict[str, ModulePipelineTabConfig] = Field(min_length=1, max_length=10)
+    #: What SCM events cause and what promotions must prove (ADR-043). Validated by
+    #: `domain.delivery_rules.parse_rules` against the module's environments; absent
+    #: means the defaults.
+    delivery: dict[str, Any] | None = None
+    #: Build inputs every run of the module gets -- NETCI_APP_DIR for a monorepo above
+    #: all -- held to the same boundary as a caller's (`app.build_inputs`).
+    buildInputs: dict[str, Any] | None = None
 
 
 class ModuleEnvironmentCreate(StrictBody):
@@ -2018,11 +2038,15 @@ def start_module_pipeline_run(
             commit_sha=payload.commitSha,
             branch=payload.branch,
             environment=payload.environment,
-            parameters=portal.delivery_parameters(moduleId, payload.environment, payload.parameters),
+            parameters=(portal.delivery_parameters(moduleId, payload.environment, payload.parameters)
+                        if payload.deploy else portal.build_parameters(moduleId, payload.parameters)),
             correlation_id=request.state.correlation_id,
             idempotency_key=idempotency_key,
             started_by=principal.subject,
             config_revision_id=active_rev_id,
+            deploy_after_build=payload.deploy,
+            trigger={"event": "manual", "sender": principal.subject,
+                     "reason": "started from the portal" + ("" if payload.deploy else ", build only")},
         )
         return pipeline_json(run)
     except KeyError as exc:
@@ -2271,6 +2295,40 @@ def list_sample_apps(principal: Principal = ReadAccess) -> dict[str, object]:
         "repositoryBaseConfigured": bool(os.getenv("NETCI_SAMPLE_APPS_REPOSITORY_BASE", "").strip()),
         "items": items,
     }
+
+
+class PromotionCreate(StrictBody):
+    #: The run whose artifact moves. Its digest is what was tested; nothing is rebuilt.
+    pipelineRunId: UUID
+    environment: Environment
+
+
+@app.get("/modules/{moduleId}/delivery-rules")
+def get_module_delivery_rules(moduleId: str, principal: Principal = ReadAccess) -> dict[str, object]:
+    """What an SCM event will cause for this module, and what a promotion must prove."""
+
+    try:
+        _require_module_access(moduleId, principal)
+        return {"moduleId": moduleId, **portal.delivery_rules(moduleId).as_json()}
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail={"code": "MODULE_NOT_FOUND", "message": str(exc)}) from exc
+
+
+@app.post("/modules/{moduleId}/promotions", status_code=status.HTTP_202_ACCEPTED)
+def promote_module_artifact(
+    moduleId: str,
+    payload: PromotionCreate,
+    principal: Principal = DeveloperAccess,
+) -> dict[str, object]:
+    _require_environment_role(payload.environment, principal)
+    try:
+        _require_module_access(moduleId, principal)
+        return portal.promote(
+            moduleId, pipeline_run_id=payload.pipelineRunId, environment=payload.environment,
+            actor=principal.subject,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail={"code": "MODULE_NOT_FOUND", "message": str(exc)}) from exc
 
 
 @app.get("/modules/{moduleId}/versions")
@@ -3199,21 +3257,79 @@ async def receive_scm_webhook(
         if app is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "associated application not found")
 
-    # Trigger pipeline run outside the read transaction
+    # Which rules apply is the module's configuration, read now (ADR-043). An application
+    # with no Portal module -- one created through the delivery API alone -- has no rules
+    # of its own and gets the defaults for its one environment.
     managed_parameters: dict[str, object] = {}
     if integration.credential_reference:
         managed_parameters["credentialsId"] = integration.credential_reference
+    module = portal.module_for_application(app.id)
+    module_id = str(module["id"]) if module else None
+    try:
+        rules = (portal.delivery_rules(module_id) if module_id
+                 else default_delivery_rules(app.default_environment, [app.default_environment]))
+    except PortalError as exc:
+        raise HTTPException(status_code=exc.status_code, detail={"code": exc.code, "message": exc.message}) from exc
+    event = ScmEvent(
+        kind=parsed.kind,  # type: ignore[arg-type]
+        branch=(parsed.base_branch or parsed.branch) if parsed.kind == "pull_request" else parsed.branch,
+        tag=parsed.tag,
+        from_fork=parsed.from_fork,
+    )
+    decision = decide_trigger(rules, event)
+    trigger = {
+        "event": parsed.kind,
+        "ref": parsed.ref,
+        "branch": parsed.branch,
+        "tag": parsed.tag,
+        "pullRequest": parsed.pull_request_number,
+        "baseBranch": parsed.base_branch,
+        "fromFork": parsed.from_fork,
+        "sender": parsed.sender,
+        "rule": decision.rule_index,
+        "reason": decision.reason,
+        "deliveryId": parsed.delivery_id,
+    }
+    if not decision.run:
+        # Answered 200: the delivery was received and understood; there is nothing to do.
+        # A 4xx would make the SCM mark the hook as failing and retry it.
+        logger.info("scm webhook ignored", extra={"deliveryId": parsed.delivery_id, "reason": decision.reason})
+        return JSONResponse(status_code=status.HTTP_200_OK, content={
+            "status": "ignored", "deliveryId": parsed.delivery_id, "reason": decision.reason,
+        })
+
+    # A build that deploys runs in the environment it deploys to; one that does not is
+    # labelled with the first environment it could reach, which is where a promotion of
+    # it would start.
+    environment = decision.deploy_to or app.default_environment
+    config_revision_id = None
+    try:
+        if module_id is None:
+            parameters = managed_parameters
+        elif decision.deploy_to is not None:
+            parameters = portal.delivery_parameters(module_id, environment, managed_parameters)
+        else:
+            parameters = portal.build_parameters(module_id, managed_parameters)
+        if module and module.get("activeConfigRevisionId"):
+            config_revision_id = UUID(str(module["activeConfigRevisionId"]))
+    except PortalError as exc:
+        raise HTTPException(status_code=exc.status_code, detail={"code": exc.code, "message": exc.message}) from exc
 
     corr_id = str(getattr(request.state, "correlation_id", None) or uuid4())
     run = platform.start_pipeline(
         app.id,
         commit_sha=parsed.commit_sha,
         branch=parsed.branch,
-        environment=app.default_environment,
-        parameters=managed_parameters,
+        environment=environment,
+        parameters=parameters,
         correlation_id=corr_id,
         idempotency_key=f"scm:{parsed.delivery_id}",
         started_by=f"scm:{provider_type.value}:{parsed.sender}",
+        config_revision_id=config_revision_id,
+        deploy_after_build=decision.deploy_to is not None,
+        publish_artifact=decision.publish,
+        release_tag=decision.release_tag,
+        trigger=trigger,
     )
 
     return JSONResponse(
@@ -3224,6 +3340,12 @@ async def receive_scm_webhook(
             "pipelineRunId": str(run.id),
             "commitSha": parsed.commit_sha,
             "branch": parsed.branch,
+            "decision": {
+                "reason": decision.reason,
+                "deployTo": decision.deploy_to.value if decision.deploy_to else None,
+                "publish": decision.publish,
+                "registerVersion": decision.release_tag,
+            },
         },
     )
 

@@ -1006,3 +1006,29 @@ CREATE INDEX IF NOT EXISTS idx_pipeline_runs_artifact_digest
 CREATE INDEX IF NOT EXISTS idx_deployments_settled_per_environment
     ON deployments (application_id, environment, updated_at DESC)
     WHERE status IN ('healthy', 'rolled_back');
+
+-- >>> migration: 0028_pipeline_run_delivery_intent.sql
+-- CI and CD become separate decisions (ADR-043). Until now every run built and then
+-- deployed, so a run needed no field saying whether it would. These are fixed when the
+-- run is queued: whether a successful build is deployed, whether it is published at all
+-- (a fork's pull request is not: nothing unreviewed is signed), the tag a success
+-- registers as a version, and what started it. Existing rows keep their meaning --
+-- every one of them was a build that deployed.
+ALTER TABLE pipeline_runs ADD COLUMN IF NOT EXISTS deploy_after_build BOOLEAN NOT NULL DEFAULT TRUE;
+ALTER TABLE pipeline_runs ADD COLUMN IF NOT EXISTS publish_artifact BOOLEAN NOT NULL DEFAULT TRUE;
+ALTER TABLE pipeline_runs ADD COLUMN IF NOT EXISTS release_tag TEXT;
+ALTER TABLE pipeline_runs ADD COLUMN IF NOT EXISTS trigger JSONB NOT NULL DEFAULT '{}'::jsonb;
+-- A run that is not published cannot carry a digest; the database refuses one, so no
+-- code path can later mistake a fork's build for an artifact.
+ALTER TABLE pipeline_runs DROP CONSTRAINT IF EXISTS pipeline_runs_unpublished_has_no_digest;
+ALTER TABLE pipeline_runs ADD CONSTRAINT pipeline_runs_unpublished_has_no_digest
+    CHECK (publish_artifact OR artifact_digest IS NULL);
+
+-- >>> migration: 0029_deployment_healthy_at.sql
+-- When a deployment became healthy, written once by the transition that made it so
+-- (ADR-043). A promotion that requires "N minutes healthy in staging" needs this fact,
+-- and nothing else records it: `updated_at` moves on every later transition, and the
+-- delivery events DORA reads are written for production only. Rows from before this
+-- column have no value, so they prove no soak -- a promotion that needs one refuses
+-- rather than guessing from `updated_at`.
+ALTER TABLE deployments ADD COLUMN IF NOT EXISTS healthy_at TIMESTAMPTZ;

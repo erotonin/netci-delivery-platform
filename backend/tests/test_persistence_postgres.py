@@ -1446,3 +1446,62 @@ def test_postgres_keeps_a_template_version_immutable_like_the_memory_store(porta
         database.close()
         with psycopg.connect(DATABASE_URL) as connection:
             connection.execute("DELETE FROM catalog_templates WHERE id = %s", (template_id,))
+
+
+# ---------------------------------------------------------------- delivery intent (ADR-043)
+
+
+def _start(platform, application, name, **intent):
+    return platform.start_pipeline(
+        application.id, commit_sha="abc1234", branch="feature/x", environment=Environment.DEV,
+        parameters={}, correlation_id=f"intent-{name}", idempotency_key=f"intent-{name}", **intent,
+    )
+
+
+def test_a_build_only_run_keeps_its_intent_across_a_restart_and_ends_without_a_deployment(database):
+    platform = DeliveryPlatform()
+    name = unique_name()
+    application, _ = seed(platform, name)
+    trigger = {"event": "push", "ref": "refs/heads/feature/x", "rule": 1, "reason": "rule 1: build only"}
+    run = _start(platform, application, name, deploy_after_build=False, release_tag="v1.0.0", trigger=trigger)
+
+    restarted = DeliveryPlatform()
+    recovered = restarted.get_pipeline(run.id)
+    assert (recovered.deploy_after_build, recovered.publish_artifact) == (False, True)
+    assert recovered.release_tag == "v1.0.0" and recovered.trigger == trigger
+
+    restarted.record_ci_result(run.id, PipelineStatus.RUNNING.value, None, [])
+    outcome = restarted.record_ci_result(run.id, PipelineStatus.SUCCEEDED.value, DIGEST, [])
+    assert outcome.deployment is None
+    assert DeliveryPlatform().get_pipeline(run.id).status == PipelineStatus.SUCCEEDED
+    assert [d for d in DeliveryPlatform().list_deployments(application.id) if d.pipeline_run_id == run.id] == []
+
+
+def test_the_database_refuses_a_digest_on_a_run_that_publishes_nothing(database):
+    import psycopg
+
+    platform = DeliveryPlatform()
+    name = unique_name()
+    application, _ = seed(platform, name)
+    run = _start(platform, application, name, deploy_after_build=False, publish_artifact=False)
+
+    # Not only the domain: a code path that forgot the rule still cannot write the digest.
+    with psycopg.connect(DATABASE_URL) as connection, connection.cursor() as cursor:
+        with pytest.raises(psycopg.errors.CheckViolation):
+            cursor.execute("UPDATE pipeline_runs SET artifact_digest = %s WHERE id = %s", (DIGEST, run.id))
+
+
+def test_healthy_at_is_written_once_and_survives_later_transitions(database):
+    platform = DeliveryPlatform()
+    _, run = seed(platform, unique_name(), environment=Environment.DEV)
+    platform.record_ci_result(run.id, PipelineStatus.RUNNING.value, None, [])
+    deployment = platform.record_ci_result(run.id, PipelineStatus.SUCCEEDED.value, DIGEST, []).deployment
+    assert deployment is not None and deployment.healthy_at is None
+    platform.record_deployment_result(deployment.id, DeploymentStatus.HEALTHY.value, "ok")
+    first = DeliveryPlatform().get_deployment(deployment.id).healthy_at
+    assert first is not None
+
+    platform.rollback_deployment(deployment.id, target_artifact_digest=ROLLBACK_DIGEST)
+    after = DeliveryPlatform().get_deployment(deployment.id)
+    assert after.status != DeploymentStatus.HEALTHY
+    assert after.healthy_at == first

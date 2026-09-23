@@ -83,6 +83,22 @@ export type PipelineRunCreate = {
   branch?: string
   environment: Environment
   parameters?: Record<string, unknown>
+  /** false: build, test, sign and publish without deploying (ADR-043). */
+  deploy?: boolean
+}
+
+/** What started a run, as the server recorded it. */
+export type RunTrigger = {
+  event?: 'push' | 'tag' | 'pull_request' | 'manual'
+  ref?: string
+  branch?: string
+  tag?: string | null
+  pullRequest?: number | null
+  baseBranch?: string | null
+  fromFork?: boolean
+  sender?: string
+  rule?: number | null
+  reason?: string
 }
 
 export type PipelineRun = {
@@ -100,6 +116,10 @@ export type PipelineRun = {
   retryOf: string | null
   configRevisionId?: string | null
   startedBy: string | null
+  deployAfterBuild?: boolean
+  publishArtifact?: boolean
+  releaseTag?: string | null
+  trigger?: RunTrigger
   createdAt: string
   updatedAt: string
 }
@@ -699,6 +719,44 @@ export function createModule(systemId: string, payload: { name: string; displayN
   return request<PortalModule>(`/systems/${encodeURIComponent(systemId)}/modules`, {
     method: 'POST',
     headers: { 'Idempotency-Key': requestId(), 'X-Correlation-Id': requestId() },
+    body: JSON.stringify(payload),
+  })
+}
+
+export type DeliveryTrigger = {
+  on: 'push' | 'tag' | 'pull_request'
+  branches?: string[]
+  tags?: string[]
+  deployTo?: 'dev' | 'staging'
+  registerVersion?: boolean
+}
+
+export type DeliveryRules = {
+  moduleId: string
+  triggers: DeliveryTrigger[]
+  forkPullRequests: 'ignore' | 'verify'
+  promotion: Record<string, { requireHealthyIn: Environment | null; minSoakMinutes: number }>
+  defaulted: boolean
+}
+
+export function getModuleDeliveryRules(moduleId: string): Promise<DeliveryRules> {
+  return request<DeliveryRules>(`/modules/${encodeURIComponent(moduleId)}/delivery-rules`)
+}
+
+export type Promotion = {
+  moduleId: string
+  environment: Environment
+  sourcePipelineRunId: string
+  artifactDigest: string
+  deploymentId: string
+  status: string
+  evidence: string | null
+}
+
+export function promoteModuleArtifact(moduleId: string, payload: { pipelineRunId: string; environment: Environment }): Promise<Promotion> {
+  return request<Promotion>(`/modules/${encodeURIComponent(moduleId)}/promotions`, {
+    method: 'POST',
+    headers: { 'X-Correlation-Id': requestId() },
     body: JSON.stringify(payload),
   })
 }

@@ -17,6 +17,16 @@ vi.mock('./api/netciClient', async (importOriginal) => {
     ] }),
     getModuleGitRefs: vi.fn().mockResolvedValue({ moduleId: 'notification-worker', repositoryUrl: 'https://git.example/notification-worker.git', branches: [{ name: 'main', sha: 'a'.repeat(40) }], tags: [], error: null }),
     getDora: vi.fn(),
+    getModuleDeliveryRules: vi.fn().mockResolvedValue({
+      moduleId: 'notification-worker', defaulted: true, forkPullRequests: 'ignore',
+      triggers: [
+        { on: 'push', branches: ['main'], deployTo: 'dev' },
+        { on: 'push', branches: ['**'] },
+        { on: 'pull_request', branches: ['**'] },
+        { on: 'tag', tags: ['v*'], registerVersion: true },
+      ],
+      promotion: { staging: { requireHealthyIn: 'dev', minSoakMinutes: 0 } },
+    }),
   }
 })
 

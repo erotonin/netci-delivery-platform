@@ -295,6 +295,34 @@ hàng phút và gọi ra hệ thống ngoài). Thay vào đó mỗi bước có 
 "Durable workflow" nghĩa là: nếu worker chết lúc đang chờ phê duyệt 3 ngày, khi bật lại
 nó vẫn nhớ đang chờ, không mất trạng thái. Jenkins không làm được điều đó.
 
+### 3.2b. CI và CD là hai quyết định riêng (ADR-043)
+
+Giống GitHub Actions: một sự kiện Git **khởi động build**; build xong **có deploy hay
+không, deploy đi đâu** là luật của module; đưa bản đã build sang môi trường tiếp theo là
+**promote** — không build lại, digest đã test chính là digest được deploy.
+
+```
+Sự kiện Git              Luật mặc định (module không khai báo gì)
+───────────────────────  ────────────────────────────────────────────────────────────
+push main           ──►  build → deploy dev (môi trường mặc định, nếu là dev/staging)
+push nhánh khác     ──►  chỉ build (vẫn ký + publish, chưa deploy)
+pull request        ──►  chỉ build; KHÔNG BAO GIỜ deploy
+PR từ fork          ──►  bỏ qua; nếu module bật `forkPullRequests: verify` thì chỉ
+                         verify: không ký, không publish, server từ chối digest
+tag v1.2.3          ──►  build → tự đăng ký version v1.2.3 (cùng transaction)
+
+Build đã publish ──► Promote (POST /modules/{id}/promotions) ──► dev / staging
+                      └─ staging mặc định đòi digest đã healthy ở dev trước;
+                         module có thể đòi soak N phút (`minSoakMinutes`)
+Version ──► Production Request ──► người thứ hai duyệt ──► prod
+             └─ có thể đòi đã healthy ở staging N phút (đổi luật này cần người duyệt)
+```
+
+Luật nằm ở `pipelineConfig.delivery` của config revision — có version, có audit, và
+`GET /modules/{id}/delivery-rules` trả về luật đang áp dụng. Không luật nào được deploy
+thẳng lên prod: khai báo `deployTo: prod` bị từ chối 422. Bấm "Run" trên Portal vẫn
+build + deploy như trước, hoặc tích **Build only** để chỉ build.
+
 ### 3.3. Luồng một lần deploy đầy đủ
 
 ```

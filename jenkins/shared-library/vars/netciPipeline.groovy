@@ -110,13 +110,22 @@ def call(Map config = [:]) {
                             // commit is not in the mirror after the refresh, the build fails
                             // rather than building something else.
                             def commit = params.COMMIT_SHA?.trim() ?: ''
+                            // A fork's pull request commit is on no branch of this
+                            // repository; only its PR ref reaches it. netCI sends one of
+                            // two shapes and this checks them again, because the value
+                            // lands in a refspec.
+                            def prRef = params.NETCI_GIT_REF?.trim() ?: ''
+                            if (prRef && !(prRef ==~ /refs\/(pull|merge-requests)\/[0-9]{1,9}\/head/)) {
+                                error("NETCI_GIT_REF is not a pull request ref: ${prRef}")
+                            }
+                            def prRefspec = prRef ? " '+${prRef}:${prRef}'" : ''
                             if (params.NETCI_BUILD_CACHE_CLAIM?.trim() && fileExists('/netci-cache') && commit ==~ /[0-9a-f]{40}/) {
                                 def mirror = '/netci-cache/git/mirror.git'
                                 sh """
                                   set -eu
                                   if [ -d '${mirror}' ]; then
                                     git -C '${mirror}' remote set-url origin '${params.GIT_URL}'
-                                    git -C '${mirror}' fetch --prune origin '+refs/heads/*:refs/heads/*' || { rm -rf '${mirror}'; git clone --mirror '${params.GIT_URL}' '${mirror}'; }
+                                    git -C '${mirror}' fetch --prune origin '+refs/heads/*:refs/heads/*'${prRefspec} || { rm -rf '${mirror}'; git clone --mirror '${params.GIT_URL}' '${mirror}'; }
                                   else
                                     mkdir -p /netci-cache/git
                                     git clone --mirror '${params.GIT_URL}' '${mirror}'
@@ -128,10 +137,14 @@ def call(Map config = [:]) {
                                 """
                                 env.GIT_COMMIT = commit
                             } else {
+                                def remote = [url: params.GIT_URL]
+                                if (prRef) {
+                                    remote.refspec = "+refs/heads/*:refs/remotes/origin/* +${prRef}:refs/remotes/origin/netci-pr-head"
+                                }
                                 checkout([
                                     $class: 'GitSCM',
                                     branches: [[name: commit ?: (params.GIT_BRANCH ?: 'main')]],
-                                    userRemoteConfigs: [[url: params.GIT_URL]]
+                                    userRemoteConfigs: [remote]
                                 ])
                             }
                         } else {
@@ -252,7 +265,7 @@ def call(Map config = [:]) {
                 steps { script { netciRunCustomStages('publish') } }
             }
             stage('Publish Evidence') {
-                when { expression { env.NETCI_PIPELINE_RUN_ID?.trim() && env.NETCI_API_URL?.trim() } }
+                when { expression { env.NETCI_PIPELINE_RUN_ID?.trim() && env.NETCI_API_URL?.trim() && !netciVerifyOnly() } }
                 steps {
                     netciInBuilder {
                         netciCallbackAuth(callbackCredentialsId) {
@@ -401,7 +414,18 @@ private void netciRunCustomStages(String anchor) {
 
 /** Honour the stage list netCI selected for this application, falling back to the template default. */
 private boolean netciStageEnabled(String stageId, List defaultStages) {
+    // A verify-only build (a fork's pull request, ADR-043) is tested and scanned but never
+    // signed or published: the signing key is not bound in it and nothing it produced can
+    // be deployed. netCI refuses a digest from such a run, so skipping here is not the
+    // only guard -- it is the one that keeps the key out of the build.
+    if (netciVerifyOnly() && (stageId == 'sign' || stageId == 'publish')) {
+        return false
+    }
     def declared = params.NETCI_STAGES?.trim()
     def stages = declared ? declared.split(',').collect { it.trim() } : defaultStages
     return stages.contains(stageId)
+}
+
+private boolean netciVerifyOnly() {
+    return params.NETCI_PUBLISH?.trim() == 'false'
 }

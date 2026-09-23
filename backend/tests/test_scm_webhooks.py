@@ -483,3 +483,48 @@ def test_the_netbox_webhook_does_not_take_the_operator_from_the_payload(monkeypa
     assert response.status_code == 200, response.text
     assert get_server_maintenance(host).updated_by == "netbox-webhook"
     assert "attacker-chosen" not in get_server_maintenance(host).updated_by
+
+
+def _github_pr(head_repo, base_repo="acme/app"):
+    return json.dumps({
+        "action": "opened", "repository": {"full_name": base_repo}, "sender": {"login": "c"},
+        "pull_request": {"number": 9, "head": {"sha": "a" * 40, "ref": "feat", "repo": head_repo},
+                         "base": {"ref": "release/2", "repo": {"full_name": base_repo}}},
+    }).encode()
+
+
+def test_github_pull_requests_carry_their_target_branch_and_whether_they_come_from_a_fork():
+    parse = GitHubScmProvider().parse_webhook
+    headers = {"x-github-delivery": "d1", "x-github-event": "pull_request"}
+
+    same = parse(headers, _github_pr({"full_name": "acme/app"}))
+    fork = parse(headers, _github_pr({"full_name": "stranger/app"}))
+    deleted = parse(headers, _github_pr(None))
+
+    assert (same.kind, same.base_branch, same.from_fork, same.pull_request_number) == ("pull_request", "release/2", False, 9)
+    assert fork.from_fork is True
+    # A head repository GitHub no longer knows is not this repository either.
+    assert deleted.from_fork is True
+
+
+def test_gitlab_merge_requests_from_another_project_are_forks():
+    parse = GitLabScmProvider().parse_webhook
+    body = lambda source: json.dumps({
+        "project": {"path_with_namespace": "acme/app"}, "user_username": "c",
+        "object_attributes": {"action": "open", "iid": 3, "id": 30, "source_branch": "feat",
+                              "target_branch": "main", "source_project_id": source, "target_project_id": 1,
+                              "last_commit": {"id": "b" * 40}},
+    }).encode()
+    headers = {"x-gitlab-event": "Merge Request Hook"}
+    assert parse(headers, body(1)).from_fork is False
+    assert parse(headers, body(2)).from_fork is True
+    assert parse(headers, body(1)).base_branch == "main"
+
+
+def test_a_tag_push_is_a_tag_event():
+    parsed = GitHubScmProvider().parse_webhook(
+        {"x-github-delivery": "d2", "x-github-event": "push"},
+        json.dumps({"repository": {"full_name": "acme/app"}, "ref": "refs/tags/v1.0.0",
+                    "after": "c" * 40, "sender": {"login": "r"}}).encode(),
+    )
+    assert (parsed.kind, parsed.tag) == ("tag", "v1.0.0")

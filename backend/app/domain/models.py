@@ -88,6 +88,16 @@ class PipelineRun:
     console_url: str | None = None
     retry_of: UUID | None = None
     config_revision_id: UUID | None = None
+    # Decided when the run is queued and never changed (ADR-043). A build that is not
+    # deployed ends `succeeded` with its digest and no deployment; a build that is not
+    # published -- a fork's pull request -- is signed by nobody and has no digest, so
+    # nothing of it can ever be deployed or promoted.
+    deploy_after_build: bool = True
+    publish_artifact: bool = True
+    #: The tag this run was built from, when a rule registers it as a version on success.
+    release_tag: str | None = None
+    #: What started the run, for people: {event, ref, rule, reason, pullRequest, fromFork}.
+    trigger: dict[str, object] = field(default_factory=dict)
     version: int = 1
     created_at: datetime = field(default_factory=utc_now)
     updated_at: datetime = field(default_factory=utc_now)
@@ -192,6 +202,9 @@ class Deployment:
     traffic_weight: int = 100
     active_color: str | None = None
     canary_step: int = 0
+    #: When this deployment became healthy -- set once, by that transition. The start of
+    #: a promotion soak (ADR-043); `updated_at` moves on every later transition.
+    healthy_at: datetime | None = None
     version: int = 1
     created_at: datetime = field(default_factory=utc_now)
     updated_at: datetime = field(default_factory=utc_now)

@@ -490,6 +490,50 @@ paths:
         - $ref: '#/components/parameters/ModuleId'
       responses:
         '200': { description: Module pipeline history }
+  /modules/{moduleId}/delivery-rules:
+    get:
+      operationId: getModuleDeliveryRules
+      description: >-
+        What an SCM event causes for this module and what a promotion must prove
+        (ADR-043). Rules live in `pipelineConfig.delivery` of the active configuration;
+        absent means the defaults.
+      parameters:
+        - $ref: '#/components/parameters/ModuleId'
+      responses:
+        '200':
+          description: Effective delivery rules
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DeliveryRules' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /modules/{moduleId}/promotions:
+    post:
+      operationId: promoteModuleArtifact
+      description: >-
+        Deploy an artifact a run already built to dev or staging, without rebuilding it.
+        The module's promotion rule may require the digest to have been healthy in an
+        earlier environment for a number of minutes. Production is refused (422
+        PRODUCTION_REQUIRES_REQUEST): it is reached through a production request.
+      parameters:
+        - $ref: '#/components/parameters/ModuleId'
+        - $ref: '#/components/parameters/CorrelationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PromotionCreate' }
+      responses:
+        '202':
+          description: Deployment of the existing artifact started
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Promotion' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: >-
+            NO_DEPLOYABLE_ARTIFACT, PROMOTION_SOURCE_NOT_HEALTHY, PROMOTION_SOAK_NOT_MET, or
+            the target is leased by another deployment
+        '422': { $ref: '#/components/responses/UnprocessableEntity' }
   /modules/{moduleId}/versions:
     get:
       operationId: listModuleVersions
@@ -1020,15 +1064,20 @@ paths:
           application/json:
             schema:
               type: object
+      description: >-
+        The module's delivery rules decide what the event causes (ADR-043): a build that
+        deploys, a build only, a verify-only build for a fork's pull request, or nothing.
       responses:
         '200':
-          description: Duplicate webhook ignored or acknowledged
+          description: >-
+            Duplicate delivery, or an event no rule acts on (`status: ignored` with the
+            reason). Answered 200 so the SCM does not mark the hook failing and retry it.
           content:
             application/json:
               schema:
                 type: object
         '201':
-          description: Pipeline triggered by verified webhook
+          description: Pipeline triggered by verified webhook; `decision` says what the rule chose
           content:
             application/json:
               schema:
@@ -3485,6 +3534,12 @@ components:
         branch: { type: string, default: main }
         environment: { $ref: '#/components/schemas/Environment' }
         parameters: { type: object, additionalProperties: true }
+        deploy:
+          type: boolean
+          default: true
+          description: >-
+            false builds, tests, signs and publishes the commit without deploying it; the
+            artifact can then be promoted (ADR-043).
     PipelineRun:
       type: object
       required: [id, applicationId, status, commitSha, createdAt]
@@ -3502,8 +3557,68 @@ components:
         consoleUrl: { type: string, nullable: true }
         retryOf: { type: string, format: uuid, nullable: true }
         startedBy: { type: string, nullable: true }
+        configRevisionId: { type: string, format: uuid, nullable: true }
+        deployAfterBuild:
+          type: boolean
+          description: Whether a successful build is deployed. Fixed when the run is queued.
+        publishArtifact:
+          type: boolean
+          description: >-
+            false for a verify-only build (a fork's pull request): nothing is signed or
+            published, and a digest reported for it is refused.
+        releaseTag:
+          type: string
+          nullable: true
+          description: The tag registered as a version when the build succeeds.
+        trigger:
+          type: object
+          additionalProperties: true
+          description: What started the run -- event, ref, pull request, fork, rule and reason.
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
+    PromotionCreate:
+      type: object
+      additionalProperties: false
+      required: [pipelineRunId, environment]
+      properties:
+        pipelineRunId: { type: string, format: uuid }
+        environment: { $ref: '#/components/schemas/Environment' }
+    Promotion:
+      type: object
+      required: [moduleId, environment, sourcePipelineRunId, artifactDigest, deploymentId, status]
+      properties:
+        moduleId: { type: string }
+        environment: { $ref: '#/components/schemas/Environment' }
+        sourcePipelineRunId: { type: string, format: uuid }
+        artifactDigest: { type: string }
+        deploymentId: { type: string, format: uuid }
+        status: { type: string }
+        evidence: { type: string, nullable: true, description: The soak the promotion rule required, as observed. }
+    DeliveryRules:
+      type: object
+      required: [moduleId, triggers, forkPullRequests, promotion, defaulted]
+      properties:
+        moduleId: { type: string }
+        triggers:
+          type: array
+          items:
+            type: object
+            required: [on]
+            properties:
+              on: { type: string, enum: [push, tag, pull_request] }
+              branches: { type: array, items: { type: string } }
+              tags: { type: array, items: { type: string } }
+              deployTo: { type: string, enum: [dev, staging] }
+              registerVersion: { type: boolean }
+        forkPullRequests: { type: string, enum: [ignore, verify] }
+        promotion:
+          type: object
+          additionalProperties:
+            type: object
+            properties:
+              requireHealthyIn: { type: string, nullable: true, enum: [dev, staging, null] }
+              minSoakMinutes: { type: integer, minimum: 0, maximum: 10080 }
+        defaulted: { type: boolean, description: True when the module declared no rules. }
     CancelRequest:
       type: object
       additionalProperties: false

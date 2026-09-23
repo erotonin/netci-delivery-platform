@@ -88,7 +88,8 @@ APPLICATION_COLUMNS = (
 RUN_COLUMNS = (
     "id, application_id, status, commit_sha, branch, environment, parameters, correlation_id,"
     " jenkins_run_id, workflow_id, artifact_digest, started_by, console_url, retry_of,"
-    " config_revision_id, version, created_at, updated_at"
+    " config_revision_id, deploy_after_build, publish_artifact, release_tag, trigger,"
+    " version, created_at, updated_at"
 )
 STAGE_COLUMNS = (
     "id, pipeline_run_id, stage_id, stage_name, attempt, status, queued_at, started_at,"
@@ -105,7 +106,7 @@ SCM_DELIVERY_COLUMNS = (
 DEPLOYMENT_COLUMNS = (
     "id, application_id, pipeline_run_id, runtime, environment, status, artifact_digest,"
     " previous_artifact_digest, approved_by, fencing_token, config_revision_id,"
-    " strategy, traffic_weight, active_color, canary_step, version, created_at, updated_at"
+    " strategy, traffic_weight, active_color, canary_step, healthy_at, version, created_at, updated_at"
 )
 EVENT_COLUMNS = (
     "id, event_type, application_id, pipeline_run_id, deployment_id, commit_sha, environment,"
@@ -439,6 +440,10 @@ def _run(row: dict[str, Any]) -> PipelineRun:
         console_url=row.get("console_url"),
         retry_of=row.get("retry_of"),
         config_revision_id=row.get("config_revision_id"),
+        deploy_after_build=bool(row.get("deploy_after_build", True)),
+        publish_artifact=bool(row.get("publish_artifact", True)),
+        release_tag=row.get("release_tag"),
+        trigger=dict(row.get("trigger") or {}),
         version=int(row["version"] or 1),
         created_at=row["created_at"],
         updated_at=row["updated_at"],
@@ -509,6 +514,7 @@ def _deployment(row: dict[str, Any]) -> Deployment:
         traffic_weight=int(row.get("traffic_weight") if row.get("traffic_weight") is not None else 100),
         active_color=row.get("active_color"),
         canary_step=int(row.get("canary_step") or 0),
+        healthy_at=row.get("healthy_at"),
         version=int(row["version"] or 1),
         created_at=row["created_at"],
         updated_at=row["updated_at"],
@@ -1137,8 +1143,11 @@ class PostgresSession:
                 INSERT INTO pipeline_runs (id, application_id, commit_sha, branch, environment,
                                            parameters, status, jenkins_run_id, workflow_id,
                                            artifact_digest, correlation_id, started_by,
-                                           console_url, retry_of, config_revision_id, version, created_at, updated_at)
-                VALUES (%s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                                           console_url, retry_of, config_revision_id,
+                                           deploy_after_build, publish_artifact, release_tag, trigger,
+                                           version, created_at, updated_at)
+                VALUES (%s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                        %s, %s, %s, %s::jsonb, %s, %s, %s)
                 """,
                 (
                     run.id,
@@ -1156,6 +1165,10 @@ class PostgresSession:
                     run.console_url,
                     run.retry_of,
                     run.config_revision_id,
+                    run.deploy_after_build,
+                    run.publish_artifact,
+                    run.release_tag,
+                    json.dumps(run.trigger, default=str),
                     run.version,
                     run.created_at,
                     run.updated_at,
@@ -1194,8 +1207,8 @@ class PostgresSession:
                                          status, artifact_digest, previous_artifact_digest,
                                          approved_by, fencing_token, config_revision_id,
                                          strategy, traffic_weight, active_color, canary_step,
-                                         version, created_at, updated_at)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                                         healthy_at, version, created_at, updated_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
                     deployment.id,
@@ -1213,6 +1226,7 @@ class PostgresSession:
                     deployment.traffic_weight,
                     deployment.active_color,
                     deployment.canary_step,
+                    deployment.healthy_at,
                     deployment.version,
                     deployment.created_at,
                     deployment.updated_at,
@@ -1225,6 +1239,8 @@ class PostgresSession:
                SET status = %s, artifact_digest = %s, previous_artifact_digest = %s,
                    approved_by = %s, fencing_token = %s,
                    strategy = %s, traffic_weight = %s, active_color = %s, canary_step = %s,
+                   -- Written once: the first healthy transition is the soak's start.
+                   healthy_at = COALESCE(healthy_at, %s),
                    version = %s, updated_at = %s
              WHERE id = %s AND version = %s
             """,
@@ -1238,6 +1254,7 @@ class PostgresSession:
                 deployment.traffic_weight,
                 deployment.active_color,
                 deployment.canary_step,
+                deployment.healthy_at,
                 deployment.version,
                 deployment.updated_at,
                 deployment.id,

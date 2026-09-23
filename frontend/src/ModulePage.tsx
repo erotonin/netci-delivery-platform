@@ -7,11 +7,11 @@ import {
 import {
   approveConfigRevision, approvePipelineRun, cancelPipelineRun, createModuleVersion, detectDrift,
   diffConfigRevisions, getDora, getModule, getModuleGitCommits, getModuleGitRefs, getModuleOverview, getPipelineLogs,
-  getPipelineStages, listConfigRevisions, listModulePipelineRuns, listModuleVersions,
+  getModuleDeliveryRules, getPipelineStages, listConfigRevisions, listModulePipelineRuns, listModuleVersions, promoteModuleArtifact,
   proposeConfigRevision, rejectConfigRevision, retryPipelineRun, rollbackConfigRevision,
   startModulePipeline, applyModuleConfig, whoami, NetciApiError, type ConfigApplyResponse, type ConfigDriftReport, type ConfigRevision, type ConfigRevisionDiff,
   listDcimServers, type DcimServer, type RuntimeSettings, type DeploymentEnvironmentConfig, type Environment, type GitCommits, type GitRefs, type ModuleOverview, type ModulePipelineConfig, type ModuleVersion,
-  type PipelineRun, type PipelineStage, type Runtime,
+  type DeliveryRules, type PipelineRun, type PipelineStage, type Runtime,
 } from './api/netciClient'
 import { usePortalFeedback } from './PortalFeedback'
 import { DoraCards, Modal, StatusPill } from './PortalShell'
@@ -115,6 +115,60 @@ function buildLabel(run: PipelineRun): string {
   return match ? `#${match[1]}` : `#${run.id.slice(0, 8)}`
 }
 
+/** What started a run, in a few words: the server's record, not a guess from the branch. */
+export function triggerText(run: PipelineRun): string {
+  const t = run.trigger ?? {}
+  switch (t.event) {
+    case 'push': return `push ${t.branch ?? run.branch}`
+    case 'tag': return `tag ${t.tag ?? ''}`
+    case 'pull_request': return `PR #${t.pullRequest ?? '?'} → ${t.baseBranch ?? 'main'}${t.fromFork ? ' (fork)' : ''}`
+    case 'manual': return 'manual'
+    default: return 'manual'
+  }
+}
+
+/** Whether the run deploys, only builds, or only verifies (ADR-043). */
+export function runIntent(run: PipelineRun): 'deploys' | 'build only' | 'verify only' {
+  if (run.publishArtifact === false) return 'verify only'
+  if (run.deployAfterBuild === false) return 'build only'
+  return 'deploys'
+}
+
+/** A run whose artifact can be moved onward: it built and published something. */
+export function isPromotable(run: PipelineRun | null): boolean {
+  return !!run && run.publishArtifact !== false && !!run.artifactDigest
+    && (run.status === 'succeeded' || run.status === 'rolled_back')
+}
+
+function describeTrigger(rule: DeliveryRules['triggers'][number]): string {
+  const patterns = (rule.on === 'tag' ? rule.tags : rule.branches) ?? []
+  const what = rule.deployTo ? `build → deploy ${rule.deployTo}` : 'build only'
+  return `${rule.on} ${patterns.join(', ')} → ${what}${rule.registerVersion ? ' + register version' : ''}`
+}
+
+/** The rules in force, stated as the server evaluates them -- first match wins. */
+export function DeliveryFlowPanel({ moduleId }: { moduleId: string }) {
+  const [rules, setRules] = useState<DeliveryRules | null>(null)
+  const [error, setError] = useState('')
+  useEffect(() => {
+    let active = true
+    getModuleDeliveryRules(moduleId)
+      .then((result) => { if (active) setRules(result) })
+      .catch((cause) => { if (active) setError(cause instanceof Error ? cause.message : String(cause)) })
+    return () => { active = false }
+  }, [moduleId])
+  if (error) return <section className="panel delivery-flow" role="alert">Could not read delivery rules: {error}</section>
+  if (!rules) return <section className="panel delivery-flow">Reading delivery rules…</section>
+  return <section className="panel delivery-flow" data-testid="delivery-flow">
+    <h3>Delivery flow{rules.defaulted ? ' (defaults)' : ''}</h3>
+    <ol>{rules.triggers.map((rule, i) => <li key={i}>{describeTrigger(rule)}</li>)}</ol>
+    <p>Fork pull requests: {rules.forkPullRequests === 'ignore' ? 'ignored' : 'verified only — never signed or published'}.</p>
+    <p>{Object.entries(rules.promotion).map(([env, rule]) => rule.requireHealthyIn
+      ? `${env} needs the artifact healthy in ${rule.requireHealthyIn}${rule.minSoakMinutes ? ` for ${rule.minSoakMinutes} min` : ''}`
+      : `${env}: no prior environment required`).join(' · ') || 'No promotion rules.'} Production is reached only through a production request.</p>
+  </section>
+}
+
 function PipelineRunView({
   pipeline,
   liveRun,
@@ -139,6 +193,20 @@ function PipelineRunView({
   const [stages, setStages] = useState<PipelineStage[]>([])
   const [cancelling, setCancelling] = useState(false)
   const [retrying, setRetrying] = useState(false)
+  const [promoting, setPromoting] = useState<Environment | null>(null)
+  const promote = async (environment: Environment) => {
+    if (!liveRun || !moduleId) return
+    setPromoting(environment)
+    try {
+      const result = await promoteModuleArtifact(moduleId, { pipelineRunId: liveRun.id, environment })
+      notify(`Promoting ${result.artifactDigest.slice(0, 19)} to ${environment}: deployment ${result.deploymentId.slice(0, 8)} is ${result.status}.`)
+    } catch (cause) {
+      // The server's refusal is the useful part: which environment it wanted evidence from.
+      notify(cause instanceof Error ? cause.message : String(cause), 'error')
+    } finally {
+      setPromoting(null)
+    }
+  }
 
   useEffect(() => {
     if (!liveRun) {
@@ -262,7 +330,7 @@ function PipelineRunView({
           <StatusPill status={liveRun?.status.replace('_', ' ') ?? 'Not started'} />
           {liveRun?.retryOf && <span className="mono" style={{ marginLeft: 8, fontSize: '0.85em', opacity: 0.8 }}>(retry of #{liveRun.retryOf.slice(0, 8)})</span>}
         </div>
-        <p>{liveRun ? `${liveRun.branch} · ${liveRun.commitSha} · triggered by ${liveRun.startedBy ?? 'unknown actor'}` : 'No pipeline run selected.'}{liveRun?.jenkinsRunId && <><br /><span className="mono" style={{ opacity: 0.7 }}>Jenkins: {liveRun.jenkinsRunId}</span></>}</p>
+        <p>{liveRun ? `${liveRun.branch} · ${liveRun.commitSha} · ${triggerText(liveRun)} · ${runIntent(liveRun)} · triggered by ${liveRun.startedBy ?? 'unknown actor'}` : 'No pipeline run selected.'}{liveRun?.releaseTag && <> · version <b>{liveRun.releaseTag}</b></>}{liveRun?.jenkinsRunId && <><br /><span className="mono" style={{ opacity: 0.7 }}>Jenkins: {liveRun.jenkinsRunId}</span></>}</p>
       </div>
       <div className="run-actions">
         {liveRun?.status === 'waiting_approval' && (
@@ -280,6 +348,13 @@ function PipelineRunView({
             <XCircle size={15} />{cancelling ? 'Cancelling…' : 'Cancel'}
           </button>
         )}
+        {moduleId && isPromotable(liveRun) && (['dev', 'staging'] as Environment[]).map((environment) => (
+          <button key={environment} className="secondary-button" data-testid={`promote-${environment}`}
+            disabled={promoting !== null} onClick={() => promote(environment)}
+            title={`Deploy this exact artifact to ${environment} without rebuilding it`}>
+            <Zap size={15} />{promoting === environment ? 'Promoting…' : `Promote to ${environment}`}
+          </button>
+        ))}
         <button className="secondary-button" disabled={retrying || !canRetry} onClick={handleRetry}>
           <RotateCcw size={15} />{retrying ? 'Retrying…' : 'Retry'}
         </button>
@@ -403,6 +478,7 @@ function PipelineTab({ moduleId, pipelineConfig, deploymentEnvironments, initial
   const [modalBranch, setModalBranch] = useState('')
   const [modalRevision, setModalRevision] = useState('')
   const [modalEnv, setModalEnv] = useState<Environment>('dev')
+  const [modalDeploy, setModalDeploy] = useState(true)
   const [modalError, setModalError] = useState('')
   // The commits on the chosen branch, so a build can be picked by its message instead of
   // by pasting hex. `null` while loading; an error is shown, not an empty list that reads
@@ -426,6 +502,7 @@ function PipelineTab({ moduleId, pipelineConfig, deploymentEnvironments, initial
     setModalBranch(branch)
     setModalRevision(branchSha(branch))
     setModalEnv((pipeline.id.replace('cd-', '') as Environment) || 'dev')
+    setModalDeploy(true)
     setModalError('')
   }
 
@@ -444,10 +521,11 @@ function PipelineTab({ moduleId, pipelineConfig, deploymentEnvironments, initial
         branch: modalBranch.trim() || 'main',
         environment: modalEnv,
         parameters: { portalPipeline: runModalPipeline.id },
+        deploy: modalDeploy,
       })
       setLiveRuns((current) => [next, ...current.filter((item) => item.id !== next.id)])
       setTriggered(runModalPipeline.name)
-      notify(`Queued build ${rev.slice(0, 8)} → ${modalEnv}.`)
+      notify(modalDeploy ? `Queued build ${rev.slice(0, 8)} → ${modalEnv}.` : `Queued build ${rev.slice(0, 8)} (build only, not deployed).`)
       setRunModalPipeline(null)
       setRun({ pipeline: runModalPipeline, liveRun: next })
     } catch (error) {
@@ -473,8 +551,8 @@ function PipelineTab({ moduleId, pipelineConfig, deploymentEnvironments, initial
       />
     )
   }
-  if (historyPipeline) { const historyRuns = runsForPipeline(historyPipeline); return <section className="history-view"><button className="back-button" onClick={() => setHistoryPipeline(null)}><ArrowLeft size={16} />All Environments</button><div className="run-heading"><div><h2>{historyPipeline.name} · Build History</h2><p>Runs targeting this environment, newest first; status reported by Jenkins and worker.</p></div><button className="primary-button" disabled={busyPipeline === historyPipeline.id} onClick={() => openRunModal(historyPipeline)}><Play size={15} />{busyPipeline === historyPipeline.id ? 'Queuing…' : 'Run Pipeline'}</button></div><section className="panel table-panel"><div className="data-table history-table"><div className="table-row table-head"><span>Build</span><span>Commit</span><span>Branch</span><span>Triggered By</span><span>Started</span><span>Status</span><span /></div>{historyRuns.map((item) => <button className="table-row table-button" onClick={() => setRun({ pipeline: historyPipeline, liveRun: item })} key={item.id}><span className="request-id" title={item.jenkinsRunId ?? item.id}>#{item.jenkinsRunId ? item.jenkinsRunId.split('#').pop() : item.id.slice(0, 8)}</span><span className="mono" title={item.commitSha}>{shortSha(item.commitSha)}</span><span>{item.branch}</span><span title={item.startedBy ?? ''}>{person(item.startedBy)}</span><span title={item.createdAt}>{new Date(item.createdAt).toLocaleString('en-US')}</span><StatusPill status={item.status.replace('_', ' ')} /><ExternalLink size={15} /></button>)}</div>{!historyRuns.length && <div className="empty-table"><History size={22} /><strong>No pipeline runs for this environment yet</strong><span>Click "Run Pipeline" to build a commit and deploy.</span></div>}</section>{triggered && <div className="toast success-toast"><CheckCircle2 size={17} />{triggered} has been queued.</div>}</section> }
-  return <><section className="panel repo-strip"><div><span>Repository</span><strong className="mono">{refs?.repositoryUrl ?? '…'}</strong></div>{refs?.error ? <div className="repo-error"><ShieldAlert size={14} />Failed to read branches from repository: {refs.error}</div> : <div><span>Branch</span><strong>{refs ? refs.branches.map((b) => `${b.name} @ ${b.sha.slice(0, 7)}`).join(' · ') || 'no branches' : 'loading…'}</strong></div>}{refs && refs.tags.length > 0 && <div><span>Latest Tags</span><strong>{refs.tags.slice(0, 3).map((t) => t.name).join(' · ')}</strong></div>}</section><div className="pipeline-card-grid">{definitions.map((pipeline) => {
+  if (historyPipeline) { const historyRuns = runsForPipeline(historyPipeline); return <section className="history-view"><button className="back-button" onClick={() => setHistoryPipeline(null)}><ArrowLeft size={16} />All Environments</button><div className="run-heading"><div><h2>{historyPipeline.name} · Build History</h2><p>Runs targeting this environment, newest first; status reported by Jenkins and worker.</p></div><button className="primary-button" disabled={busyPipeline === historyPipeline.id} onClick={() => openRunModal(historyPipeline)}><Play size={15} />{busyPipeline === historyPipeline.id ? 'Queuing…' : 'Run Pipeline'}</button></div><section className="panel table-panel"><div className="data-table history-table"><div className="table-row table-head"><span>Build</span><span>Commit</span><span>Branch</span><span>Triggered By</span><span>Started</span><span>Status</span><span /></div>{historyRuns.map((item) => <button className="table-row table-button" onClick={() => setRun({ pipeline: historyPipeline, liveRun: item })} key={item.id}><span className="request-id" title={item.jenkinsRunId ?? item.id}>#{item.jenkinsRunId ? item.jenkinsRunId.split('#').pop() : item.id.slice(0, 8)}</span><span className="mono" title={item.commitSha}>{shortSha(item.commitSha)}</span><span title={item.trigger?.reason ?? ''}>{item.branch}<small className="run-intent"> · {triggerText(item)}{runIntent(item) !== 'deploys' ? ` · ${runIntent(item)}` : ''}</small></span><span title={item.startedBy ?? ''}>{person(item.startedBy)}</span><span title={item.createdAt}>{new Date(item.createdAt).toLocaleString('en-US')}</span><StatusPill status={item.status.replace('_', ' ')} /><ExternalLink size={15} /></button>)}</div>{!historyRuns.length && <div className="empty-table"><History size={22} /><strong>No pipeline runs for this environment yet</strong><span>Click "Run Pipeline" to build a commit and deploy.</span></div>}</section>{triggered && <div className="toast success-toast"><CheckCircle2 size={17} />{triggered} has been queued.</div>}</section> }
+  return <><section className="panel repo-strip"><div><span>Repository</span><strong className="mono">{refs?.repositoryUrl ?? '…'}</strong></div>{refs?.error ? <div className="repo-error"><ShieldAlert size={14} />Failed to read branches from repository: {refs.error}</div> : <div><span>Branch</span><strong>{refs ? refs.branches.map((b) => `${b.name} @ ${b.sha.slice(0, 7)}`).join(' · ') || 'no branches' : 'loading…'}</strong></div>}{refs && refs.tags.length > 0 && <div><span>Latest Tags</span><strong>{refs.tags.slice(0, 3).map((t) => t.name).join(' · ')}</strong></div>}</section><DeliveryFlowPanel moduleId={moduleId} /><div className="pipeline-card-grid">{definitions.map((pipeline) => {
     const live = runsForPipeline(pipeline)[0]
     const env = pipeline.id.replace('cd-', '')
     return <article className="pipeline-card panel" key={pipeline.id}><div className="pipeline-card-title"><span className={`pipeline-icon pipeline-${pipeline.id}`}><GitBranch size={18} /></span><div><h3>{pipeline.name}</h3><p>build → publish → deploy to <b>{env}</b> · branch {pipeline.branch}{env === 'prod' ? ' · approval required' : ''}</p></div><button aria-label={`Open history ${pipeline.name}`} onClick={() => setHistoryPipeline(pipeline)}><MoreHorizontal size={18} /></button></div><div className="last-build" style={live ? { cursor: 'pointer' } : undefined} title={live ? "Click để mở chi tiết Pipeline Run này" : undefined} onClick={() => { if (live) setRun({ pipeline, liveRun: live }) }}><span>Latest Run</span><strong title={live?.jenkinsRunId ?? live?.id}>{live ? `#${live.jenkinsRunId ? live.jenkinsRunId.split('#').pop() : live.id.slice(0, 8)}` : '—'}</strong><StatusPill status={live?.status.replace('_', ' ') ?? 'idle'} /></div>{live?.status === 'waiting_approval' && <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: '#fff4df', border: '1px solid #dda11d', borderRadius: '6px', padding: '6px 10px', margin: '8px 0', fontSize: '0.82rem', color: '#9d6b0c', cursor: 'pointer' }} onClick={() => setRun({ pipeline, liveRun: live })}><span>⏳ <strong>Chờ phê duyệt</strong> để deploy Prod</span><span style={{ textDecoration: 'underline', fontWeight: 600 }}>Duyệt ngay →</span></div>}<dl><div><dt>Commit</dt><dd className="mono" title={live?.commitSha}>{shortSha(live?.commitSha)}{live?.branch ? ` (${live.branch})` : ''}</dd></div><div><dt>Artifact</dt><dd className="mono" title={live?.artifactDigest ?? ''}>{shortDigest(live?.artifactDigest)}</dd></div><div><dt>Triggered By</dt><dd title={live?.startedBy ?? ''}>{person(live?.startedBy)}</dd></div><div><dt>Started</dt><dd title={live?.createdAt}>{live ? timeAgo(live.createdAt) : 'none'}</dd></div></dl><footer><button className="secondary-button" onClick={() => setHistoryPipeline(pipeline)}><History size={15} />History</button><button className="primary-button" style={{ height: '32px', padding: '0 12px', fontSize: '0.82rem', display: 'flex', alignItems: 'center', gap: '6px' }} disabled={busyPipeline === pipeline.id} aria-label={`Run ${pipeline.name}`} onClick={() => openRunModal(pipeline)}><Play size={14} />Run Pipeline</button></footer></article>
@@ -482,7 +560,9 @@ function PipelineTab({ moduleId, pipelineConfig, deploymentEnvironments, initial
   {runModalPipeline && (
     <Modal
       title={`Run Pipeline → ${runModalPipeline.name}`}
-      description={`Build selected commit on Jenkins (ephemeral pod), sign & scan artifact, then deploy to ${modalEnv}${modalEnv === 'prod' ? ' after approval' : ''}.`}
+      description={modalDeploy
+        ? `Build selected commit on Jenkins (ephemeral pod), sign & scan artifact, then deploy to ${modalEnv}${modalEnv === 'prod' ? ' after approval' : ''}.`
+        : 'Build, test, sign and publish the selected commit without deploying it. Promote the artifact afterwards from the run page.'}
       onClose={() => setRunModalPipeline(null)}
       footer={
         <>
@@ -533,6 +613,10 @@ function PipelineTab({ moduleId, pipelineConfig, deploymentEnvironments, initial
           <select value={modalEnv} onChange={(e) => setModalEnv(e.target.value as Environment)}>
             {definitions.map((d) => { const env = d.id.replace('cd-', '') as Environment; return <option key={env} value={env}>{environmentLabel[env] ?? env}{env === 'prod' ? ' (approval required)' : ''}</option> })}
           </select>
+        </label>
+        <label className="field full checkbox-field">
+          <span><input type="checkbox" data-testid="run-build-only" checked={!modalDeploy} onChange={(e) => setModalDeploy(!e.target.checked)} /> Build only — do not deploy</span>
+          <small>The artifact is still signed and published; deploy it later with “Promote”.</small>
         </label>
         {modalError && <div className="login-error" role="alert">{modalError}</div>}
       </div>

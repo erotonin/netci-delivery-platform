@@ -167,7 +167,10 @@ def trivy_findings(report: dict[str, object]) -> list[dict[str, str]]:
 
 def command_status(arguments: argparse.Namespace) -> int:
     payload: dict[str, object] = {"status": arguments.status, "logLines": list(arguments.log or [])}
-    if arguments.status == "succeeded":
+    if arguments.status == "succeeded" and os.environ.get("NETCI_PUBLISH", "").strip() == "false":
+        # A verify-only build published nothing, and netCI refuses a digest for it.
+        pass
+    elif arguments.status == "succeeded":
         digest = arguments.digest or read_text_file("artifact-digest.txt")
         if not digest.startswith(DIGEST_PREFIX):
             fail(f"a successful build must report a {DIGEST_PREFIX} digest, got {digest!r}")

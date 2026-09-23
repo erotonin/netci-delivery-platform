@@ -51,6 +51,12 @@ class CiLaunchRequest:
     isolation: BuildIsolation | None = None
     # Custom catalog stages in this run's list: id, name, repository script, anchor.
     custom_stages: list[dict[str, object]] = field(default_factory=list)
+    # False for a verify-only build (a fork's pull request): the library skips Sign,
+    # Publish and Publish Evidence, so the signing key is never bound in that build.
+    publish_artifact: bool = True
+    # A pull request's head ref when its commit is on no branch of the repository -- a
+    # fork's commits are reachable only through `refs/pull/<n>/head`.
+    source_ref: str = ""
 
 
 @dataclass(frozen=True)

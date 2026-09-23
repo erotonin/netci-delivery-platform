@@ -129,6 +129,10 @@ JOB_PARAMETERS: tuple[str, ...] = (
     # that one name, whatever its own repository held.
     "NETCI_APP_DIR",
     "NETCI_IMAGE_NAME",
+    # "false" for a verify-only build: no Sign, no Publish, no evidence (ADR-043).
+    "NETCI_PUBLISH",
+    # The pull request head ref to fetch when the commit is on no branch (a fork's).
+    "NETCI_GIT_REF",
     # Lets the same job be sent to a shared or an ephemeral agent, which is what the
     # benchmark compares. Empty means "use the template default".
     "NETCI_AGENT_LABEL",
@@ -142,6 +146,28 @@ JOB_PARAMETERS: tuple[str, ...] = (
     "REGISTRY_PULL_HOST",
     "NETCI_TRIVY_DB_REPOSITORY",
 )
+
+
+#: The library's stage list when netCI sends none (netciPipeline.groovy `defaultStages`).
+LIBRARY_DEFAULT_STAGES: tuple[str, ...] = (
+    "checkout", "unit-test", "build", "sbom", "vulnerability-scan", "sign", "publish",
+)
+UNPUBLISHED_STAGES = frozenset({"sign", "publish"})
+
+
+def _stages_for(request: "CiLaunchRequest") -> list[str]:
+    """The stage list Jenkins runs. A verify-only build names none that sign or publish.
+
+    `NETCI_PUBLISH=false` is what the current library reads. This is what a controller
+    still on an older library reads: it has honoured `NETCI_STAGES` since the start, so
+    the signing key stays out of a fork's build even there. Such a build then fails at
+    Publish Evidence for want of a digest -- a visible failure, not a leaked key.
+    """
+
+    stages = list(request.stages) or list(LIBRARY_DEFAULT_STAGES)
+    if not request.publish_artifact:
+        stages = [stage for stage in stages if stage not in UNPUBLISHED_STAGES]
+    return stages
 
 
 def image_name_for(application_name: str) -> str:
@@ -380,7 +406,7 @@ class JenkinsHttpAdapter:
                 "NETCI_API_URL": self.config.callback_url,
                 "NETCI_ENVIRONMENT": request.environment,
                 "NETCI_TEMPLATE": request.pipeline_template,
-                "NETCI_STAGES": ",".join(request.stages),
+                "NETCI_STAGES": ",".join(_stages_for(request)),
                 "NETCI_CUSTOM_STAGES": json.dumps(request.custom_stages) if request.custom_stages else "",
                 "GIT_URL": request.repository_url,
                 "GIT_BRANCH": request.branch,
@@ -391,6 +417,8 @@ class JenkinsHttpAdapter:
                 # Decided here, not by the caller: the image repository is where the
                 # artifact lands, and one module must not be able to publish as another.
                 "NETCI_IMAGE_NAME": image_name_for(request.application_name),
+                "NETCI_PUBLISH": "true" if request.publish_artifact else "false",
+                "NETCI_GIT_REF": request.source_ref,
                 "NETCI_AGENT_LABEL": str(request.parameters.get("agentLabel", "")),
                 **(request.isolation.as_parameters() if request.isolation else {
                     "NETCI_BUILD_NAMESPACE": "", "NETCI_BUILD_SERVICE_ACCOUNT": "", "NETCI_BUILD_CACHE_CLAIM": "",

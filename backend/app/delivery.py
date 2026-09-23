@@ -23,6 +23,7 @@ import re
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
+from typing import Callable
 from uuid import UUID, uuid4
 
 from .adapters.cd_orchestrator import (
@@ -52,6 +53,7 @@ from .stage_catalog import (
 )
 from .runtime_environment import is_local_runtime
 from .policy.rules import PolicyDecision, evaluate_artifact_evidence
+from .domain.delivery_rules import pull_request_ref
 from .domain.models import (
     Application,
     StageDefinition,
@@ -148,6 +150,9 @@ class DeliveryPlatform:
         # Composition builds the seam and stops. Reading state here is what made a second
         # replica answer from a snapshot of its own start-up.
         self.database: PlatformDatabase = database if database is not None else build_database()
+        #: Called inside the transaction that records a published build carrying a
+        #: release tag. The Portal owns versions and sets this; nothing else does.
+        self.build_published_hook: Callable[[PlatformSession, PipelineRun], None] | None = None
 
     # ------------------------------------------------------------- persistence
 
@@ -854,12 +859,23 @@ class DeliveryPlatform:
         idempotency_key: str | None,
         started_by: str | None = None,
         config_revision_id: UUID | None = None,
+        deploy_after_build: bool = True,
+        publish_artifact: bool = True,
+        release_tag: str | None = None,
+        trigger: dict[str, object] | None = None,
     ) -> PipelineRun:
+        if deploy_after_build and not publish_artifact:
+            # Nothing unpublished has a digest, so there would be nothing to deploy.
+            raise DeliveryError("UNPUBLISHED_RUN_CANNOT_DEPLOY",
+                                "a run that publishes no artifact cannot be deployed", 422)
         request_payload = {
             "commitSha": commit_sha,
             "branch": branch,
             "environment": environment.value,
             "parameters": parameters,
+            "deployAfterBuild": deploy_after_build,
+            "publishArtifact": publish_artifact,
+            "releaseTag": release_tag,
         }
         # The CI dispatch below is a network call, so it must happen after this
         # transaction commits rather than while it holds a connection open.
@@ -890,6 +906,10 @@ class DeliveryPlatform:
                 started_by=started_by,
                 config_revision_id=config_revision_id,
                 request_payload=request_payload,
+                deploy_after_build=deploy_after_build,
+                publish_artifact=publish_artifact,
+                release_tag=release_tag,
+                trigger=dict(trigger or {}),
             )
         return self._launch_ci(application, run)
 
@@ -907,6 +927,10 @@ class DeliveryPlatform:
         started_by: str | None,
         request_payload: dict[str, object],
         config_revision_id: UUID | None = None,
+        deploy_after_build: bool = True,
+        publish_artifact: bool = True,
+        release_tag: str | None = None,
+        trigger: dict[str, object] | None = None,
     ) -> PipelineRun:
         run = PipelineRun(
             application_id=application_id,
@@ -921,6 +945,10 @@ class DeliveryPlatform:
             # touch this run: a build must deploy to the targets it was approved for, not
             # to whatever the module points at by the time the workflow gets there.
             config_revision_id=config_revision_id,
+            deploy_after_build=deploy_after_build,
+            publish_artifact=publish_artifact,
+            release_tag=release_tag,
+            trigger=dict(trigger or {}),
         )
         unit = UnitOfWork(runs=[(run, None)])
         unit.logs.append(
@@ -1014,6 +1042,8 @@ class DeliveryPlatform:
             correlation_id=run.correlation_id or "",
             parameters=dict(run.parameters),
             custom_stages=self._custom_stages_for(application),
+            publish_artifact=run.publish_artifact,
+            source_ref=pull_request_ref(run.trigger.get("ref")),
         )
         try:
             launched = self.ci_launcher.launch(request)
@@ -1356,6 +1386,12 @@ class DeliveryPlatform:
                 started_by=actor,
                 retry_of=parent.id,
                 config_revision_id=config_revision_id if config_revision_id is not None else parent.config_revision_id,
+                # A retry is the same intent run again: a fork's verify-only build must not
+                # come back from a retry as a published, deployable one.
+                deploy_after_build=parent.deploy_after_build,
+                publish_artifact=parent.publish_artifact,
+                release_tag=parent.release_tag,
+                trigger=dict(parent.trigger),
             )
             unit = UnitOfWork(runs=[(new_run, None)])
             unit.logs.append(
@@ -1727,6 +1763,19 @@ class DeliveryPlatform:
             self._apply(transaction, unit)
             return _CiOutcome(CiResult(updated))
 
+        if not run.publish_artifact:
+            # A verify-only build (a fork's pull request) was dispatched with Sign and
+            # Publish switched off. A digest arriving for it came from the build's own
+            # code, which is exactly the code nobody has reviewed: refuse it rather than
+            # record something that looks like an artifact.
+            if artifact_digest:
+                raise DeliveryError(
+                    "UNPUBLISHED_RUN_HAS_NO_ARTIFACT",
+                    "this run was dispatched verify-only; it publishes no artifact and may not report one",
+                    422,
+                )
+            return self._record_build_success(transaction, run, None, log_lines)
+
         if not artifact_digest or not IMMUTABLE_DIGEST.fullmatch(artifact_digest):
             raise DeliveryError(
                 "IMMUTABLE_ARTIFACT_REQUIRED", "successful CI requires a sha256 artifact digest", 422
@@ -1764,6 +1813,11 @@ class DeliveryPlatform:
                 CiResult(failed),
                 deferred_error=DeliveryError("ARTIFACT_POLICY_DENIED", decision.reason, 422),
             )
+
+        if not run.deploy_after_build:
+            # Built, verified and published; deploying it is a separate decision -- a
+            # promotion, or a production request naming the version it became.
+            return self._record_build_success(transaction, run, artifact_digest, log_lines)
 
         application = transaction.application(run.application_id)
         if application is None:
@@ -1836,12 +1890,77 @@ class DeliveryPlatform:
             )
         )
         self._apply(transaction, unit)
+        self._build_published(transaction, updated)
 
         # A production deployment starts its durable workflow only after approval;
         # anything else can begin immediately, once this transaction has committed.
         if deployment.status != DeploymentStatus.DEPLOYING:
             return _CiOutcome(CiResult(updated, deployment))
         return _CiOutcome(CiResult(updated, deployment), pending_cd=(application, updated, deployment))
+
+    def _record_build_success(
+        self,
+        transaction: PlatformSession,
+        run: PipelineRun,
+        artifact_digest: str | None,
+        log_lines: list[str] | None,
+    ) -> "_CiOutcome":
+        """A run whose intent ends at the build: `succeeded`, and no deployment."""
+
+        updated = replace(
+            run, status=PipelineStatus.SUCCEEDED, artifact_digest=artifact_digest,
+            version=run.version + 1, updated_at=_now(),
+        )
+        unit = UnitOfWork(runs=[(updated, run.version)])
+        if log_lines:
+            unit.logs.append((run.id, list(log_lines)))
+        unit.logs.append((run.id, [
+            "build succeeded; not deployed (" + ("verify only: nothing published" if artifact_digest is None
+                                                  else f"artifact {artifact_digest}") + ")"
+        ]))
+        unit.audit.append(
+            AuditRecord(
+                "pipeline.succeeded",
+                application_id=run.application_id,
+                pipeline_run_id=run.id,
+                correlation_id=run.correlation_id,
+                payload={"artifactDigest": artifact_digest, "deployed": False,
+                         "published": run.publish_artifact},
+            )
+        )
+        self._notify_scm_status(
+            transaction,
+            run.application_id,
+            run.commit_sha,
+            ScmCommitStatus.SUCCESS,
+            pipeline_run_id=run.id,
+            target_url=run.console_url,
+            correlation_id=run.correlation_id,
+            unit=unit,
+        )
+        unit.notifications.append(
+            NotificationRecord(
+                id=uuid4(),
+                event_type="pipeline.completed",
+                aggregate_type="pipeline_run",
+                aggregate_id=str(run.id),
+                payload={
+                    "application_id": str(run.application_id),
+                    "status": "succeeded",
+                    "commit_sha": run.commit_sha,
+                    "artifact_digest": artifact_digest,
+                    "deployed": False,
+                },
+                recipient="events@netci.local",
+            )
+        )
+        self._apply(transaction, unit)
+        self._build_published(transaction, updated)
+        return _CiOutcome(CiResult(updated))
+
+    def _build_published(self, transaction: PlatformSession, run: PipelineRun) -> None:
+        if self.build_published_hook is not None and run.artifact_digest and run.release_tag:
+            self.build_published_hook(transaction, run)
 
     def redeploy_artifact(
         self,
@@ -2356,7 +2475,8 @@ class DeliveryPlatform:
         target_status = DeploymentStatus(result_status)
         healthy = target_status == DeploymentStatus.HEALTHY
         updated = replace(
-            deployment, status=target_status, version=deployment.version + 1, updated_at=now
+            deployment, status=target_status, version=deployment.version + 1, updated_at=now,
+            healthy_at=(deployment.healthy_at or now) if healthy else deployment.healthy_at,
         )
         unit = UnitOfWork(deployments=[(updated, deployment.version)])
         run = (

@@ -43,6 +43,7 @@ from .domain.models import (
     Environment,
     ModuleConfigRevision,
     NotificationRecord,
+    PipelineRun,
     PipelineStatus,
     Runtime,
 )
@@ -57,6 +58,16 @@ from .store import (
     join,
 )
 from .domain.dag import compute_dag_waves, DagValidationError
+from .domain.delivery_rules import (
+    AUTOMATIC_ENVIRONMENTS,
+    DeliveryRuleError,
+    DeliveryRules,
+    SoakEvidence,
+    parse_rules,
+    rules_source,
+    soak_evidence,
+)
+from .build_inputs import BuildInputError, validate_build_inputs
 from .coordinator import ReleasePlanCoordinator
 
 #: Rolling window every DORA figure is computed over. Stated in the response so a
@@ -252,6 +263,27 @@ def classify_config_risk(
     return "low", ["Safe configuration adjustment (feature flags / log level)"]
 
 
+def _module_build_inputs(pipeline_config: dict[str, Any] | None) -> dict[str, Any]:
+    """`pipelineConfig.buildInputs`: what every run of the module is built with -- its
+    application directory in a monorepo, above all. Without it a run a webhook started
+    had only what the webhook carried, and built the repository root. Held to the same
+    boundary as a caller's build inputs: a deploy-controlled key here is refused too."""
+
+    raw = (pipeline_config or {}).get("buildInputs")
+    try:
+        return validate_build_inputs(raw if raw is not None else None)
+    except BuildInputError as exc:
+        raise PortalError("INVALID_BUILD_INPUTS", f"pipelineConfig.buildInputs: {exc.message}", 422) from exc
+
+
+def _prod_promotion(pipeline_config: dict[str, Any] | None) -> object:
+    delivery = rules_source(pipeline_config)
+    if not isinstance(delivery, dict):
+        return None
+    promotion = delivery.get("promotion")
+    return promotion.get("prod") if isinstance(promotion, dict) else None
+
+
 class PortalError(ApiError):
     """A Portal refusal: the client gets this code and status."""
 
@@ -271,6 +303,11 @@ class PortalService:
         # application and the Portal module in one transaction.
         self.database: PlatformDatabase = database if database is not None else platform.database
         self.dcim_catalog = dcim_catalog or build_dcim_catalog()
+        # A tag a rule marks as a version becomes one in the transaction that records the
+        # build's success. Registered afterwards, a crash in between would leave a
+        # published tag no production request can name, and a replayed callback could
+        # not repair it, because the run has already succeeded.
+        platform.build_published_hook = self._register_tagged_version
 
     def reset(self) -> None:
         """Clear the in-memory store and re-apply demo data; local/test setup only."""
@@ -393,6 +430,7 @@ class PortalService:
     ) -> dict[str, object]:
         with self._session(session) as transaction:
             self._validate_module_slot(transaction, system_id, module_id)
+            self._check_delivery_rules(transaction, application_id, pipeline_config, list(deployment_environments))
             transaction.insert_portal_module(
                 ModuleRow(
                     id=module_id,
@@ -601,6 +639,47 @@ class PortalService:
         }
 
     @staticmethod
+    def _environments_of(deployment_config: list[dict[str, object]]) -> list[Environment]:
+        found: list[Environment] = []
+        for item in deployment_config:
+            env = item.get("environment")
+            try:
+                found.append(env if isinstance(env, Environment) else Environment(str(env)))
+            except ValueError:
+                continue
+        return found
+
+    def _check_delivery_rules(
+        self,
+        transaction: PlatformSession,
+        application_id: UUID | None,
+        pipeline_config: dict[str, object],
+        deployment_config: list[dict[str, object]],
+    ) -> DeliveryRules:
+        application = transaction.application(application_id) if application_id else None
+        _module_build_inputs(pipeline_config)
+        try:
+            return parse_rules(
+                rules_source(pipeline_config),
+                default_environment=application.default_environment if application else Environment.DEV,
+                configured=self._environments_of(deployment_config),
+            )
+        except DeliveryRuleError as exc:
+            raise PortalError("INVALID_DELIVERY_RULES", str(exc), 422) from exc
+
+    def delivery_rules(self, module_id: str, session: PlatformSession | None = None) -> DeliveryRules:
+        """The rules in force for a module: what its active configuration says, else the
+        defaults. Read from the store on every call, like everything else here."""
+
+        with self._session(session) as transaction:
+            module = transaction.portal_module(module_id)
+            if module is None:
+                raise KeyError("module not found")
+            return self._check_delivery_rules(
+                transaction, module.application_id, dict(module.pipeline_config), list(module.deployment_config)
+            )
+
+    @staticmethod
     def _touches_production(
         current_deployment_config: list[dict[str, object]],
         new_deployment_config: list[dict[str, object]],
@@ -689,8 +768,12 @@ class PortalService:
                 )
             existing = transaction.config_revisions(module_id)
             next_number = max((item.revision_number for item in existing), default=0) + 1
-            needs_approval = self.production_config_needs_approval() and self._touches_production(
-                list(module.deployment_config), deployment_config
+            self._check_delivery_rules(transaction, module.application_id, pipeline_config, deployment_config)
+            needs_approval = self.production_config_needs_approval() and (
+                self._touches_production(list(module.deployment_config), deployment_config)
+                # Promotion rules for prod are a production control: removing a staging
+                # soak is weakening the gate, and it needs the same second person.
+                or _prod_promotion(module.pipeline_config) != _prod_promotion(pipeline_config)
             )
             revision = transaction.record_config_revision(
                 ModuleConfigRevision(
@@ -1424,7 +1507,17 @@ class PortalService:
             managed["target_namespace"] = namespace
         if kubeconfig_ref:
             managed["kubeconfig_ref"] = kubeconfig_ref
-        return {**dict(supplied or {}), **managed}
+        return {**_module_build_inputs(module.pipeline_config), **dict(supplied or {}), **managed}
+
+    def build_parameters(self, module_id: str, supplied: dict[str, object] | None = None) -> dict[str, object]:
+        """Build inputs alone, for a run that deploys nowhere: the module's own, then the
+        caller's. No target is resolved, so a module without one can still be built."""
+
+        with self._session() as transaction:
+            module = transaction.portal_module(module_id)
+            if module is None:
+                raise KeyError("module not found")
+            return {**_module_build_inputs(module.pipeline_config), **dict(supplied or {})}
 
     def dashboard(self, application_ids: set[UUID] | None = None) -> dict[str, object]:
         with self._session() as transaction:
@@ -1620,8 +1713,9 @@ class PortalService:
         pipeline_run_id: UUID | None,
         artifact_digest: str | None,
         created_by: str = "Admin",
+        session: PlatformSession | None = None,
     ) -> dict[str, object]:
-        with self._session() as transaction:
+        with self._session(session) as transaction:
             module = transaction.portal_module(module_id)
             if module is None:
                 raise KeyError("module not found")
@@ -1704,6 +1798,127 @@ class PortalService:
             )
             transaction.apply(audit_unit)
             return {"moduleId": module_id, "version": tag, **record}
+
+    def _require_promotion_evidence(
+        self, transaction: PlatformSession, module_id: str, environment: Environment, digest: str
+    ) -> SoakEvidence | None:
+        """Refuse unless the digest has done its time where the module's rules say.
+
+        Evidence is read from the deployment records and their success facts, never from
+        the caller: "it ran fine in staging" is something netCI saw, or it is not true.
+        """
+
+        rule = self.delivery_rules(module_id, session=transaction).promotion.get(environment)
+        if rule is None or rule.require_healthy_in is None:
+            return None
+        module = transaction.portal_module(module_id)
+        if module is None or module.application_id is None or not digest:
+            raise PortalError("NO_DEPLOYABLE_ARTIFACT", f"module {module_id} has no artifact to promote", 409)
+        evidence = soak_evidence(
+            digest=digest,
+            environment=rule.require_healthy_in,
+            deployments=transaction.deployments(module.application_id),
+            now=datetime.now(timezone.utc),
+        )
+        source = rule.require_healthy_in.value
+        if evidence.deployment_id is None:
+            raise PortalError(
+                "PROMOTION_SOURCE_NOT_HEALTHY",
+                f"{environment.value} requires this artifact to have been healthy in {source} first; "
+                f"{evidence.detail}",
+                409,
+            )
+        if evidence.proven_minutes < rule.min_soak_minutes:
+            raise PortalError(
+                "PROMOTION_SOAK_NOT_MET",
+                f"{environment.value} requires {rule.min_soak_minutes} min healthy in {source}; "
+                f"{evidence.detail}",
+                409,
+            )
+        return evidence
+
+    def promote(
+        self, module_id: str, *, pipeline_run_id: UUID, environment: Environment, actor: str
+    ) -> dict[str, object]:
+        """Deploy an artifact that was already built to the next environment (ADR-043).
+
+        Nothing is rebuilt: the digest that was tested is the digest that moves. Prod is
+        not reachable here -- it goes through a production request and its approver.
+        """
+
+        if environment not in AUTOMATIC_ENVIRONMENTS:
+            raise PortalError(
+                "PRODUCTION_REQUIRES_REQUEST",
+                "production is reached through a production request naming a registered version",
+                422,
+            )
+        with self._session() as transaction:
+            module = transaction.portal_module(module_id)
+            if module is None:
+                raise KeyError("module not found")
+            if module.application_id is None:
+                raise PortalError("MODULE_NOT_PROVISIONED", "module has no delivery application", 409)
+            run = transaction.pipeline_run(pipeline_run_id)
+            if run is None or run.application_id != module.application_id:
+                raise PortalError("PIPELINE_NOT_FOUND", "no such run for this module", 404)
+            if not run.publish_artifact or not run.artifact_digest or run.status not in {
+                PipelineStatus.SUCCEEDED, PipelineStatus.RUNNING, PipelineStatus.ROLLED_BACK
+            }:
+                raise PortalError(
+                    "NO_DEPLOYABLE_ARTIFACT",
+                    "only a run that built and published an artifact can be promoted",
+                    409,
+                )
+            evidence = self._require_promotion_evidence(transaction, module_id, environment, run.artifact_digest)
+            parameters = self._delivery_parameters(transaction, module_id, environment)
+            revision_id = module.active_config_revision_id
+        # Outside the read transaction: redeploy_artifact takes the lease and reaches Temporal.
+        deployment = self.platform.redeploy_artifact(
+            module.application_id,
+            environment=environment,
+            source_pipeline_run_id=run.id,
+            config_revision_id=revision_id,
+            actor=actor,
+            parameters=parameters,
+            reason=f"promotion to {environment.value}" + (f" ({evidence.detail})" if evidence else ""),
+        )
+        return {
+            "moduleId": module_id,
+            "environment": environment.value,
+            "sourcePipelineRunId": str(run.id),
+            "artifactDigest": deployment.artifact_digest,
+            "deploymentId": str(deployment.id),
+            "status": deployment.status.value,
+            "evidence": evidence.detail if evidence else None,
+        }
+
+    def _register_tagged_version(self, transaction: PlatformSession, run: PipelineRun) -> None:
+        if not run.release_tag or not run.artifact_digest:
+            return
+        module = transaction.portal_module_for_application(run.application_id)
+        if module is None:
+            return
+        try:
+            self.register_version(
+                module.id, tag=run.release_tag, git_tag_url="", artifact_url="",
+                pipeline_run_id=run.id, artifact_digest=run.artifact_digest,
+                created_by=run.started_by or "scm", session=transaction,
+            )
+            outcome = f"registered version {run.release_tag}"
+            event = "release_version.registered_from_tag"
+        except ValueError as exc:
+            # The build still succeeded; what failed is naming it. Most often the tag was
+            # moved to another commit after a version was registered from it -- a version
+            # is immutable, so the new build does not get the old name.
+            outcome = f"version {run.release_tag} not registered: {exc}"
+            event = "release_version.refused"
+        transaction.apply(UnitOfWork(
+            logs=[(run.id, [outcome])],
+            audit=[AuditRecord(event, application_id=run.application_id, pipeline_run_id=run.id,
+                               actor=run.started_by, payload={"version": run.release_tag,
+                                                              "artifactDigest": run.artifact_digest,
+                                                              "outcome": outcome})],
+        ))
 
     def record_ci_report(self, module_id: str, tag: str, report: dict[str, object]) -> dict[str, object]:
         with self._session() as transaction:
@@ -1876,9 +2091,13 @@ class PortalService:
                 if module is None:
                     raise KeyError(f"module {module_id} not found")
                 version = str(item["version"])
-                if transaction.portal_version(module_id, version) is None:
+                registered = transaction.portal_version(module_id, version)
+                if registered is None:
                     raise ValueError(f"version {version} is not registered for module {module_id}")
                 self._delivery_parameters(transaction, module_id, Environment.PROD)
+                self._require_promotion_evidence(
+                    transaction, module_id, Environment.PROD, str(registered.metadata.get("artifactDigest") or "")
+                )
                 deps = tuple(str(d) for d in (item.get("dependencies") or ()))
                 requested_modules.append(
                     RequestModuleRow(
