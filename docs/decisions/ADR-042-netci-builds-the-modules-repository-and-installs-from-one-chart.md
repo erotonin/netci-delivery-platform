@@ -79,6 +79,9 @@ two descriptions of one deployment -- arriving immediately.
   through all nine stages on the lab's existing Jenkins; `payments-api` appeared in the
   registry for the first time; `cosign verify` passed; the worker in the cluster deployed
   it over SSH and the container reports that digest.
+- Removing `/metrics` from the Ingress was not enough: the portal's `/api/` proxy still
+  served it as `/api/metrics`, found only by requesting it through the live Ingress. The
+  portal now answers 404 there, and the contract test reads `nginx.conf` for that block.
 - **Lab migration.** The lab's modules build from `netci.git` and rely on the sample
   defaults. They keep working on the library's `main` branch, which is unchanged. Moving
   `main` to this library requires giving each lab module its `NETCI_APP_DIR`

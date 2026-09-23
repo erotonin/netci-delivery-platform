@@ -107,3 +107,16 @@ def test_no_library_step_runs_tooling_out_of_the_checked_out_repository():
         if re.search(r"python3 [\"']?scripts/netci_callback\.py", line)
     ]
     assert not offenders, offenders
+
+
+def test_the_public_entry_point_does_not_proxy_metrics():
+    """The Ingress sends everything to the portal, and the portal proxies /api/* to the API.
+
+    So /api/metrics reached the API from outside: every request ran the readiness probe
+    against Jenkins, Temporal and DCIM for an anonymous caller. The portal refuses it.
+    """
+
+    nginx = (ROOT / "frontend" / "nginx.conf").read_text(encoding="utf-8")
+    block = re.search(r"location = /api/metrics \{(.*?)\}", nginx, re.S)
+    assert block and "return 404" in block.group(1)
+    assert nginx.index("location = /api/metrics") < nginx.index("location /api/ {")

@@ -27,7 +27,9 @@ Mục tiêu: **cài netCI một lần, trỏ vào Jenkins sẵn có của tổ c
 ```
 
 - **Ingress chỉ có một đường `/` tới portal.** Portal proxy `/api` sang API, nên trình duyệt
-  và API cùng origin. `/metrics` không được public.
+  và API cùng origin. `/metrics` không được public: nginx của portal trả 404 cho
+  `/api/metrics` (nếu không, proxy `/api/` sẽ chuyển tiếp nó). Prometheus scrape thẳng
+  Service `…-api:8000/metrics` trong cụm.
 - **Migration** chạy trong initContainer của mỗi pod API. `scripts/migrate.py` giữ advisory
   lock nên nhiều pod cùng khởi động vẫn an toàn: pod đầu áp dụng, các pod sau thấy "up to date".
 - **Mọi secret là file** dưới `/run/secrets/...`; không cái nào nằm trong biến môi trường.
