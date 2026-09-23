@@ -3392,6 +3392,19 @@ components:
             critical: { type: integer, minimum: 0 }
             high: { type: integer, minimum: 0 }
             medium: { type: integer, minimum: 0 }
+            findings:
+              type: array
+              maxItems: 500
+              description: Blocking findings by identifier; an exception can waive only a named one.
+              items:
+                type: object
+                required: [id, severity]
+                properties:
+                  id: { type: string }
+                  severity: { type: string, enum: [HIGH, CRITICAL] }
+                  package: { type: string }
+                  installedVersion: { type: string }
+                  fixedVersion: { type: string }
             reportLocation: { type: string, nullable: true }
         signature:
           type: object
@@ -3401,6 +3414,30 @@ components:
             verified: { type: boolean }
             certificateIdentity: { type: string, nullable: true }
             bundleLocation: { type: string, nullable: true }
+        provenance:
+          type: object
+          nullable: true
+          description: >-
+            The SLSA v1 provenance the Sign stage attested and verified (ADR-044). Bound to
+            the run when published: a commit or repository other than the one netCI
+            dispatched is a deny. Required for container images when
+            NETCI_REQUIRE_PROVENANCE is true.
+          required: [predicateType, verified]
+          properties:
+            predicateType: { type: string, enum: ['https://slsa.dev/provenance/v1'] }
+            verified: { type: boolean }
+            repository: { type: string, nullable: true }
+            commit: { type: string, nullable: true }
+            builderId: { type: string, nullable: true }
+        ciReport:
+          type: object
+          nullable: true
+          required: [autoTest]
+          properties:
+            autoTest: { type: string, enum: [passed, failed, skipped] }
+            coverage: { type: number, minimum: 0, maximum: 100, nullable: true }
+            testsRun: { type: integer, minimum: 0, nullable: true }
+            runner: { type: string, nullable: true }
     DeliveryEvent:
       type: object
       required: [id, eventType, applicationId, occurredAt]

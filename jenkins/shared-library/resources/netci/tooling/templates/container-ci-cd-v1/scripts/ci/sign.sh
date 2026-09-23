@@ -45,3 +45,33 @@ cosign "${cosign_args[@]}" "${registry_artifact_ref}"
 cosign "${verify_args[@]}" --output json "${registry_artifact_ref}" \
   > "${NETCI_OUTPUT_DIR}/signature.bundle.json"
 require_file "${NETCI_OUTPUT_DIR}/signature.bundle.json"
+
+# SLSA v1 provenance, attested with the same key: which repository, which commit, which
+# directory, which Jenkins build. The worker verifies it at deploy time and compares the
+# commit and repository with what netCI dispatched, so an image signed with netCI's key
+# but built from something else is refused -- without asking netCI's database.
+if [[ "${COSIGN_ATTEST_PROVENANCE:-true}" == "true" ]]; then
+  if [[ -z "${GIT_URL:-}" || -z "${COMMIT_SHA:-}" ]]; then
+    echo "not dispatched by netCI (no GIT_URL/COMMIT_SHA): no provenance to attest" >&2
+  else
+    callback="${NETCI_TOOLING_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)}/scripts/netci_callback.py"
+    python3 "${callback}" provenance --output provenance.json
+    attest_args=(attest --yes --key "${COSIGN_KEY_REF}" --type slsaprovenance1 \
+      --predicate "${NETCI_OUTPUT_DIR}/provenance.json")
+    verify_attest_args=(verify-attestation --key "${COSIGN_PUBLIC_KEY_REF}" --type slsaprovenance1)
+    if [[ "${COSIGN_ALLOW_INSECURE_REGISTRY:-true}" == "true" ]]; then
+      attest_args+=(--allow-insecure-registry)
+      verify_attest_args+=(--allow-insecure-registry)
+    fi
+    if [[ "${COSIGN_TLOG_UPLOAD:-false}" == "false" ]]; then
+      attest_args+=(--tlog-upload=false)
+      verify_attest_args+=(--insecure-ignore-tlog=true)
+      if cosign attest --help 2>&1 | grep -q -- '--use-signing-config'; then
+        attest_args+=(--use-signing-config=false)
+      fi
+    fi
+    cosign "${attest_args[@]}" "${registry_artifact_ref}"
+    cosign "${verify_attest_args[@]}" "${registry_artifact_ref}" > "${NETCI_OUTPUT_DIR}/provenance.verify.json"
+    require_file "${NETCI_OUTPUT_DIR}/provenance.verify.json"
+  fi
+fi

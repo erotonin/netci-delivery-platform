@@ -96,6 +96,10 @@ supplyChain:
   requireSecurityEvidence: true
   signatureVerifyMode: cosign  # cosign | none is refused outside local mode
   signatureRequireTlog: true   # false only for keys with no transparency log (air-gapped)
+  # Refuse a container image without verified SLSA provenance naming the commit netCI
+  # dispatched (ADR-044). The shared library shipped with this chart attests it; a
+  # controller on an older library has none, and its images are refused.
+  requireProvenance: true
 
 # ---------------------------------------------------------------- inventory: DCIM
 dcim:

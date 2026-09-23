@@ -35,6 +35,7 @@ class CdStartRequest:
     require_approval: bool
     parameters: dict[str, object]
     commit_sha: str = ""
+    source_repository: str = ""
 
     @property
     def workflow_id(self) -> str:
@@ -133,6 +134,7 @@ class TemporalCdOrchestrator:
             parameters=dict(request.parameters),
             require_approval=request.require_approval,
             commit_sha=request.commit_sha,
+            source_repository=request.source_repository,
         )
 
         async def start_workflow() -> str:
@@ -169,6 +171,7 @@ class TemporalCdOrchestrator:
             parameters=dict(request.parameters),
             require_approval=False,
             commit_sha=request.commit_sha,
+            source_repository=request.source_repository,
         )
 
         async def start_workflow() -> str:

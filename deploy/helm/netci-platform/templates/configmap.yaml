@@ -92,6 +92,7 @@ data:
   NETCI_REQUIRE_SECURITY_EVIDENCE: {{ .Values.supplyChain.requireSecurityEvidence | quote }}
   NETCI_SIGNATURE_VERIFY_MODE: {{ .Values.supplyChain.signatureVerifyMode | quote }}
   NETCI_SIGNATURE_REQUIRE_TLOG: {{ .Values.supplyChain.signatureRequireTlog | quote }}
+  NETCI_REQUIRE_PROVENANCE: {{ .Values.supplyChain.requireProvenance | quote }}
   NETCI_COSIGN_PUBLIC_KEY_FILE: /run/secrets/netci-app/cosign.pub
 
   # inventory

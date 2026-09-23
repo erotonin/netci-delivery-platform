@@ -102,6 +102,8 @@ def test_complete_evidence_for_the_right_digest_is_allowed():
         "sbom": "pass",
         "vulnerabilityScan": "pass",
         "signature": "pass",
+        # Stated, not implied: this evidence carries no provenance and none was required.
+        "provenance": "not_required",
     }
 
 

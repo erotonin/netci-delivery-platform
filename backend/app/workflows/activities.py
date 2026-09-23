@@ -22,7 +22,7 @@ from ..adapters.signature_verifier import (
     SignatureVerificationError,
     SignatureVerifier,
 )
-from ..policy.rules import PolicyViolation, evaluate_artifact_evidence
+from ..policy.rules import PolicyViolation, evaluate_artifact_evidence, provenance_required
 from ..adapters.oci_blob import OciBlobError, fetch_blob, with_pull_host
 from .provision_and_deploy import DeliveryInput, DeliveryResult, RollbackResult
 
@@ -275,6 +275,22 @@ class DeliveryActivities:
         except SignatureVerificationError as exc:
             raise PolicyViolation(f"artifact signature re-verification failed: {exc}") from exc
         activity.logger.info("artifact %s: %s", delivery.artifact_digest, outcome)
+
+        # Where the artifact came from, checked here and not only at the API: this is the
+        # host that is about to run it, reading the attestation from the registry with
+        # netCI's key and comparing it with the commit this deployment carries.
+        artifact_ref = str(evidence.get("artifactRef") or "")
+        if provenance_required() and not artifact_ref.startswith(("file://", "http://", "https://")):
+            try:
+                provenance = await self.signature_verifier.verify_provenance(
+                    ArtifactIdentity(digest=delivery.artifact_digest,
+                                     reference=str(evidence.get("artifactRef") or "") or None),
+                    commit=delivery.commit_sha,
+                    repository=delivery.source_repository,
+                )
+            except SignatureVerificationError as exc:
+                raise PolicyViolation(f"artifact provenance verification failed: {exc}") from exc
+            activity.logger.info("artifact %s: %s", delivery.artifact_digest, provenance)
 
     @activity.defn(name="deploy")
     async def deploy(self, delivery: DeliveryInput) -> DeliveryResult:

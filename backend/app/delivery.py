@@ -1593,7 +1593,13 @@ class DeliveryPlatform:
                 "pipelineRunId": str(run.id),
                 "applicationId": str(run.application_id),
             }
-            decision = evaluate_artifact_evidence(stored, expected_digest=digest, require_evidence=True)
+            application = transaction.application(run.application_id)
+            decision = evaluate_artifact_evidence(
+                stored, expected_digest=digest, require_evidence=True,
+                # Bound here, where the run is known: the verdict stored below binds every
+                # later evaluation, so a mismatch recorded now cannot be re-read as allow.
+                expected_source=(application.repository_url if application else "", run.commit_sha),
+            )
             stored["decision"] = "allow" if decision.allowed else "deny"
             stored["reason"] = decision.reason
             unit = UnitOfWork()
@@ -2133,6 +2139,7 @@ class DeliveryPlatform:
             require_approval=False,
             parameters=parameters,
             commit_sha=run.commit_sha,
+            source_repository=application.repository_url,
         )
         try:
             workflow_id = self.cd_orchestrator.start(request)
@@ -2623,6 +2630,7 @@ class DeliveryPlatform:
             require_approval=False,
             parameters=parameters,
             commit_sha=source.commit_sha,
+            source_repository=application.repository_url,
         )
         try:
             workflow_id = self.cd_orchestrator.start_rollback(request)

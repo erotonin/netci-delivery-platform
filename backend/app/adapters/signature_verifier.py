@@ -21,6 +21,8 @@ or hours after the build, on a different host, with a different trust root.
 from __future__ import annotations
 
 import asyncio
+import base64
+import json
 import logging
 import os
 import shutil
@@ -79,6 +81,59 @@ class SignatureVerifier(Protocol):
 
     async def verify(self, artifact: ArtifactIdentity) -> str: ...
 
+    async def verify_provenance(self, artifact: ArtifactIdentity, *, commit: str, repository: str) -> str: ...
+
+
+SLSA_PROVENANCE_V1 = "https://slsa.dev/provenance/v1"
+
+
+def _public_url(url: str) -> str:
+    from urllib.parse import urlunsplit
+
+    parts = urlsplit(str(url or "").strip())
+    if parts.username is None and parts.password is None:
+        return str(url or "").strip().rstrip("/")
+    host = (parts.hostname or "") + (f":{parts.port}" if parts.port else "")
+    return urlunsplit((parts.scheme, host, parts.path, parts.query, parts.fragment)).rstrip("/")
+
+
+def check_provenance_statements(output: str, *, digest: str, commit: str, repository: str) -> str:
+    """Find, in `cosign verify-attestation` output, a statement for this digest that says
+    it was built from this commit of this repository. Only statements cosign verified
+    reach stdout; the check is about what they *say*."""
+
+    want = digest.removeprefix(DIGEST_PREFIX)
+    seen: list[str] = []
+    for line in output.splitlines():
+        line = line.strip()
+        if not line.startswith("{"):
+            continue
+        try:
+            envelope = json.loads(line)
+            statement = json.loads(base64.b64decode(envelope.get("payload") or ""))
+        except (ValueError, TypeError):
+            continue
+        if statement.get("predicateType") != SLSA_PROVENANCE_V1:
+            continue
+        subjects = statement.get("subject") or []
+        if not any(isinstance(s, dict) and (s.get("digest") or {}).get("sha256") == want for s in subjects):
+            continue
+        definition = (statement.get("predicate") or {}).get("buildDefinition") or {}
+        external = definition.get("externalParameters") or {}
+        seen.append(f"{external.get('repository')}@{external.get('commit')}")
+        dependencies = definition.get("resolvedDependencies") or []
+        commit_ok = external.get("commit") == commit and any(
+            isinstance(d, dict) and (d.get("digest") or {}).get("gitCommit") == commit for d in dependencies
+        )
+        repository_ok = not repository or _public_url(str(external.get("repository") or "")) == _public_url(repository)
+        if commit_ok and repository_ok:
+            return f"SLSA provenance verified: built from {_public_url(repository) or 'the repository'} at {commit}"
+    if seen:
+        raise SignatureVerificationError(
+            f"provenance was signed but says {', '.join(seen)}; netCI dispatched {_public_url(repository)}@{commit}"
+        )
+    raise SignatureVerificationError("no verified SLSA v1 provenance statement names this digest")
+
 
 class NullSignatureVerifier:
     """Accept the evidence CI recorded, without re-checking it.
@@ -91,6 +146,13 @@ class NullSignatureVerifier:
 
     async def verify(self, artifact: ArtifactIdentity) -> str:
         return "signature not re-verified at deploy time (NETCI_SIGNATURE_VERIFY_MODE=none)"
+
+    async def verify_provenance(self, artifact: ArtifactIdentity, *, commit: str, repository: str) -> str:
+        # Requiring provenance and then not checking it would be the green screen this
+        # platform refuses: say so, and let the caller fail closed.
+        raise SignatureVerificationError(
+            "provenance is required but NETCI_SIGNATURE_VERIFY_MODE=none cannot verify it"
+        )
 
 
 def _read_key() -> str:
@@ -221,6 +283,31 @@ class CosignSignatureVerifier:
             )
         logger.info("verified artifact signature for %s", target)
         return f"cosign verified {target} against the netCI public key"
+
+    async def verify_provenance(self, artifact: ArtifactIdentity, *, commit: str, repository: str) -> str:
+        """Verify the SLSA attestation with netCI's key, then check what it claims.
+
+        The attestation is signed by the build, so its signature proves only that the
+        holder of the key made it. What makes it evidence is the comparison: the commit
+        and repository it names must be the ones netCI dispatched for this run.
+        """
+
+        if not artifact.is_oci:
+            raise SignatureVerificationError(
+                "SLSA provenance is attested for container images; this artifact is not one"
+            )
+        if not commit:
+            raise SignatureVerificationError("the deployment carries no commit to compare provenance against")
+        target = artifact.pinned_reference()
+        tlog = [] if self.require_tlog else ["--insecure-ignore-tlog=true"]
+        code, output = await self._run([
+            self.executable, "verify-attestation", "--key", self.key(), "--type", "slsaprovenance1", *tlog, target,
+        ])
+        if code != 0:
+            raise SignatureVerificationError(
+                f"cosign could not verify a provenance attestation for {target}: {output.strip()[-600:] or 'no output'}"
+            )
+        return check_provenance_statements(output, digest=artifact.digest, commit=commit, repository=repository)
 
 
 def build_signature_verifier() -> SignatureVerifier:

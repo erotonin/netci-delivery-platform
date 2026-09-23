@@ -48,6 +48,9 @@ class DeliveryInput:
     require_approval: bool | None = None
     # The commit the artifact was built from; the runtime health gates compare it.
     commit_sha: str = ""
+    # The module's repository, for the provenance check (ADR-044). Decided by the server
+    # from the application record; defaulted so a workflow started before it resumes.
+    source_repository: str = ""
 
     @property
     def approval_required(self) -> bool:

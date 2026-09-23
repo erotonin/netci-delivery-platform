@@ -1361,6 +1361,16 @@ class SignatureEvidence(StrictBody):
     bundleLocation: str | None = Field(default=None, max_length=1000)
 
 
+class ProvenanceEvidence(StrictBody):
+    """What the Sign stage attested with `cosign attest` and then verified (ADR-044)."""
+
+    predicateType: Literal["https://slsa.dev/provenance/v1"]
+    verified: bool
+    repository: str | None = Field(default=None, max_length=1000)
+    commit: str | None = Field(default=None, max_length=64)
+    builderId: str | None = Field(default=None, max_length=500)
+
+
 class RunCiReport(StrictBody):
     autoTest: Literal["passed", "failed", "skipped"]
     coverage: float | None = Field(default=None, ge=0, le=100)
@@ -1376,6 +1386,7 @@ class SecurityEvidenceRequest(StrictBody):
     sbom: SbomEvidence
     vulnerabilityScan: VulnerabilityScanEvidence
     signature: SignatureEvidence
+    provenance: ProvenanceEvidence | None = None
     buildRunId: str | None = Field(default=None, max_length=255)
     # What the test stage recorded; copied onto a version registered from this run.
     ciReport: RunCiReport | None = None

@@ -22,7 +22,9 @@ import json
 import os
 import sys
 import urllib.error
+import urllib.parse
 import urllib.request
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import NoReturn
 
@@ -265,11 +267,108 @@ def command_evidence(arguments: argparse.Namespace) -> int:
             "bundleLocation": str(signature_path) if signature_verified else None,
         },
     }
+    provenance = provenance_evidence()
+    if provenance is not None:
+        payload["provenance"] = provenance
     response = post(f"/pipeline-runs/{run_id()}/security-evidence", payload)
     print(json.dumps(response, indent=2))
     if response.get("decision") != "allow":
         fail(f"netCI supply-chain policy denied this artifact: {response.get('reason')}")
     return 0
+
+
+SLSA_PROVENANCE_V1 = "https://slsa.dev/provenance/v1"
+BUILD_TYPE = "https://github.com/netci/netci-delivery-platform/buildtypes/jenkins-shared-library/v1"
+
+
+def public_url(url: str) -> str:
+    """A repository URL without credentials. Provenance is stored in the registry beside
+    the image, where anyone who can pull can read it; a token in `https://user:tok@...`
+    would be published with every build."""
+
+    parts = urllib.parse.urlsplit(url)
+    if parts.username is None and parts.password is None:
+        return url
+    host = parts.hostname or ""
+    if parts.port:
+        host = f"{host}:{parts.port}"
+    return urllib.parse.urlunsplit((parts.scheme, host, parts.path, parts.query, parts.fragment))
+
+
+def provenance_predicate() -> dict[str, object]:
+    """SLSA v1 provenance for this build, from what netCI told the build to do.
+
+    Every field comes from the job parameters netCI set or from Jenkins itself -- the
+    repository, the exact commit, the directory, the image name, the run -- so the worker
+    can check at deploy time that the image was built from the commit netCI dispatched,
+    without asking netCI's database.
+    """
+
+    repository = public_url(setting("GIT_URL"))
+    commit = setting("COMMIT_SHA")
+    if not repository or not commit:
+        fail("provenance needs GIT_URL and COMMIT_SHA; this build was not dispatched by netCI")
+    workspace = setting("WORKSPACE")
+    app_dir = setting("NETCI_APP_DIR", ".")
+    if workspace and os.path.isabs(app_dir):
+        app_dir = os.path.relpath(app_dir, workspace)
+    jenkins = setting("JENKINS_URL").rstrip("/")
+    return {
+        "buildDefinition": {
+            "buildType": BUILD_TYPE,
+            "externalParameters": {
+                "repository": repository,
+                "ref": setting("GIT_BRANCH"),
+                "commit": commit,
+                "appDir": app_dir,
+                "imageName": setting("NETCI_IMAGE_NAME"),
+                "pipelineRunId": setting("NETCI_PIPELINE_RUN_ID"),
+            },
+            "internalParameters": {
+                "template": setting("NETCI_TEMPLATE"),
+                "stages": setting("NETCI_STAGES"),
+                "environment": setting("NETCI_ENVIRONMENT"),
+            },
+            "resolvedDependencies": [
+                {"uri": f"git+{repository}", "digest": {"gitCommit": commit}},
+            ],
+        },
+        "runDetails": {
+            "builder": {"id": f"{jenkins or 'jenkins'}#netci-shared-library"},
+            "metadata": {
+                "invocationId": setting("BUILD_URL") or setting("BUILD_TAG"),
+                "finishedOn": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            },
+        },
+    }
+
+
+def command_provenance(arguments: argparse.Namespace) -> int:
+    target = output_dir() / arguments.output
+    target.write_text(json.dumps(provenance_predicate(), indent=2, sort_keys=True), encoding="utf-8")
+    print(f"provenance predicate written to {target}")
+    return 0
+
+
+def provenance_evidence() -> dict[str, object] | None:
+    """What the Sign stage attested and then verified; None when it attested nothing."""
+
+    verified = output_dir() / "provenance.verify.json"
+    predicate_path = output_dir() / "provenance.json"
+    if not predicate_path.is_file():
+        return None
+    try:
+        predicate = json.loads(predicate_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        fail("provenance.json is unreadable")
+    external = predicate.get("buildDefinition", {}).get("externalParameters", {})
+    return {
+        "predicateType": SLSA_PROVENANCE_V1,
+        "verified": verified.is_file() and verified.stat().st_size > 0,
+        "repository": external.get("repository"),
+        "commit": external.get("commit"),
+        "builderId": predicate.get("runDetails", {}).get("builder", {}).get("id"),
+    }
 
 
 def main() -> int:
@@ -298,6 +397,10 @@ def main() -> int:
     evidence.add_argument("--scan-location", default="", help="durable URI of the stored scan report")
     evidence.add_argument("--signature-file", default="signature.bundle.json")
     evidence.set_defaults(handler=command_evidence)
+
+    provenance = subcommands.add_parser("provenance", help="write the SLSA v1 provenance predicate for this build")
+    provenance.add_argument("--output", default="provenance.json")
+    provenance.set_defaults(handler=command_provenance)
 
     arguments = parser.parse_args()
     return int(arguments.handler(arguments))

@@ -292,6 +292,35 @@ def _finding_ids(scan: dict[str, object]) -> list[str]:
 IMMUTABLE_DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
 
 
+SLSA_PROVENANCE_V1 = "https://slsa.dev/provenance/v1"
+
+
+def provenance_required() -> bool:
+    """Whether an artifact without verified SLSA provenance is refused (ADR-044)."""
+
+    return os.getenv("NETCI_REQUIRE_PROVENANCE", "false").strip().lower() in {"1", "true", "yes"}
+
+
+def public_repository_url(url: str) -> str:
+    """A repository URL without credentials or a trailing slash: the form provenance
+    records (scripts/netci_callback.py `public_url`), so the two can be compared."""
+
+    from urllib.parse import urlsplit, urlunsplit
+
+    parts = urlsplit(str(url or "").strip())
+    host = parts.hostname or ""
+    if parts.port:
+        host = f"{host}:{parts.port}"
+    if parts.username is None and parts.password is None:
+        return str(url or "").strip().rstrip("/")
+    return urlunsplit((parts.scheme, host, parts.path, parts.query, parts.fragment)).rstrip("/")
+
+
+def _is_blob_reference(reference: object) -> bool:
+    text = str(reference or "")
+    return text.startswith(("file://", "http://", "https://"))
+
+
 def evaluate_artifact_evidence(
     evidence: dict[str, object] | None,
     *,
@@ -299,6 +328,8 @@ def evaluate_artifact_evidence(
     require_evidence: bool,
     exceptions: tuple[VulnerabilityException, ...] | None = None,
     today: date | None = None,
+    expected_source: tuple[str, str] | None = None,
+    require_provenance: bool | None = None,
 ) -> PolicyDecision:
     """Decide whether an artifact may be deployed, from its CI evidence alone.
 
@@ -403,5 +434,41 @@ def evaluate_artifact_evidence(
     if not isinstance(signature, dict) or signature.get("provider") != "cosign" or signature.get("verified") is not True:
         return PolicyDecision(False, "Cosign signature evidence is missing or unverified", checks)
     checks["signature"] = "pass"
+
+    # Provenance says what the artifact was built from. A signature alone proves the key
+    # signed *something*; it does not say the image came from the commit netCI
+    # dispatched. `expected_source` is (repository, commit) of the run the evidence was
+    # published for -- given where the evidence is recorded, so the stored verdict binds
+    # every later evaluation.
+    provenance = evidence.get("provenance")
+    required = provenance_required() if require_provenance is None else require_provenance
+    if isinstance(provenance, dict):
+        if provenance.get("predicateType") != SLSA_PROVENANCE_V1 or provenance.get("verified") is not True:
+            return PolicyDecision(False, "SLSA provenance is present but was not verified", {**checks, "provenance": "fail"})
+        if expected_source is not None:
+            repository, commit = expected_source
+            if str(provenance.get("commit") or "") != commit:
+                return PolicyDecision(
+                    False,
+                    f"provenance says the artifact was built from commit {provenance.get('commit')!r}; "
+                    f"netCI dispatched {commit!r}",
+                    {**checks, "provenance": "fail"},
+                )
+            if repository and public_repository_url(str(provenance.get("repository") or "")) != public_repository_url(repository):
+                return PolicyDecision(
+                    False,
+                    "provenance names another repository than the module's",
+                    {**checks, "provenance": "fail"},
+                )
+        checks["provenance"] = "pass"
+    elif required and not _is_blob_reference(evidence.get("artifactRef")):
+        return PolicyDecision(False, "no verified SLSA provenance was published for this artifact",
+                              {**checks, "provenance": "fail"})
+    elif required:
+        # A systemd binary is signed as a blob; the Sign stage attests provenance for
+        # container images only. Recorded as such, not as a pass.
+        checks["provenance"] = "not_applicable"
+    else:
+        checks["provenance"] = "not_required"
 
     return PolicyDecision(True, waived_reason or "artifact satisfies the netCI supply-chain policy", checks)
