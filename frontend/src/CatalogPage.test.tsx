@@ -266,3 +266,30 @@ describe('registering a Golden Path template from the browser', () => {
     })
   })
 })
+
+describe('a new version of a Golden Path template', () => {
+  const admin = {
+    token: 't', identity: { authMode: 'token' as const, separationOfDuties: true,
+      principal: { subject: 'pat', displayName: 'Pat', email: '', roles: ['platform-admin'], teams: [], method: 'token' } },
+  }
+  const developer = { ...admin, identity: { ...admin.identity, principal: { ...admin.identity.principal, subject: 'dana', roles: ['developer'] } } }
+
+  it('starts from the current definition with the next patch version', async () => {
+    render(<PortalFeedbackProvider><CatalogPage session={admin} /></PortalFeedbackProvider>)
+    fireEvent.click(await screen.findByRole('tab', { name: /templates/i }))
+    fireEvent.click(await screen.findByTestId('catalog-new-version-fastapi-service'))
+
+    expect((screen.getByPlaceholderText('e.g. fastapi-service') as HTMLInputElement).value).toBe('fastapi-service')
+    // A version is immutable, so the form proposes the next one rather than the same.
+    expect((screen.getByPlaceholderText('v1.0.0') as HTMLInputElement).value).toBe('v1.0.1')
+    expect((screen.getByLabelText(/Parameters schema/i) as HTMLTextAreaElement).value).toContain('pythonVersion')
+  })
+
+  it('is not offered to someone who cannot register templates', async () => {
+    render(<PortalFeedbackProvider><CatalogPage session={developer} /></PortalFeedbackProvider>)
+    fireEvent.click(await screen.findByRole('tab', { name: /templates/i }))
+    await screen.findByText('FastAPI Production Service')
+    expect(screen.queryByTestId('catalog-new-version-fastapi-service')).toBeNull()
+  })
+})
+

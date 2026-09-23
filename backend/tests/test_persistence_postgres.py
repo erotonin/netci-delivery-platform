@@ -1410,3 +1410,39 @@ def test_the_wave_decision_is_serialised_by_a_row_lock(portal_database):
     # first, so the second only read the plan after the first had written it.
     assert order in (["a-in", "a-out", "b-in", "b-out"],
                      ["b-in", "b-out", "a-in", "a-out"]), order
+
+
+def test_postgres_keeps_a_template_version_immutable_like_the_memory_store(portal_database):
+    """The same rule in the SQL: a conflict may change the deprecation flag, nothing else."""
+
+    from dataclasses import replace
+    from datetime import datetime, timezone
+
+    import psycopg
+
+    from app.store import PostgresDatabase
+    from app.store.records import CatalogTemplateRecord
+
+    now = datetime.now(timezone.utc)
+    template_id = f"tpl-{uuid.uuid4().hex[:8]}"
+    original = CatalogTemplateRecord(
+        id=template_id, version="v1.0.0", name="T", description="d", category="backend",
+        parameters_schema={"type": "object"}, pipeline_definition={"stages": ["build"]},
+        is_deprecated=False, created_at=now, updated_at=now,
+    )
+    database = PostgresDatabase(DATABASE_URL)
+    try:
+        with database.transaction() as session:
+            assert session.insert_catalog_template(original) is True
+        with database.transaction() as session:
+            assert session.insert_catalog_template(replace(original, pipeline_definition={"stages": ["other"]})) is False
+        with database.transaction() as session:
+            assert session.insert_catalog_template(replace(original, is_deprecated=True)) is True
+        with database.transaction() as session:
+            stored = session.catalog_template(template_id, "v1.0.0")
+        assert stored.pipeline_definition == {"stages": ["build"]}
+        assert stored.is_deprecated is True
+    finally:
+        database.close()
+        with psycopg.connect(DATABASE_URL) as connection:
+            connection.execute("DELETE FROM catalog_templates WHERE id = %s", (template_id,))

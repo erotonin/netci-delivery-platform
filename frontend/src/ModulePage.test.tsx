@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 
 vi.mock('./api/netciClient', async (importOriginal) => {
@@ -11,6 +11,10 @@ vi.mock('./api/netciClient', async (importOriginal) => {
       pipelineConfig: { runner: 'Jenkins', strategy: 'Trunk-based', pipelines: { CI: { branch: 'main', coverageReportPath: 'coverage/lcov.info', stages: ['checkout', 'unit-test'] }, 'CD Prod': { branch: 'release/*', coverageReportPath: 'coverage/lcov.info', stages: ['checkout', 'deploy', 'health-check'] } } },
     }),
     listModulePipelineRuns: vi.fn().mockResolvedValue({ moduleId: 'notification-worker', items: [] }),
+    getModuleGitCommits: vi.fn().mockResolvedValue({ moduleId: 'notification-worker', ref: 'main', error: null, items: [
+      { sha: 'b'.repeat(40), subject: 'fix: retry the push', author: 'Dana', committedAt: '2026-09-22T10:00:00Z' },
+      { sha: 'c'.repeat(40), subject: 'feat: batch notifications', author: 'Rae', committedAt: '2026-09-21T10:00:00Z' },
+    ] }),
     getModuleGitRefs: vi.fn().mockResolvedValue({ moduleId: 'notification-worker', repositoryUrl: 'https://git.example/notification-worker.git', branches: [{ name: 'main', sha: 'a'.repeat(40) }], tags: [], error: null }),
     getDora: vi.fn(),
   }
@@ -65,5 +69,19 @@ describe('ModulePage pipeline contract', () => {
     await user.click(screen.getByRole('tab', { name: 'DORA Metrics' }))
 
     expect(await screen.findByText(/no delivery events recorded yet/)).toBeTruthy()
+  })
+
+  it('lets a commit be chosen by its message, and sends that exact commit', async () => {
+    // The dialog offered only the branch tip; anything older had to be pasted as hex.
+    const user = userEvent.setup()
+    render(<PortalFeedbackProvider><ModulePage moduleId="notification-worker" onSettings={vi.fn()} /></PortalFeedbackProvider>)
+    await screen.findByRole('heading', { name: 'Notification Worker' })
+    await user.click(screen.getByRole('tab', { name: 'Pipeline' }))
+    await user.click((await screen.findAllByRole('button', { name: /^Run / }))[0])
+
+    const picker = await screen.findByTestId('run-commit-picker')
+    expect(within(picker).getByText(/feat: batch notifications/)).toBeTruthy()
+    await user.selectOptions(picker, 'c'.repeat(40))
+    expect((screen.getByPlaceholderText('7–64 hex characters') as HTMLInputElement).value).toBe('c'.repeat(40))
   })
 })

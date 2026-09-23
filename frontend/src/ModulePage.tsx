@@ -6,11 +6,11 @@ import {
 } from 'lucide-react'
 import {
   approveConfigRevision, approvePipelineRun, cancelPipelineRun, createModuleVersion, detectDrift,
-  diffConfigRevisions, getDora, getModule, getModuleGitRefs, getModuleOverview, getPipelineLogs,
+  diffConfigRevisions, getDora, getModule, getModuleGitCommits, getModuleGitRefs, getModuleOverview, getPipelineLogs,
   getPipelineStages, listConfigRevisions, listModulePipelineRuns, listModuleVersions,
   proposeConfigRevision, rejectConfigRevision, retryPipelineRun, rollbackConfigRevision,
   startModulePipeline, applyModuleConfig, whoami, NetciApiError, type ConfigApplyResponse, type ConfigDriftReport, type ConfigRevision, type ConfigRevisionDiff,
-  listDcimServers, type DcimServer, type RuntimeSettings, type DeploymentEnvironmentConfig, type Environment, type GitRefs, type ModuleOverview, type ModulePipelineConfig, type ModuleVersion,
+  listDcimServers, type DcimServer, type RuntimeSettings, type DeploymentEnvironmentConfig, type Environment, type GitCommits, type GitRefs, type ModuleOverview, type ModulePipelineConfig, type ModuleVersion,
   type PipelineRun, type PipelineStage, type Runtime,
 } from './api/netciClient'
 import { usePortalFeedback } from './PortalFeedback'
@@ -404,6 +404,19 @@ function PipelineTab({ moduleId, pipelineConfig, deploymentEnvironments, initial
   const [modalRevision, setModalRevision] = useState('')
   const [modalEnv, setModalEnv] = useState<Environment>('dev')
   const [modalError, setModalError] = useState('')
+  // The commits on the chosen branch, so a build can be picked by its message instead of
+  // by pasting hex. `null` while loading; an error is shown, not an empty list that reads
+  // as "this branch has no commits".
+  const [branchCommits, setBranchCommits] = useState<GitCommits | null>(null)
+  useEffect(() => {
+    if (!runModalPipeline || !modalBranch.trim()) return
+    let active = true
+    setBranchCommits(null)
+    getModuleGitCommits(moduleId, modalBranch.trim())
+      .then((result) => { if (active) setBranchCommits(result) })
+      .catch((cause) => { if (active) setBranchCommits({ moduleId, ref: modalBranch, items: [], error: cause instanceof Error ? cause.message : String(cause) }) })
+    return () => { active = false }
+  }, [moduleId, modalBranch, runModalPipeline])
   const branchSha = (name: string) => refs?.branches.find((b) => b.name === name)?.sha ?? refs?.tags.find((t) => t.name === name)?.sha ?? ''
 
   const openRunModal = (pipeline: PipelineDefinition) => {
@@ -494,6 +507,21 @@ function PipelineTab({ moduleId, pipelineConfig, deploymentEnvironments, initial
               : refsState === 'unreachable'
                 ? 'Could not reach netCI to list branches; enter the commit SHA manually.'
                 : 'Select branch or tag: netCI auto-fills head commit SHA.'}</small>
+        </label>
+        <label className="field full">
+          <span>Commit</span>
+          {branchCommits && branchCommits.items.length > 0 ? (
+            <select data-testid="run-commit-picker" value={branchCommits.items.some((c) => c.sha === modalRevision) ? modalRevision : ''} onChange={(e) => { if (e.target.value) setModalRevision(e.target.value) }}>
+              <option value="">— chọn commit —</option>
+              {branchCommits.items.map((c) => <option key={c.sha} value={c.sha}>{c.sha.slice(0, 7)} · {c.subject} · {c.author} · {timeAgo(c.committedAt)}</option>)}
+            </select>
+          ) : (
+            <small>{branchCommits === null
+              ? 'Reading recent commits…'
+              : branchCommits.error
+                ? `Could not list commits (${branchCommits.error}); enter the SHA below.`
+                : 'No commits found on this branch.'}</small>
+          )}
         </label>
         <label className="field full">
           <span>Commit SHA</span>

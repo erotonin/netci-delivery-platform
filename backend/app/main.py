@@ -10,6 +10,7 @@ import os
 import re
 import subprocess
 import secrets
+import tempfile
 import time
 import urllib.request
 
@@ -22,7 +23,7 @@ from uuid import UUID, uuid4
 
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response, status, WebSocket, WebSocketDisconnect
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, Response, status, WebSocket, WebSocketDisconnect
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response as PlainResponse, StreamingResponse
@@ -98,7 +99,7 @@ from .store.records import (
     SecurityExceptionRecord,
 )
 from .catalog.services import CatalogServiceManager, CatalogValidationError
-from .catalog.templates import PipelineTemplateEngine, TemplateValidationError, seed_builtin_templates
+from .catalog.templates import PipelineTemplateEngine, TemplateValidationError, TemplateVersionConflict, seed_builtin_templates
 from .catalog.previews import PreviewEnvironmentManager, PreviewEnvironmentError
 from .catalog.resources import SelfServiceResourceManager, ResourceRequestError
 
@@ -2043,6 +2044,57 @@ def list_module_pipeline_runs(moduleId: str, principal: Principal = ReadAccess) 
 _GIT_REF_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,200}$")
 
 
+#: The only URL schemes netCI dials to read a repository. Not file:// -- a module's URL
+#: would otherwise name a path on the API's own filesystem.
+GIT_URL_SCHEMES = frozenset({"http", "https", "ssh"})
+_GIT_ENV = {"GIT_TERMINAL_PROMPT": "0", "GIT_ASKPASS": "/bin/true"}
+
+
+def list_recent_commits(
+    repository_url: str, ref: str, *, limit: int = 15, timeout_seconds: float = 20.0
+) -> list[dict[str, str]]:
+    """The newest commits on one branch or tag, with subject, author and time.
+
+    The run dialog used to offer only a branch's head SHA, so choosing anything but the
+    tip meant pasting hex from somewhere else. This reads the module's own repository --
+    the URL registered at onboarding, never one a caller supplies -- with a shallow fetch
+    into a throwaway directory: `--depth` commits and no file contents, so asking about a
+    large repository does not clone it.
+    """
+
+    parsed = urlsplit(repository_url)
+    if parsed.scheme not in GIT_URL_SCHEMES:
+        raise ValueError(f"unsupported repository URL scheme {parsed.scheme!r}")
+    # The ref reaches git as an argument; a leading '-' would be read as an option.
+    if ref.startswith("-") or not _GIT_REF_NAME.fullmatch(ref):
+        raise ValueError(f"{ref!r} is not a branch or tag name")
+    limit = max(1, min(int(limit), 50))
+    env = {**os.environ, **_GIT_ENV}
+    with tempfile.TemporaryDirectory(prefix="netci-commits-") as scratch:
+        subprocess.run(["git", "init", "--bare", "-q", scratch], check=True, env=env,
+                       capture_output=True, timeout=timeout_seconds)
+        fetch = subprocess.run(
+            ["git", "-C", scratch, "fetch", "--quiet", "--no-tags", f"--depth={limit}",
+             "--filter=blob:none", repository_url, ref],
+            capture_output=True, text=True, timeout=timeout_seconds, env=env, check=False,
+        )
+        if fetch.returncode != 0:
+            raise RuntimeError((fetch.stderr or fetch.stdout).strip()[-300:] or "git fetch failed")
+        log = subprocess.run(
+            ["git", "-C", scratch, "log", f"-n{limit}", "--format=%H%x1f%s%x1f%an%x1f%aI", "FETCH_HEAD"],
+            capture_output=True, text=True, timeout=timeout_seconds, env=env, check=False,
+        )
+        if log.returncode != 0:
+            raise RuntimeError((log.stderr or log.stdout).strip()[-300:] or "git log failed")
+    commits: list[dict[str, str]] = []
+    for line in log.stdout.splitlines():
+        parts = line.split("\x1f")
+        if len(parts) == 4 and re.fullmatch(r"[0-9a-f]{40}", parts[0]):
+            sha, subject, author, when = parts
+            commits.append({"sha": sha, "subject": subject[:200], "author": author[:120], "committedAt": when})
+    return commits
+
+
 def list_remote_refs(repository_url: str, timeout_seconds: float = 15.0) -> dict[str, list[dict[str, str]]]:
     """Branches and tags of a repository with the commit each points at, from the
     repository itself (`git ls-remote`) -- what the "run this branch" dialog offers.
@@ -2054,7 +2106,7 @@ def list_remote_refs(repository_url: str, timeout_seconds: float = 15.0) -> dict
     """
 
     parsed = urlsplit(repository_url)
-    if parsed.scheme not in {"http", "https", "ssh"}:
+    if parsed.scheme not in GIT_URL_SCHEMES:
         raise ValueError(f"unsupported repository URL scheme {parsed.scheme!r}")
     result = subprocess.run(
         ["git", "ls-remote", "--heads", "--tags", "--refs", repository_url],
@@ -2097,6 +2149,32 @@ def get_module_git_refs(moduleId: str, principal: Principal = ReadAccess) -> dic
     except (ValueError, RuntimeError, subprocess.TimeoutExpired) as exc:
         return {"moduleId": moduleId, "repositoryUrl": repository_url, "branches": [], "tags": [], "error": str(exc)[:300]}
     return {"moduleId": moduleId, "repositoryUrl": repository_url, **refs, "error": None}
+
+
+@app.get("/modules/{moduleId}/git-commits")
+def get_module_git_commits(
+    moduleId: str,
+    ref: str = Query(default="main", min_length=1, max_length=255),
+    limit: int = Query(default=15, ge=1, le=50),
+    principal: Principal = ReadAccess,
+) -> dict[str, object]:
+    """Recent commits on a branch or tag of the module's repository, for the run dialog."""
+
+    try:
+        module = portal.module(moduleId)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail={"code": "MODULE_NOT_FOUND", "message": str(exc)}) from exc
+    _require_module_access(moduleId, principal)
+    repository_url = str(module.get("repositoryUrl") or "")
+    try:
+        items = list_recent_commits(repository_url, ref, limit=limit)
+    except ValueError as exc:
+        # A malformed ref is the caller's mistake; say so rather than report an empty list.
+        raise HTTPException(status_code=422, detail={"code": "INVALID_GIT_REF", "message": str(exc)}) from exc
+    except (RuntimeError, subprocess.TimeoutExpired, subprocess.CalledProcessError) as exc:
+        # The repository could not be read: an honest error, never an invented history.
+        return {"moduleId": moduleId, "ref": ref, "items": [], "error": str(exc)[:300]}
+    return {"moduleId": moduleId, "ref": ref, "items": items, "error": None}
 
 
 @app.get("/git/info")
@@ -4767,6 +4845,8 @@ def register_catalog_template(
                 pipeline_definition=payload.pipelineDefinition,
                 is_deprecated=payload.isDeprecated,
             )
+        except TemplateVersionConflict as exc:
+            raise HTTPException(status_code=409, detail={"code": "TEMPLATE_VERSION_EXISTS", "message": str(exc)}) from exc
         except TemplateValidationError as exc:
             raise HTTPException(status_code=400, detail={"code": "TEMPLATE_VALIDATION_ERROR", "message": str(exc)}) from exc
     return catalog_template_json(record)

@@ -245,3 +245,45 @@ def test_self_service_resources_api(client: TestClient, monkeypatch):
     )
     assert deprov.status_code == 200
     assert deprov.json()["status"] == "deprovisioned"
+
+
+def _template(**overrides):
+    body = {"templateId": "orders-service", "version": "v1.0.0", "name": "Orders Service",
+            "description": "golden path", "category": "backend",
+            "parametersSchema": {"type": "object", "properties": {"port": {"type": "integer"}}},
+            "pipelineDefinition": {"stages": ["checkout", "build"]}, "isDeprecated": False}
+    body.update(overrides)
+    return body
+
+
+def test_a_registered_template_version_cannot_be_rewritten(client: TestClient):
+    """Registering an existing version used to overwrite it, definition and all.
+
+    Every module instantiated from orders-service v1.0.0 would then name a pipeline it was
+    never built from. A version is written once; a changed definition is a new version.
+    """
+
+    assert client.post("/catalog/templates", json=_template()).status_code == 201
+
+    rewritten = client.post("/catalog/templates", json=_template(pipelineDefinition={"stages": ["deploy-anything"]}))
+    assert rewritten.status_code == 409, rewritten.text
+    assert rewritten.json()["code"] == "TEMPLATE_VERSION_EXISTS"
+
+    stored = client.get("/catalog/templates/orders-service", params={"version": "v1.0.0"}).json()
+    assert stored["pipelineDefinition"] == {"stages": ["checkout", "build"]}
+
+
+def test_a_template_version_can_still_be_retired(client: TestClient):
+    """Deprecation is the one change an existing version admits, and only with its content intact."""
+
+    assert client.post("/catalog/templates", json=_template()).status_code == 201
+    retired = client.post("/catalog/templates", json=_template(isDeprecated=True))
+    assert retired.status_code == 201, retired.text
+    assert retired.json()["isDeprecated"] is True
+
+
+def test_registering_the_same_version_again_is_idempotent(client: TestClient):
+    assert client.post("/catalog/templates", json=_template()).status_code == 201
+    again = client.post("/catalog/templates", json=_template())
+    assert again.status_code == 201
+    assert again.json()["pipelineDefinition"] == {"stages": ["checkout", "build"]}

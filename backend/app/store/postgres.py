@@ -2848,7 +2848,17 @@ class PostgresSession:
         )
         return tuple(_service_dependency(row) for row in self._cursor.fetchall())
 
-    def insert_catalog_template(self, template: CatalogTemplateRecord) -> None:
+    def insert_catalog_template(self, template: CatalogTemplateRecord) -> bool:
+        """Write a template version, or retire one. False: that version says something else.
+
+        This was an upsert that rewrote everything, so registering `fastapi-service v1.0.0`
+        a second time replaced the definition every module built from v1.0.0 had been
+        instantiated from -- the same version number now named a different pipeline. A
+        version's content is written once. On a conflict only the deprecation flag may
+        change, and only when the rest is identical; the condition sits in the statement,
+        so two admins registering one new version with different content cannot both win.
+        """
+
         self._cursor.execute(
             """
             INSERT INTO catalog_templates (
@@ -2856,13 +2866,13 @@ class PostgresSession:
                 is_deprecated, created_at, updated_at
             ) VALUES (%s, %s, %s, %s, %s, %s::jsonb, %s::jsonb, %s, %s, %s)
             ON CONFLICT (id, version) DO UPDATE SET
-                name = EXCLUDED.name,
-                description = EXCLUDED.description,
-                category = EXCLUDED.category,
-                parameters_schema = EXCLUDED.parameters_schema,
-                pipeline_definition = EXCLUDED.pipeline_definition,
                 is_deprecated = EXCLUDED.is_deprecated,
                 updated_at = EXCLUDED.updated_at
+             WHERE catalog_templates.name = EXCLUDED.name
+               AND catalog_templates.description = EXCLUDED.description
+               AND catalog_templates.category = EXCLUDED.category
+               AND catalog_templates.parameters_schema = EXCLUDED.parameters_schema
+               AND catalog_templates.pipeline_definition = EXCLUDED.pipeline_definition
             """,
             (
                 template.id,
@@ -2877,6 +2887,7 @@ class PostgresSession:
                 template.updated_at,
             ),
         )
+        return self._cursor.rowcount == 1
 
     def catalog_template(
         self, template_id: str, version: str | None = None

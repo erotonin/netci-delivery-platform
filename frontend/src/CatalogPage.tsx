@@ -264,6 +264,22 @@ export function CatalogPage({
     }
   }
 
+  // A template version is immutable (the server answers 409 to a rewrite), so "editing" a
+  // Golden Path is registering its next version, starting from the current definition.
+  const isPlatformAdmin = Boolean(session?.identity.principal.roles.includes('platform-admin'))
+  const openNewVersion = (tpl: CatalogTemplate) => {
+    const match = /^v?(\d+)\.(\d+)\.(\d+)(.*)$/.exec(tpl.version)
+    const next = match ? `v${match[1]}.${match[2]}.${Number(match[3]) + 1}` : tpl.version
+    setTemplateForm({
+      templateId: tpl.templateId, version: next, name: tpl.name, description: tpl.description,
+      category: tpl.category, isDeprecated: false,
+      parametersSchema: JSON.stringify(tpl.parametersSchema ?? {}, null, 2),
+      pipelineDefinition: JSON.stringify(tpl.pipelineDefinition ?? {}, null, 2),
+    })
+    setTemplateFormError('')
+    setShowRegisterTemplate(true)
+  }
+
   const handleRegisterTemplate = async (e: React.FormEvent) => {
     e.preventDefault()
     setTemplateFormError('')
@@ -810,6 +826,16 @@ export function CatalogPage({
                   >
                     <Play size={15} /> 1-Click Instantiate
                   </button>
+                  {isPlatformAdmin && (
+                    <button
+                      className="secondary-button"
+                      data-testid={`catalog-new-version-${tpl.templateId}`}
+                      style={{ width: '100%', justifyContent: 'center', marginTop: '0.5rem' }}
+                      onClick={() => openNewVersion(tpl)}
+                    >
+                      <Plus size={15} /> New version
+                    </button>
+                  )}
                 </div>
               </article>
             ))}

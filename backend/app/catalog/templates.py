@@ -18,6 +18,10 @@ class TemplateValidationError(ValueError):
     """Raised when template validation or instantiation fails."""
 
 
+class TemplateVersionConflict(TemplateValidationError):
+    """The version exists with a different definition. Versions are immutable: register a new one."""
+
+
 @dataclass(frozen=True)
 class InstantiatedTemplate:
     template_id: str
@@ -72,8 +76,12 @@ class PipelineTemplateEngine:
             created_at=now,
             updated_at=now,
         )
-        self._session.insert_catalog_template(record)
-        return record
+        if not self._session.insert_catalog_template(record):
+            raise TemplateVersionConflict(
+                f"{template_id} {version} is already registered with a different definition; "
+                "modules built from it rely on that one -- register a new version instead"
+            )
+        return self._session.catalog_template(template_id, version) or record
 
     def validate_parameters(
         self, schema: dict[str, Any], parameters: dict[str, Any]

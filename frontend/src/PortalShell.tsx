@@ -1,5 +1,6 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import {
+  CalendarDays,
   Activity, Bell, BookOpen, Box, CheckCircle2, ChevronDown, ChevronRight, Clock3,
   Compass, Gauge, Grid2X2, Layers3, LogOut, Menu, Search, Server, Settings,
   ShieldAlert, X,
@@ -105,6 +106,7 @@ function Sidebar({ page, systemId, moduleId, moduleLinks, navigationSystems, ses
         <button aria-current={page === 'catalog' ? 'page' : undefined} className={page === 'catalog' ? 'nav-item active' : 'nav-item'} onClick={() => navigate('catalog')}><Compass size={17} />Service Catalog</button>
         <button aria-current={page === 'servers' ? 'page' : undefined} className={page === 'servers' ? 'nav-item active' : 'nav-item'} onClick={() => navigate('servers')}><Server size={17} />Servers</button>
         <button aria-current={page === 'requests' ? 'page' : undefined} className={page === 'requests' ? 'nav-item active' : 'nav-item'} onClick={() => navigate('requests')}><ShieldAlert size={17} />Production Requests</button>
+        <button aria-current={page === 'calendar' ? 'page' : undefined} className={page === 'calendar' ? 'nav-item active' : 'nav-item'} onClick={() => navigate('calendar')}><CalendarDays size={17} />Release Calendar</button>
         <span className="nav-label nav-label-spaced">Systems</span>
         {navigationSystems.map((system) => <button key={system.id} className="nav-item system-link" onClick={() => navigate('system', { systemId: system.id })}><i className={`system-health health-${systemTone[system.status] ?? 'gray'}`} />{system.id}</button>)}
       </>}
@@ -148,7 +150,7 @@ function TopBar({ page, systemId, moduleId, moduleLinks, navigationSystems, sess
   const [query, setQuery] = useState('')
   const [searchOpen, setSearchOpen] = useState(false)
   const moduleName = moduleLinks.find((item) => item.id === moduleId)?.name ?? navigationSystems.flatMap((system) => system.modules).find((item) => item.id === moduleId)?.name
-  const labels: Partial<Record<PageId, string>> = { dashboard: 'Dashboard', systems: 'All Systems', servers: 'Servers', catalog: 'Service Catalog', architecture: 'Architecture & IDP 2026 Roadmap', system: 'Overview', requests: 'Production Requests', module: moduleName, 'new-module': 'New Module' }
+  const labels: Partial<Record<PageId, string>> = { dashboard: 'Dashboard', systems: 'All Systems', servers: 'Servers', catalog: 'Service Catalog', calendar: 'Release Calendar', architecture: 'Architecture & IDP 2026 Roadmap', system: 'Overview', requests: 'Production Requests', module: moduleName, 'new-module': 'New Module' }
   const crumbs = ['system', 'requests', 'module', 'new-module'].includes(page) ? ['Systems', systemId, labels[page]] : [labels[page]]
   const searchItems = [
     { key: 'dashboard', label: 'Dashboard', detail: 'General', action: () => navigate('dashboard') },

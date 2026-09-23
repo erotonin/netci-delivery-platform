@@ -379,6 +379,42 @@ paths:
         '200': { description: Module settings persisted }
         '403': { description: Caller does not have access to the owning team }
         '404': { $ref: '#/components/responses/NotFound' }
+  /modules/{moduleId}/git-commits:
+    get:
+      operationId: getModuleGitCommits
+      summary: Recent commits on a branch or tag of the module's repository
+      description: >-
+        A shallow fetch (`--depth`, no file contents) of the module's registered repository
+        into a throwaway directory, then `git log`. What the run dialog lists so a commit can
+        be chosen by its message rather than pasted as hex. A repository that cannot be read
+        answers with `error` and an empty list, never an invented history.
+      parameters:
+        - $ref: '#/components/parameters/ModuleId'
+        - {name: ref, in: query, required: false, schema: {type: string, default: main, maxLength: 255}}
+        - {name: limit, in: query, required: false, schema: {type: integer, minimum: 1, maximum: 50, default: 15}}
+      responses:
+        '200':
+          description: Commits, newest first
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  moduleId: {type: string}
+                  ref: {type: string}
+                  error: {type: string, nullable: true}
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        sha: {type: string}
+                        subject: {type: string}
+                        author: {type: string}
+                        committedAt: {type: string, format: date-time}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '422':
+          description: '`ref` is not a branch or tag name (`INVALID_GIT_REF`), including one starting with `-`.'
   /modules/{moduleId}/git-refs:
     get:
       operationId: getModuleGitRefs
@@ -2220,6 +2256,13 @@ paths:
             schema:
               $ref: '#/components/schemas/CatalogTemplateCreate'
       responses:
+        '409':
+          description: >-
+            This id and version are already registered with a different definition
+            (`TEMPLATE_VERSION_EXISTS`). A version is immutable -- modules instantiated from it
+            rely on that definition -- so a change is a new version. Registering identical
+            content again is idempotent, and may change only `isDeprecated`, which is how a
+            version is retired.
         '201':
           description: Template registered
           content:

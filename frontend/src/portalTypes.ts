@@ -1,4 +1,4 @@
-export type PageId = 'dashboard' | 'systems' | 'servers' | 'system' | 'requests' | 'module' | 'new-module' | 'catalog' | 'architecture'
+export type PageId = 'dashboard' | 'systems' | 'servers' | 'system' | 'requests' | 'module' | 'new-module' | 'catalog' | 'calendar' | 'architecture'
 export type ModuleTab = 'overview' | 'pipeline' | 'version' | 'config' | 'dora'
 export type SettingsTab = 'general' | 'pipeline' | 'activity'
 

@@ -611,6 +611,15 @@ export function getModuleGitRefs(moduleId: string): Promise<GitRefs> {
   return request<GitRefs>(`/modules/${encodeURIComponent(moduleId)}/git-refs`)
 }
 
+export type GitCommit = { sha: string; subject: string; author: string; committedAt: string }
+export type GitCommits = { moduleId: string; ref: string; items: GitCommit[]; error: string | null }
+
+/** Recent commits on one branch or tag, read by the server from the module's own repository. */
+export function getModuleGitCommits(moduleId: string, ref: string, limit = 15): Promise<GitCommits> {
+  const query = new URLSearchParams({ ref, limit: String(limit) })
+  return request<GitCommits>(`/modules/${encodeURIComponent(moduleId)}/git-commits?${query}`)
+}
+
 export function getModuleOverview(moduleId: string): Promise<ModuleOverview> {
   return request<ModuleOverview>(`/modules/${encodeURIComponent(moduleId)}/overview`)
 }

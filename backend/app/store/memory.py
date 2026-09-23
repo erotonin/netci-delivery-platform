@@ -1230,8 +1230,16 @@ class InMemorySession:
         matched.sort(key=lambda d: d.created_at)
         return tuple(matched)
 
-    def insert_catalog_template(self, template: CatalogTemplateRecord) -> None:
-        self._state.catalog_templates[(template.id, template.version)] = template
+    def insert_catalog_template(self, template: CatalogTemplateRecord) -> bool:
+        key = (template.id, template.version)
+        existing = self._state.catalog_templates.get(key)
+        if existing is not None:
+            content = lambda t: (t.name, t.description, t.category, t.parameters_schema, t.pipeline_definition)
+            if content(existing) != content(template):
+                return False  # see the PostgreSQL implementation
+            template = replace(existing, is_deprecated=template.is_deprecated, updated_at=template.updated_at)
+        self._state.catalog_templates[key] = template
+        return True
 
     def catalog_template(
         self, template_id: str, version: str | None = None

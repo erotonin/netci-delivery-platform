@@ -717,3 +717,16 @@ textarea { min-height: 78px; padding: 9px 10px; resize: vertical; font-size: 11p
 .env-draft legend { display: flex; align-items: center; gap: 8px; padding: 0 6px; font-size: 12px; }
 .checkbox-field { flex-direction: row; align-items: center; gap: 8px; }
 .checkbox-field input { width: auto; }
+
+/* Release calendar: one panel per day that has releases, today always shown. */
+.calendar-summary { display: flex; flex-direction: column; gap: 4px; padding: 12px 16px; margin-bottom: 14px; }
+.calendar-summary > span { display: inline-flex; align-items: center; gap: 8px; font-weight: 600; }
+.calendar-summary small { color: var(--muted); }
+.calendar-days { display: grid; gap: 12px; }
+.calendar-day { padding: 12px 16px; }
+.calendar-day.today { border-color: var(--primary, #2563eb); }
+.calendar-day h3 { display: flex; align-items: center; gap: 8px; font-size: 13px; margin: 0 0 8px; }
+.calendar-release { display: grid; grid-template-columns: 1fr auto; gap: 4px 12px; padding: 8px 0; border-top: 1px solid var(--border); }
+.calendar-release small { display: block; color: var(--muted); font-size: 11px; }
+.calendar-release.has-warning { background: #fff8eb; }
+.calendar-warning { grid-column: 1 / -1; display: flex; align-items: center; gap: 6px; margin: 0; color: #9d6b0c; font-size: 12px; }
