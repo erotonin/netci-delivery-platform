@@ -1687,4 +1687,61 @@ export function executeAgentCommand(
   })
 }
 
+export type ExposureFinding = {
+  moduleId: string
+  systemId: string
+  environment: string
+  artifactDigest: string
+  pipelineRunId: string
+  vulnerabilityId: string
+  severity: string
+  package: string
+  installedVersion: string
+  fixedVersion: string
+  sources: string[]
+  firstSeenAt: string
+}
+
+export type ExposureCoverage = {
+  inService: number
+  withSbom: number
+  rescanned: number
+  rescanFailed: number
+  oldestRescanAt: string | null
+  notCovered: { moduleId: string; environment: string; artifactDigest: string; reason: string }[]
+}
+
+export type VulnerabilityExposure = {
+  vulnerabilityId: string | null
+  minSeverity: string | null
+  affected: ExposureFinding[]
+  coverage: ExposureCoverage
+}
+
+export type RescanResult = {
+  scanned: string[]
+  failed: { artifactDigest: string; error: string }[]
+  skippedNoSbom: string[]
+  scanner: string
+}
+
+// Live exposure queries correlate running artifacts with recorded SBOMs and scan findings (ADR-045).
+export function getRunningVulnerabilities(
+  minSeverity: 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW' = 'HIGH'
+): Promise<VulnerabilityExposure> {
+  return request<VulnerabilityExposure>(`/vulnerabilities/exposure?minSeverity=${encodeURIComponent(minSeverity)}`)
+}
+
+export function getVulnerabilityExposure(id: string): Promise<VulnerabilityExposure> {
+  return request<VulnerabilityExposure>(`/vulnerabilities/${encodeURIComponent(id)}/exposure`)
+}
+
+export function rescanVulnerabilities(): Promise<RescanResult> {
+  return request<RescanResult>('/vulnerabilities/rescan', {
+    method: 'POST',
+    headers: { 'X-Correlation-Id': requestId() },
+  })
+}
+
+
 

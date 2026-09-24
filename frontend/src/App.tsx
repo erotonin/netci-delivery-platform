@@ -14,6 +14,7 @@ import { PortalFeedbackProvider } from './PortalFeedback'
 import { Modal, PortalShell, type Navigate } from './PortalShell'
 import { ProductionRequestsPage } from './ProductionRequestsPage'
 import { ReleaseCalendarPage } from './ReleaseCalendarPage'
+import { VulnerabilitiesPage } from './VulnerabilitiesPage'
 import type { PageId } from './portalTypes'
 import './styles.css'
 
@@ -55,6 +56,7 @@ function readRoute(): RouteState {
   if (parts[0] === 'requests' || parts[0] === 'production-requests') return { page: 'requests', systemId: '', moduleId: '', settingsOpen: false }
   if (parts[0] === 'catalog') return { page: 'catalog', systemId: '', moduleId: '', settingsOpen: false }
   if (parts[0] === 'calendar') return { page: 'calendar', systemId: '', moduleId: '', settingsOpen: false }
+  if (parts[0] === 'vulnerabilities') return { page: 'vulnerabilities', systemId: '', moduleId: '', settingsOpen: false }
   if (parts[0] === 'servers') return { page: 'servers', systemId: '', moduleId: '', settingsOpen: false }
   if (parts[0] === 'architecture') return { page: 'architecture', systemId: '', moduleId: '', settingsOpen: false }
   return { page: 'dashboard', systemId: '', moduleId: '', settingsOpen: false }
@@ -64,6 +66,7 @@ function routePath(route: RouteState): string {
   if (route.page === 'systems') return '/systems'
   if (route.page === 'catalog') return '/catalog'
   if (route.page === 'calendar') return '/calendar'
+  if (route.page === 'vulnerabilities') return '/vulnerabilities'
   if (route.page === 'servers') return '/servers'
   if (route.page === 'architecture') return '/architecture'
   if (route.page === 'system') return route.systemId ? `/systems/${route.systemId}` : '/systems'
@@ -160,6 +163,7 @@ function PortalApp({ session, onLogout }: { session: AuthSession; onLogout: () =
       {page === 'catalog' && <CatalogPage session={session} navigate={navigate} />}
       {page === 'servers' && <ServersPage />}
       {page === 'calendar' && <ReleaseCalendarPage />}
+      {page === 'vulnerabilities' && <VulnerabilitiesPage />}
       {page === 'architecture' && <ArchitectureRoadmapPage />}
       {page === 'system' && <SystemPage systemId={systemId} navigate={navigate} />}
       {page === 'requests' && <ProductionRequestsPage systemId={systemId} />}
