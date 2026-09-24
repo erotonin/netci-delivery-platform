@@ -111,6 +111,23 @@ class CiResult:
     deployment: Deployment | None = None
 
 
+def _pr_comment_body(run: PipelineRun, status: ScmCommitStatus, target_url: str | None) -> str:
+    """What a pull request is told about its build: what happened, and what it was allowed to do."""
+
+    outcome = "passed" if status == ScmCommitStatus.SUCCESS else "failed"
+    if not run.publish_artifact:
+        intent = "verify only -- not signed or published (pull request from a fork)"
+    elif run.artifact_digest:
+        intent = f"published `{run.artifact_digest}`; not deployed -- promote it from netCI"
+    else:
+        intent = "not published"
+    lines = [f"**netCI build {outcome}** for `{run.commit_sha[:12]}`", "", f"- {intent}"]
+    if target_url:
+        lines.append(f"- [build log]({target_url})")
+    lines.append(f"- netCI run `{run.id}`")
+    return "\n".join(lines)
+
+
 @dataclass(frozen=True)
 class _CiOutcome:
     """What a CI result produced, and whether a workflow still has to be started.
@@ -1116,34 +1133,40 @@ class DeliveryPlatform:
         integration = session.scm_integration_for_application(application_id)
         if integration is None or not integration.enabled:
             return
-        try:
-            from .adapters.scm import get_scm_provider
-            provider = get_scm_provider(integration.provider)
-            provider.update_commit_status(
-                integration.repository_identity,
-                commit_sha,
-                status,
-                context="netci/pipeline",
-                description=f"netCI pipeline {status.value}",
-                target_url=target_url,
-                credential_reference=integration.credential_reference,
-            )
-            if unit is not None:
-                unit.audit.append(
-                    AuditRecord(
-                        "scm.status_updated",
-                        application_id=application_id,
-                        pipeline_run_id=pipeline_run_id,
-                        correlation_id=correlation_id,
-                        payload={
-                            "provider": integration.provider.value,
-                            "status": status.value,
-                            "commitSha": commit_sha,
-                        },
-                    )
-                )
-        except Exception as exc:
-            logger.warning("Failed to update SCM commit status: %s", exc)
+        # Queued in the same unit of work, sent by the outbox (ADR-048). The status used to
+        # be "sent" by a provider method that made no request at all, and an audit record
+        # said `scm.status_updated` regardless -- a trail claiming the SCM was told what it
+        # never was. What is recorded here is the intent; the outbox records the delivery.
+        pending = unit if unit is not None else UnitOfWork()
+        common = {
+            "provider": integration.provider.value,
+            "repository": integration.repository_identity,
+            "credentialReference": integration.credential_reference,
+        }
+        pending.notifications.append(NotificationRecord(
+            id=uuid4(), event_type="scm.commit_status", aggregate_type="pipeline_run",
+            aggregate_id=str(pipeline_run_id or commit_sha), recipient="scm",
+            payload={**common, "commitSha": commit_sha, "state": status.value, "context": "netci/pipeline",
+                     "description": f"netCI pipeline {status.value}", "targetUrl": target_url},
+        ))
+        # The run as this unit of work will leave it (with its digest), not as stored.
+        staged = [r for r, _ in pending.runs if pipeline_run_id and r.id == pipeline_run_id]
+        run = staged[-1] if staged else (session.pipeline_run(pipeline_run_id) if pipeline_run_id else None)
+        number = (run.trigger or {}).get("pullRequest") if run is not None else None
+        if run is not None and number and status in {ScmCommitStatus.SUCCESS, ScmCommitStatus.FAILURE}:
+            pending.notifications.append(NotificationRecord(
+                id=uuid4(), event_type="scm.pr_comment", aggregate_type="pipeline_run",
+                aggregate_id=str(run.id), recipient="scm",
+                payload={**common, "pullRequest": int(number), "body": _pr_comment_body(run, status, target_url)},
+            ))
+        pending.audit.append(AuditRecord(
+            "scm.status_queued", application_id=application_id, pipeline_run_id=pipeline_run_id,
+            correlation_id=correlation_id,
+            payload={"provider": integration.provider.value, "status": status.value, "commitSha": commit_sha,
+                     "pullRequestComment": bool(number and status in {ScmCommitStatus.SUCCESS, ScmCommitStatus.FAILURE})},
+        ))
+        if unit is None:
+            session.apply(pending)
 
     def list_pipeline_runs(
         self, application_id: UUID | None = None, session: PlatformSession | None = None

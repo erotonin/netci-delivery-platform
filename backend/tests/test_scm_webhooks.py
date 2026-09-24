@@ -338,68 +338,44 @@ def test_payload_size_limit():
 
 
 def test_commit_status_lifecycle():
+    """Each transition queues a commit status in the outbox, in the same transaction.
+
+    It used to call the provider directly, whose GitHub and GitLab methods made no request
+    at all, while an audit record said `scm.status_updated`. The outbox now owns delivery
+    (ADR-048); what the transition records is that a status is due.
+    """
     app_obj = create_test_application()
     repo_name = f"org/status-repo-{uuid4().hex[:6]}"
-    secret = "status-secret-token-123"
-
     client.post(
         f"/applications/{app_obj.id}/scm",
-        json={
-            "provider": "github",
-            "repositoryIdentity": repo_name,
-            "secretToken": secret,
-        },
+        json={"provider": "github", "repositoryIdentity": repo_name, "secretToken": "status-secret-token-123"},
     )
+    sha = "c0ffee11c0ffee22c0ffee33c0ffee44c0ffee55"
 
-    mock_provider = get_scm_provider(ScmProviderType.GITHUB)
-    assert isinstance(mock_provider, MockScmProvider)
-    mock_provider.status_updates.clear()
+    def queued_states():
+        from datetime import datetime, timedelta, timezone
+        with main_mod.database.transaction() as tx:
+            items = tx.pending_notifications(limit=500, now=datetime.now(timezone.utc) + timedelta(days=1))
+        return [n.payload["state"] for n in sorted(items, key=lambda n: n.created_at)
+                if n.event_type == "scm.commit_status" and n.payload.get("commitSha") == sha
+                and n.payload.get("repository") == repo_name]
 
-    # Start a pipeline run
     run = platform.start_pipeline(
-        app_obj.id,
-        commit_sha="c0ffee11c0ffee22c0ffee33c0ffee44c0ffee55",
-        branch="main",
-        environment=Environment.DEV,
-        parameters={},
-        correlation_id=str(uuid4()),
-        idempotency_key=str(uuid4()),
+        app_obj.id, commit_sha=sha, branch="main", environment=Environment.DEV, parameters={},
+        correlation_id=str(uuid4()), idempotency_key=str(uuid4()),
     )
-    # Status PENDING should have been recorded
-    assert any(
-        s["commit_sha"] == "c0ffee11c0ffee22c0ffee33c0ffee44c0ffee55"
-        and s["status"] == ScmCommitStatus.PENDING
-        for s in mock_provider.status_updates
-    )
+    assert queued_states() == [ScmCommitStatus.PENDING.value]
 
-    # Transition to RUNNING
-    platform.record_ci_result(
-        run.id,
-        result_status="running",
-        artifact_digest=None,
-        log_lines=["Compiling..."],
-    )
-    assert any(
-        s["commit_sha"] == "c0ffee11c0ffee22c0ffee33c0ffee44c0ffee55"
-        and s["status"] == ScmCommitStatus.RUNNING
-        for s in mock_provider.status_updates
-    )
+    platform.record_ci_result(run.id, result_status="running", artifact_digest=None, log_lines=["Compiling..."])
+    assert queued_states() == [ScmCommitStatus.PENDING.value, ScmCommitStatus.RUNNING.value]
 
-    # Transition to SUCCEEDED
     artifact = f"sha256:{hashlib.sha256(b'img').hexdigest()}"
-    platform.record_ci_result(
-        run.id,
-        result_status="succeeded",
-        artifact_digest=artifact,
-        log_lines=["Build done"],
-    )
-    assert any(
-        s["commit_sha"] == "c0ffee11c0ffee22c0ffee33c0ffee44c0ffee55"
-        and s["status"] == ScmCommitStatus.SUCCESS
-        for s in mock_provider.status_updates
-    )
+    platform.record_ci_result(run.id, result_status="succeeded", artifact_digest=artifact, log_lines=["Build done"])
+    assert queued_states()[-1] == ScmCommitStatus.SUCCESS.value
 
-
+    with main_mod.database.transaction() as tx:
+        audit = [a.event_type for a in tx.audit_records({app_obj.id}) if a.pipeline_run_id == run.id]
+    assert "scm.status_updated" not in audit
 # -----------------------------------------------------------------------------
 # NetBox DCIM webhook: it decides whether a host may receive deployments
 # -----------------------------------------------------------------------------

@@ -75,7 +75,7 @@ from .metrics import PrometheusMetricsMiddleware, metrics
 from .admission import AdmissionController
 from .coordinator import ReleasePlanCoordinator
 from .demo_data import seed_demo_data
-from .notifications import NotificationOutboxWorker
+from .notifications import NotificationOutboxWorker, build_outbox_dispatcher
 from .policy.break_glass import BreakGlassError, BreakGlassService
 from .policy.engine import PolicyEngine
 from .runtime_environment import is_local_runtime
@@ -193,7 +193,7 @@ rate_limiter = build_rate_limiter()
 
 @asynccontextmanager
 async def lifespan(application: FastAPI):
-    outbox_worker = NotificationOutboxWorker(database)
+    outbox_worker = NotificationOutboxWorker(database, dispatcher=build_outbox_dispatcher())
     if os.getenv("NETCI_DISABLE_OUTBOX_WORKER", "0") != "1":
         outbox_worker.start()
     # There is deliberately no simulated CI here. A worker that invented artifact digests

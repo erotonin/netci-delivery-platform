@@ -39,6 +39,10 @@ secrets:
   cosignPublicKey: ""          # the public half of the key the pipeline signs with
   jenkinsApiTokens: {}         # {A: "<token for controllers[id=A]>"}
   dcimApiToken: ""             # only when dcim.provider is set
+  # Commit statuses and pull-request comments (ADR-048), sent by the outbox. Without the
+  # token for a provider, its statuses dead-letter -- visible, never silently "sent".
+  githubToken: ""              # repo:status + pull request comments on the modules' repositories
+  gitlabToken: ""              # api scope
   buildClusterKubeconfig: ""   # only when buildIsolation.mode is kubernetes
   trafficKubeconfig: ""        # only when traffic.router is nginx-ingress
 
@@ -204,6 +208,10 @@ podDisruptionBudget:
 extraEnv: []                   # [{name: NETCI_RATE_LIMIT, value: "240"}]
 
 # ---------------------------------------------------------------- netCI's own SLOs
+scm:
+  githubApiUrl: ""             # default https://api.github.com; GitHub Enterprise: https://ghe.example.com/api/v3
+  gitlabUrl: ""                # default https://gitlab.com
+
 monitoring:
   # A PrometheusRule with netCI's SLO recording rules and alerts (docs/SLO.md). Needs the
   # Prometheus Operator CRDs, so it is off by default.

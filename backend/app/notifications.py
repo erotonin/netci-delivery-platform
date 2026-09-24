@@ -166,3 +166,35 @@ class NotificationOutboxWorker:
         self._running = False
         if self._task and not self._task.done():
             self._task.cancel()
+
+
+class RoutingNotificationDispatcher:
+    """Sends `scm.*` notifications to the SCM reporter, everything else to `default`.
+
+    Without this split, every outbox row -- a GitHub commit status as much as a
+    generic webhook -- would go through `HttpWebhookNotificationDispatcher`, which
+    treats a non-URL recipient as "just log it"; a commit status enqueued with
+    recipient "scm" would appear to succeed while GitHub never heard about it.
+    """
+
+    def __init__(self, scm: NotificationDispatcher, default: NotificationDispatcher) -> None:
+        self.scm = scm
+        self.default = default
+
+    async def dispatch(self, notification: NotificationRecord) -> None:
+        if notification.event_type.startswith("scm."):
+            await self.scm.dispatch(notification)
+        else:
+            await self.default.dispatch(notification)
+
+
+def build_outbox_dispatcher() -> RoutingNotificationDispatcher:
+    """Default dispatcher wiring for the outbox worker.
+
+    Imports `ScmReporter` lazily: `adapters/scm_reporter.py` doesn't need to import
+    from `notifications.py`, but if it ever does, a module-level import here would
+    create a cycle.
+    """
+    from .adapters.scm_reporter import ScmReporter
+
+    return RoutingNotificationDispatcher(ScmReporter(), HttpWebhookNotificationDispatcher())

@@ -102,6 +102,18 @@ data:
   NETCI_COSIGN_PUBLIC_KEY_FILE: /run/secrets/netci-app/cosign.pub
 
   # inventory
+  {{- if .Values.secrets.githubToken }}
+  NETCI_GITHUB_TOKEN_FILE: /run/secrets/netci-app/scm-github-token
+  {{- end }}
+  {{- if .Values.secrets.gitlabToken }}
+  NETCI_GITLAB_TOKEN_FILE: /run/secrets/netci-app/scm-gitlab-token
+  {{- end }}
+  {{- with .Values.scm.githubApiUrl }}
+  NETCI_GITHUB_API_URL: {{ . | quote }}
+  {{- end }}
+  {{- with .Values.scm.gitlabUrl }}
+  NETCI_GITLAB_URL: {{ . | quote }}
+  {{- end }}
   NETCI_REQUIRE_DCIM_REVALIDATION: {{ .Values.dcim.requireRevalidation | quote }}
   {{- if .Values.dcim.provider }}
   NETCI_DCIM_PROVIDER: {{ .Values.dcim.provider | quote }}
