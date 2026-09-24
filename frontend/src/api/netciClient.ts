@@ -1788,3 +1788,53 @@ export function cancelChangeFreeze(id: string): Promise<ChangeFreeze> {
     headers: { 'X-Correlation-Id': requestId() },
   })
 }
+
+export type ScoreSummary = { passed: number; known: number; total: number }
+
+export type ScorecardCheck = {
+  id: string
+  title: string
+  // null: netCI could not evaluate this check -- shown as "unknown", never as a pass.
+  passed: boolean | null
+  detail: string
+}
+
+export type ModuleScorecard = {
+  moduleId: string
+  score: ScoreSummary
+  checks: ScorecardCheck[]
+}
+
+export type ScorecardListItem = {
+  moduleId: string
+  systemId: string
+  name: string
+  score: ScoreSummary
+}
+
+export function getModuleScorecard(moduleId: string): Promise<ModuleScorecard> {
+  return request<ModuleScorecard>(`/modules/${encodeURIComponent(moduleId)}/scorecard`)
+}
+
+export async function listScorecards(): Promise<ScorecardListItem[]> {
+  const response = await request<{ items: ScorecardListItem[] }>('/scorecards')
+  return response.items
+}
+
+export type ModuleInsights = {
+  failures: {
+    total: number
+    byClass: Record<string, number>
+    recent: { pipelineRunId: string; class: string; stage: string; at: string }[]
+  }
+  flaky: {
+    count: number
+    commits: { commitSha: string; failedRunId: string; passedRunId: string }[]
+  }
+  queueTime: { samples: number; p50Seconds: number; p95Seconds: number }
+  leadTime: { samples: number; meanSeconds: number }
+}
+
+export function getModuleInsights(moduleId: string, days = 30): Promise<ModuleInsights> {
+  return request<ModuleInsights>(`/modules/${encodeURIComponent(moduleId)}/insights?days=${encodeURIComponent(String(days))}`)
+}

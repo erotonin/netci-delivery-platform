@@ -90,10 +90,13 @@ class Scope:
     DEPLOYMENT_RESULT = "deployment:result"
     DEPLOYMENT_READ = "deployment:read"
     AGENT_CONNECT = "agent:connect"
+    #: A preview environment's deploy or teardown result (ADR-049). Its own scope, so a
+    #: preview workflow's token cannot report a real deployment, nor the reverse.
+    PREVIEW_RESULT = "preview:result"
 
     ALL = frozenset(
         {CI_RESULT, CI_LOGS, CI_EVIDENCE, CI_REPORT, CI_STAGE, DEPLOYMENT_RESULT,
-         DEPLOYMENT_READ, AGENT_CONNECT}
+         DEPLOYMENT_READ, AGENT_CONNECT, PREVIEW_RESULT}
     )
 
 
@@ -105,7 +108,7 @@ WORKLOAD_SCOPES: dict[str, frozenset[str]] = {
         {Scope.CI_RESULT, Scope.CI_LOGS, Scope.CI_EVIDENCE, Scope.CI_REPORT, Scope.CI_STAGE}
     ),
     Workload.TEMPORAL: frozenset(
-        {Scope.DEPLOYMENT_RESULT, Scope.DEPLOYMENT_READ, Scope.CI_EVIDENCE}
+        {Scope.DEPLOYMENT_RESULT, Scope.DEPLOYMENT_READ, Scope.CI_EVIDENCE, Scope.PREVIEW_RESULT}
     ),
     Workload.AGENT: frozenset({Scope.AGENT_CONNECT}),
 }
@@ -113,7 +116,7 @@ WORKLOAD_SCOPES: dict[str, frozenset[str]] = {
 #: Operations that end a piece of work. A token for one of these is single-use, so a
 #: token captured from a worker's environment cannot be replayed later to overwrite a
 #: newer result.
-TERMINAL_SCOPES = frozenset({Scope.DEPLOYMENT_RESULT})
+TERMINAL_SCOPES = frozenset({Scope.DEPLOYMENT_RESULT, Scope.PREVIEW_RESULT})
 
 
 @dataclass(frozen=True)

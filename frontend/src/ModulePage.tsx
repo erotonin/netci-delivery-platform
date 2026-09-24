@@ -6,11 +6,11 @@ import {
 } from 'lucide-react'
 import {
   approveConfigRevision, approvePipelineRun, cancelPipelineRun, createModuleVersion, detectDrift,
-  diffConfigRevisions, getDora, getModule, getModuleGitCommits, getModuleGitRefs, getModuleOverview, getPipelineLogs,
+  diffConfigRevisions, getDora, getModule, getModuleGitCommits, getModuleGitRefs, getModuleInsights, getModuleOverview, getModuleScorecard, getPipelineLogs,
   getModuleDeliveryRules, getPipelineStages, listConfigRevisions, listModulePipelineRuns, listModuleVersions, promoteModuleArtifact,
   proposeConfigRevision, rejectConfigRevision, retryPipelineRun, rollbackConfigRevision,
   startModulePipeline, applyModuleConfig, whoami, NetciApiError, type ConfigApplyResponse, type ConfigDriftReport, type ConfigRevision, type ConfigRevisionDiff,
-  listDcimServers, type DcimServer, type RuntimeSettings, type DeploymentEnvironmentConfig, type Environment, type GitCommits, type GitRefs, type ModuleOverview, type ModulePipelineConfig, type ModuleVersion,
+  listDcimServers, type DcimServer, type RuntimeSettings, type DeploymentEnvironmentConfig, type Environment, type GitCommits, type GitRefs, type ModuleInsights, type ModuleOverview, type ModulePipelineConfig, type ModuleScorecard, type ModuleVersion,
   type DeliveryRules, type PipelineRun, type PipelineStage, type Runtime,
 } from './api/netciClient'
 import { usePortalFeedback } from './PortalFeedback'
@@ -39,6 +39,54 @@ const statusLabel = (status: string) => ({
   never_deployed: 'chưa triển khai', healthy: 'healthy', failed: 'failed', rolled_back: 'rolled back',
   deploying: 'deploying', pending_approval: 'chờ phê duyệt', rollback_in_progress: 'đang rollback', cancelled: 'cancelled', rollback_failed: 'rollback failed',
 }[status] ?? status.replace(/_/g, ' '))
+
+/** Each check's own scan may have found nothing to say -- `passed: null` means netCI could
+ * not evaluate it, not that it passed. Shown as "unknown", in the same muted tone as any
+ * other missing data, so it can never be mistaken for a green check at a glance. */
+function ScorecardPanel({ moduleId }: { moduleId: string }) {
+  const [scorecard, setScorecard] = useState<ModuleScorecard | null>(null)
+  const [error, setError] = useState('')
+  useEffect(() => {
+    let active = true
+    getModuleScorecard(moduleId).then((result) => { if (active) { setScorecard(result); setError('') } }).catch((reason) => { if (active) setError(reason instanceof Error ? reason.message : 'Unable to load scorecard.') })
+    return () => { active = false }
+  }, [moduleId])
+  return <section className="panel">
+    <div className="panel-heading"><div><h2>Scorecard</h2><p>{scorecard ? `${scorecard.score.passed}/${scorecard.score.known} (${scorecard.score.total}) checks passed` : 'What each check found, or could not check.'}</p></div></div>
+    {error && <p className="muted" style={{ padding: '0 17px 16px' }}>{error}</p>}
+    {!error && !scorecard && <p className="muted" style={{ padding: '0 17px 16px' }}>Loading scorecard…</p>}
+    {scorecard && (scorecard.checks.length === 0 ? <p className="muted" style={{ padding: '0 17px 16px' }}>No checks recorded yet.</p> : <ul style={{ listStyle: 'none', margin: 0, padding: '0 17px 16px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+      {scorecard.checks.map((check) => <li key={check.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '10px', borderBottom: '1px solid var(--border)', paddingBottom: '8px' }}>
+        <span><strong>{check.title}</strong><br /><small className="muted">{check.detail}</small></span>
+        {check.passed === true && <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', color: 'var(--green)', fontSize: '11px', fontWeight: 600, whiteSpace: 'nowrap' }}><CheckCircle2 size={15} />pass</span>}
+        {check.passed === false && <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', color: 'var(--red)', fontSize: '11px', fontWeight: 600, whiteSpace: 'nowrap' }}><XCircle size={15} />fail</span>}
+        {check.passed === null && <span className="muted" style={{ fontSize: '11px', fontWeight: 600, whiteSpace: 'nowrap' }}>unknown</span>}
+      </li>)}
+    </ul>)}
+  </section>
+}
+
+function InsightsPanel({ moduleId }: { moduleId: string }) {
+  const [insights, setInsights] = useState<ModuleInsights | null>(null)
+  const [error, setError] = useState('')
+  useEffect(() => {
+    let active = true
+    getModuleInsights(moduleId, 30).then((result) => { if (active) { setInsights(result); setError('') } }).catch((reason) => { if (active) setError(reason instanceof Error ? reason.message : 'Unable to load insights.') })
+    return () => { active = false }
+  }, [moduleId])
+  const failureClasses = insights ? Object.entries(insights.failures.byClass) : []
+  return <section className="panel">
+    <div className="panel-heading"><div><h2>Insights</h2><p>Last 30 days</p></div></div>
+    {error && <p className="muted" style={{ padding: '0 17px 16px' }}>{error}</p>}
+    {!error && !insights && <p className="muted" style={{ padding: '0 17px 16px' }}>Loading insights…</p>}
+    {insights && <div className="quality-facts">
+      <div><span>Failures</span><strong>{insights.failures.total} total{failureClasses.length > 0 ? ` · ${failureClasses.map(([cls, count]) => `${cls}: ${count}`).join(', ')}` : ''}</strong></div>
+      <div><span>Flaky suspects</span><strong>{insights.flaky.count}</strong></div>
+      <div><span>Queue time</span><strong>{insights.queueTime.samples > 0 ? `p50 ${insights.queueTime.p50Seconds}s · p95 ${insights.queueTime.p95Seconds}s` : 'không có dữ liệu'}</strong></div>
+      <div><span>Lead time</span><strong>{insights.leadTime.samples > 0 ? `mean ${insights.leadTime.meanSeconds}s (${insights.leadTime.samples} runs)` : 'không có dữ liệu'}</strong></div>
+    </div>}
+  </section>
+}
 
 function OverviewTab({ moduleId, onOpenRun }: { moduleId: string; onOpenRun?: (run: PipelineRun) => void }) {
   const [overview, setOverview] = useState<ModuleOverview | null>(null)
@@ -76,6 +124,10 @@ function OverviewTab({ moduleId, onOpenRun }: { moduleId: string; onOpenRun?: (r
           : 'pipeline không gửi kết quả test'}</strong></div>
       </div>}
     </section>
+    <div className="module-overview-grid">
+      <ScorecardPanel moduleId={moduleId} />
+      <InsightsPanel moduleId={moduleId} />
+    </div>
     <div className="module-overview-grid">
       <section className="panel"><div className="panel-heading"><div><h2>Build gần đây</h2><p>{overview.recentRuns.length} lượt chạy mới nhất</p></div></div>
         <div className="data-table history-table compact"><div className="table-row table-head"><span>Trạng thái</span><span>Môi trường</span><span>Commit</span><span>Artifact</span><span>Bởi</span><span>Khi nào</span></div>
