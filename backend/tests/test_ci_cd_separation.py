@@ -332,3 +332,27 @@ def test_the_effective_rules_are_readable():
     assert rules["triggers"][0] == {"on": "push", "branches": ["main"], "deployTo": "dev"}
     assert rules["forkPullRequests"] == "ignore"
     assert UUID  # imported for readers who follow the ids
+
+
+def test_a_failed_promotion_does_not_rewrite_the_build_it_promoted():
+    """The build succeeded; a later deployment of its artifact failing is not the build failing.
+
+    It used to be: a promotion reuses the build's run, and its failure set that run to
+    `failed` -- after which the artifact could not be promoted again and the environment
+    it had served looked empty.
+    """
+    module, repo = _module()
+    run_id = _push(repo, "refs/heads/feature/pay").json()["pipelineRunId"]
+    _succeed(run_id)
+    first = client.post(f"/modules/{module['id']}/promotions", json={"pipelineRunId": run_id, "environment": "dev"}).json()
+    _healthy(first["deploymentId"])
+    second = client.post(f"/modules/{module['id']}/promotions", json={"pipelineRunId": run_id, "environment": "dev"}).json()
+    failed = client.post(f"/deployments/{second['deploymentId']}/result", headers=MACHINE,
+                         json={"status": "failed", "message": "verification failed"})
+    assert failed.status_code == 202, failed.text
+
+    assert client.get(f"/pipeline-runs/{run_id}").json()["status"] == "succeeded"
+    lines = client.get(f"/pipeline-runs/{run_id}/logs").json()["lines"]
+    assert any(second["deploymentId"] in line and "failed" in line for line in lines)
+    again = client.post(f"/modules/{module['id']}/promotions", json={"pipelineRunId": run_id, "environment": "dev"})
+    assert again.status_code == 202, again.text

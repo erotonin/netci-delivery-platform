@@ -2566,11 +2566,14 @@ class DeliveryPlatform:
             if deployment.pipeline_run_id
             else None
         )
+        # A deployment decides its run's outcome only when it is the run's own CD -- the
+        # run is still running or waiting for approval. A promotion or redeploy of an
+        # artifact that was built long ago reuses that run to locate the artifact; it used
+        # to overwrite a succeeded build as `failed` when the later deployment failed,
+        # which made the artifact undeployable and the environment look empty.
+        owns_run = run is not None and run.status in {PipelineStatus.RUNNING, PipelineStatus.WAITING_APPROVAL}
         if run is not None:
-            pipeline_status = PipelineStatus.SUCCEEDED if healthy else PipelineStatus.FAILED
-            unit.runs.append(
-                (replace(run, status=pipeline_status, version=run.version + 1, updated_at=now), run.version)
-            )
+            # Audited for every deployment, whoever's run it borrowed.
             unit.audit.append(
                 AuditRecord(
                     f"deployment.{target_status.value}",
@@ -2579,6 +2582,16 @@ class DeliveryPlatform:
                     deployment_id=deployment.id,
                     correlation_id=run.correlation_id,
                 )
+            )
+        if run is not None and not owns_run:
+            unit.logs.append((run.id, [
+                f"deployment {deployment.id} of this artifact to {deployment.environment.value}: {target_status.value}"
+                + (f" ({message})" if message else "")
+            ]))
+        if run is not None and owns_run:
+            pipeline_status = PipelineStatus.SUCCEEDED if healthy else PipelineStatus.FAILED
+            unit.runs.append(
+                (replace(run, status=pipeline_status, version=run.version + 1, updated_at=now), run.version)
             )
             if message:
                 unit.logs.append((run.id, [f"deployment={target_status.value} {message}"]))
@@ -2609,7 +2622,8 @@ class DeliveryPlatform:
                 recipient="events@netci.local",
             )
         )
-        if run is not None:
+        if run is not None and owns_run:
+            # The pipeline completed only if this deployment was its own CD.
             unit.notifications.append(
                 NotificationRecord(
                     id=uuid4(),
