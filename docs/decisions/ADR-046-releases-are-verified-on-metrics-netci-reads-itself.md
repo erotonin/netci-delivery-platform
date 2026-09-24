@@ -52,3 +52,20 @@ under traffic:
   is held and heartbeated for that time.
 - The thresholds a production request used to carry (`strategyConfig.thresholds`) no
   longer decide anything. The module's verification spec does.
+
+## Live evidence (2026-09-24, Kubernetes install 0.2.0-rc11, lab Prometheus)
+
+`payments-api` exports no request metrics yet, so the passing check used a stand-in
+query over Prometheus's own `prometheus_http_requests_total` (5xx rate, `or vector(0)`),
+declared through a configuration revision for dev with a 1-minute window at 30 s.
+Promoting build `70973a5e` to dev, the worker sampled the lab Prometheus three times and
+the run log reads *deployment=healthy health check passed; verified: 3 sample(s) over the
+window within thresholds*. With the query pointed at the service's real metric
+(`http_requests_total{app="{release}"}`, which has no series), the same promotion ended
+*deployment=failed post-deploy verification failed: errorRate: Prometheus returned no
+data for the whole window; automatic rollback completed*.
+
+The lab's Prometheus listens on 127.0.0.1 only. The cluster reaches it through
+`scripts/lab/tcp_bridge.py`, which binds 172.17.0.1:19090 (the Docker bridge, not
+0.0.0.0). Canary analysis was not exercised live: the lab has no canary-capable module
+with request metrics.

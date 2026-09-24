@@ -16,6 +16,12 @@ case "${1:-up}" in
       -v "$root/infra/monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro" \
       -v "$root/infra/monitoring/rules.yml:/etc/prometheus/rules.yml:ro" \
       prom/prometheus:v3.5.0 --config.file=/etc/prometheus/prometheus.yml --web.listen-address=127.0.0.1:9090 >/dev/null
+    # The Kubernetes install queries Prometheus for release verification (ADR-046); pods
+    # reach the host only on the Docker bridge, so bridge 172.17.0.1:19090 -> 127.0.0.1:9090
+    # (never 0.0.0.0: Prometheus stays off the host's other interfaces).
+    docker run -d --name netci-prometheus-bridge --network host --restart unless-stopped \
+      -v "$root/scripts/lab/tcp_bridge.py:/bridge.py:ro" python:3.12.10-slim-bookworm \
+      python /bridge.py 172.17.0.1:19090 127.0.0.1:9090 >/dev/null
     pkill -f "[a]lert_webhook_receiver.py" || true
     nohup .venv/bin/python scripts/lab/alert_webhook_receiver.py --port 9095 --out "$logs/alerts.jsonl" > "$logs/alert-receiver.log" 2>&1 &
     sleep 3

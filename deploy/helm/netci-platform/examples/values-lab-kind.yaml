@@ -18,7 +18,7 @@ global:
 
 image:
   registry: 172.17.0.1:55000/netci
-  tag: 0.2.0-rc10
+  tag: 0.2.0-rc11
 
 existingSecret: netci-app
 
@@ -85,3 +85,8 @@ portal: {replicas: 1}
 ingress:
   enabled: true
   className: nginx
+
+# Prometheus for release verification (ADR-046), through the lab's bridge on the Docker
+# network (scripts/lab/monitoring.sh); Prometheus itself listens on 127.0.0.1 only.
+verification:
+  prometheusUrl: http://172.17.0.1:19090
