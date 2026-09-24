@@ -9,12 +9,17 @@ from temporalio.client import Client
 from temporalio.worker import Worker
 
 from ..adapters.signature_verifier import build_signature_verifier
+from ..logging import configure_logging
 from ..runtime_environment import is_local_runtime
 from .activities import AnsibleRuntimeRunner, DeliveryActivities, build_deployment_reporter, build_evidence_store
 from .provision_and_deploy import ProvisionAndDeployWorkflow, RollbackWorkflow
 
 
 async def main() -> None:
+    # Without this the worker had no handler: every activity's INFO line -- which digest
+    # was verified, against which key, from which commit -- was dropped, so a deployment
+    # left no record on the host that ran it. The JSON formatter redacts secrets.
+    configure_logging(os.getenv('NETCI_LOG_LEVEL', 'INFO'))
     address = os.getenv('TEMPORAL_ADDRESS', 'localhost:7233')
     namespace = os.getenv('TEMPORAL_NAMESPACE', 'default')
     client = await Client.connect(address, namespace=namespace)

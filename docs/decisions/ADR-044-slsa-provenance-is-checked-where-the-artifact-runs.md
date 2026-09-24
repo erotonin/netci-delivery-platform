@@ -53,3 +53,18 @@ consult that row, and a compromised build could report whatever digest it liked 
   repository only if provenance is required.
 - A Kubernetes admission check could verify the same attestation without netCI's
   database. That is not built yet (`admission.py` still checks netCI's evidence).
+
+## Live evidence (2026-09-24, Kubernetes install 0.2.0-rc10, library `netci-0.2` c3e997e)
+
+A build-only run of `payments-api` on the lab's Jenkins A (build #5) attested provenance
+and published evidence recorded as `provenance.verified = true`, commit
+`fe28b3a2…`, repository `http://172.17.0.52/payments-api.git`, with the chart default
+`requireProvenance: true`. Promoting it to dev, the in-cluster worker logged, before
+deploying: *cosign verified …@sha256:af8f5034… against the netCI public key* and
+*SLSA provenance verified: built from http://172.17.0.52/payments-api.git at fe28b3a2…*.
+The deployment became healthy.
+
+The worker logged nothing at all before this: it never configured a log handler, so
+every activity's INFO line was dropped. `app.workflows.worker` now calls
+`configure_logging`. The builder id reads `jenkins#netci-shared-library`, because the
+agent container has no `JENKINS_URL`; the build URL is still recorded as the invocation.

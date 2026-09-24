@@ -48,3 +48,14 @@ most of the answer. It could not give the rest:
   a mirror, as the build farm already does.
 - SBOM documents are stored as JSONB. A few hundred KB per digest is the common case,
   and uploads above 16 MiB are refused.
+
+## Live evidence (2026-09-24, Kubernetes install 0.2.0-rc10)
+
+The same build uploaded its SBOM (938 components, `cyclonedx-json`) after its evidence.
+The API's first scheduled pass (60 s after start) and `POST /vulnerabilities/rescan` both
+scanned it with the trivy in the API image, against the lab's database mirror
+(`--insecure`, since the mirror registry is plain HTTP). `GET /vulnerabilities/CVE-2025-8869/exposure`
+returned `payments-api` in dev (pip 25.0.1, fixed in 25.3, source `rescan`), with
+coverage 1 in service / 1 with SBOM / 1 rescanned / 0 failed / 0 not covered. The build's
+own scan (HIGH and CRITICAL only) had found nothing, so these MEDIUM findings exist in
+netCI only because of the rescan.
