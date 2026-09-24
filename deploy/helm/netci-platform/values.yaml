@@ -202,3 +202,14 @@ podDisruptionBudget:
 
 # Extra environment for the API and worker, for settings this file does not name.
 extraEnv: []                   # [{name: NETCI_RATE_LIMIT, value: "240"}]
+
+# ---------------------------------------------------------------- netCI's own SLOs
+monitoring:
+  # A PrometheusRule with netCI's SLO recording rules and alerts (docs/SLO.md). Needs the
+  # Prometheus Operator CRDs, so it is off by default.
+  prometheusRule:
+    enabled: false
+    labels: {}
+  slo:
+    availabilityTarget: 0.995   # API requests (health probes excluded) not answered 5xx, over 30 days
+    latencyP95Seconds: 1.0

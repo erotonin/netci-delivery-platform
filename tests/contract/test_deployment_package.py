@@ -120,3 +120,53 @@ def test_the_public_entry_point_does_not_proxy_metrics():
     block = re.search(r"location = /api/metrics \{(.*?)\}", nginx, re.S)
     assert block and "return 404" in block.group(1)
     assert nginx.index("location = /api/metrics") < nginx.index("location /api/ {")
+
+
+# ---------------------------------------------------------------- netCI's own SLOs
+
+
+def _exported_metric_names() -> set[str]:
+    source = (ROOT / "backend" / "app" / "metrics.py").read_text(encoding="utf-8")
+    return set(re.findall(r'"(netci_[a-z_]+)"', source))
+
+
+@needs_helm
+def test_the_slo_rules_are_off_by_default_and_render_when_enabled():
+    assert "PrometheusRule" not in _render("-f", str(EXAMPLE)).stdout
+    rendered = _render("-f", str(EXAMPLE), "--set", "monitoring.prometheusRule.enabled=true")
+    assert rendered.returncode == 0, rendered.stderr
+    assert "kind: PrometheusRule" in rendered.stdout
+
+
+@needs_helm
+def test_every_slo_expression_names_only_metrics_netci_exports_and_every_alert_says_what_to_do():
+    import yaml
+
+    rendered = _render("-f", str(EXAMPLE), "--set", "monitoring.prometheusRule.enabled=true",
+                       "--show-only", "templates/prometheusrule.yaml")
+    rule = yaml.safe_load(rendered.stdout)
+    exported = _exported_metric_names()
+    recorded = {r["record"] for g in rule["spec"]["groups"] for r in g["rules"] if "record" in r}
+    for group in rule["spec"]["groups"]:
+        for item in group["rules"]:
+            names = set(re.findall(r"\bnetci_[a-z_]+", item["expr"]))
+            # A histogram's series carry a _bucket suffix the registry name does not.
+            unknown = {n for n in names if n not in exported and n.removesuffix("_bucket") not in exported}
+            assert not unknown, f"{item.get('alert') or item.get('record')}: {unknown} is not exported by netCI"
+            used_records = set(re.findall(r"netci:[a-z0-9_:]+", item["expr"]))
+            assert used_records <= recorded
+            if "alert" in item:
+                assert item["labels"]["severity"] in {"page", "ticket"}
+                assert item["annotations"]["description"].strip()
+
+
+@needs_helm
+def test_the_burn_rate_thresholds_follow_the_availability_target():
+    rendered = _render("-f", str(EXAMPLE), "--set", "monitoring.prometheusRule.enabled=true",
+                       "--set", "monitoring.slo.availabilityTarget=0.99",
+                       "--show-only", "templates/prometheusrule.yaml").stdout
+    # 14.4x and 6x the error budget of a 99 % target.
+    assert "netci:api_error_ratio:rate1h > 0.144" in rendered
+    assert "netci:api_error_ratio:rate6h > 0.06" in rendered
+    # Health probes are not API traffic: counted, they would bury real failures.
+    assert 'route!~"/livez|/healthz|/readyz|/metrics"' in rendered

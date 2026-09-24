@@ -88,6 +88,10 @@ CRITICAL_TABLES: tuple[str, ...] = (
     "catalog_templates",
     "preview_environments",
     "resource_requests",
+    "artifact_sboms",
+    "artifact_findings",
+    "artifact_rescans",
+    "change_freezes",
 )
 
 
@@ -317,7 +321,10 @@ def create(arguments: argparse.Namespace) -> int:
     print(f"backing up {parts['database']} at {parts['host']}:{parts['port']}")
     tables = discover_tables(url)
     counts = table_counts(url, tables)
-    checksums = table_checksums(url, [t for t in tables if t in CRITICAL_TABLES])
+    # Every table, not only the hand-kept critical list: a table added after that list was
+    # written (SBOMs, change freezes, ...) would otherwise be restored unchecked, and a
+    # restore that lost it would still pass. The list remains the set that must exist.
+    checksums = table_checksums(url, tables)
 
     # Custom format: compressed, and restorable table by table
     result = run_in_postgres(
