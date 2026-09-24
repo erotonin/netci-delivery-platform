@@ -31,8 +31,10 @@ from .adapters.cd_orchestrator import (
     CdStartError,
     CdStartRequest,
     NullCdOrchestrator,
+    PreviewStartRequest,
 )
 from .adapters.ci_launcher import CiLaunchError, CiLaunchRequest, CiLauncher, NullCiLauncher
+from .catalog.previews import PreviewRequest
 from .errors import ApiError
 from .persistence import (
     AuditRecord,
@@ -140,6 +142,9 @@ class _CiOutcome:
 
     result: CiResult
     pending_cd: tuple[Application, PipelineRun, Deployment] | None = None
+    #: What a pull-request build's success asked to have started, once this transaction
+    #: commits -- built by `preview_hook`, started by `start_preview`.
+    pending_preview: PreviewRequest | None = None
     # A policy denial has to be recorded *and* rejected. Raising inside the transaction
     # would roll back the failed run and the denial audit record along with it, leaving
     # the run stuck at "running" with no explanation -- so the error is carried out of
@@ -172,6 +177,11 @@ class DeliveryPlatform:
         #: Called inside the transaction that records a published build carrying a
         #: release tag. The Portal owns versions and sets this; nothing else does.
         self.build_published_hook: Callable[[PlatformSession, PipelineRun], None] | None = None
+        #: Called inside the transaction that records a published build's success, for a
+        #: run that may be a pull request's. The Portal owns previews and sets this; it
+        #: returns what must be started once the transaction commits, or None when this
+        #: run gets no preview (not a pull request, not published, previews not enabled).
+        self.preview_hook: Callable[[PlatformSession, PipelineRun], "PreviewRequest | None"] | None = None
 
     # ------------------------------------------------------------- persistence
 
@@ -1708,6 +1718,9 @@ class DeliveryPlatform:
                                              artifact_digest, log_lines)
         if outcome.deferred_error is not None:
             raise outcome.deferred_error
+        if outcome.pending_preview is not None:
+            # Also a network call outside the transaction above -- see _start_cd.
+            self.start_preview(outcome.pending_preview)
         if outcome.pending_cd is None:
             return outcome.result
         # Starting the CD workflow is a network call to Temporal and must not run while
@@ -2030,8 +2043,13 @@ class DeliveryPlatform:
             )
         )
         self._apply(transaction, unit)
-        self._build_published(transaction, updated)
-        return _CiOutcome(CiResult(updated))
+        preview_request = None
+        if self.preview_hook is not None:
+            try:
+                preview_request = self.preview_hook(transaction, updated)
+            except Exception as exc:
+                logger.warning("preview_hook failed for run %s: %s", updated.id, exc, exc_info=True)
+        return _CiOutcome(CiResult(updated), pending_preview=preview_request)
 
     def _build_published(self, transaction: PlatformSession, run: PipelineRun) -> None:
         if self.build_published_hook is not None and run.artifact_digest and run.release_tag:
@@ -2255,6 +2273,66 @@ class DeliveryPlatform:
         )
         self._commit(unit)
         return deployment
+
+    def start_preview(self, preview_request: PreviewRequest) -> None:
+        """Start (or restart) the durable preview workflow.
+
+        Outside any transaction, like `_start_cd`: this reaches Temporal, and a database
+        connection held open across that call is how a slow orchestrator becomes a
+        connection-pool outage. A failure to start is not silently dropped -- the row is
+        moved to `failed` and the reason audited, because a preview stuck in `deploying`
+        with no worker coming is indistinguishable from one still on its way.
+        """
+
+        parameters = dict(preview_request.parameters)
+        if preview_request.action == "deploy":
+            with self._transaction() as transaction:
+                evidence = transaction.security_evidence(preview_request.pipeline_run_id) or {}
+            artifact_ref = str(evidence.get("artifactRef") or "").strip()
+            if artifact_ref:
+                parameters["artifact_ref"] = artifact_ref
+                parameters["image_repository"] = artifact_ref.split("@", 1)[0]
+        if workload_identity.workload_identity_configured():
+            parameters["callback_token"] = workload_identity.mint(
+                workload=workload_identity.Workload.TEMPORAL,
+                application_id=preview_request.application_id,
+                pipeline_run_id=preview_request.pipeline_run_id,
+                scopes={workload_identity.Scope.PREVIEW_RESULT, workload_identity.Scope.CI_EVIDENCE},
+                ttl_seconds=workload_identity.MAX_TTL_SECONDS,
+            )
+        request = PreviewStartRequest(
+            preview_id=preview_request.preview_id,
+            application_id=preview_request.application_id,
+            pipeline_run_id=preview_request.pipeline_run_id,
+            action=preview_request.action,
+            namespace=preview_request.namespace,
+            release=preview_request.release,
+            artifact_digest=preview_request.artifact_digest,
+            parameters=parameters,
+        )
+        try:
+            self.cd_orchestrator.start_preview(request)
+        except CdStartError as exc:
+            with self._transaction() as transaction:
+                transaction.update_preview_environment(
+                    preview_request.preview_id,
+                    status="failed",
+                    detail=f"could not start the preview workflow: {exc}",
+                )
+                transaction.apply(UnitOfWork(audit=[AuditRecord(
+                    "preview.start_failed",
+                    application_id=preview_request.application_id,
+                    pipeline_run_id=preview_request.pipeline_run_id,
+                    payload={"previewId": preview_request.preview_id, "action": preview_request.action, "error": str(exc)},
+                )]))
+            return
+        with self._transaction() as transaction:
+            transaction.apply(UnitOfWork(audit=[AuditRecord(
+                "preview.workflow_started",
+                application_id=preview_request.application_id,
+                pipeline_run_id=preview_request.pipeline_run_id,
+                payload={"previewId": preview_request.preview_id, "action": preview_request.action},
+            )]))
 
     def create_production_promotion(
         self,

@@ -34,7 +34,7 @@ from ..domain.verification import (
     parse_verification,
     render_query,
 )
-from .provision_and_deploy import DeliveryInput, DeliveryResult, RollbackResult
+from .provision_and_deploy import DeliveryInput, DeliveryResult, PreviewInput, PreviewResult, RollbackResult
 
 
 _SAFE_EVIDENCE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
@@ -56,11 +56,15 @@ class RuntimeRunner(Protocol):
 
     async def rollback(self, delivery: DeliveryInput) -> None: ...
 
+    async def preview(self, preview: PreviewInput) -> str | None: ...
+
 
 class DeploymentReporter(Protocol):
     async def report(self, result: DeliveryResult) -> None: ...
 
     async def report_rollback(self, result: RollbackResult) -> None: ...
+
+    async def report_preview(self, result: PreviewResult) -> None: ...
 
 
 class UnconfiguredDeploymentReporter:
@@ -68,6 +72,9 @@ class UnconfiguredDeploymentReporter:
         raise RuntimeError("deployment result reporting is not configured")
 
     async def report_rollback(self, result: RollbackResult) -> None:
+        raise RuntimeError("deployment result reporting is not configured")
+
+    async def report_preview(self, result: PreviewResult) -> None:
         raise RuntimeError("deployment result reporting is not configured")
 
 
@@ -143,6 +150,35 @@ class HttpDeploymentReporter:
                 raise RuntimeError(f"netCI returned {exc.code} for rollback callback") from exc
             except urllib.error.URLError as exc:
                 raise RuntimeError(f"cannot report rollback result: {exc}") from exc
+
+        await asyncio.to_thread(send)
+
+    async def report_preview(self, result: PreviewResult) -> None:
+        if not _SAFE_EVIDENCE_ID.fullmatch(result.preview_id):
+            raise RuntimeError("invalid preview id for result callback")
+        payload: dict[str, object] = {"status": result.status, "message": result.message or result.status, "url": result.url}
+        body = json.dumps(payload).encode()
+        credential = result.callback_token or self.api_key
+        request = urllib.request.Request(
+            f"{self.base_url}/preview-environments/{result.preview_id}/result",
+            data=body,
+            method="POST",
+            headers={
+                "Authorization": f"Bearer {credential}",
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+            },
+        )
+
+        def send() -> None:
+            try:
+                with urllib.request.urlopen(request, timeout=self.timeout_seconds) as response:
+                    if response.status not in {200, 202}:
+                        raise RuntimeError(f"netCI returned {response.status} for preview callback")
+            except urllib.error.HTTPError as exc:
+                raise RuntimeError(f"netCI returned {exc.code} for preview callback") from exc
+            except urllib.error.URLError as exc:
+                raise RuntimeError(f"cannot report preview result: {exc}") from exc
 
         await asyncio.to_thread(send)
 
@@ -383,6 +419,14 @@ class DeliveryActivities:
     async def report_rollback_result(self, result: RollbackResult) -> None:
         await self.deployment_reporter.report_rollback(result)
 
+    @activity.defn(name="preview")
+    async def preview(self, preview: PreviewInput) -> str | None:
+        return await self.runtime_runner.preview(preview)
+
+    @activity.defn(name="report_preview_result")
+    async def report_preview_result(self, result: PreviewResult) -> None:
+        await self.deployment_reporter.report_preview(result)
+
 
 def _breaches(spec: VerificationSpec, sample: Sample) -> bool:
     return (
@@ -478,7 +522,20 @@ class AnsibleRuntimeRunner:
             self.executable,
             "-i",
             str(self.inventory),
+            *self._ssh_args(),
+            str(playbook),
         ]
+        if delivery.runtime in {"docker", "systemd"} and isinstance(target_hosts, list) and target_hosts:
+            command.extend(["--limit", ",".join(target_hosts)])
+        command.extend(["--extra-vars", json.dumps(extra_vars, sort_keys=True)])
+        return command
+
+    def _ssh_args(self) -> list[str]:
+        """`--private-key`/`--ssh-common-args`, shared by every playbook this runner
+        invokes -- Kubernetes and local plays never need them, but a play that does is a
+        variable the checked-in playbook decides, not this runner."""
+
+        args: list[str] = []
         private_key_file = os.getenv("NETCI_ANSIBLE_PRIVATE_KEY_FILE", "").strip()
         if private_key_file:
             secret_root = Path(os.getenv("NETCI_ANSIBLE_SECRET_DIR", "/run/secrets/netci")).resolve()
@@ -487,7 +544,7 @@ class AnsibleRuntimeRunner:
                 raise ValueError("NETCI_ANSIBLE_PRIVATE_KEY_FILE must stay beneath NETCI_ANSIBLE_SECRET_DIR")
             if not private_key.is_file():
                 raise ValueError("NETCI_ANSIBLE_PRIVATE_KEY_FILE does not exist")
-            command.extend(["--private-key", str(private_key)])
+            args.extend(["--private-key", str(private_key)])
         known_hosts_file = os.getenv("NETCI_ANSIBLE_KNOWN_HOSTS_FILE", "").strip()
         if known_hosts_file:
             secret_root = Path(os.getenv("NETCI_ANSIBLE_SECRET_DIR", "/run/secrets/netci")).resolve()
@@ -496,12 +553,44 @@ class AnsibleRuntimeRunner:
                 raise ValueError("NETCI_ANSIBLE_KNOWN_HOSTS_FILE must stay beneath NETCI_ANSIBLE_SECRET_DIR")
             if not known_hosts.is_file():
                 raise ValueError("NETCI_ANSIBLE_KNOWN_HOSTS_FILE does not exist")
-            command.extend(
+            args.extend(
                 ["--ssh-common-args", f"-o UserKnownHostsFile={known_hosts} -o StrictHostKeyChecking=yes"]
             )
-        command.append(str(playbook))
-        if delivery.runtime in {"docker", "systemd"} and isinstance(target_hosts, list) and target_hosts:
-            command.extend(["--limit", ",".join(target_hosts)])
+        return args
+
+    def command_for_preview(self, preview: PreviewInput) -> list[str]:
+        """The command for `preview-kubernetes.yml` -- a pull request's own deployment,
+        never the module's dev/staging/prod one (that playbook refuses any namespace but
+        those three, on purpose)."""
+
+        if preview.action not in {"deploy", "teardown"}:
+            raise ValueError(f"unsupported preview action: {preview.action}")
+        parameters = dict(preview.parameters)
+        for control_key in _CONTROL_PLANE_PARAMETERS:
+            parameters.pop(control_key, None)
+        # Same rule as command_for: only a basename-like reference resolved beneath the
+        # worker-owned secret directory may become the Ansible kubeconfig argument.
+        parameters.pop("kubeconfig", None)
+        kubeconfig_ref = parameters.pop("kubeconfig_ref", None)
+        if kubeconfig_ref is not None:
+            if not isinstance(kubeconfig_ref, str) or not _SAFE_SECRET_REF.fullmatch(kubeconfig_ref):
+                raise ValueError("kubeconfig_ref must be a safe secret file name")
+            secret_root = Path(os.getenv("NETCI_KUBECONFIG_DIR", "/run/secrets")).resolve()
+            kubeconfig = (secret_root / kubeconfig_ref).resolve()
+            if not kubeconfig.is_relative_to(secret_root):
+                raise ValueError("kubeconfig_ref escapes NETCI_KUBECONFIG_DIR")
+            parameters["kubeconfig"] = str(kubeconfig)
+
+        extra_vars: dict[str, object] = {
+            **parameters,
+            "preview_action": preview.action,
+            "preview_namespace": preview.namespace,
+            "preview_release": preview.release,
+            "artifact_digest": preview.artifact_digest,
+            "application_id": preview.application_id,
+        }
+        playbook = self.project_root / "deploy" / "ansible" / "playbooks" / "preview-kubernetes.yml"
+        command = [self.executable, "-i", str(self.inventory), *self._ssh_args(), str(playbook)]
         command.extend(["--extra-vars", json.dumps(extra_vars, sort_keys=True)])
         return command
 
@@ -545,7 +634,7 @@ class AnsibleRuntimeRunner:
             installed = set()
         return [name for name in self.required_collections() if name not in installed]
 
-    async def _run(self, command: list[str]) -> None:
+    async def _run(self, command: list[str]) -> str:
         process = await asyncio.create_subprocess_exec(
             *command,
             cwd=self.project_root,
@@ -574,6 +663,8 @@ class AnsibleRuntimeRunner:
                 if part and part.strip()
             )[-4000:]
             raise RuntimeError(f"runtime adapter failed with exit {process.returncode}: {detail}")
+        # A preview reads its URL back from here; deploy/rollback simply ignore it.
+        return stdout.decode(errors="replace")
 
     async def _materialized(self, delivery: DeliveryInput) -> DeliveryInput:
         """For a binary artifact, fetch it from the registry and hand the playbook a file.
@@ -664,3 +755,10 @@ class AnsibleRuntimeRunner:
     async def rollback(self, delivery: DeliveryInput) -> None:
         delivery = await self._materialized(delivery)
         await self._run(self.command_for("rollback", delivery))
+
+    async def preview(self, preview: PreviewInput) -> str | None:
+        stdout = await self._run(self.command_for_preview(preview))
+        # The worker takes this line as the preview's URL; it never composes one itself
+        # (ADR-049) -- absent means the deploy's Ingress read found nothing to serve it.
+        match = re.search(r"NETCI_PREVIEW_URL=([^\s\"]+)", stdout)
+        return match.group(1) if match else None

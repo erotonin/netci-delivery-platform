@@ -37,6 +37,9 @@ class ScmParsedEvent:
     base_branch: str | None = None
     from_fork: bool = False
     pull_request_number: int | None = None
+    #: The pull/merge request was closed (merged or not) -- a signal to tear down its
+    #: preview, never to start a build (ADR-049).
+    closed: bool = False
 
     @property
     def kind(self) -> str:
@@ -157,7 +160,7 @@ class GitHubScmProvider:
 
         if event_type == "pull_request":
             action = payload.get("action")
-            if action not in ("opened", "synchronize", "reopened"):
+            if action not in ("opened", "synchronize", "reopened", "closed"):
                 return None
             pr = payload.get("pull_request", {})
             head = pr.get("head", {})
@@ -183,6 +186,7 @@ class GitHubScmProvider:
                 # repository either; absence is not evidence of being trusted.
                 from_fork=head_repo != base_repo,
                 pull_request_number=int(pr.get("number") or 0),
+                closed=action == "closed",
             )
 
         return None
@@ -295,7 +299,7 @@ class GitLabScmProvider:
         if event_type == "Merge Request Hook":
             attrs = payload.get("object_attributes", {})
             action = attrs.get("action")
-            if action not in ("open", "update", "reopen"):
+            if action not in ("open", "update", "reopen", "close", "merge"):
                 return None
             commit_sha = attrs.get("last_commit", {}).get("id")
             if not commit_sha:
@@ -320,6 +324,7 @@ class GitLabScmProvider:
                 base_branch=str(attrs.get("target_branch") or "main"),
                 from_fork=source_project is None or source_project != target_project,
                 pull_request_number=int(attrs.get("iid") or 0),
+                closed=action in ("close", "merge"),
             )
 
         return None

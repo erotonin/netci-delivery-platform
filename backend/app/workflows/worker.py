@@ -13,7 +13,7 @@ from ..adapters.signature_verifier import build_signature_verifier
 from ..logging import configure_logging
 from ..runtime_environment import is_local_runtime
 from .activities import AnsibleRuntimeRunner, DeliveryActivities, build_deployment_reporter, build_evidence_store
-from .provision_and_deploy import ProvisionAndDeployWorkflow, RollbackWorkflow
+from .provision_and_deploy import PreviewWorkflow, ProvisionAndDeployWorkflow, RollbackWorkflow
 
 
 async def main() -> None:
@@ -49,7 +49,7 @@ async def main() -> None:
     worker = Worker(
         client,
         task_queue=os.getenv('TEMPORAL_TASK_QUEUE', 'netci-delivery'),
-        workflows=[ProvisionAndDeployWorkflow, RollbackWorkflow],
+        workflows=[ProvisionAndDeployWorkflow, RollbackWorkflow, PreviewWorkflow],
         activities=[
             activities.validate_artifact,
             activities.deploy,
@@ -58,6 +58,8 @@ async def main() -> None:
             activities.rollback,
             activities.report_deployment_result,
             activities.report_rollback_result,
+            activities.preview,
+            activities.report_preview_result,
         ],
     )
     await worker.run()

@@ -16,12 +16,15 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import logging
 import os
 import re
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from typing import Any
 from uuid import UUID, uuid4
+
+logger = logging.getLogger(__name__)
 
 from .adapters.dcim import DcimCatalog, build_dcim_catalog
 from .demo_data import seed_demo_data
@@ -56,6 +59,13 @@ from .store import (
     SystemRow,
     VersionRow,
     join,
+)
+from .store.records import PreviewEnvironmentRecord
+from .catalog.previews import (
+    DEFAULT_TTL_HOURS,
+    MAX_TTL_HOURS,
+    PreviewEnvironmentManager,
+    PreviewRequest,
 )
 from .domain.dag import compute_dag_waves, DagValidationError
 from .domain.freezes import applicable_freeze
@@ -285,6 +295,54 @@ def _module_verification(pipeline_config: dict[str, Any] | None) -> Verification
         raise PortalError("INVALID_VERIFICATION", f"pipelineConfig.verification: {exc}", 422) from exc
 
 
+def _module_previews(pipeline_config: dict[str, Any] | None) -> dict[str, object]:
+    """`pipelineConfig.previews`: whether a pull request's build gets its own deployment,
+    and how long it lives unattended (ADR-049). Absent means disabled."""
+
+    raw = (pipeline_config or {}).get("previews")
+    if raw is None:
+        return {"enabled": False, "ttlHours": DEFAULT_TTL_HOURS}
+    if not isinstance(raw, dict):
+        raise PortalError("INVALID_PREVIEWS", "pipelineConfig.previews must be an object", 422)
+    unknown = set(raw) - {"enabled", "ttlHours"}
+    if unknown:
+        raise PortalError("INVALID_PREVIEWS", f"pipelineConfig.previews: unknown field(s) {sorted(unknown)}", 422)
+    enabled = raw.get("enabled", False)
+    if not isinstance(enabled, bool):
+        raise PortalError("INVALID_PREVIEWS", "pipelineConfig.previews.enabled must be a boolean", 422)
+    ttl_hours = raw.get("ttlHours", DEFAULT_TTL_HOURS)
+    if not isinstance(ttl_hours, int) or isinstance(ttl_hours, bool) or not (1 <= ttl_hours <= MAX_TTL_HOURS):
+        raise PortalError(
+            "INVALID_PREVIEWS", f"pipelineConfig.previews.ttlHours must be an integer between 1 and {MAX_TTL_HOURS}", 422
+        )
+    return {"enabled": enabled, "ttlHours": ttl_hours}
+
+
+def _deployment_target_environment(item: dict[str, Any]) -> str:
+    env = item.get("environment")
+    return env.value if isinstance(env, Environment) else str(env or "")
+
+
+def _preview_dev_target(deployment_config: list[dict[str, Any]]) -> dict[str, Any] | None:
+    return next((t for t in deployment_config if _deployment_target_environment(t) == "dev"), None)
+
+
+def _preview_parameters(target: dict[str, Any] | None) -> dict[str, object]:
+    """Playbook inputs the preview needs from the module's dev target: which cluster to
+    reach, and where its runtime pulls images from. Nothing else of the target travels."""
+
+    if target is None:
+        return {}
+    params: dict[str, object] = {}
+    kubeconfig_ref = str(target.get("kubeconfigRef") or "").strip()
+    if kubeconfig_ref:
+        params["kubeconfig_ref"] = kubeconfig_ref
+    settings = target.get("runtimeSettings")
+    if isinstance(settings, dict) and settings.get("imagePullHost"):
+        params["image_pull_host"] = str(settings["imagePullHost"])
+    return params
+
+
 def _prod_promotion(pipeline_config: dict[str, Any] | None) -> object:
     delivery = rules_source(pipeline_config)
     if not isinstance(delivery, dict):
@@ -317,6 +375,10 @@ class PortalService:
         # published tag no production request can name, and a replayed callback could
         # not repair it, because the run has already succeeded.
         platform.build_published_hook = self._register_tagged_version
+        # A pull-request build that publishes a digest requests its own preview here, in
+        # the same transaction that recorded the build's success (ADR-049). Set the way
+        # `build_published_hook` is: the Portal owns previews, nothing else does.
+        platform.preview_hook = self._request_preview
 
     def reset(self) -> None:
         """Clear the in-memory store and re-apply demo data; local/test setup only."""
@@ -439,7 +501,7 @@ class PortalService:
     ) -> dict[str, object]:
         with self._session(session) as transaction:
             self._validate_module_slot(transaction, system_id, module_id)
-            self._check_delivery_rules(transaction, application_id, pipeline_config, list(deployment_environments))
+            self._check_delivery_rules(transaction, application_id, pipeline_config, list(deployment_environments), runtime)
             transaction.insert_portal_module(
                 ModuleRow(
                     id=module_id,
@@ -664,10 +726,24 @@ class PortalService:
         application_id: UUID | None,
         pipeline_config: dict[str, object],
         deployment_config: list[dict[str, object]],
+        runtime: Runtime | str | None = None,
     ) -> DeliveryRules:
         application = transaction.application(application_id) if application_id else None
         _module_build_inputs(pipeline_config)
         _module_verification(pipeline_config)
+        previews = _module_previews(pipeline_config)
+        if previews["enabled"]:
+            runtime_value = runtime.value if isinstance(runtime, Runtime) else str(runtime or "")
+            dev_target = _preview_dev_target(deployment_config)
+            if runtime_value != Runtime.KUBERNETES.value or dev_target is None or not (
+                str(dev_target.get("kubeconfigRef") or "").strip() and str(dev_target.get("namespace") or "").strip()
+            ):
+                raise PortalError(
+                    "INVALID_PREVIEWS",
+                    "pipelineConfig.previews.enabled requires a kubernetes module with a dev "
+                    "deployment target that declares kubeconfigRef and namespace",
+                    422,
+                )
         try:
             return parse_rules(
                 rules_source(pipeline_config),
@@ -686,7 +762,8 @@ class PortalService:
             if module is None:
                 raise KeyError("module not found")
             return self._check_delivery_rules(
-                transaction, module.application_id, dict(module.pipeline_config), list(module.deployment_config)
+                transaction, module.application_id, dict(module.pipeline_config), list(module.deployment_config),
+                module.runtime,
             )
 
     @staticmethod
@@ -778,7 +855,7 @@ class PortalService:
                 )
             existing = transaction.config_revisions(module_id)
             next_number = max((item.revision_number for item in existing), default=0) + 1
-            self._check_delivery_rules(transaction, module.application_id, pipeline_config, deployment_config)
+            self._check_delivery_rules(transaction, module.application_id, pipeline_config, deployment_config, module.runtime)
             needs_approval = self.production_config_needs_approval() and (
                 self._touches_production(list(module.deployment_config), deployment_config)
                 # Promotion rules for prod are a production control: removing a staging
@@ -1942,6 +2019,142 @@ class PortalService:
                                                               "artifactDigest": run.artifact_digest,
                                                               "outcome": outcome})],
         ))
+
+    # --------------------------------------------------------------- preview environments
+
+    def _request_preview(self, transaction: PlatformSession, run: PipelineRun) -> PreviewRequest | None:
+        """Called inside the transaction that recorded a published build's success.
+
+        None whenever this run is not a same-repository pull request, its module has no
+        previews configured, or (defensively) the target `_check_delivery_rules` requires
+        for previews is missing -- a module reaches this only after that check passed at
+        the time its configuration was written, but configuration and code both move.
+        """
+
+        if run.trigger.get("event") != "pull_request" or not run.publish_artifact or not run.artifact_digest:
+            return None
+        pull_request_number = run.trigger.get("pullRequest")
+        if not isinstance(pull_request_number, int) or isinstance(pull_request_number, bool) or pull_request_number <= 0:
+            return None
+        module = transaction.portal_module_for_application(run.application_id)
+        if module is None:
+            return None
+        previews = _module_previews(module.pipeline_config)
+        if not previews["enabled"]:
+            return None
+        try:
+            record = PreviewEnvironmentManager(transaction).request(
+                application_id=run.application_id,
+                module_id=module.id,
+                pull_request_id=str(pull_request_number),
+                pull_request_number=pull_request_number,
+                pipeline_run_id=run.id,
+                commit_sha=run.commit_sha,
+                artifact_digest=run.artifact_digest,
+                ttl_hours=previews["ttlHours"],
+                created_by=run.started_by or "scm",
+            )
+            transaction.apply(UnitOfWork(audit=[AuditRecord(
+                "preview.requested", application_id=run.application_id, pipeline_run_id=run.id,
+                payload={"previewId": record.id, "namespace": record.namespace, "pullRequest": pull_request_number},
+            )]))
+            return self.preview_start_request(transaction, record)
+        except Exception as exc:
+            logger.warning("preview request failed for run %s: %s", run.id, exc, exc_info=True)
+            transaction.apply(UnitOfWork(audit=[AuditRecord(
+                "preview.request_failed", application_id=run.application_id, pipeline_run_id=run.id,
+                payload={"error": str(exc)},
+            )]))
+            return None
+
+    def preview_start_request(
+        self, transaction: PlatformSession, preview: PreviewEnvironmentRecord
+    ) -> PreviewRequest:
+        """What must be started for this row, once the transaction that wrote it commits.
+
+        `preview.status` says which: `deploying` is a deploy, anything else being asked to
+        start is a teardown -- there is nothing a third action would mean.
+        """
+
+        if preview.pipeline_run_id is None:
+            raise PortalError(
+                "PREVIEW_HAS_NO_RUN", f"preview {preview.id} has no pipeline run recorded", 500
+            )
+        module = transaction.portal_module_for_application(preview.application_id)
+        target = _preview_dev_target(list(module.deployment_config)) if module else None
+        action = "deploy" if preview.status == "deploying" else "teardown"
+        return PreviewRequest(
+            preview_id=preview.id,
+            application_id=preview.application_id,
+            pipeline_run_id=preview.pipeline_run_id,
+            action=action,
+            namespace=preview.namespace,
+            release=preview.release_name or preview.id,
+            artifact_digest=preview.artifact_digest or "",
+            parameters=_preview_parameters(target),
+        )
+
+    def request_preview(self, pipeline_run_id: UUID, *, created_by: str) -> PreviewEnvironmentRecord:
+        """POST /preview-environments: (re)start a preview for an already-succeeded run.
+
+        Starts exactly what the automatic pull-request trigger starts -- the same write,
+        the same namespace, the same redeploy-in-place for a run already previewed.
+        """
+
+        with self._session() as transaction:
+            run = transaction.pipeline_run(pipeline_run_id)
+            if run is None:
+                raise PortalError("PIPELINE_NOT_FOUND", "pipeline run not found", 404)
+            if run.status != PipelineStatus.SUCCEEDED or not run.publish_artifact or not run.artifact_digest:
+                raise PortalError(
+                    "PIPELINE_NOT_PREVIEWABLE",
+                    "the run must be a succeeded, published build carrying an artifact",
+                    409,
+                )
+            pull_request_number = run.trigger.get("pullRequest")
+            if not isinstance(pull_request_number, int) or isinstance(pull_request_number, bool) or pull_request_number <= 0:
+                raise PortalError(
+                    "NOT_A_PULL_REQUEST_RUN", "this run is not associated with a pull request", 422
+                )
+            module = transaction.portal_module_for_application(run.application_id)
+            if module is None:
+                raise PortalError("MODULE_NOT_FOUND", "this application has no Portal module", 404)
+            previews = _module_previews(module.pipeline_config)
+            if not previews["enabled"]:
+                raise PortalError("INVALID_PREVIEWS", f"module {module.id} does not have previews enabled", 422)
+            record = PreviewEnvironmentManager(transaction).request(
+                application_id=run.application_id,
+                module_id=module.id,
+                pull_request_id=str(pull_request_number),
+                pull_request_number=pull_request_number,
+                pipeline_run_id=run.id,
+                commit_sha=run.commit_sha,
+                artifact_digest=run.artifact_digest,
+                ttl_hours=previews["ttlHours"],
+                created_by=created_by,
+            )
+            preview_request = self.preview_start_request(transaction, record)
+        self.platform.start_preview(preview_request)
+        return record
+
+    def preview_teardown(
+        self, transaction: PlatformSession, preview: PreviewEnvironmentRecord, *, detail: str
+    ) -> PreviewRequest | None:
+        """Move an active or deploying preview to `destroying` and say what must stop.
+
+        None when it is not currently live -- teardown is refused, not silently repeated,
+        for a row already `destroying`, `destroyed`, `failed` or `expired`.
+        """
+
+        updated = PreviewEnvironmentManager(transaction).start_teardown(preview.id, detail=detail)
+        if updated is None:
+            return None
+        request = self.preview_start_request(transaction, updated)
+        transaction.apply(UnitOfWork(audit=[AuditRecord(
+            "preview.teardown_requested", application_id=updated.application_id,
+            pipeline_run_id=updated.pipeline_run_id, payload={"previewId": updated.id, "detail": detail},
+        )]))
+        return request
 
     def record_ci_report(self, module_id: str, tag: str, report: dict[str, object]) -> dict[str, object]:
         with self._session() as transaction:

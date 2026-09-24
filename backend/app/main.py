@@ -119,7 +119,7 @@ from .catalog.previews import PreviewEnvironmentManager, PreviewEnvironmentError
 from .catalog.resources import SelfServiceResourceManager, ResourceRequestError
 
 from .traffic import TrafficRoutingUnavailable, default_traffic_router
-from .agent_fleet import LOCK_RECONCILE, LOCK_RETENTION, LOCK_SBOM_RESCAN, AgentFleet, run_exclusively
+from .agent_fleet import LOCK_PREVIEW_REAPER, LOCK_RECONCILE, LOCK_RETENTION, LOCK_SBOM_RESCAN, AgentFleet, run_exclusively
 from . import workload_identity
 from .workload_identity import (
     CallbackClaims,
@@ -218,8 +218,11 @@ async def lifespan(application: FastAPI):
     # callback tokens) are now thinned on a schedule, one replica per pass.
     retention_task = asyncio.create_task(_purge_retention_periodically())
     rescan_task = asyncio.create_task(_rescan_sboms_periodically())
+    # A preview nobody tears down is a preview that runs forever; this is what makes the
+    # TTL a promise rather than a number nobody reads (ADR-049).
+    preview_reaper_task = asyncio.create_task(_reap_previews_periodically())
     yield
-    for task in (reconcile_task, retention_task, rescan_task):
+    for task in (reconcile_task, retention_task, rescan_task, preview_reaper_task):
         task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await task
@@ -304,6 +307,62 @@ async def _rescan_sboms_periodically() -> None:
             continue
         if outcome:
             logger.info("SBOM rescan pass completed: %s", outcome)
+
+
+def _preview_reaper_interval_seconds() -> float:
+    raw = os.getenv("NETCI_PREVIEW_REAPER_INTERVAL_SECONDS", "300").strip()
+    try:
+        return max(0.0, float(raw))
+    except ValueError:
+        return 300.0
+
+
+def _reap_expired_previews() -> dict[str, int]:
+    """Move every preview whose TTL passed to `destroying` and start its teardown.
+
+    The write (which previews expired) and the Temporal call (starting each teardown)
+    are deliberately separate passes: the write commits and releases its connection
+    before any network call to Temporal begins, exactly as `DeliveryPlatform._start_cd`
+    keeps a slow orchestrator from becoming a connection-pool outage.
+    """
+
+    now = datetime.now(timezone.utc)
+    starts = []
+    with database.transaction() as session:
+        for preview in session.expired_preview_environments(now):
+            request = portal.preview_teardown(
+                session, preview, detail=f"ttl expired at {preview.expires_at.isoformat()}"
+            )
+            if request is not None:
+                starts.append(request)
+    for request in starts:
+        platform.start_preview(request)
+    return {"reaped": len(starts)}
+
+
+def run_preview_reaper_pass() -> dict[str, int] | None:
+    """One reaper pass under the advisory lock; None when another replica holds it."""
+
+    return run_exclusively(database, LOCK_PREVIEW_REAPER, _reap_expired_previews, describe="preview_reaper")
+
+
+async def _reap_previews_periodically() -> None:
+    interval = _preview_reaper_interval_seconds()
+    if interval <= 0:
+        logger.info("preview reaper disabled (NETCI_PREVIEW_REAPER_INTERVAL_SECONDS=0)")
+        return
+    delay = min(interval, 60.0)
+    logger.info("preview reaper every %.0fs (first pass in %.0fs)", interval, delay)
+    while True:
+        await asyncio.sleep(delay)
+        delay = interval
+        try:
+            outcome = await asyncio.to_thread(run_preview_reaper_pass)
+        except Exception:  # noqa: BLE001 - the loop must outlive one bad pass
+            logger.exception("preview reaper pass failed; will retry after %.0fs", interval)
+            continue
+        if outcome and outcome.get("reaped"):
+            logger.info("preview reaper started teardown for %d expired preview(s)", outcome["reaped"])
 
 
 def _reconcile_interval_seconds() -> float:
@@ -1214,6 +1273,9 @@ class ModulePipelineConfig(StrictBody):
     #: Post-deploy and canary verification queries and thresholds (ADR-046), validated by
     #: `domain.verification.parse_verification`.
     verification: dict[str, Any] | None = None
+    #: Whether a same-repository pull request gets its own deployment, and how long it
+    #: lives unattended (ADR-049). Validated by `portal._module_previews`.
+    previews: dict[str, Any] | None = None
 
 
 class ModuleEnvironmentCreate(StrictBody):
@@ -3381,6 +3443,22 @@ async def receive_scm_webhook(
         if app is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "associated application not found")
 
+    if parsed.kind == "pull_request" and parsed.closed:
+        # A closed pull request tears down its preview and starts nothing new -- closing
+        # is not an event any delivery rule is asked about (ADR-049).
+        with database.transaction() as session:
+            preview = session.active_preview_for(app.id, str(parsed.pull_request_number or 0))
+            preview_request = (
+                portal.preview_teardown(session, preview, detail="pull request closed")
+                if preview is not None else None
+            )
+        if preview_request is not None:
+            platform.start_preview(preview_request)
+        return JSONResponse(status_code=status.HTTP_200_OK, content={
+            "status": "preview_teardown" if preview_request is not None else "ignored",
+            "deliveryId": parsed.delivery_id,
+        })
+
     # Which rules apply is the module's configuration, read now (ADR-043). An application
     # with no Portal module -- one created through the delivery API alone -- has no rules
     # of its own and gets the defaults for its one environment.
@@ -5233,11 +5311,17 @@ class TemplateInstantiateRequest(StrictBody):
 
 
 class PreviewEnvironmentCreate(StrictBody):
-    applicationId: UUID
-    pullRequestId: str = Field(min_length=1, max_length=64)
-    commitSha: str = Field(min_length=1, max_length=64)
-    ttlSeconds: int = Field(default=86400, ge=3600, le=259200)
-    createdBy: str | None = Field(default=None, max_length=128)
+    """The server decides namespace, release, credentials and target from the run's own
+    module (ADR-015); the caller names only which succeeded, published run to preview."""
+
+    pipelineRunId: UUID
+
+
+class PreviewResultRequest(StrictBody):
+    status: Literal["active", "failed", "destroyed"]
+    message: str = Field(default="", max_length=2000)
+    #: What the cluster actually serves, or absent -- never invented here either.
+    url: str | None = Field(default=None, max_length=2000)
 
 
 class ResourceRequestCreate(StrictBody):
@@ -5295,6 +5379,10 @@ def preview_environment_json(rec: PreviewEnvironmentRecord) -> dict[str, Any]:
         "createdBy": rec.created_by,
         "createdAt": rec.created_at.isoformat(),
         "destroyedAt": rec.destroyed_at.isoformat() if rec.destroyed_at else None,
+        "pipelineRunId": str(rec.pipeline_run_id) if rec.pipeline_run_id else None,
+        "artifactDigest": rec.artifact_digest,
+        "releaseName": rec.release_name,
+        "detail": rec.detail,
     }
 
 
@@ -5556,25 +5644,17 @@ def instantiate_catalog_template(
     }
 
 
-# --- Preview Environments Endpoints ---
+# --- Preview Environments Endpoints (ADR-049) ---
 
 @app.post("/preview-environments", status_code=status.HTTP_201_CREATED)
 def create_preview_environment(
     payload: PreviewEnvironmentCreate,
     principal: Principal = DeveloperAccess,
 ) -> dict[str, Any]:
-    with database.transaction() as session:
-        mgr = PreviewEnvironmentManager(session)
-        try:
-            record = mgr.create_preview(
-                application_id=payload.applicationId,
-                pull_request_id=payload.pullRequestId,
-                commit_sha=payload.commitSha,
-                ttl_seconds=payload.ttlSeconds,
-                created_by=payload.createdBy or principal.subject,
-            )
-        except PreviewEnvironmentError as exc:
-            raise HTTPException(status_code=400, detail={"code": "PREVIEW_ERROR", "message": str(exc)}) from exc
+    try:
+        record = portal.request_preview(payload.pipelineRunId, created_by=principal.subject)
+    except PortalError as exc:
+        raise HTTPException(status_code=exc.status_code, detail={"code": exc.code, "message": exc.message}) from exc
     return preview_environment_json(record)
 
 
@@ -5609,25 +5689,56 @@ def teardown_preview_environment(
     principal: Principal = DeveloperAccess,
 ) -> dict[str, Any]:
     with database.transaction() as session:
-        mgr = PreviewEnvironmentManager(session)
-        try:
-            record = mgr.teardown_preview(previewId)
-        except PreviewEnvironmentError as exc:
-            raise HTTPException(status_code=404, detail={"code": "PREVIEW_NOT_FOUND", "message": str(exc)}) from exc
+        preview = session.preview_environment(previewId)
+        if preview is None:
+            raise HTTPException(status_code=404, detail={"code": "PREVIEW_NOT_FOUND", "message": f"preview '{previewId}' not found"})
+        if preview.status not in ("active", "deploying"):
+            raise HTTPException(
+                status_code=409,
+                detail={"code": "PREVIEW_NOT_TEARDOWNABLE", "message": f"a preview in status {preview.status} cannot be torn down"},
+            )
+        preview_request = portal.preview_teardown(session, preview, detail=f"teardown requested by {principal.subject}")
+        record = session.preview_environment(previewId)
+    if preview_request is not None:
+        platform.start_preview(preview_request)
     return preview_environment_json(record)
 
 
-@app.post("/preview-environments/reconcile-expiry")
-def reconcile_preview_environments_expiry(
-    principal: Principal = AdminAccess,
+@app.post("/preview-environments/{previewId}/result", status_code=status.HTTP_202_ACCEPTED)
+def record_preview_result(
+    previewId: str,
+    payload: PreviewResultRequest,
+    request: Request,
+    _: Principal = PipelineAccess,
 ) -> dict[str, Any]:
     with database.transaction() as session:
-        mgr = PreviewEnvironmentManager(session)
-        expired = mgr.reconcile_expiry()
-    return {
-        "reconciledCount": len(expired),
-        "items": [preview_environment_json(p) for p in expired],
-    }
+        preview = session.preview_environment(previewId)
+        if preview is None:
+            raise HTTPException(status_code=404, detail={"code": "PREVIEW_NOT_FOUND", "message": f"preview '{previewId}' not found"})
+        if preview.pipeline_run_id is None:
+            raise HTTPException(
+                status_code=409,
+                detail={"code": "PREVIEW_NOT_STARTED", "message": "this preview was never deployed by a worker"},
+            )
+        # Not marked terminal (single-use): a preview's own transition table already
+        # refuses a replay -- a result answered once leaves `deploying`/`destroying`, and
+        # a second call finds no allowed transition there, same as this token's jti would
+        # have said. Deployment results mark this because that path has no such table.
+        _authorize_callback(
+            request, scope=Scope.PREVIEW_RESULT, workload=Workload.TEMPORAL,
+            pipeline_run_id=preview.pipeline_run_id,
+        )
+        try:
+            updated = PreviewEnvironmentManager(session).record_result(
+                previewId, status=payload.status, message=payload.message, url=payload.url
+            )
+        except PreviewEnvironmentError as exc:
+            raise HTTPException(status_code=exc.status_code, detail={"code": exc.code, "message": exc.message}) from exc
+        session.apply(UnitOfWork(audit=[AuditRecord(
+            "preview.result_reported", application_id=updated.application_id, pipeline_run_id=updated.pipeline_run_id,
+            payload={"previewId": updated.id, "status": updated.status, "url": updated.url},
+        )]))
+    return preview_environment_json(updated)
 
 
 # --- Self-Service Resources Endpoints ---

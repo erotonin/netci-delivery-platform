@@ -91,6 +91,31 @@ class Approval:
     comment: str = ""
 
 
+@dataclass(frozen=True)
+class PreviewInput:
+    """A pull request's own deployment, or the removal of one (ADR-049)."""
+
+    application_id: str
+    pipeline_run_id: str
+    preview_id: str
+    action: str  # "deploy" | "teardown"
+    namespace: str
+    release: str
+    artifact_digest: str = ""
+    parameters: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class PreviewResult:
+    preview_id: str
+    status: str  # "active" | "failed" | "destroyed"
+    message: str = ""
+    #: What the cluster actually serves, read back by the worker -- never composed here
+    #: or anywhere upstream of it. None whenever nothing served it, including on success.
+    url: str | None = None
+    callback_token: str = ""
+
+
 @workflow.defn
 class ProvisionAndDeployWorkflow:
     def __init__(self) -> None:
@@ -265,6 +290,71 @@ class RollbackWorkflow:
             raise
         await workflow.execute_activity(
             "report_rollback_result",
+            result,
+            start_to_close_timeout=timedelta(minutes=1),
+            retry_policy=RetryPolicy(maximum_attempts=10),
+        )
+        return result
+
+
+@workflow.defn
+class PreviewWorkflow:
+    """Deploy a pull request's published digest into its own namespace, or remove it.
+
+    Half of `ProvisionAndDeployWorkflow`'s shape, with neither of its two extra parts: no
+    approval wait (a preview is not production) and no rollback (there is nothing under a
+    preview to roll back to -- a failure is reported failed and the row stays that way
+    until the next push or the reaper tears it down).
+    """
+
+    @workflow.run
+    async def run(self, preview: PreviewInput) -> PreviewResult:
+        callback_token = str(preview.parameters.get("callback_token") or "")
+        try:
+            if preview.action == "deploy":
+                # Re-verified here, on the worker, against the digest about to be
+                # deployed -- the same reason ProvisionAndDeployWorkflow does it before
+                # touching any runtime.
+                delivery = DeliveryInput(
+                    application_id=preview.application_id,
+                    pipeline_run_id=preview.pipeline_run_id,
+                    runtime="kubernetes",
+                    environment="dev",
+                    artifact_digest=preview.artifact_digest,
+                    deployment_id=preview.preview_id,
+                    release_name=preview.release,
+                    parameters=dict(preview.parameters),
+                )
+                await workflow.execute_activity(
+                    "validate_artifact",
+                    delivery,
+                    start_to_close_timeout=timedelta(minutes=5),
+                    retry_policy=RetryPolicy(maximum_attempts=1),
+                )
+            url = await workflow.execute_activity(
+                "preview",
+                preview,
+                start_to_close_timeout=timedelta(minutes=10),
+                heartbeat_timeout=timedelta(seconds=45),
+                retry_policy=RetryPolicy(maximum_attempts=3),
+            )
+            result = PreviewResult(
+                preview_id=preview.preview_id,
+                status=("active" if preview.action == "deploy" else "destroyed"),
+                url=url or None,
+                callback_token=callback_token,
+            )
+        except Exception as exc:
+            # Reported failed and left there -- never raised past the report. Unlike a
+            # real deployment there is no earlier state a preview must be rolled back to.
+            result = PreviewResult(
+                preview_id=preview.preview_id,
+                status="failed",
+                message=_failure_message(exc),
+                callback_token=callback_token,
+            )
+        await workflow.execute_activity(
+            "report_preview_result",
             result,
             start_to_close_timeout=timedelta(minutes=1),
             retry_policy=RetryPolicy(maximum_attempts=10),

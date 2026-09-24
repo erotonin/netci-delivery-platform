@@ -162,7 +162,8 @@ CATALOG_TEMPLATE_COLUMNS = (
     "id, version, name, description, category, parameters_schema, pipeline_definition, is_deprecated, created_at, updated_at"
 )
 PREVIEW_ENVIRONMENT_COLUMNS = (
-    "id, application_id, pull_request_id, commit_sha, namespace, url, status, ttl_seconds, expires_at, created_by, created_at, destroyed_at"
+    "id, application_id, pull_request_id, commit_sha, namespace, url, status, ttl_seconds, expires_at, "
+    "created_by, created_at, destroyed_at, pipeline_run_id, artifact_digest, release_name, detail"
 )
 RESOURCE_REQUEST_COLUMNS = (
     "id, application_id, team_id, environment, resource_type, spec, status, status_reason, provider, outputs, requested_by, approved_by, created_at, updated_at"
@@ -388,6 +389,10 @@ def _preview_environment(row: dict[str, Any]) -> PreviewEnvironmentRecord:
         created_by=row["created_by"],
         created_at=row["created_at"],
         destroyed_at=row["destroyed_at"],
+        pipeline_run_id=row["pipeline_run_id"],
+        artifact_digest=row["artifact_digest"],
+        release_name=row["release_name"],
+        detail=row["detail"] or "",
     )
 
 
@@ -3115,8 +3120,17 @@ class PostgresSession:
             """
             INSERT INTO preview_environments (
                 id, application_id, pull_request_id, commit_sha, namespace, url, status,
-                ttl_seconds, expires_at, created_by, created_at, destroyed_at
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ttl_seconds, expires_at, created_by, created_at, destroyed_at,
+                pipeline_run_id, artifact_digest, release_name, detail
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (id) DO UPDATE
+               SET status = EXCLUDED.status,
+                   detail = EXCLUDED.detail,
+                   url = EXCLUDED.url,
+                   artifact_digest = EXCLUDED.artifact_digest,
+                   pipeline_run_id = EXCLUDED.pipeline_run_id,
+                   expires_at = EXCLUDED.expires_at,
+                   commit_sha = EXCLUDED.commit_sha
             """,
             (
                 preview.id,
@@ -3131,20 +3145,56 @@ class PostgresSession:
                 preview.created_by,
                 preview.created_at,
                 preview.destroyed_at,
+                preview.pipeline_run_id,
+                preview.artifact_digest,
+                preview.release_name,
+                preview.detail,
             ),
         )
 
-    def update_preview_environment_status(
-        self, preview_id: str, status: str, destroyed_at: datetime | None = None
+    def update_preview_environment(
+        self,
+        preview_id: str,
+        *,
+        status: str,
+        detail: str = "",
+        url: str | None = None,
+        artifact_digest: str | None = None,
+        pipeline_run_id: UUID | None = None,
+        expires_at: datetime | None = None,
+        commit_sha: str | None = None,
+        destroyed_at: datetime | None = None,
+        expected_status: tuple[str, ...] | list[str] | str | None = None,
     ) -> PreviewEnvironmentRecord | None:
+        # status/detail/url are unconditional: a report that carries no url must clear a
+        # stale one from an earlier cycle, never leave it looking current (ADR-049). The
+        # rest use COALESCE so a status-only transition (tearing down, expiring) does not
+        # erase what the last deploy recorded.
+        where_extra = ""
+        params: list[Any] = [
+            status, detail, url, artifact_digest, pipeline_run_id, expires_at, commit_sha, destroyed_at, preview_id
+        ]
+        if expected_status is not None:
+            if isinstance(expected_status, str):
+                where_extra = " AND status = %s"
+                params.append(expected_status)
+            else:
+                where_extra = " AND status = ANY(%s)"
+                params.append(list(expected_status))
+
         self._cursor.execute(
             f"""
             UPDATE preview_environments
-               SET status = %s, destroyed_at = COALESCE(%s, destroyed_at)
-             WHERE id = %s
+               SET status = %s, detail = %s, url = %s,
+                   artifact_digest = COALESCE(%s, artifact_digest),
+                   pipeline_run_id = COALESCE(%s, pipeline_run_id),
+                   expires_at = COALESCE(%s, expires_at),
+                   commit_sha = COALESCE(%s, commit_sha),
+                   destroyed_at = COALESCE(%s, destroyed_at)
+             WHERE id = %s{where_extra}
             RETURNING {PREVIEW_ENVIRONMENT_COLUMNS}
             """,
-            (status, destroyed_at, preview_id),
+            tuple(params),
         )
         row = self._cursor.fetchone()
         return _preview_environment(row) if row else None
@@ -3153,6 +3203,20 @@ class PostgresSession:
         self._cursor.execute(
             f"SELECT {PREVIEW_ENVIRONMENT_COLUMNS} FROM preview_environments WHERE id = %s",
             (preview_id,),
+        )
+        row = self._cursor.fetchone()
+        return _preview_environment(row) if row else None
+
+    def active_preview_for(
+        self, application_id: UUID, pull_request_id: str
+    ) -> PreviewEnvironmentRecord | None:
+        self._cursor.execute(
+            f"""
+            SELECT {PREVIEW_ENVIRONMENT_COLUMNS} FROM preview_environments
+             WHERE application_id = %s AND pull_request_id = %s AND status IN ('active', 'deploying')
+             ORDER BY created_at DESC LIMIT 1
+            """,
+            (application_id, pull_request_id),
         )
         row = self._cursor.fetchone()
         return _preview_environment(row) if row else None
@@ -3178,7 +3242,8 @@ class PostgresSession:
 
     def expired_preview_environments(self, now: datetime) -> tuple[PreviewEnvironmentRecord, ...]:
         self._cursor.execute(
-            f"SELECT {PREVIEW_ENVIRONMENT_COLUMNS} FROM preview_environments WHERE status = 'active' AND expires_at <= %s",
+            f"SELECT {PREVIEW_ENVIRONMENT_COLUMNS} FROM preview_environments "
+            "WHERE status IN ('active', 'deploying') AND expires_at <= %s",
             (now,),
         )
         return tuple(_preview_environment(row) for row in self._cursor.fetchall())

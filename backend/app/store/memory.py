@@ -1347,15 +1347,36 @@ class InMemorySession:
     def insert_preview_environment(self, preview: PreviewEnvironmentRecord) -> None:
         self._state.preview_environments[preview.id] = preview
 
-    def update_preview_environment_status(
-        self, preview_id: str, status: str, destroyed_at: datetime | None = None
+    def update_preview_environment(
+        self,
+        preview_id: str,
+        *,
+        status: str,
+        detail: str = "",
+        url: str | None = None,
+        artifact_digest: str | None = None,
+        pipeline_run_id: UUID | None = None,
+        expires_at: datetime | None = None,
+        commit_sha: str | None = None,
+        destroyed_at: datetime | None = None,
+        expected_status: tuple[str, ...] | list[str] | str | None = None,
     ) -> PreviewEnvironmentRecord | None:
         current = self._state.preview_environments.get(preview_id)
         if not current:
             return None
+        if expected_status is not None:
+            allowed = {expected_status} if isinstance(expected_status, str) else set(expected_status)
+            if current.status not in allowed:
+                return None
         updated = replace(
             current,
             status=status,
+            detail=detail,
+            url=url,
+            artifact_digest=artifact_digest if artifact_digest is not None else current.artifact_digest,
+            pipeline_run_id=pipeline_run_id if pipeline_run_id is not None else current.pipeline_run_id,
+            expires_at=expires_at if expires_at is not None else current.expires_at,
+            commit_sha=commit_sha if commit_sha is not None else current.commit_sha,
             destroyed_at=destroyed_at if destroyed_at is not None else current.destroyed_at,
         )
         self._state.preview_environments[preview_id] = updated
@@ -1363,6 +1384,17 @@ class InMemorySession:
 
     def preview_environment(self, preview_id: str) -> PreviewEnvironmentRecord | None:
         return self._state.preview_environments.get(preview_id)
+
+    def active_preview_for(
+        self, application_id: UUID, pull_request_id: str
+    ) -> PreviewEnvironmentRecord | None:
+        candidates = [
+            p for p in self._state.preview_environments.values()
+            if p.application_id == application_id and p.pull_request_id == pull_request_id
+            and p.status in ("active", "deploying")
+        ]
+        candidates.sort(key=lambda p: p.created_at, reverse=True)
+        return candidates[0] if candidates else None
 
     def list_preview_environments(
         self, application_id: UUID | None = None, status: str | None = None
@@ -1379,7 +1411,7 @@ class InMemorySession:
         expired = [
             p
             for p in self._state.preview_environments.values()
-            if p.status == "active" and p.expires_at <= now
+            if p.status in ("active", "deploying") and p.expires_at <= now
         ]
         return tuple(expired)
 

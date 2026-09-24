@@ -518,17 +518,41 @@ class PlatformSession(Protocol):
 
     def insert_preview_environment(self, preview: PreviewEnvironmentRecord) -> None: ...
 
-    def update_preview_environment_status(
-        self, preview_id: str, status: str, destroyed_at: datetime | None = None
-    ) -> PreviewEnvironmentRecord | None: ...
+    def update_preview_environment(
+        self,
+        preview_id: str,
+        *,
+        status: str,
+        detail: str = "",
+        url: str | None = None,
+        artifact_digest: str | None = None,
+        pipeline_run_id: UUID | None = None,
+        expires_at: datetime | None = None,
+        commit_sha: str | None = None,
+        destroyed_at: datetime | None = None,
+        expected_status: tuple[str, ...] | list[str] | str | None = None,
+    ) -> PreviewEnvironmentRecord | None:
+        """Transition a preview row.
+
+        `status`, `detail` and `url` are always written -- a report that carries no url
+        must clear a stale one from an earlier cycle, never leave it looking current. The
+        rest are written only when given, so a status-only transition (tearing down,
+        expiring) does not erase what the last deploy recorded.
+        """
 
     def preview_environment(self, preview_id: str) -> PreviewEnvironmentRecord | None: ...
+
+    def active_preview_for(
+        self, application_id: UUID, pull_request_id: str
+    ) -> PreviewEnvironmentRecord | None:
+        """The preview currently deploying or active for this application's pull request."""
 
     def list_preview_environments(
         self, application_id: UUID | None = None, status: str | None = None
     ) -> tuple[PreviewEnvironmentRecord, ...]: ...
 
-    def expired_preview_environments(self, now: datetime) -> tuple[PreviewEnvironmentRecord, ...]: ...
+    def expired_preview_environments(self, now: datetime) -> tuple[PreviewEnvironmentRecord, ...]:
+        """Deploying or active previews whose TTL has passed."""
 
     def insert_resource_request(self, request: ResourceRequestRecord) -> None: ...
 

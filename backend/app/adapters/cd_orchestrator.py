@@ -10,9 +10,9 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Protocol
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from ..runtime_environment import require_live_mode
 
@@ -52,10 +52,34 @@ class CdStartRequest:
         return f"netci-rollback-{self.deployment_id}-{generation if generation is not None else 0}"
 
 
+@dataclass(frozen=True)
+class PreviewStartRequest:
+    """Start or stop a pull request's own deployment (ADR-049)."""
+
+    preview_id: str
+    application_id: UUID
+    pipeline_run_id: UUID
+    action: str  # "deploy" | "teardown"
+    namespace: str
+    release: str
+    artifact_digest: str = ""
+    parameters: dict[str, object] = field(default_factory=dict)
+
+    @property
+    def workflow_id(self) -> str:
+        """Unlike a deployment's, not deterministic: a preview is (re)started by writing
+        a new row transition each time, never by resuming one a caller lost track of, so
+        there is nothing to re-attach to and a collision would only ever be a bug."""
+
+        return f"netci-preview-{self.preview_id}-{self.action}-{uuid4().hex[:8]}"
+
+
 class CdOrchestrator(Protocol):
     def start(self, request: CdStartRequest) -> str | None: ...
 
     def start_rollback(self, request: CdStartRequest) -> str | None: ...
+
+    def start_preview(self, request: PreviewStartRequest) -> str | None: ...
 
     def signal_approval(self, workflow_id: str, actor: str, comment: str) -> None: ...
 
@@ -73,6 +97,9 @@ class NullCdOrchestrator:
         return None
 
     def start_rollback(self, request: CdStartRequest) -> str | None:
+        return None
+
+    def start_preview(self, request: PreviewStartRequest) -> str | None:
         return None
 
     def signal_approval(self, workflow_id: str, actor: str, comment: str) -> None:
@@ -189,6 +216,38 @@ class TemporalCdOrchestrator:
             return self._run(start_workflow())
         except Exception as exc:  # noqa: BLE001 - surfaced as CdStartError to the caller
             raise CdStartError(f"cannot start rollback workflow {request.rollback_workflow_id}: {exc}") from exc
+
+    def start_preview(self, request: PreviewStartRequest) -> str:
+        from temporalio.common import WorkflowIDReusePolicy
+
+        from ..workflows.provision_and_deploy import PreviewInput, PreviewWorkflow
+
+        preview = PreviewInput(
+            application_id=str(request.application_id),
+            pipeline_run_id=str(request.pipeline_run_id),
+            preview_id=request.preview_id,
+            action=request.action,
+            namespace=request.namespace,
+            release=request.release,
+            artifact_digest=request.artifact_digest,
+            parameters=dict(request.parameters),
+        )
+
+        async def start_workflow() -> str:
+            client = await self._client()
+            handle = await client.start_workflow(
+                PreviewWorkflow.run,
+                preview,
+                id=request.workflow_id,
+                task_queue=self.task_queue,
+                id_reuse_policy=WorkflowIDReusePolicy.ALLOW_DUPLICATE_FAILED_ONLY,
+            )
+            return handle.id
+
+        try:
+            return self._run(start_workflow())
+        except Exception as exc:
+            raise CdStartError(f"cannot start preview workflow {request.workflow_id}: {exc}") from exc
 
     def signal_approval(self, workflow_id: str, actor: str, comment: str) -> None:
         from ..workflows.provision_and_deploy import Approval, ProvisionAndDeployWorkflow

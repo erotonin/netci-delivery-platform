@@ -1,5 +1,8 @@
 """Integration tests for Phase 12: Catalog, Templates, Previews, and Self-Service APIs."""
 
+import hashlib
+import hmac
+import json
 from uuid import uuid4
 import pytest
 from fastapi.testclient import TestClient
@@ -119,51 +122,114 @@ def test_catalog_templates_api(client: TestClient):
 
 
 def test_preview_environments_api(client: TestClient):
-    # Create application first
-    app_resp = client.post(
-        "/applications",
-        headers={"X-Forwarded-User": "developer-alice", "Idempotency-Key": f"app-key-{uuid4()}"},
+    """A preview is a deployment now (ADR-049): it starts `deploying` from a real
+    pull-request build and only the worker's own callback may say `active`. This test
+    used to assert the opposite -- a preview born `active` with a URL nobody served,
+    which is exactly the fake success this project forbids -- so it now drives the real
+    trigger and callback instead of the removed body-supplied create."""
+
+    secret = "webhook-secret-for-catalog-test"
+    system_id = f"sys-{uuid4().hex[:6]}"
+    assert client.post(
+        "/systems", json={"id": system_id, "unit": "Cart", "description": "cart"}
+    ).status_code == 201
+    module_resp = client.post(
+        f"/systems/{system_id}/modules",
         json={
-            "name": "cart-api",
+            "name": "cart-api", "displayName": "cart-api",
             "repositoryUrl": "https://github.com/org/cart-api",
-            "pipelineTemplate": "container-ci-cd-v1",
-            "runtime": "docker",
-            "defaultEnvironment": "dev",
-            "stages": [],
+            "pipelineTemplate": "kubernetes-ci-cd-v1", "runtime": "kubernetes", "moduleType": "Backend",
+            "pipelineConfig": {
+                "runner": "jenkins", "strategy": "Trunk-based",
+                "pipelines": {"ci": {"branch": "main", "stages": ["build"]}},
+                "previews": {"enabled": True, "ttlHours": 2},
+            },
+            "deploymentEnvironments": [
+                {"displayName": env, "environment": env, "runtime": "kubernetes",
+                 "kubeconfigRef": f"{env}-kubeconfig", "namespace": f"ns-{env}"}
+                for env in ("dev", "staging", "prod")
+            ],
         },
     )
-    assert app_resp.status_code == 201
-    app_id = app_resp.json()["id"]
-
-    # 1. Create preview environment
-    create_resp = client.post(
-        "/preview-environments",
-        headers={"X-Forwarded-User": "developer-alice"},
-        json={
-            "applicationId": app_id,
-            "pullRequestId": "PR-55",
-            "commitSha": "e" * 40,
-            "ttlSeconds": 7200,
-        },
+    assert module_resp.status_code == 201, module_resp.text
+    module = module_resp.json()
+    app_id = module["applicationId"]
+    repo = "org/cart-api"
+    scm_resp = client.post(
+        f"/applications/{app_id}/scm",
+        json={"provider": "github", "repositoryIdentity": repo, "secretToken": secret},
     )
-    assert create_resp.status_code == 201
-    prv_data = create_resp.json()
-    prv_id = prv_data["previewId"]
-    assert prv_data["status"] == "active"
-    assert "pr-55" in prv_id
+    assert scm_resp.status_code == 201, scm_resp.text
 
-    # 2. List preview environments
+    def github_hook(payload: dict):
+        raw = json.dumps(payload).encode()
+        signature = hmac.new(secret.encode(), raw, hashlib.sha256).hexdigest()
+        return client.post(
+            "/webhooks/scm/github", content=raw,
+            headers={"x-github-delivery": uuid4().hex, "x-github-event": "pull_request",
+                     "x-hub-signature-256": f"sha256={signature}", "content-type": "application/json"},
+        )
+
+    pr_payload = {
+        "action": "opened", "repository": {"full_name": repo}, "sender": {"login": "dev1"},
+        "pull_request": {"number": 55,
+                         "head": {"sha": uuid4().hex + uuid4().hex[:8], "ref": "feature/x", "repo": {"full_name": repo}},
+                         "base": {"ref": "main", "repo": {"full_name": repo}}},
+    }
+    triggered = github_hook(pr_payload)
+    assert triggered.status_code == 201, triggered.text
+    run_id = triggered.json()["pipelineRunId"]
+
+    machine = {"Authorization": "Bearer netci-local-pipeline-key"}
+    client.post(f"/pipeline-runs/{run_id}/ci-result", headers=machine, json={"status": "running"})
+    digest = f"sha256:{uuid4().hex}{uuid4().hex}"
+    evidence = client.post(f"/pipeline-runs/{run_id}/security-evidence", headers=machine, json={
+        "artifactDigest": digest,
+        "artifactRef": f"registry.local/cart-api@{digest}",
+        "sbom": {"generatedBy": "syft", "location": "s3://evidence/sbom.json", "format": "cyclonedx-json"},
+        "vulnerabilityScan": {"scanner": "trivy", "status": "passed", "critical": 0, "high": 0, "medium": 0},
+        "signature": {"provider": "cosign", "verified": True, "certificateIdentity": "netci"},
+    })
+    assert evidence.status_code == 202, evidence.text
+    succeeded = client.post(f"/pipeline-runs/{run_id}/ci-result", headers=machine, json={
+        "status": "succeeded", "artifactDigest": digest,
+    })
+    assert succeeded.status_code == 202, succeeded.text
+
+    # 1. The trigger started a preview -- `deploying`, no invented URL.
     list_resp = client.get(f"/preview-environments?applicationId={app_id}")
     assert list_resp.status_code == 200
-    assert len(list_resp.json()["items"]) == 1
+    items = list_resp.json()["items"]
+    assert len(items) == 1
+    prv_data = items[0]
+    prv_id = prv_data["previewId"]
+    assert prv_data["status"] == "deploying"
+    assert prv_data["url"] is None
+    assert "pr-55" in prv_id
+    assert prv_data["pipelineRunId"] == run_id
 
-    # 3. Teardown preview environment
+    # 2. Get by id agrees.
+    get_resp = client.get(f"/preview-environments/{prv_id}")
+    assert get_resp.status_code == 200
+    assert get_resp.json()["previewId"] == prv_id
+
+    # 3. Teardown moves it to `destroying`; only the worker's own report ends it.
     td_resp = client.post(
         f"/preview-environments/{prv_id}/teardown",
         headers={"X-Forwarded-User": "developer-alice"},
     )
     assert td_resp.status_code == 200
-    assert td_resp.json()["status"] == "destroyed"
+    assert td_resp.json()["status"] == "destroying"
+
+    # No NETCI_WORKLOAD_TOKEN_KEYS configured in this test, same as the ci-result calls
+    # above: the legacy shared key authenticates as the pipeline role and carries no
+    # per-run claims to check (workload-token scoping is covered in test_real_previews.py).
+    result_resp = client.post(
+        f"/preview-environments/{prv_id}/result", headers=machine,
+        json={"status": "destroyed", "message": "namespace removed"},
+    )
+    assert result_resp.status_code == 202, result_resp.text
+    assert result_resp.json()["status"] == "destroyed"
 
 
 def test_self_service_resources_api(client: TestClient, monkeypatch):

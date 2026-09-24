@@ -2504,7 +2504,7 @@ paths:
   /preview-environments:
     post:
       operationId: createPreviewEnvironment
-      summary: Create or refresh an ephemeral preview environment for a pull request
+      summary: Start a preview for an already succeeded, published pull-request run
       requestBody:
         required: true
         content:
@@ -2513,17 +2513,21 @@ paths:
               $ref: '#/components/schemas/PreviewEnvironmentCreate'
       responses:
         '201':
-          description: Preview environment created
+          description: Preview environment moved to deploying; the worker's deploy was started
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/PreviewEnvironment'
-        '400':
-          $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
     get:
       operationId: listPreviewEnvironments
       summary: List ephemeral preview environments
@@ -2582,7 +2586,7 @@ paths:
           schema: { type: string }
       responses:
         '200':
-          description: Preview environment destroyed
+          description: Preview environment moved to destroying; the worker's teardown was started
           content:
             application/json:
               schema:
@@ -2593,27 +2597,41 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
 
-  /preview-environments/reconcile-expiry:
+  /preview-environments/{previewId}/result:
     post:
-      operationId: reconcilePreviewEnvironmentsExpiry
-      summary: Reconcile expired preview environments based on TTL
+      operationId: recordPreviewEnvironmentResult
+      description: Worker callback seam for a preview's deploy or teardown result; it performs no deployment itself.
+      security:
+        - PipelineBearer: []
+      parameters:
+        - name: previewId
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PreviewResultRequest'
       responses:
-        '200':
-          description: Expired preview environments reconciled
+        '202':
+          description: Preview result accepted
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  reconciledCount: { type: integer }
-                  items:
-                    type: array
-                    items: { $ref: '#/components/schemas/PreviewEnvironment' }
+                $ref: '#/components/schemas/PreviewEnvironment'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
 
   /self-service/resources:
     post:
@@ -4467,14 +4485,18 @@ components:
         deploymentConfig: { type: object, additionalProperties: true }
     PreviewEnvironmentCreate:
       type: object
-      required: [applicationId, pullRequestId, commitSha]
+      required: [pipelineRunId]
       additionalProperties: false
       properties:
-        applicationId: { type: string, format: uuid }
-        pullRequestId: { type: string, minLength: 1, maxLength: 64 }
-        commitSha: { type: string, minLength: 1, maxLength: 64 }
-        ttlSeconds: { type: integer, default: 86400, minimum: 3600, maximum: 259200 }
-        createdBy: { type: string, maxLength: 128, nullable: true }
+        pipelineRunId: { type: string, format: uuid }
+    PreviewResultRequest:
+      type: object
+      required: [status]
+      additionalProperties: false
+      properties:
+        status: { type: string, enum: [active, failed, destroyed] }
+        message: { type: string, maxLength: 2000, default: "" }
+        url: { type: string, maxLength: 2000, nullable: true }
     PreviewEnvironment:
       type: object
       required: [previewId, applicationId, pullRequestId, commitSha, namespace, url, status, ttlSeconds, expiresAt, createdBy, createdAt]
@@ -4484,13 +4506,17 @@ components:
         pullRequestId: { type: string }
         commitSha: { type: string }
         namespace: { type: string }
-        url: { type: string }
+        url: { type: string, nullable: true }
         status: { type: string }
         ttlSeconds: { type: integer }
         expiresAt: { type: string, format: date-time }
         createdBy: { type: string }
         createdAt: { type: string, format: date-time }
         destroyedAt: { type: string, format: date-time, nullable: true }
+        pipelineRunId: { type: string, format: uuid, nullable: true }
+        artifactDigest: { type: string, nullable: true }
+        releaseName: { type: string, nullable: true }
+        detail: { type: string }
     ResourceRequestCreate:
       type: object
       required: [applicationId, teamId, resourceType]

@@ -266,24 +266,37 @@ class CatalogTemplateRecord:
 
 @dataclass(frozen=True)
 class PreviewEnvironmentRecord:
+    """A pull request's own deployment (ADR-049).
+
+    `url` is nullable: it is written only once the worker reports what the cluster
+    actually served, never composed here. `pipeline_run_id` and `artifact_digest` name
+    the build the row was last (re)deployed from; `release_name` is the Helm release the
+    worker manages, deterministic from the module id and pull request number so a second
+    push to the same PR finds and redeploys the same row instead of creating another.
+    """
+
     id: str
     application_id: UUID
     pull_request_id: str
     commit_sha: str
     namespace: str
-    url: str
+    url: str | None
     status: str = "pending"
     ttl_seconds: int = 86400
     expires_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     created_by: str = "system"
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     destroyed_at: datetime | None = None
+    pipeline_run_id: UUID | None = None
+    artifact_digest: str | None = None
+    release_name: str | None = None
+    detail: str = ""
 
     def is_active(self, now: datetime) -> bool:
         return self.status == "active" and self.expires_at > now and self.destroyed_at is None
 
     def is_expired(self, now: datetime) -> bool:
-        return self.status == "active" and self.expires_at <= now
+        return self.status in ("active", "deploying") and self.expires_at <= now
 
 
 @dataclass(frozen=True)
