@@ -41,6 +41,17 @@ spec:
             # left there, nginx could not resolve it and never started.
             - name: NETCI_API_UPSTREAM
               value: {{ printf "%s-api:8000" (include "netci.fullname" .) | quote }}
+            {{- if eq .Values.auth.mode "oidc" }}
+            # The browser redeems the SSO code at the identity provider itself, so the
+            # portal's CSP must allow that origin -- and only that one.
+            {{- $issuer := urlParse (required "auth.oidc.issuer is required for auth.mode=oidc" .Values.auth.oidc.issuer) }}
+            {{- $origin := printf "%s://%s" $issuer.scheme $issuer.host }}
+            {{- if not (regexMatch "^https?://[A-Za-z0-9.-]+(:[0-9]{1,5})?$" $origin) }}
+            {{- fail (printf "auth.oidc.issuer must be an http(s) URL; its origin %q cannot go into a CSP" $origin) }}
+            {{- end }}
+            - name: NETCI_OIDC_ORIGIN
+              value: {{ $origin | quote }}
+            {{- end }}
           ports:
             - {name: http, containerPort: 8080, protocol: TCP}
           securityContext:

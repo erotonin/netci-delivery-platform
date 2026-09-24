@@ -10,12 +10,14 @@ FROM nginx:1.29.8-alpine3.23
 
 COPY nginx.conf /etc/nginx/nginx.conf
 COPY nginx/api-upstream.conf.template /etc/nginx/templates/api-upstream.conf.template
+COPY nginx/csp.conf.template /etc/nginx/templates/csp.conf.template
 COPY --from=build /app/dist /usr/share/nginx/html
 
 # Where the API is. compose names the service netci-api; the Helm chart sets this to the
 # release's backend Service. The entrypoint renders the template into /tmp, which the
 # non-root nginx user can write.
 ENV NETCI_API_UPSTREAM=netci-api:8000 \
+    NETCI_OIDC_ORIGIN="" \
     NGINX_ENVSUBST_OUTPUT_DIR=/tmp
 
 # The custom config keeps its pid and temporary files under /tmp, so the

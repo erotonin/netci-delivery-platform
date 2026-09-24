@@ -122,6 +122,32 @@ def test_the_public_entry_point_does_not_proxy_metrics():
     assert nginx.index("location = /api/metrics") < nginx.index("location /api/ {")
 
 
+def test_the_portal_csp_lets_the_browser_redeem_an_sso_code_at_the_issuer_only():
+    """PKCE: the browser itself posts the code to the IdP's token endpoint.
+
+    With `connect-src 'self'` the Keycloak round trip came back with a code the portal was
+    not allowed to redeem -- "SSO login failed: Failed to fetch" on the Kubernetes install,
+    invisible on the vite dev server, which sends no CSP.
+    """
+
+    nginx = (ROOT / "frontend" / "nginx.conf").read_text(encoding="utf-8")
+    template = (ROOT / "frontend" / "nginx" / "csp.conf.template").read_text(encoding="utf-8")
+    dockerfile = (ROOT / "frontend" / "Dockerfile").read_text(encoding="utf-8")
+    assert "Content-Security-Policy" not in nginx and "include /tmp/csp.conf;" in nginx
+    assert "connect-src 'self' ${NETCI_OIDC_ORIGIN};" in template
+    # Defined but empty, so envsubst replaces it rather than leaving `${...}` in the header.
+    assert 'NETCI_OIDC_ORIGIN=""' in dockerfile and "csp.conf.template" in dockerfile
+
+
+@needs_helm
+def test_the_chart_gives_the_portal_the_issuer_origin_and_nothing_else():
+    rendered = _render("-f", str(EXAMPLE))
+    assert rendered.returncode == 0, rendered.stderr
+    assert re.search(r'name: NETCI_OIDC_ORIGIN\n\s+value: "http://127\.0\.0\.1:8180"', rendered.stdout)
+    hostile = _render("-f", str(EXAMPLE), "--set", "auth.oidc.issuer=javascript:alert(1)")
+    assert hostile.returncode != 0 and "cannot go into a CSP" in hostile.stderr
+
+
 # ---------------------------------------------------------------- netCI's own SLOs
 
 
