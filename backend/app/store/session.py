@@ -461,6 +461,14 @@ class PlatformSession(Protocol):
 
     # ----------------------------------------------- change freezes (ADR-047)
 
+    def advisory_xact_lock(self, key: int) -> None:
+        """Wait for, then hold until commit, a transaction-scoped advisory lock."""
+        ...
+
+    def count_active_pipeline_runs(self, application_ids: list[UUID] | None) -> int:
+        """Runs queued, running or waiting for approval -- of these applications, or all."""
+        ...
+
     def insert_change_freeze(self, record: ChangeFreezeRecord) -> None: ...
 
     def change_freeze(self, freeze_id: UUID) -> ChangeFreezeRecord | None: ...

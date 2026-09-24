@@ -1127,6 +1127,16 @@ class InMemorySession:
         # One process, one loop: there is nobody to lose the race against.
         return True
 
+    def advisory_xact_lock(self, key: int) -> None:
+        # Transactions on the in-memory store are already serialized by its lock.
+        return None
+
+    def count_active_pipeline_runs(self, application_ids) -> int:
+        active = {PipelineStatus.QUEUED, PipelineStatus.RUNNING, PipelineStatus.WAITING_APPROVAL}
+        wanted = set(application_ids) if application_ids is not None else None
+        return sum(1 for r in self._state.runs.values()
+                   if r.status in active and (wanted is None or r.application_id in wanted))
+
     def stage_catalog(self) -> tuple[StageDefinition, ...]:
         return tuple(sorted(self._state.stage_catalog.values(), key=lambda s: (s.position, s.id)))
 

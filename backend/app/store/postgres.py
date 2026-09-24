@@ -2624,6 +2624,22 @@ class PostgresSession:
         row = self._cursor.fetchone()
         return bool(row and row["locked"])
 
+    def advisory_xact_lock(self, key: int) -> None:
+        # Blocking, and released at commit: two starts against one quota queue here, so
+        # the second counts the run the first has just written instead of both passing.
+        self._cursor.execute("SELECT pg_advisory_xact_lock(%s)", (key,))
+
+    def count_active_pipeline_runs(self, application_ids) -> int:
+        statuses = [PipelineStatus.QUEUED.value, PipelineStatus.RUNNING.value, PipelineStatus.WAITING_APPROVAL.value]
+        if application_ids is None:
+            self._cursor.execute("SELECT count(*) AS n FROM pipeline_runs WHERE status = ANY(%s)", (statuses,))
+        else:
+            self._cursor.execute(
+                "SELECT count(*) AS n FROM pipeline_runs WHERE status = ANY(%s) AND application_id = ANY(%s)",
+                (statuses, list(application_ids)),
+            )
+        return int(self._cursor.fetchone()["n"])
+
     def get_server_telemetry(self, server_name: str) -> ServerTelemetry | None:
         self._cursor.execute(
             "SELECT server_name, cpu_percent, mem_percent, disk_percent, observed_at FROM server_telemetry WHERE server_name = %s",

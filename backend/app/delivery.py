@@ -55,6 +55,7 @@ from .runtime_environment import is_local_runtime
 from .policy.rules import PolicyDecision, evaluate_artifact_evidence
 from .domain.delivery_rules import pull_request_ref
 from .domain.freezes import applicable_freeze
+from .policy.quota import QuotaEnforcer, QuotaViolation
 from .domain.models import (
     Application,
     StageDefinition,
@@ -895,6 +896,7 @@ class DeliveryPlatform:
                         "IDEMPOTENCY_KEY_REUSED", "same key was used with a different request", 409
                     )
                 return replay
+            self._enforce_pipeline_quota(transaction, application)
             run = self._write_queued_run(
                 transaction,
                 application_id=application_id,
@@ -1376,6 +1378,9 @@ class DeliveryPlatform:
                     raise AssertionError("pipeline retry idempotency scope returned another result type")
                 return replay
 
+            application_for_quota = transaction.application(parent.application_id)
+            if application_for_quota is not None:
+                self._enforce_pipeline_quota(transaction, application_for_quota)
             corr_id = f"retry-{parent.correlation_id or parent.id}-{uuid4().hex[:6]}"
             new_run = PipelineRun(
                 application_id=parent.application_id,
@@ -1911,6 +1916,15 @@ class DeliveryPlatform:
         if deployment.status != DeploymentStatus.DEPLOYING:
             return _CiOutcome(CiResult(updated, deployment))
         return _CiOutcome(CiResult(updated, deployment), pending_cd=(application, updated, deployment))
+
+    @staticmethod
+    def _enforce_pipeline_quota(transaction: PlatformSession, application: Application) -> None:
+        try:
+            QuotaEnforcer.check_pipeline_quota(
+                transaction, application_id=application.id, team=application.owner_team
+            )
+        except QuotaViolation as exc:
+            raise DeliveryError("PIPELINE_QUOTA_EXCEEDED", str(exc), 429) from exc
 
     def _active_freeze(self, transaction: PlatformSession, application_id: UUID, environment: Environment):
         """The change freeze that stops a deployment starting now, unless a break-glass
