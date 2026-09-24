@@ -3087,6 +3087,84 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
+  /change-freezes:
+    post:
+      operationId: createChangeFreeze
+      summary: Create a scheduled change freeze window
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChangeFreezeCreate'
+      responses:
+        '201':
+          description: Change freeze created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChangeFreeze'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+    get:
+      operationId: listChangeFreezes
+      summary: List change freezes
+      parameters:
+        - name: includePast
+          in: query
+          required: false
+          schema:
+            type: boolean
+            default: false
+      responses:
+        '200':
+          description: List of change freezes
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ChangeFreeze'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /change-freezes/{freezeId}/cancel:
+    post:
+      operationId: cancelChangeFreeze
+      summary: Cancel an active change freeze
+      parameters:
+        - name: freezeId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Change freeze cancelled
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChangeFreeze'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
 
 components:
   securitySchemes:
@@ -4369,6 +4447,78 @@ components:
         artifactDigest: { type: string }
         components: { type: integer }
         recorded: { type: boolean }
+    ChangeFreezeCreate:
+      type: object
+      additionalProperties: false
+      required: [name, startsAt, endsAt, environments, reason]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 120
+        startsAt:
+          type: string
+          format: date-time
+        endsAt:
+          type: string
+          format: date-time
+        environments:
+          type: array
+          minItems: 1
+          maxItems: 3
+          items:
+            $ref: '#/components/schemas/Environment'
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 1000
+        systemId:
+          type: string
+          pattern: '^[a-zA-Z][a-zA-Z0-9-]{2,62}$'
+          nullable: true
+        moduleId:
+          type: string
+          pattern: '^[a-z0-9][a-z0-9-]{2,62}$'
+          nullable: true
+    ChangeFreeze:
+      type: object
+      required: [id, name, startsAt, endsAt, environments, reason, createdBy, createdAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        startsAt:
+          type: string
+          format: date-time
+        endsAt:
+          type: string
+          format: date-time
+        environments:
+          type: array
+          items:
+            $ref: '#/components/schemas/Environment'
+        systemId:
+          type: string
+          nullable: true
+        moduleId:
+          type: string
+          nullable: true
+        reason:
+          type: string
+        createdBy:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        cancelledAt:
+          type: string
+          format: date-time
+          nullable: true
+        cancelledBy:
+          type: string
+          nullable: true
     VulnerabilityExposure:
       type: object
       required: [affected, coverage]

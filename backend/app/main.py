@@ -15,7 +15,7 @@ import time
 import urllib.request
 
 logger = logging.getLogger("netci.main")
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from contextlib import asynccontextmanager
 from typing import Any, Literal
 from urllib.parse import urlsplit
@@ -103,6 +103,7 @@ from .store.records import (
     BreakGlassRecord,
     CatalogServiceRecord,
     CatalogTemplateRecord,
+    ChangeFreezeRecord,
     PolicyDecisionRecord,
     PreviewEnvironmentRecord,
     ResourceQuotaRecord,
@@ -4020,6 +4021,153 @@ def get_vulnerability_exposure(
 async def rescan_vulnerabilities(_: Principal = AdminAccess) -> dict[str, object]:
     outcome = await asyncio.to_thread(rescan_in_service, platform, sbom_scanner)
     return outcome
+
+
+class ChangeFreezeCreate(StrictBody):
+    name: str = Field(min_length=1, max_length=120)
+    startsAt: datetime
+    endsAt: datetime
+    environments: list[Environment] = Field(min_length=1, max_length=3)
+    reason: str = Field(min_length=1, max_length=1000)
+    systemId: str | None = Field(default=None, pattern=r"^[a-zA-Z][a-zA-Z0-9-]{2,62}$")
+    moduleId: str | None = Field(default=None, pattern=r"^[a-z0-9][a-z0-9-]{2,62}$")
+
+    @model_validator(mode="after")
+    def validate_freeze(self) -> "ChangeFreezeCreate":
+        if self.startsAt.tzinfo is None or self.startsAt.tzinfo.utcoffset(self.startsAt) is None:
+            raise ValueError("startsAt must be timezone-aware")
+        if self.endsAt.tzinfo is None or self.endsAt.tzinfo.utcoffset(self.endsAt) is None:
+            raise ValueError("endsAt must be timezone-aware")
+        if self.endsAt <= self.startsAt:
+            raise ValueError("endsAt must be after startsAt")
+        if self.endsAt - self.startsAt > timedelta(days=31):
+            raise ValueError("freeze duration cannot exceed 31 days")
+        if len(self.environments) != len(set(self.environments)):
+            raise ValueError("duplicate environments are not allowed")
+        if self.systemId is not None and self.moduleId is not None:
+            raise ValueError("cannot specify both systemId and moduleId")
+        return self
+
+
+def change_freeze_json(item: ChangeFreezeRecord) -> dict[str, Any]:
+    return {
+        "id": str(item.id),
+        "name": item.name,
+        "startsAt": item.starts_at.isoformat(),
+        "endsAt": item.ends_at.isoformat(),
+        "environments": list(item.environments),
+        "systemId": item.system_id,
+        "moduleId": item.module_id,
+        "reason": item.reason,
+        "createdBy": item.created_by,
+        "createdAt": item.created_at.isoformat(),
+        "cancelledAt": item.cancelled_at.isoformat() if item.cancelled_at else None,
+        "cancelledBy": item.cancelled_by,
+    }
+
+
+@app.post("/change-freezes", status_code=status.HTTP_201_CREATED)
+def create_change_freeze(
+    payload: ChangeFreezeCreate,
+    principal: Principal = ReviewerAccess,
+) -> dict[str, Any]:
+    if payload.moduleId:
+        try:
+            portal.module(payload.moduleId)
+        except KeyError as exc:
+            raise HTTPException(
+                status_code=404,
+                detail={"code": "MODULE_NOT_FOUND", "message": f"Module {payload.moduleId} not found"},
+            ) from exc
+    if payload.systemId:
+        try:
+            portal.system(payload.systemId)
+        except KeyError as exc:
+            raise HTTPException(
+                status_code=404,
+                detail={"code": "SYSTEM_NOT_FOUND", "message": f"System {payload.systemId} not found"},
+            ) from exc
+    record = ChangeFreezeRecord(
+        id=uuid4(),
+        name=payload.name,
+        starts_at=payload.startsAt,
+        ends_at=payload.endsAt,
+        environments=tuple(e.value for e in payload.environments),
+        reason=payload.reason,
+        created_by=principal.subject,
+        system_id=payload.systemId,
+        module_id=payload.moduleId,
+    )
+    with database.transaction() as tx:
+        tx.insert_change_freeze(record)
+        tx.apply(
+            UnitOfWork(
+                audit=[
+                    AuditRecord(
+                        "change_freeze.created",
+                        actor=principal.subject,
+                        payload={
+                            "freezeId": str(record.id),
+                            "name": record.name,
+                            "startsAt": record.starts_at.isoformat(),
+                            "endsAt": record.ends_at.isoformat(),
+                            "environments": list(record.environments),
+                        },
+                    )
+                ]
+            )
+        )
+    return change_freeze_json(record)
+
+
+@app.get("/change-freezes")
+def list_change_freezes(
+    includePast: bool = False,
+    _: Principal = ReadAccess,
+) -> dict[str, Any]:
+    with database.transaction() as tx:
+        items = tx.change_freezes(ending_after=None if includePast else datetime.now(timezone.utc))
+    return {"items": [change_freeze_json(i) for i in items]}
+
+
+@app.post("/change-freezes/{freezeId}/cancel")
+def cancel_change_freeze(
+    freezeId: UUID,
+    principal: Principal = ReviewerAccess,
+) -> dict[str, Any]:
+    with database.transaction() as tx:
+        existing = tx.change_freeze(freezeId)
+        if existing is None:
+            raise HTTPException(
+                status_code=404,
+                detail={"code": "FREEZE_NOT_FOUND", "message": f"Change freeze {freezeId} not found"},
+            )
+        now = datetime.now(timezone.utc)
+        if not tx.cancel_change_freeze(freezeId, cancelled_by=principal.subject, at=now):
+            raise HTTPException(
+                status_code=409,
+                detail={"code": "FREEZE_NOT_ACTIVE", "message": f"Change freeze {freezeId} is not active"},
+            )
+        tx.apply(
+            UnitOfWork(
+                audit=[
+                    AuditRecord(
+                        "change_freeze.cancelled",
+                        actor=principal.subject,
+                        payload={
+                            "freezeId": str(freezeId),
+                            "name": existing.name,
+                            "startsAt": existing.starts_at.isoformat(),
+                            "endsAt": existing.ends_at.isoformat(),
+                            "environments": list(existing.environments),
+                        },
+                    )
+                ]
+            )
+        )
+        updated = tx.change_freeze(freezeId)
+        assert updated is not None
+        return change_freeze_json(updated)
 
 
 @app.post("/deployments/{deploymentId}/approve", status_code=status.HTTP_202_ACCEPTED, response_model=None)

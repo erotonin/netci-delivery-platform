@@ -54,7 +54,7 @@ def truncate() -> None:
                 " deployments, pipeline_runs, applications, policy_decisions, security_exceptions,"
                 " break_glass_requests, resource_quotas, catalog_services, catalog_service_dependencies,"
                 " catalog_templates, preview_environments, resource_requests,"
-                " artifact_sboms, artifact_findings, artifact_rescans RESTART IDENTITY CASCADE"
+                " artifact_sboms, artifact_findings, artifact_rescans, change_freezes RESTART IDENTITY CASCADE"
             )
 
 
@@ -1668,4 +1668,89 @@ def test_postgres_artifact_rescan_persistence_and_update(database):
         assert rescans[DIGEST].status == "failed"
         assert rescans[DIGEST].detail == "trivy did not finish within 300s"
         assert abs((rescans[DIGEST].scanned_at - t2).total_seconds()) < 1.0
+
+
+def test_postgres_change_freeze_persistence_filtering_and_cancel(database):
+    from datetime import datetime, timedelta, timezone
+    from uuid import uuid4
+    from app.store.records import ChangeFreezeRecord
+
+    platform = DeliveryPlatform()
+    now = datetime.now(timezone.utc)
+    t_past_start = now - timedelta(days=5)
+    t_past_end = now - timedelta(days=1)
+    t_future_start = now + timedelta(days=1)
+    t_future_end = now + timedelta(days=3)
+
+    freeze_past = ChangeFreezeRecord(
+        id=uuid4(),
+        name="past-freeze",
+        starts_at=t_past_start,
+        ends_at=t_past_end,
+        environments=("dev",),
+        reason="past maintenance",
+        created_by="admin@example.com",
+    )
+    freeze_future = ChangeFreezeRecord(
+        id=uuid4(),
+        name="future-freeze",
+        starts_at=t_future_start,
+        ends_at=t_future_end,
+        environments=("staging", "prod"),
+        reason="black friday",
+        created_by="ops@example.com",
+        system_id="sys-orders",
+    )
+
+    with platform.transaction() as tx:
+        tx.insert_change_freeze(freeze_past)
+        tx.insert_change_freeze(freeze_future)
+
+    with platform.transaction() as tx:
+        fetched_past = tx.change_freeze(freeze_past.id)
+        assert fetched_past is not None
+        assert fetched_past.name == "past-freeze"
+        assert fetched_past.environments == ("dev",)
+        assert fetched_past.cancelled_at is None
+
+        fetched_future = tx.change_freeze(freeze_future.id)
+        assert fetched_future is not None
+        assert fetched_future.name == "future-freeze"
+        assert fetched_future.system_id == "sys-orders"
+
+        # ending_after=None returns all non-cancelled freezes
+        all_freezes = tx.change_freezes(ending_after=None)
+        freeze_ids = [f.id for f in all_freezes]
+        assert freeze_past.id in freeze_ids
+        assert freeze_future.id in freeze_ids
+
+        # ending_after=now filters out past freezes
+        active_freezes = tx.change_freezes(ending_after=now)
+        active_ids = [f.id for f in active_freezes]
+        assert freeze_past.id not in active_ids
+        assert freeze_future.id in active_ids
+
+    # Cancel once: returns True
+    cancel_time = datetime.now(timezone.utc)
+    with platform.transaction() as tx:
+        cancelled = tx.cancel_change_freeze(freeze_future.id, cancelled_by="lead@example.com", at=cancel_time)
+        assert cancelled is True
+
+    # Cancel a second time: returns False
+    with platform.transaction() as tx:
+        cancelled_again = tx.cancel_change_freeze(freeze_future.id, cancelled_by="lead@example.com", at=cancel_time)
+        assert cancelled_again is False
+
+    # Check persistence of cancelled state
+    with platform.transaction() as tx:
+        refetched = tx.change_freeze(freeze_future.id)
+        assert refetched is not None
+        assert refetched.cancelled_by == "lead@example.com"
+        assert refetched.cancelled_at is not None
+        assert abs((refetched.cancelled_at - cancel_time).total_seconds()) < 1.0
+
+        # Cancelled freeze should no longer appear in change_freezes()
+        active_after_cancel = tx.change_freezes(ending_after=None)
+        assert freeze_future.id not in [f.id for f in active_after_cancel]
+
 
