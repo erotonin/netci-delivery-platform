@@ -8,3 +8,5 @@ psycopg[binary]==3.2.9
 # Verifies identity-provider JWT signatures in NETCI_AUTH_MODE=oidc.
 # Pinned explicitly rather than relied on as a transitive dependency of temporalio.
 cryptography==50.0.1
+# Optional: only imported when NETCI_LOG_SUMMARY=claude (adapters/log_summary.py).
+anthropic>=0.75

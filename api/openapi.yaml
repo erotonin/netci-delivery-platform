@@ -1491,6 +1491,46 @@ paths:
               schema: { type: object, additionalProperties: true }
         '404':
           $ref: '#/components/responses/NotFound'
+  /pipeline-runs/{pipelineRunId}/suspected-cause:
+    post:
+      operationId: getSuspectedCause
+      summary: A model's suggested cause for a FAILED run, read from its log
+      description: >-
+        Advisory only: it never changes the run's status and never gates a deployment.
+        Off unless NETCI_LOG_SUMMARY=claude is configured.
+      parameters:
+        - $ref: '#/components/parameters/PipelineRunId'
+      responses:
+        '200':
+          description: A suggested cause, or a decline if the model found no basis for one
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [pipelineRunId, status, text, model, disclaimer]
+                properties:
+                  pipelineRunId: { type: string, format: uuid }
+                  status: { type: string, enum: [suggested, declined] }
+                  text: { type: string }
+                  model: { type: string }
+                  disclaimer: { type: string }
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: The run has not FAILED
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+        '501':
+          description: Log summarization is not configured
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+        '502':
+          description: The model call failed
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
   /pipeline-runs/{pipelineRunId}/sbom:
     post:
       operationId: recordPipelineSbom
