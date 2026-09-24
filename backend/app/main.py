@@ -97,6 +97,8 @@ from .adapters.prometheus_metrics import MetricsUnavailable, build_metrics_sourc
 from .adapters.log_summary import LogSummaryError, build_log_summarizer
 from .domain.verification import VerificationConfigError, VerificationResult, render_query, verdict_for_canary
 from .exposure import SEVERITY_ORDER, exposure as vulnerability_exposure, rescan_in_service
+from .projections.scorecard import all_scorecards, module_scorecard
+from .projections.insights import delivery_insights
 from .store import build_database
 from .store.records import (
     ArtifactFindingRecord,
@@ -4258,6 +4260,43 @@ def cancel_change_freeze(
         updated = tx.change_freeze(freezeId)
         assert updated is not None
         return change_freeze_json(updated)
+
+
+@app.get("/modules/{moduleId}/scorecard")
+def get_module_scorecard(moduleId: str, principal: Principal = ReadAccess) -> dict[str, object]:
+    try:
+        _require_module_access(moduleId, principal)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail={"code": "MODULE_NOT_FOUND", "message": str(exc)}) from exc
+    return module_scorecard(platform, portal, moduleId, now=datetime.now(timezone.utc))
+
+
+@app.get("/scorecards")
+def get_scorecards(principal: Principal = ReadAccess) -> dict[str, object]:
+    visible = _visible_application_ids(principal)
+    with platform.transaction() as tx:
+        modules = tx.portal_modules()
+    module_ids = [module.id for module in modules if module.application_id in visible]
+    return all_scorecards(platform, portal, module_ids, now=datetime.now(timezone.utc))
+
+
+@app.get("/modules/{moduleId}/insights")
+def get_module_insights(
+    moduleId: str,
+    days: int = Query(default=30, ge=1, le=365),
+    principal: Principal = ReadAccess,
+) -> dict[str, object]:
+    try:
+        module = _require_module_access(moduleId, principal)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail={"code": "MODULE_NOT_FOUND", "message": str(exc)}) from exc
+    application_id = module.get("applicationId")
+    if not application_id:
+        raise HTTPException(
+            status_code=404,
+            detail={"code": "MODULE_NOT_LINKED", "message": "module has no linked application"},
+        )
+    return delivery_insights(platform, UUID(str(application_id)), now=datetime.now(timezone.utc), days=days)
 
 
 @app.post("/deployments/{deploymentId}/approve", status_code=status.HTTP_202_ACCEPTED, response_model=None)

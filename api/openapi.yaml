@@ -3205,6 +3205,63 @@ paths:
           $ref: '#/components/responses/NotFound'
         '409':
           $ref: '#/components/responses/Conflict'
+  /modules/{moduleId}/scorecard:
+    get:
+      operationId: getModuleScorecard
+      summary: One module's scorecard, computed from data netCI already stores
+      parameters:
+        - $ref: '#/components/parameters/ModuleId'
+      responses:
+        '200':
+          description: Module scorecard
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ModuleScorecard'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /scorecards:
+    get:
+      operationId: listScorecards
+      summary: Scorecards for every module visible to the caller, worst-first
+      responses:
+        '200':
+          description: Scorecard summaries
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScorecardsResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /modules/{moduleId}/insights:
+    get:
+      operationId: getModuleInsights
+      summary: Failure classes, flaky-build suspects, queue time and lead time
+      parameters:
+        - $ref: '#/components/parameters/ModuleId'
+        - name: days
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 365, default: 30 }
+      responses:
+        '200':
+          description: Delivery insights
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ModuleInsights'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
 
 components:
   securitySchemes:
@@ -4608,5 +4665,106 @@ components:
               environment: { type: string }
               artifactDigest: { type: string }
               reason: { type: string }
+    ScorecardCheck:
+      type: object
+      required: [id, title, passed, detail]
+      properties:
+        id: { type: string }
+        title: { type: string }
+        passed:
+          type: boolean
+          nullable: true
+          description: >-
+            null means netCI has no basis to evaluate this check yet (nothing deployed,
+            no production target, ...) -- never a silent pass.
+        detail: { type: string }
+    ScorecardScore:
+      type: object
+      required: [passed, known, total]
+      properties:
+        passed: { type: integer }
+        known: { type: integer }
+        total: { type: integer }
+    ModuleScorecard:
+      type: object
+      required: [moduleId, score, checks]
+      properties:
+        moduleId: { type: string }
+        score:
+          $ref: '#/components/schemas/ScorecardScore'
+        checks:
+          type: array
+          items:
+            $ref: '#/components/schemas/ScorecardCheck'
+    ScorecardsResponse:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            type: object
+            required: [moduleId, systemId, name, score]
+            properties:
+              moduleId: { type: string }
+              systemId: { type: string }
+              name: { type: string }
+              score:
+                $ref: '#/components/schemas/ScorecardScore'
+    RecentFailure:
+      type: object
+      required: [pipelineRunId, class, stage, at]
+      properties:
+        pipelineRunId: { type: string, format: uuid }
+        class: { type: string }
+        stage:
+          type: string
+          nullable: true
+        at: { type: string, format: date-time }
+    FlakyCommit:
+      type: object
+      required: [commitSha, failedRunId, passedRunId]
+      properties:
+        commitSha: { type: string }
+        failedRunId: { type: string, format: uuid }
+        passedRunId: { type: string, format: uuid }
+    ModuleInsights:
+      type: object
+      required: [failures, flaky, queueTime, leadTime]
+      properties:
+        failures:
+          type: object
+          required: [total, byClass, recent]
+          properties:
+            total: { type: integer }
+            byClass:
+              type: object
+              additionalProperties: { type: integer }
+            recent:
+              type: array
+              items:
+                $ref: '#/components/schemas/RecentFailure'
+        flaky:
+          type: object
+          required: [count, commits]
+          properties:
+            count: { type: integer }
+            commits:
+              type: array
+              items:
+                $ref: '#/components/schemas/FlakyCommit'
+        queueTime:
+          type: object
+          required: [samples, p50Seconds, p95Seconds]
+          properties:
+            samples: { type: integer }
+            p50Seconds: { type: number, nullable: true }
+            p95Seconds: { type: number, nullable: true }
+        leadTime:
+          type: object
+          required: [samples, meanSeconds]
+          properties:
+            samples: { type: integer }
+            meanSeconds: { type: number, nullable: true }
 
 
