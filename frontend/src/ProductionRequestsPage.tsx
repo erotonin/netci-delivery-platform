@@ -7,7 +7,7 @@ import {
 import {
   approveProductionRequest, createProductionRequest, listProductionRequests, listSystems,
   getSystem, rejectProductionRequest, getProductionRequestPlan, advanceCanary, abortCanary,
-  getDeploymentTraffic, cancelDeployment, whoami,
+  getDeploymentTraffic, cancelDeployment, whoami, NetciApiError,
   type ProductionRequest, type ProductionRequestCreate,
 } from './api/netciClient'
 import { Modal, PageHeader, StatusPill } from './PortalShell'
@@ -101,14 +101,49 @@ function RequestDetails({
 
   const handleAdvanceCanary = async () => {
     setCanaryBusy(true)
-    try {
-      const res = await advanceCanary(request.id)
-      notify(`Canary advanced to step ${res.step} (${res.trafficWeight}% traffic).`)
-      setTrafficInfo({ trafficWeight: res.trafficWeight, canaryStep: res.step })
+
+    const applyAdvanceResult = async (res: {
+      allowed: boolean
+      status: string
+      trafficWeight: number
+      canaryStep: number
+      reason: string
+      analysed: boolean
+    }) => {
+      if (res.status === 'aborted') {
+        notify(res.reason, 'error')
+      } else {
+        if (res.analysed === false) {
+          notify(`Canary advanced WITHOUT analysis: ${res.reason}`)
+        } else {
+          notify(res.reason)
+        }
+        setTrafficInfo({ trafficWeight: res.trafficWeight, canaryStep: res.canaryStep })
+      }
       const updated = await getProductionRequestPlan(request.id)
       setCurrentReq((prev) => ({ ...prev, ...updated, id: (updated as any).id || (updated as any).requestId || prev.id }))
       onRefresh?.()
+    }
+
+    try {
+      const res = await advanceCanary(request.id)
+      await applyAdvanceResult(res)
     } catch (err) {
+      if (err instanceof NetciApiError && err.code === 'CANARY_ANALYSIS_UNAVAILABLE') {
+        const reason = window.prompt(
+          `netCI cannot analyse this canary: ${err.message}\nAdvance anyway? Give a reason (at least 10 characters) -- it is recorded as an advance without analysis.`
+        )
+        const overrideReason = reason?.trim()
+        if (overrideReason && overrideReason.length >= 10) {
+          try {
+            const overrideRes = await advanceCanary(request.id, { overrideReason })
+            await applyAdvanceResult(overrideRes)
+          } catch (overrideErr) {
+            notify(overrideErr instanceof Error ? overrideErr.message : 'Failed to advance canary', 'error')
+          }
+        }
+        return
+      }
       notify(err instanceof Error ? err.message : 'Failed to advance canary', 'error')
     } finally {
       setCanaryBusy(false)

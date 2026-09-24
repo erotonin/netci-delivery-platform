@@ -96,6 +96,9 @@ data:
   NETCI_SBOM_RESCAN: {{ .Values.supplyChain.sbomRescan | quote }}
   NETCI_SBOM_RESCAN_INTERVAL_SECONDS: {{ .Values.supplyChain.sbomRescanIntervalSeconds | quote }}
   NETCI_TRIVY_INSECURE: {{ .Values.registry.allowHttp | quote }}
+  {{- with .Values.verification.prometheusUrl }}
+  NETCI_PROMETHEUS_URL: {{ . | quote }}
+  {{- end }}
   NETCI_COSIGN_PUBLIC_KEY_FILE: /run/secrets/netci-app/cosign.pub
 
   # inventory

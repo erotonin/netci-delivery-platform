@@ -760,7 +760,14 @@ paths:
   /production-requests/{requestId}/canary/advance:
     post:
       operationId: advance_canary_step
-      summary: Advance canary traffic step or verify metrics
+      summary: Advance canary traffic one step, on metrics netCI reads itself
+      description: >-
+        netCI queries Prometheus with the module's `pipelineConfig.verification` queries
+        (`{track}` = canary) and aborts the canary on a breach (ADR-046). Metrics are never
+        taken from the request. When netCI cannot analyse -- no queries, no Prometheus,
+        or no data -- the step is refused (409 CANARY_ANALYSIS_UNAVAILABLE) unless an
+        `overrideReason` is given, which advances it and is audited as an advance
+        without analysis (`analysed: false`), never as a pass.
       parameters:
         - $ref: '#/components/parameters/ProductionRequestId'
       requestBody:
@@ -772,8 +779,14 @@ paths:
               properties:
                 metrics:
                   type: object
+                  description: Refused when non-empty (422 CANARY_METRICS_ARE_READ_BY_NETCI).
                   additionalProperties:
                     type: number
+                overrideReason:
+                  type: string
+                  minLength: 10
+                  maxLength: 500
+                  description: Advance although netCI could not analyse the canary; audited.
                 canaryRules:
                   type: object
                   description: Header/cookie steering rules (headerName, headerValue, cookie) applied to the canary ingress
@@ -796,6 +809,7 @@ paths:
                   trafficWeight: { type: integer, minimum: 0, maximum: 100 }
                   canaryStep: { type: integer }
                   reason: { type: string }
+                  analysed: { type: boolean, description: false when advanced on an overrideReason without analysis }
                   promotionDeploymentId: { type: string, format: uuid }
                   canaryReleaseRetired: { type: boolean }
         '400':

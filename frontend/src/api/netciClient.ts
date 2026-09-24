@@ -869,12 +869,13 @@ export function getProductionRequestPlan(productionRequestId: string): Promise<P
 
 export function advanceCanary(
   productionRequestId: string,
-  metrics?: Record<string, number>,
-): Promise<{ message: string; deploymentId: string; step: number; trafficWeight: number }> {
+  options?: { overrideReason?: string },
+): Promise<{ allowed: boolean; status: string; trafficWeight: number; canaryStep: number; reason: string; analysed: boolean }> {
+  const body = options?.overrideReason !== undefined ? { overrideReason: options.overrideReason } : {}
   return request(`/production-requests/${encodeURIComponent(productionRequestId)}/canary/advance`, {
     method: 'POST',
     headers: { 'X-Correlation-Id': requestId() },
-    body: JSON.stringify({ metrics }),
+    body: JSON.stringify(body),
   })
 }
 

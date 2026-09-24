@@ -157,6 +157,24 @@ class BreakGlassRecord:
 
 
 @dataclass(frozen=True)
+class ChangeFreezeRecord:
+    """A window in which deployments are refused (ADR-047)."""
+
+    id: UUID
+    name: str
+    starts_at: datetime
+    ends_at: datetime
+    environments: tuple[str, ...]
+    reason: str
+    created_by: str
+    system_id: str | None = None
+    module_id: str | None = None
+    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    cancelled_at: datetime | None = None
+    cancelled_by: str | None = None
+
+
+@dataclass(frozen=True)
 class ArtifactSbomRecord:
     """The SBOM of one immutable artifact, as CI produced it (ADR-045)."""
 

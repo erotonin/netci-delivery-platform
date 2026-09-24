@@ -34,6 +34,7 @@ from ..domain.models import (
 from ..persistence import AuditRecord, IdempotencyRow, UnitOfWork
 from .records import (
     ArtifactFindingRecord,
+    ChangeFreezeRecord,
     ArtifactRescanRecord,
     ArtifactSbomRecord,
     BreakGlassRecord,
@@ -457,6 +458,20 @@ class PlatformSession(Protocol):
     ) -> tuple[ArtifactFindingRecord, ...]: ...
 
     def record_artifact_rescan(self, record: ArtifactRescanRecord) -> None: ...
+
+    # ----------------------------------------------- change freezes (ADR-047)
+
+    def insert_change_freeze(self, record: ChangeFreezeRecord) -> None: ...
+
+    def change_freeze(self, freeze_id: UUID) -> ChangeFreezeRecord | None: ...
+
+    def change_freezes(self, *, ending_after: datetime | None = None) -> tuple[ChangeFreezeRecord, ...]:
+        """Not-cancelled freezes, those ending after `ending_after` when given, by start."""
+        ...
+
+    def cancel_change_freeze(self, freeze_id: UUID, *, cancelled_by: str, at: datetime) -> bool:
+        """Cancel once; False when it was already cancelled or does not exist."""
+        ...
 
     def artifact_rescans(self, artifact_digests: Iterable[str]) -> dict[str, ArtifactRescanRecord]: ...
 

@@ -106,6 +106,18 @@ class ProvisionAndDeployWorkflow:
     def approval_status(self) -> Approval | None:
         return self.approval
 
+    async def _rollback_or_fail(self, delivery: DeliveryInput, result: DeliveryResult, why: str) -> DeliveryResult:
+        if delivery.parameters.get("rollbackStrategy", "automatic") == "automatic":
+            await workflow.execute_activity(
+                "rollback",
+                delivery,
+                start_to_close_timeout=timedelta(minutes=10),
+                heartbeat_timeout=timedelta(seconds=45),
+                retry_policy=RetryPolicy(maximum_attempts=3),
+            )
+            return replace(result, status="rolled_back", message=f"{why}; automatic rollback completed")
+        return replace(result, status="failed", message=f"{why}; manual intervention required")
+
     @workflow.run
     async def run(self, delivery: DeliveryInput) -> DeliveryResult:
         try:
@@ -145,27 +157,29 @@ class ProvisionAndDeployWorkflow:
                 retry_policy=RetryPolicy(maximum_attempts=3),
             )
             if not healthy:
-                if delivery.parameters.get("rollbackStrategy", "automatic") == "automatic":
-                    await workflow.execute_activity(
-                        "rollback",
-                        delivery,
-                        start_to_close_timeout=timedelta(minutes=10),
-                        heartbeat_timeout=timedelta(seconds=45),
-                        retry_policy=RetryPolicy(maximum_attempts=3),
-                    )
-                    result = replace(
-                        result,
-                        status="rolled_back",
-                        message="health check failed; automatic rollback completed",
-                    )
-                else:
-                    result = replace(
-                        result,
-                        status="failed",
-                        message="health check failed; manual intervention required",
-                    )
+                result = await self._rollback_or_fail(delivery, result, "health check failed")
             else:
                 result = replace(result, status="healthy", message="health check passed")
+                # Post-deploy verification (ADR-046): the release's own metrics over the
+                # module's window. Patched so a workflow started before this existed
+                # replays the history it actually recorded.
+                verification = delivery.parameters.get("verification")
+                if isinstance(verification, dict) and workflow.patched("post-deploy-verification-v1"):
+                    window = int(verification.get("windowMinutes") or 5)
+                    verdict = await workflow.execute_activity(
+                        "verify_release",
+                        delivery,
+                        result_type=dict,
+                        start_to_close_timeout=timedelta(minutes=window + 5),
+                        heartbeat_timeout=timedelta(minutes=2),
+                        retry_policy=RetryPolicy(maximum_attempts=1),
+                    )
+                    if verdict.get("passed"):
+                        result = replace(result, message=f"health check passed; verified: {verdict.get('reason')}")
+                    else:
+                        result = await self._rollback_or_fail(
+                            delivery, result, f"post-deploy verification failed: {verdict.get('reason')}"
+                        )
         except Exception as exc:
             failed = DeliveryResult(
                 deployment_id=delivery.deployment_id,

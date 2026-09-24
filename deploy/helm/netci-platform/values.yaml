@@ -107,6 +107,14 @@ supplyChain:
   sbomRescan: trivy
   sbomRescanIntervalSeconds: 21600
 
+# ---------------------------------------------------------------- release verification
+verification:
+  # Prometheus the API (canary analysis) and the worker (post-deploy verification) query
+  # with a module's pipelineConfig.verification (ADR-046). Empty: a module that declares
+  # verification fails closed, and canaries cannot be analysed -- only advanced on an
+  # audited overrideReason.
+  prometheusUrl: ""
+
 # ---------------------------------------------------------------- inventory: DCIM
 dcim:
   provider: ""                 # netbox | http | "" (none: manual hostnames, unvalidated)

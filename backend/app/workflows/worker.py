@@ -8,6 +8,7 @@ from pathlib import Path
 from temporalio.client import Client
 from temporalio.worker import Worker
 
+from ..adapters.prometheus_metrics import build_metrics_source
 from ..adapters.signature_verifier import build_signature_verifier
 from ..logging import configure_logging
 from ..runtime_environment import is_local_runtime
@@ -43,6 +44,7 @@ async def main() -> None:
         runner,
         build_signature_verifier(),
         build_deployment_reporter(),
+        metrics_source=build_metrics_source(),
     )
     worker = Worker(
         client,
@@ -52,6 +54,7 @@ async def main() -> None:
             activities.validate_artifact,
             activities.deploy,
             activities.health_check,
+            activities.verify_release,
             activities.rollback,
             activities.report_deployment_result,
             activities.report_rollback_result,

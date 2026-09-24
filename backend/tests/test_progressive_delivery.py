@@ -5,7 +5,9 @@ from uuid import uuid4, UUID
 from fastapi.testclient import TestClient
 
 from backend.app.main import app
+from backend.app.adapters.prometheus_metrics import MetricsUnavailable
 from backend.app.domain.models import Environment, PipelineStatus
+from backend.app.domain.verification import VerificationResult, parse_verification
 from backend.app.store.postgres import PostgresDatabase
 from backend.app.traffic import default_traffic_router
 
@@ -30,6 +32,44 @@ def dev_headers():
 @pytest.fixture
 def reviewer_headers():
     return {"Authorization": "Bearer release-manager-token"}
+
+
+class _FakeMetricsSource:
+    """Configurable metrics source for testing canary analysis (ADR-046)."""
+
+    def __init__(self, error_rate: float | None = 0.005, p95_latency_ms: float | None = 120.0):
+        self.error_rate = error_rate
+        self.p95_latency_ms = p95_latency_ms
+        self.queries_executed: list[str] = []
+        self.raise_error: Exception | None = None
+
+    def query(self, promql: str) -> float | None:
+        if self.raise_error is not None:
+            raise self.raise_error
+        self.queries_executed.append(promql)
+        if "x{" in promql:
+            return self.error_rate
+        if "y{" in promql:
+            return self.p95_latency_ms
+        return None
+
+
+@pytest.fixture
+def fake_canary_metrics(monkeypatch):
+    from backend.app import main as main_module
+
+    fake = _FakeMetricsSource(error_rate=0.005, p95_latency_ms=120.0)
+    spec = parse_verification({
+        "queries": {
+            "errorRate": 'sum(x{app="{release}",track="{track}"})',
+            "p95LatencyMs": 'max(y{app="{release}"})',
+        },
+        "maxErrorRate": 0.05,
+        "maxP95LatencyMs": 1000,
+    })
+    monkeypatch.setattr(main_module.portal, "verification_spec", lambda module_id: spec)
+    monkeypatch.setattr(main_module, "metrics_source", fake)
+    return fake
 
 
 def _setup_verified_module(client, auth_headers, system_id, module_name, version_tag, runtime="kubernetes"):
@@ -133,7 +173,50 @@ def _setup_verified_module(client, auth_headers, system_id, module_name, version
     return module_id, app_id, run_id
 
 
-def test_canary_progressive_delivery_flow(client, auth_headers, dev_headers, reviewer_headers):
+def _setup_canary_request(client, auth_headers, dev_headers, reviewer_headers, module_name="search-api", version_tag="v2.0.0"):
+    sys_res = client.post(
+        "/systems",
+        headers=auth_headers,
+        json={"id": f"sys-{uuid4().hex[:8]}", "unit": "Search", "description": "Canary test"},
+    )
+    assert sys_res.status_code == 201, sys_res.text
+    system_id = sys_res.json()["id"]
+
+    mod_name = f"{module_name}-{uuid4().hex[:6]}"
+    mod_id, app_id, _ = _setup_verified_module(client, auth_headers, system_id, mod_name, version_tag)
+
+    sched = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
+    req_res = client.post(
+        "/production-requests",
+        headers=dev_headers,
+        json={
+            "modules": [{"moduleId": mod_id, "version": version_tag}],
+            "scheduledFor": sched,
+            "rollbackStrategy": "automatic",
+            "runAutomationTests": True,
+            "strategy": "canary",
+            "strategyConfig": {
+                "steps": [10, 25, 50, 100],
+                "thresholds": {"maxErrorRate": 0.05, "maxP95LatencyMs": 500},
+            },
+        },
+    )
+    assert req_res.status_code == 201, req_res.text
+    req_id = req_res.json()["id"]
+
+    appr_res = client.post(f"/production-requests/{req_id}/approve", headers=reviewer_headers, json={"comment": "approve canary"})
+    assert appr_res.status_code == 202, appr_res.text
+    dep_id = appr_res.json()["modules"][0]["deploymentId"]
+
+    from backend.app.main import platform, portal
+    canary_dep = platform.get_deployment(UUID(dep_id))
+    platform.record_deployment_result(UUID(dep_id), "healthy", "canary up", fencing_token=canary_dep.fencing_token)
+    portal.record_production_deployment_result(UUID(dep_id), "healthy", "canary up")
+
+    return req_id, dep_id, mod_id
+
+
+def test_canary_progressive_delivery_flow(client, auth_headers, dev_headers, reviewer_headers, fake_canary_metrics):
     # Setup System
     sys_res = client.post(
         "/systems",
@@ -196,7 +279,7 @@ def test_canary_progressive_delivery_flow(client, auth_headers, dev_headers, rev
     adv_res = client.post(
         f"/production-requests/{req_id}/canary/advance",
         headers=reviewer_headers,
-        json={"metrics": {"errorRate": 0.005, "p95LatencyMs": 120.0}},
+        json={},
     )
     assert adv_res.status_code == 200, adv_res.text
     adv_data = adv_res.json()
@@ -209,10 +292,12 @@ def test_canary_progressive_delivery_flow(client, auth_headers, dev_headers, rev
     assert traffic_res2.json()["routerStatus"]["canaryWeight"] == 25
 
     # Advance canary with failing metrics (error rate 8% > 5% threshold)
+    fake_canary_metrics.error_rate = 0.08
+    fake_canary_metrics.p95_latency_ms = 150.0
     fail_adv = client.post(
         f"/production-requests/{req_id}/canary/advance",
         headers=reviewer_headers,
-        json={"metrics": {"errorRate": 0.08, "p95LatencyMs": 150.0}},
+        json={},
     )
     assert fail_adv.status_code == 200, fail_adv.text
     fail_data = fail_adv.json()
@@ -228,7 +313,7 @@ def test_canary_progressive_delivery_flow(client, auth_headers, dev_headers, rev
     assert platform.get_deployment(UUID(dep_id)).status.value == "rollback_in_progress"
 
 
-def test_canary_last_step_promotes_the_stable_release(client, auth_headers, dev_headers, reviewer_headers):
+def test_canary_last_step_promotes_the_stable_release(client, auth_headers, dev_headers, reviewer_headers, fake_canary_metrics):
     sys_res = client.post(
         "/systems",
         headers=auth_headers,
@@ -261,7 +346,7 @@ def test_canary_last_step_promotes_the_stable_release(client, auth_headers, dev_
     adv = client.post(
         f"/production-requests/{req_id}/canary/advance",
         headers=reviewer_headers,
-        json={"metrics": {"errorRate": 0.0, "p95LatencyMs": 50.0}},
+        json={},
     )
     assert adv.status_code == 200, adv.text
     body = adv.json()
@@ -387,6 +472,10 @@ def test_canary_rules_that_cannot_be_applied_refuse_the_step(client, reviewer_he
         main_module.portal, "production_request",
         lambda request_id: {"deploymentId": str(uuid4()), "modules": [{"moduleId": "m-1"}]},
     )
+    monkeypatch.setattr(
+        main_module, "_canary_analysis",
+        lambda *args, **kwargs: (VerificationResult(True, "ok", 1), ""),
+    )
 
     def exploding_module(module_id):
         raise RuntimeError("projection unavailable")
@@ -396,8 +485,7 @@ def test_canary_rules_that_cannot_be_applied_refuse_the_step(client, reviewer_he
     response = client.post(
         "/production-requests/req-1/canary/advance",
         headers=reviewer_headers,
-        json={"metrics": {"errorRate": 0.0},
-              "canaryRules": {"headerName": "x-canary", "headerValue": "yes"}},
+        json={"canaryRules": {"headerName": "x-canary", "headerValue": "yes"}},
     )
 
     assert response.status_code == 502, response.text
@@ -505,6 +593,10 @@ def test_an_internal_canary_failure_is_not_reported_as_the_callers_mistake(clien
         main_module.portal, "production_request",
         lambda request_id: {"deploymentId": str(uuid4()), "modules": []},
     )
+    monkeypatch.setattr(
+        main_module, "_canary_analysis",
+        lambda *args, **kwargs: (VerificationResult(True, "ok", 1), ""),
+    )
 
     def exploding(self, *args, **kwargs):
         raise RuntimeError('relation "production_requests" does not exist')
@@ -512,7 +604,7 @@ def test_an_internal_canary_failure_is_not_reported_as_the_callers_mistake(clien
     monkeypatch.setattr(ReleasePlanCoordinator, "advance_canary", exploding)
 
     response = client.post("/production-requests/req-1/canary/advance",
-                           headers=reviewer_headers, json={"metrics": {}})
+                           headers=reviewer_headers, json={})
 
     assert response.status_code == 500, response.text
     assert response.json()["code"] == "CANARY_INTERNAL_ERROR"
@@ -529,6 +621,10 @@ def test_a_caller_mistake_on_the_canary_is_still_a_400(client, reviewer_headers,
         main_module.portal, "production_request",
         lambda request_id: {"deploymentId": str(uuid4()), "modules": []},
     )
+    monkeypatch.setattr(
+        main_module, "_canary_analysis",
+        lambda *args, **kwargs: (VerificationResult(True, "ok", 1), ""),
+    )
 
     def refuses(self, *args, **kwargs):
         raise ValueError("canary delivery needs the kubernetes runtime; module m-1 runs on docker")
@@ -536,8 +632,156 @@ def test_a_caller_mistake_on_the_canary_is_still_a_400(client, reviewer_headers,
     monkeypatch.setattr(ReleasePlanCoordinator, "advance_canary", refuses)
 
     response = client.post("/production-requests/req-1/canary/advance",
-                           headers=reviewer_headers, json={"metrics": {}})
+                           headers=reviewer_headers, json={})
 
     assert response.status_code == 400, response.text
     assert response.json()["code"] == "CANARY_ERROR"
     assert "kubernetes runtime" in response.json()["message"]
+
+
+def test_canary_advance_refuses_caller_metrics(client, auth_headers, dev_headers, reviewer_headers, fake_canary_metrics):
+    req_id, dep_id, _ = _setup_canary_request(client, auth_headers, dev_headers, reviewer_headers, "canary-caller-metrics")
+    response = client.post(
+        f"/production-requests/{req_id}/canary/advance",
+        headers=reviewer_headers,
+        json={"metrics": {"errorRate": 0.01}},
+    )
+    assert response.status_code == 422, response.text
+    assert response.json()["code"] == "CANARY_METRICS_ARE_READ_BY_NETCI"
+
+    traffic = client.get(f"/deployments/{dep_id}/traffic", headers=auth_headers).json()
+    assert traffic["trafficWeight"] == 10
+
+
+def test_canary_advance_refuses_when_no_verification_spec_and_no_override(
+    client, auth_headers, dev_headers, reviewer_headers, monkeypatch, fake_canary_metrics
+):
+    from backend.app import main as main_module
+
+    monkeypatch.setattr(main_module.portal, "verification_spec", lambda module_id: None)
+
+    req_id, dep_id, _ = _setup_canary_request(client, auth_headers, dev_headers, reviewer_headers, "canary-no-spec")
+    response = client.post(
+        f"/production-requests/{req_id}/canary/advance",
+        headers=reviewer_headers,
+        json={},
+    )
+    assert response.status_code == 409, response.text
+    body = response.json()
+    assert body["code"] == "CANARY_ANALYSIS_UNAVAILABLE"
+    assert "pipelineConfig.verification" in body["message"]
+
+    traffic = client.get(f"/deployments/{dep_id}/traffic", headers=auth_headers).json()
+    assert traffic["trafficWeight"] == 10
+
+
+def test_canary_advance_fails_409_when_prometheus_returns_none_and_not_aborted(
+    client, auth_headers, dev_headers, reviewer_headers, fake_canary_metrics
+):
+    from backend.app import main as main_module
+
+    fake_canary_metrics.error_rate = None
+    req_id, dep_id, _ = _setup_canary_request(client, auth_headers, dev_headers, reviewer_headers, "canary-prom-none")
+    status_before = client.get(f"/production-requests/{req_id}/plan", headers=auth_headers).json()["status"]
+
+    response = client.post(
+        f"/production-requests/{req_id}/canary/advance",
+        headers=reviewer_headers,
+        json={},
+    )
+    assert response.status_code == 409, response.text
+    body = response.json()
+    assert body["code"] == "CANARY_ANALYSIS_UNAVAILABLE"
+    assert "Prometheus returned no data" in body["message"]
+
+    # Status of the request/deployment unchanged and not aborted
+    plan = client.get(f"/production-requests/{req_id}/plan", headers=auth_headers).json()
+    assert plan["status"] == status_before
+
+    dep = main_module.platform.get_deployment(UUID(dep_id))
+    assert dep.status.value == "healthy"
+    assert dep.traffic_weight == 10
+
+
+def test_canary_advance_fails_409_when_metrics_unavailable(
+    client, auth_headers, dev_headers, reviewer_headers, fake_canary_metrics
+):
+    fake_canary_metrics.raise_error = MetricsUnavailable("down")
+    req_id, dep_id, _ = _setup_canary_request(client, auth_headers, dev_headers, reviewer_headers, "canary-down")
+
+    response = client.post(
+        f"/production-requests/{req_id}/canary/advance",
+        headers=reviewer_headers,
+        json={},
+    )
+    assert response.status_code == 409, response.text
+    body = response.json()
+    assert body["code"] == "CANARY_ANALYSIS_UNAVAILABLE"
+    assert "down" in body["message"]
+
+
+def test_canary_advance_with_override_reason_when_no_spec(
+    client, auth_headers, dev_headers, reviewer_headers, monkeypatch, fake_canary_metrics
+):
+    from backend.app import main as main_module
+
+    monkeypatch.setattr(main_module.portal, "verification_spec", lambda module_id: None)
+
+    req_id, dep_id, _ = _setup_canary_request(client, auth_headers, dev_headers, reviewer_headers, "canary-override")
+
+    response = client.post(
+        f"/production-requests/{req_id}/canary/advance",
+        headers=reviewer_headers,
+        json={"overrideReason": "manual verification completed by team lead"},
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["allowed"] is True
+    assert body["status"] == "advanced"
+    assert body["analysed"] is False
+    assert body["reason"].startswith("advanced WITHOUT analysis")
+
+    if hasattr(main_module.platform, "audit_records"):
+        records = main_module.platform.audit_records()
+    else:
+        with main_module.database.transaction() as tx:
+            records, _, _ = tx.audit_records_paginated(limit=100)
+
+    override_records = [r for r in records if r.event_type == "canary.advanced_without_analysis"]
+    assert len(override_records) >= 1
+    assert any(
+        r.payload.get("productionRequestId") == req_id
+        and r.payload.get("reason") == "manual verification completed by team lead"
+        for r in override_records
+    )
+
+
+def test_canary_advance_refuses_override_reason_shorter_than_10_chars(
+    client, auth_headers, dev_headers, reviewer_headers, monkeypatch, fake_canary_metrics
+):
+    from backend.app import main as main_module
+
+    monkeypatch.setattr(main_module.portal, "verification_spec", lambda module_id: None)
+
+    req_id, dep_id, _ = _setup_canary_request(client, auth_headers, dev_headers, reviewer_headers, "canary-short-reason")
+    response = client.post(
+        f"/production-requests/{req_id}/canary/advance",
+        headers=reviewer_headers,
+        json={"overrideReason": "too short"},
+    )
+    assert response.status_code == 422, response.text
+
+
+def test_canary_promql_query_contains_module_and_track(
+    client, auth_headers, dev_headers, reviewer_headers, fake_canary_metrics
+):
+    req_id, dep_id, mod_id = _setup_canary_request(client, auth_headers, dev_headers, reviewer_headers, "canary-promql-check")
+
+    response = client.post(
+        f"/production-requests/{req_id}/canary/advance",
+        headers=reviewer_headers,
+        json={},
+    )
+    assert response.status_code == 200, response.text
+    assert any(f'app="{mod_id}"' in q and 'track="canary"' in q for q in fake_canary_metrics.queries_executed)
+

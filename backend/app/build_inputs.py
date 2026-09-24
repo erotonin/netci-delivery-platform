@@ -55,6 +55,9 @@ DEPLOYMENT_CONTROLLED_KEYS: frozenset[str] = frozenset(
         # How it recovers
         "rollback", "rollback_strategy", "rollback_command", "runtime_health_verified",
         "require_approval", "approved_by", "actor", "owner", "owner_team", "app_name",
+        # Post-deploy verification is the module's (ADR-046); a caller must not be able
+        # to replace the thresholds or the queries for one run.
+        "verification",
     }
 )
 

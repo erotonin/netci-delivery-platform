@@ -55,6 +55,7 @@ from ..persistence import (
 )
 from .records import (
     ArtifactFindingRecord,
+    ChangeFreezeRecord,
     ArtifactRescanRecord,
     ArtifactSbomRecord,
     BreakGlassRecord,
@@ -2842,6 +2843,45 @@ class PostgresSession:
             (wanted,),
         )
         return {row["artifact_digest"]: ArtifactRescanRecord(**row) for row in self._cursor.fetchall()}
+
+    # ----------------------------------------------- change freezes (ADR-047)
+
+    _FREEZE_COLUMNS = ("id, name, starts_at, ends_at, environments, system_id, module_id, reason,"
+                       " created_by, created_at, cancelled_at, cancelled_by")
+
+    @staticmethod
+    def _freeze(row: dict[str, Any]) -> ChangeFreezeRecord:
+        return ChangeFreezeRecord(**{**row, "environments": tuple(row["environments"])})
+
+    def insert_change_freeze(self, record: ChangeFreezeRecord) -> None:
+        self._cursor.execute(
+            f"INSERT INTO change_freezes ({self._FREEZE_COLUMNS}) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+            (record.id, record.name, record.starts_at, record.ends_at, list(record.environments), record.system_id,
+             record.module_id, record.reason, record.created_by, record.created_at, record.cancelled_at,
+             record.cancelled_by),
+        )
+
+    def change_freeze(self, freeze_id: UUID) -> ChangeFreezeRecord | None:
+        self._cursor.execute(f"SELECT {self._FREEZE_COLUMNS} FROM change_freezes WHERE id = %s", (freeze_id,))
+        row = self._cursor.fetchone()
+        return self._freeze(row) if row else None
+
+    def change_freezes(self, *, ending_after: datetime | None = None) -> tuple[ChangeFreezeRecord, ...]:
+        query = f"SELECT {self._FREEZE_COLUMNS} FROM change_freezes WHERE cancelled_at IS NULL"
+        params: tuple[object, ...] = ()
+        if ending_after is not None:
+            query += " AND ends_at > %s"
+            params = (ending_after,)
+        self._cursor.execute(query + " ORDER BY starts_at, id", params)
+        return tuple(self._freeze(row) for row in self._cursor.fetchall())
+
+    def cancel_change_freeze(self, freeze_id: UUID, *, cancelled_by: str, at: datetime) -> bool:
+        # Conditional, so two people cancelling at once record one cancellation.
+        self._cursor.execute(
+            "UPDATE change_freezes SET cancelled_at = %s, cancelled_by = %s WHERE id = %s AND cancelled_at IS NULL",
+            (at, cancelled_by, freeze_id),
+        )
+        return self._cursor.rowcount == 1
 
     # ----------------------------------------------- catalog & self-service
 

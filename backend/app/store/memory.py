@@ -56,6 +56,7 @@ from ..persistence import (
 )
 from .records import (
     ArtifactFindingRecord,
+    ChangeFreezeRecord,
     ArtifactRescanRecord,
     ArtifactSbomRecord,
     BreakGlassRecord,
@@ -107,6 +108,7 @@ class _State:
     artifact_sboms: dict[str, ArtifactSbomRecord] = field(default_factory=dict)
     artifact_findings: dict[tuple[str, str, str, str, str], ArtifactFindingRecord] = field(default_factory=dict)
     artifact_rescans: dict[str, ArtifactRescanRecord] = field(default_factory=dict)
+    change_freezes: dict[UUID, ChangeFreezeRecord] = field(default_factory=dict)
     catalog_services: dict[str, CatalogServiceRecord] = field(default_factory=dict)
     service_dependencies: dict[UUID, ServiceDependencyRecord] = field(default_factory=dict)
     catalog_templates: dict[tuple[str, str], CatalogTemplateRecord] = field(default_factory=dict)
@@ -151,6 +153,7 @@ class _State:
             artifact_sboms=dict(self.artifact_sboms),
             artifact_findings=dict(self.artifact_findings),
             artifact_rescans=dict(self.artifact_rescans),
+            change_freezes=dict(self.change_freezes),
             catalog_services=dict(self.catalog_services),
             service_dependencies=dict(self.service_dependencies),
             catalog_templates=dict(self.catalog_templates),
@@ -1217,6 +1220,26 @@ class InMemorySession:
 
     def artifact_rescans(self, artifact_digests) -> dict[str, ArtifactRescanRecord]:
         return {d: self._state.artifact_rescans[d] for d in artifact_digests if d in self._state.artifact_rescans}
+
+    # ----------------------------------------------- change freezes (ADR-047)
+
+    def insert_change_freeze(self, record: ChangeFreezeRecord) -> None:
+        self._state.change_freezes[record.id] = record
+
+    def change_freeze(self, freeze_id: UUID) -> ChangeFreezeRecord | None:
+        return self._state.change_freezes.get(freeze_id)
+
+    def change_freezes(self, *, ending_after: datetime | None = None) -> tuple[ChangeFreezeRecord, ...]:
+        items = [f for f in self._state.change_freezes.values()
+                 if f.cancelled_at is None and (ending_after is None or f.ends_at > ending_after)]
+        return tuple(sorted(items, key=lambda f: (f.starts_at, f.id)))
+
+    def cancel_change_freeze(self, freeze_id: UUID, *, cancelled_by: str, at: datetime) -> bool:
+        current = self._state.change_freezes.get(freeze_id)
+        if current is None or current.cancelled_at is not None:
+            return False
+        self._state.change_freezes[freeze_id] = replace(current, cancelled_at=at, cancelled_by=cancelled_by)
+        return True
 
     # ----------------------------------------------- catalog & self-service
 

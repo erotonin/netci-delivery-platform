@@ -54,6 +54,7 @@ from .stage_catalog import (
 from .runtime_environment import is_local_runtime
 from .policy.rules import PolicyDecision, evaluate_artifact_evidence
 from .domain.delivery_rules import pull_request_ref
+from .domain.freezes import applicable_freeze
 from .domain.models import (
     Application,
     StageDefinition,
@@ -1824,6 +1825,13 @@ class DeliveryPlatform:
             # Built, verified and published; deploying it is a separate decision -- a
             # promotion, or a production request naming the version it became.
             return self._record_build_success(transaction, run, artifact_digest, log_lines)
+        freeze = self._active_freeze(transaction, run.application_id, run.environment)
+        if freeze is not None:
+            # The build is real and is recorded; only the deployment waits. Refusing the
+            # callback instead would lose the build's result. Promote it once the freeze ends.
+            note = (f"not deployed: {run.environment.value} is frozen until {freeze.ends_at.isoformat()} "
+                    f"({freeze.name}); promote this run after the freeze")
+            return self._record_build_success(transaction, run, artifact_digest, [*(log_lines or []), note])
 
         application = transaction.application(run.application_id)
         if application is None:
@@ -1903,6 +1911,30 @@ class DeliveryPlatform:
         if deployment.status != DeploymentStatus.DEPLOYING:
             return _CiOutcome(CiResult(updated, deployment))
         return _CiOutcome(CiResult(updated, deployment), pending_cd=(application, updated, deployment))
+
+    def _active_freeze(self, transaction: PlatformSession, application_id: UUID, environment: Environment):
+        """The change freeze that stops a deployment starting now, unless a break-glass
+        was granted for that very freeze (ADR-047). Rollbacks never ask."""
+
+        now = _now()
+        module = transaction.portal_module_for_application(application_id)
+        freeze = applicable_freeze(
+            transaction.change_freezes(ending_after=now), environment=environment.value,
+            system_id=module.system_id if module else None, module_id=module.id if module else None, at=now,
+        )
+        if freeze is None or transaction.active_break_glass("change_freeze", str(freeze.id), now) is not None:
+            return None
+        return freeze
+
+    def _refuse_during_freeze(self, transaction: PlatformSession, application_id: UUID, environment: Environment) -> None:
+        freeze = self._active_freeze(transaction, application_id, environment)
+        if freeze is not None:
+            raise DeliveryError(
+                "CHANGE_FREEZE",
+                f"{environment.value} is frozen until {freeze.ends_at.isoformat()} ({freeze.name}: {freeze.reason}); "
+                f"a break-glass on change_freeze/{freeze.id} is the way through",
+                409,
+            )
 
     def _record_build_success(
         self,
@@ -2015,6 +2047,9 @@ class DeliveryPlatform:
                 raise DeliveryError("ARTIFACT_POLICY_DENIED", decision.reason, 422)
 
             requires_approval = environment == Environment.PROD
+            if not requires_approval:
+                # Prod is checked at approval, when it starts moving.
+                self._refuse_during_freeze(transaction, application_id, environment)
             now = _now()
             # The run is what carries the server-managed target for the lease and the
             # workflow. A redeploy reuses the run that built the artifact, with the new
@@ -2389,6 +2424,9 @@ class DeliveryPlatform:
             if deployment.pipeline_run_id
             else None
         )
+        # An approval is what starts a production deployment moving, so the freeze is
+        # checked here: approving the day before a freeze does not deploy during it.
+        self._refuse_during_freeze(transaction, deployment.application_id, deployment.environment)
         unit = UnitOfWork()
         # An approval is what starts a production deployment moving, so the target is
         # claimed here. Two approvals seconds apart used to produce two workflows writing

@@ -51,10 +51,12 @@ vi.mock('./api/netciClient', async (importOriginal) => {
       activeColor: null,
     }),
     advanceCanary: vi.fn().mockResolvedValue({
-      message: 'Canary advanced',
-      deploymentId: 'dep-1234',
-      step: 3,
+      allowed: true,
+      status: 'advanced',
       trafficWeight: 50,
+      canaryStep: 3,
+      reason: 'Canary advanced to 50%',
+      analysed: true,
     }),
     abortCanary: vi.fn().mockResolvedValue({
       message: 'Canary aborted',
@@ -96,6 +98,65 @@ describe('ProductionRequestsPage (Phase 10)', () => {
     expect(screen.getByText(/Canary Traffic Allocation/i)).toBeTruthy()
     expect(screen.getByText(/Advance Step/i)).toBeTruthy()
     expect(screen.getByText(/Abort Canary/i)).toBeTruthy()
+  })
+
+  it('prompts for overrideReason on 409 CANARY_ANALYSIS_UNAVAILABLE and advances with override', async () => {
+    const client = await import('./api/netciClient')
+    const { NetciApiError } = client
+    const error409 = new NetciApiError(
+      409,
+      {
+        code: 'CANARY_ANALYSIS_UNAVAILABLE',
+        message: 'module search-api declares no verification queries (pipelineConfig.verification)',
+      },
+      'unavailable'
+    )
+    vi.mocked(client.advanceCanary)
+      .mockRejectedValueOnce(error409)
+      .mockResolvedValueOnce({
+        allowed: true,
+        status: 'advanced',
+        trafficWeight: 50,
+        canaryStep: 3,
+        reason: 'advanced WITHOUT analysis by alice: manual override for emergency deploy',
+        analysed: false,
+      })
+
+    const promptSpy = vi.spyOn(window, 'prompt').mockReturnValue('manual override for emergency deploy')
+
+    render(
+      <PortalFeedbackProvider>
+        <ProductionRequestsPage systemId="" />
+      </PortalFeedbackProvider>
+    )
+
+    const viewButton = await screen.findByLabelText(/xem/i)
+    fireEvent.click(viewButton)
+
+    const advanceButton = await screen.findByText(/Advance Step/i)
+    fireEvent.click(advanceButton)
+
+    await waitFor(() => {
+      expect(promptSpy).toHaveBeenCalledWith(
+        'netCI cannot analyse this canary: module search-api declares no verification queries (pipelineConfig.verification)\nAdvance anyway? Give a reason (at least 10 characters) -- it is recorded as an advance without analysis.'
+      )
+      expect(client.advanceCanary).toHaveBeenCalledTimes(2)
+      expect(client.advanceCanary).toHaveBeenLastCalledWith('req-canary-1', {
+        overrideReason: 'manual override for emergency deploy',
+      })
+    })
+
+    expect(await screen.findByText(/Canary advanced WITHOUT analysis/i)).toBeTruthy()
+    promptSpy.mockRestore()
+    vi.mocked(client.advanceCanary).mockReset()
+    vi.mocked(client.advanceCanary).mockResolvedValue({
+      allowed: true,
+      status: 'advanced',
+      trafficWeight: 50,
+      canaryStep: 3,
+      reason: 'Canary advanced to 50%',
+      analysed: true,
+    })
   })
 })
 

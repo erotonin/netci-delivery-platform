@@ -10,7 +10,8 @@ from uuid import UUID
 
 from .domain.models import DeploymentStatus, Environment
 from .persistence import AuditRecord, UnitOfWork
-from .traffic import CanaryAnalyzer, default_traffic_router
+from .domain.verification import VerificationResult
+from .traffic import default_traffic_router
 
 logger = logging.getLogger(__name__)
 
@@ -413,7 +414,9 @@ class ReleasePlanCoordinator:
         self,
         request_id: str,
         deployment_id: UUID,
-        metrics: dict[str, float] | None = None,
+        *,
+        analysis: VerificationResult | None,
+        override_reason: str | None = None,
         actor: str = "coordinator",
     ) -> dict[str, Any]:
         """Evaluate canary metrics and advance to the next traffic step.
@@ -433,23 +436,32 @@ class ReleasePlanCoordinator:
 
             config = request.strategy_config or {}
             steps = config.get("steps", [10, 25, 50, 100])
-            thresholds = config.get("thresholds", {})
 
-        # Evaluate metrics
-        decision = CanaryAnalyzer.evaluate(metrics, thresholds)
-        if not decision.allowed:
-            # Metrics threshold breached! Auto-abort canary
-            aborted = self.abort_canary(request_id, deployment_id, reason=decision.reason)
+        # The verdict comes from metrics netCI read itself (ADR-046). It used to be computed
+        # from metrics in the request body, and a body with none read as 0 % errors and
+        # 0 ms latency -- every canary "passed" an analysis of no data.
+        if analysis is not None and not analysis.passed:
+            aborted = self.abort_canary(request_id, deployment_id, reason=analysis.reason)
             return {
                 "allowed": False,
                 "status": "aborted",
-                "reason": decision.reason,
+                "reason": analysis.reason,
                 "canaryReleaseRetired": aborted.get("canaryReleaseRetired", False),
-                "metrics": {
-                    "errorRate": decision.error_rate,
-                    "p95LatencyMs": decision.p95_latency_ms,
-                },
             }
+        if analysis is None:
+            if not (override_reason or "").strip():
+                raise ValueError("canary analysis is unavailable and no override reason was given")
+            # Advancing without analysis is allowed only as that, on the record: never
+            # reported as a pass.
+            with self.portal._session() as transaction:
+                transaction.apply(UnitOfWork(audit=[AuditRecord(
+                    "canary.advanced_without_analysis",
+                    application_id=deployment.application_id,
+                    deployment_id=deployment_id,
+                    actor=actor,
+                    payload={"productionRequestId": request_id, "reason": override_reason},
+                )]))
+        reason = analysis.reason if analysis is not None else f"advanced WITHOUT analysis by {actor}: {override_reason}"
 
         current_weight = deployment.traffic_weight
         next_weight = None
@@ -483,7 +495,8 @@ class ReleasePlanCoordinator:
             "status": "advanced",
             "trafficWeight": next_weight,
             "canaryStep": next_step_num,
-            "reason": decision.reason,
+            "reason": reason,
+            "analysed": analysis is not None,
         }
         if next_weight >= 100:
             promotion = self._promote_canary(request_id, deployment_id, actor)

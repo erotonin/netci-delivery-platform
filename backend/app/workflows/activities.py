@@ -11,6 +11,7 @@ import tempfile
 import urllib.error
 import urllib.request
 from urllib.parse import urlsplit, urlunsplit
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Protocol
 
@@ -24,6 +25,15 @@ from ..adapters.signature_verifier import (
 )
 from ..policy.rules import PolicyViolation, evaluate_artifact_evidence, provenance_required
 from ..adapters.oci_blob import OciBlobError, fetch_blob, with_pull_host
+from ..adapters.prometheus_metrics import MetricsUnavailable, UnconfiguredMetricsSource
+from ..domain.verification import (
+    Sample,
+    VerificationConfigError,
+    VerificationSpec,
+    evaluate,
+    parse_verification,
+    render_query,
+)
 from .provision_and_deploy import DeliveryInput, DeliveryResult, RollbackResult
 
 
@@ -225,11 +235,15 @@ class DeliveryActivities:
         runtime_runner: RuntimeRunner,
         signature_verifier: SignatureVerifier | None = None,
         deployment_reporter: DeploymentReporter | None = None,
+        metrics_source=None,
     ) -> None:
         self.evidence_store = evidence_store
         self.runtime_runner = runtime_runner
         self.signature_verifier = signature_verifier or NullSignatureVerifier()
         self.deployment_reporter = deployment_reporter or UnconfiguredDeploymentReporter()
+        # Where post-deploy verification reads metrics (ADR-046). Unconfigured raises on
+        # every query, so a module that asks for verification fails closed without one.
+        self.metrics_source = metrics_source or UnconfiguredMetricsSource()
 
     @activity.defn(name="validate_artifact")
     async def validate_artifact(self, delivery: DeliveryInput) -> None:
@@ -292,6 +306,58 @@ class DeliveryActivities:
                 raise PolicyViolation(f"artifact provenance verification failed: {exc}") from exc
             activity.logger.info("artifact %s: %s", delivery.artifact_digest, provenance)
 
+    @activity.defn(name="verify_release")
+    async def verify_release(self, delivery: DeliveryInput) -> dict[str, object]:
+        """Watch the release's own metrics for the module's window, after it is healthy.
+
+        The runtime health gate proves the process answers; it says nothing about the
+        error rate once real traffic reaches it. This samples the module's queries every
+        `intervalSeconds` for `windowMinutes`, stops at the first breach, and treats a
+        metric that never returned data as a failure -- "we saw nothing" is not "fine".
+        """
+
+        try:
+            spec = parse_verification(delivery.parameters.get("verification"))
+        except VerificationConfigError as exc:
+            return {"passed": False, "reason": f"verification configuration is invalid: {exc}", "samples": 0}
+        if spec is None:
+            return {"passed": True, "reason": "no post-deploy verification configured", "samples": 0}
+        release = str(delivery.parameters.get("app_name") or delivery.release_name)
+        try:
+            queries = {
+                name: render_query(template, release=release, environment=delivery.environment, track="stable")
+                for name, template in spec.queries.items()
+            }
+        except VerificationConfigError as exc:
+            return {"passed": False, "reason": f"cannot build the verification queries: {exc}", "samples": 0}
+
+        samples: list[Sample] = []
+        last_error = ""
+        # A sample now and one every interval until the window is covered.
+        planned = spec.window_minutes * 60 // spec.interval_seconds + 1
+        while True:
+            values: dict[str, float | None] = {}
+            for name, promql in queries.items():
+                try:
+                    values[name] = await asyncio.to_thread(self.metrics_source.query, promql)
+                except MetricsUnavailable as exc:
+                    values[name] = None
+                    last_error = str(exc)
+            sample = Sample(at=datetime.now(timezone.utc), error_rate=values.get("errorRate"),
+                            p95_latency_ms=values.get("p95LatencyMs"))
+            samples.append(sample)
+            _heartbeat(f"verification sample {len(samples)}")
+            if _breaches(spec, sample) or len(samples) >= planned:
+                break
+            await asyncio.sleep(spec.interval_seconds)
+
+        verdict = evaluate(spec, samples)
+        reason = verdict.reason
+        if not verdict.passed and last_error:
+            reason += f" (last metrics error: {last_error})"
+        activity.logger.info("post-deploy verification for %s: %s", delivery.artifact_digest, reason)
+        return {"passed": verdict.passed, "reason": reason, "samples": verdict.samples}
+
     @activity.defn(name="deploy")
     async def deploy(self, delivery: DeliveryInput) -> DeliveryResult:
         runtime_deployment_id = await self.runtime_runner.deploy(delivery)
@@ -316,6 +382,14 @@ class DeliveryActivities:
     @activity.defn(name="report_rollback_result")
     async def report_rollback_result(self, result: RollbackResult) -> None:
         await self.deployment_reporter.report_rollback(result)
+
+
+def _breaches(spec: VerificationSpec, sample: Sample) -> bool:
+    return (
+        ("errorRate" in spec.queries and sample.error_rate is not None and sample.error_rate > spec.max_error_rate)
+        or ("p95LatencyMs" in spec.queries and sample.p95_latency_ms is not None
+            and sample.p95_latency_ms > spec.max_p95_latency_ms)
+    )
 
 
 def _heartbeat(detail: str) -> None:

@@ -93,6 +93,8 @@ from .readiness import probe_readiness, without_operator_detail
 from .reconciler import Reconciler
 from .retention import RetentionManager
 from .adapters.trivy_rescan import build_sbom_scanner
+from .adapters.prometheus_metrics import MetricsUnavailable, build_metrics_source
+from .domain.verification import VerificationConfigError, VerificationResult, render_query, verdict_for_canary
 from .exposure import SEVERITY_ORDER, exposure as vulnerability_exposure, rescan_in_service
 from .store import build_database
 from .store.records import (
@@ -178,6 +180,8 @@ platform = DeliveryPlatform(build_ci_launcher(), build_cd_orchestrator(), databa
 portal = PortalService(platform, database=database)
 reconciler = Reconciler(platform, platform.ci_launcher, platform.cd_orchestrator)
 sbom_scanner = build_sbom_scanner()
+# The canary's metrics come from here, never from the request (ADR-046).
+metrics_source = build_metrics_source()
 # Which replica holds which edge agent, and the commands waiting for them, are rows in
 # the same database (ADR-032); only the sockets themselves are process-local.
 fleet = AgentFleet(database)
@@ -1200,6 +1204,9 @@ class ModulePipelineConfig(StrictBody):
     #: Build inputs every run of the module gets -- NETCI_APP_DIR for a monorepo above
     #: all -- held to the same boundary as a caller's (`app.build_inputs`).
     buildInputs: dict[str, Any] | None = None
+    #: Post-deploy and canary verification queries and thresholds (ADR-046), validated by
+    #: `domain.verification.parse_verification`.
+    verification: dict[str, Any] | None = None
 
 
 class ModuleEnvironmentCreate(StrictBody):
@@ -2681,8 +2688,39 @@ def get_production_request_plan(requestId: str, principal: Principal = ReadAcces
 
 
 class AdvanceCanaryRequest(StrictBody):
+    #: Refused when non-empty (ADR-046): netCI reads the canary's metrics itself. Declared
+    #: so a client that still sends them gets a 422 naming why, not a silent drop.
     metrics: dict[str, float] = Field(default_factory=dict)
     canaryRules: dict[str, Any] = Field(default_factory=dict)
+    #: When netCI cannot analyse the canary (no queries, no Prometheus, no data), a
+    #: reviewer may still advance it -- recorded as an advance WITHOUT analysis.
+    overrideReason: str | None = Field(default=None, min_length=10, max_length=500)
+
+
+def _canary_analysis(request: dict[str, Any], deployment_id: str) -> tuple[VerificationResult | None, str]:
+    """The canary verdict from metrics netCI reads, or why there is none."""
+
+    modules = request.get("modules") or []
+    module = next((m for m in modules if str(m.get("deploymentId") or "") == deployment_id), modules[0] if modules else None)
+    if not module:
+        return None, "the production request names no module"
+    module_id = str(module.get("moduleId"))
+    spec = portal.verification_spec(module_id)
+    if spec is None:
+        return None, f"module {module_id} declares no verification queries (pipelineConfig.verification)"
+    values: dict[str, float | None] = {}
+    try:
+        for name, template in spec.queries.items():
+            values[name] = metrics_source.query(
+                render_query(template, release=module_id, environment="prod", track="canary")
+            )
+    except (MetricsUnavailable, VerificationConfigError) as exc:
+        return None, f"canary metrics could not be read: {exc}"
+    missing = [name for name, value in values.items() if value is None]
+    if missing:
+        # "Cannot tell" is not "bad": no abort, but no advance on it either.
+        return None, f"Prometheus returned no data for the canary ({', '.join(missing)})"
+    return verdict_for_canary(spec, values.get("errorRate"), values.get("p95LatencyMs")), ""
 
 
 @app.post("/production-requests/{requestId}/canary/advance")
@@ -2701,7 +2739,20 @@ def advance_canary_step(
         raise HTTPException(
             status_code=400, detail={"code": "NO_ACTIVE_DEPLOYMENT", "message": "no deployment currently active for this request"}
         )
-    metrics_data = payload.metrics if payload else {}
+    if payload and payload.metrics:
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "CANARY_METRICS_ARE_READ_BY_NETCI",
+                    "message": "netCI reads canary metrics from Prometheus itself; metrics in the request are not accepted"},
+        )
+    analysis, unavailable = _canary_analysis(existing, str(deployment_id))
+    override = (payload.overrideReason or "").strip() if payload else ""
+    if analysis is None and not override:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "CANARY_ANALYSIS_UNAVAILABLE",
+                    "message": f"{unavailable}; to advance anyway give an overrideReason -- it is recorded as an advance without analysis"},
+        )
     if payload and payload.canaryRules:
         modules = existing.get("modules") or []
         for m in modules:
@@ -2731,7 +2782,8 @@ def advance_canary_step(
                     ) from exc
     coordinator = ReleasePlanCoordinator(portal, platform)
     try:
-        return coordinator.advance_canary(requestId, UUID(str(deployment_id)), metrics_data, actor=principal.subject)
+        return coordinator.advance_canary(requestId, UUID(str(deployment_id)), analysis=analysis,
+                                          override_reason=override or None, actor=principal.subject)
     except TrafficRoutingUnavailable:
         raise
     except KeyError as exc:

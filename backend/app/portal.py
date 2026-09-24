@@ -58,6 +58,7 @@ from .store import (
     join,
 )
 from .domain.dag import compute_dag_waves, DagValidationError
+from .domain.freezes import applicable_freeze
 from .domain.delivery_rules import (
     AUTOMATIC_ENVIRONMENTS,
     DeliveryRuleError,
@@ -68,6 +69,7 @@ from .domain.delivery_rules import (
     soak_evidence,
 )
 from .build_inputs import BuildInputError, validate_build_inputs
+from .domain.verification import VerificationConfigError, VerificationSpec, parse_verification
 from .coordinator import ReleasePlanCoordinator
 
 #: Rolling window every DORA figure is computed over. Stated in the response so a
@@ -274,6 +276,13 @@ def _module_build_inputs(pipeline_config: dict[str, Any] | None) -> dict[str, An
         return validate_build_inputs(raw if raw is not None else None)
     except BuildInputError as exc:
         raise PortalError("INVALID_BUILD_INPUTS", f"pipelineConfig.buildInputs: {exc.message}", 422) from exc
+
+
+def _module_verification(pipeline_config: dict[str, Any] | None) -> VerificationSpec | None:
+    try:
+        return parse_verification((pipeline_config or {}).get("verification"))
+    except VerificationConfigError as exc:
+        raise PortalError("INVALID_VERIFICATION", f"pipelineConfig.verification: {exc}", 422) from exc
 
 
 def _prod_promotion(pipeline_config: dict[str, Any] | None) -> object:
@@ -658,6 +667,7 @@ class PortalService:
     ) -> DeliveryRules:
         application = transaction.application(application_id) if application_id else None
         _module_build_inputs(pipeline_config)
+        _module_verification(pipeline_config)
         try:
             return parse_rules(
                 rules_source(pipeline_config),
@@ -1507,7 +1517,20 @@ class PortalService:
             managed["target_namespace"] = namespace
         if kubeconfig_ref:
             managed["kubeconfig_ref"] = kubeconfig_ref
+        # Post-deploy verification (ADR-046): server-managed like the target, so a caller
+        # cannot switch it off for one run. Absent when the module declares none, or not
+        # for this environment -- and then the workflow says so rather than "verified".
+        spec = _module_verification(module.pipeline_config)
+        if spec is not None and spec.applies_to(environment.value):
+            managed["verification"] = spec.as_json()
         return {**_module_build_inputs(module.pipeline_config), **dict(supplied or {}), **managed}
+
+    def verification_spec(self, module_id: str) -> VerificationSpec | None:
+        with self._session() as transaction:
+            module = transaction.portal_module(module_id)
+            if module is None:
+                raise KeyError("module not found")
+            return _module_verification(module.pipeline_config)
 
     def build_parameters(self, module_id: str, supplied: dict[str, object] | None = None) -> dict[str, object]:
         """Build inputs alone, for a run that deploys nowhere: the module's own, then the
@@ -2095,6 +2118,19 @@ class PortalService:
                 if registered is None:
                     raise ValueError(f"version {version} is not registered for module {module_id}")
                 self._delivery_parameters(transaction, module_id, Environment.PROD)
+                # Told now, not at approval: a release scheduled into a freeze would be
+                # refused then anyway, and whoever planned it needs to know today.
+                freeze = applicable_freeze(
+                    transaction.change_freezes(ending_after=scheduled_for), environment=Environment.PROD.value,
+                    system_id=module.system_id, module_id=module_id, at=scheduled_for,
+                )
+                if freeze is not None:
+                    raise PortalError(
+                        "CHANGE_FREEZE",
+                        f"prod is frozen at {scheduled_for.isoformat()} until {freeze.ends_at.isoformat()} "
+                        f"({freeze.name}: {freeze.reason})",
+                        409,
+                    )
                 self._require_promotion_evidence(
                     transaction, module_id, Environment.PROD, str(registered.metadata.get("artifactDigest") or "")
                 )
