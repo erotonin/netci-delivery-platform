@@ -1744,5 +1744,47 @@ export function rescanVulnerabilities(): Promise<RescanResult> {
   })
 }
 
+export type ChangeFreeze = {
+  id: string
+  name: string
+  startsAt: string
+  endsAt: string
+  environments: string[]
+  systemId: string | null
+  moduleId: string | null
+  reason: string
+  createdBy: string
+  createdAt: string
+  cancelledAt: string | null
+  cancelledBy: string | null
+}
 
+export type ChangeFreezeCreate = {
+  name: string
+  startsAt: string
+  endsAt: string
+  environments: ('dev' | 'staging' | 'prod')[]
+  reason: string
+  systemId?: string | null
+  moduleId?: string | null
+}
 
+export async function listChangeFreezes(): Promise<ChangeFreeze[]> {
+  const response = await request<{ items: ChangeFreeze[] }>('/change-freezes')
+  return response.items
+}
+
+export function createChangeFreeze(payload: ChangeFreezeCreate): Promise<ChangeFreeze> {
+  return request<ChangeFreeze>('/change-freezes', {
+    method: 'POST',
+    headers: { 'X-Correlation-Id': requestId() },
+    body: JSON.stringify(payload),
+  })
+}
+
+export function cancelChangeFreeze(id: string): Promise<ChangeFreeze> {
+  return request<ChangeFreeze>(`/change-freezes/${encodeURIComponent(id)}/cancel`, {
+    method: 'POST',
+    headers: { 'X-Correlation-Id': requestId() },
+  })
+}
