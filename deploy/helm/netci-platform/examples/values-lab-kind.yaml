@@ -44,6 +44,7 @@ auth:
     issuer: http://127.0.0.1:8180/realms/netci
     audience: netci
     jwksUrl: http://172.17.0.1:8180/realms/netci/protocol/openid-connect/certs
+    discoveryUrl: http://172.17.0.1:8180/realms/netci/.well-known/openid-configuration
     browserClientId: netci-portal
     roleMap: netci-admins=platform-admin,release-managers=reviewer,engineers=developer
 

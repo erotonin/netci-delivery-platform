@@ -81,6 +81,9 @@ auth:
     issuer: ""                 # https://sso.example.com/realms/netci
     audience: netci
     jwksUrl: ""                # defaults to <issuer>/.well-known/jwks.json
+    # Where the API reads the discovery document when the public issuer URL does not
+    # resolve from inside the cluster; endpoints and issuer stay the public ones.
+    discoveryUrl: ""           # defaults to <issuer>/.well-known/openid-configuration
     browserClientId: netci-portal
     rolesClaim: groups
     teamsClaim: groups

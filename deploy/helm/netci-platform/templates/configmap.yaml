@@ -32,6 +32,9 @@ data:
   {{- if eq .Values.auth.mode "oidc" }}
   NETCI_OIDC_ISSUER: {{ required "auth.oidc.issuer is required for auth.mode=oidc" .Values.auth.oidc.issuer | quote }}
   NETCI_OIDC_AUDIENCE: {{ required "auth.oidc.audience is required" .Values.auth.oidc.audience | quote }}
+  {{- with .Values.auth.oidc.discoveryUrl }}
+  NETCI_OIDC_DISCOVERY_URL: {{ . | quote }}
+  {{- end }}
   {{- with .Values.auth.oidc.jwksUrl }}
   NETCI_OIDC_JWKS_URL: {{ . | quote }}
   {{- end }}

@@ -1696,11 +1696,16 @@ def _oidc_browser_config() -> dict[str, object] | None:
     now = time.monotonic()
     discovery = _oidc_discovery["value"]
     if discovery is None or now - float(_oidc_discovery["at"]) > 600:
+        # Where *this server* reads the discovery document, when that differs from the
+        # issuer a browser uses: inside a cluster the public issuer URL can resolve to the
+        # pod itself. The document's endpoints are still the identity provider's public
+        # ones, and the issuer checked on tokens is still NETCI_OIDC_ISSUER.
+        discovery_url = os.getenv("NETCI_OIDC_DISCOVERY_URL", "").strip() or f"{issuer}/.well-known/openid-configuration"
         try:
-            with urllib.request.urlopen(f"{issuer}/.well-known/openid-configuration", timeout=5) as response:
+            with urllib.request.urlopen(discovery_url, timeout=5) as response:
                 discovery = json.loads(response.read())
         except (OSError, ValueError) as exc:
-            logger.warning("OIDC discovery at %s failed: %s", issuer, exc)
+            logger.warning("OIDC discovery at %s failed: %s", discovery_url, exc)
             return {"issuer": issuer, "clientId": client_id, "error": "discovery_unavailable"}
         _oidc_discovery.update(at=now, value=discovery)
     assert isinstance(discovery, dict)

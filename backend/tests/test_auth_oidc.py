@@ -281,3 +281,32 @@ def test_the_subject_is_the_login_name_when_the_provider_sends_one(rsa_key, ec_k
     principal = verifier.authenticate(bearer(sign_rs256(rsa_key, claims(preferred_username="dana"))))
     assert principal.subject == "dana"
     assert verifier.authenticate(bearer(sign_rs256(rsa_key, claims()))).subject == "u-1042"
+
+
+def test_the_browser_config_reads_discovery_from_the_server_side_url_when_one_is_set(monkeypatch):
+    """Inside a cluster the public issuer can resolve to the pod itself; the discovery
+    document is then read from an internal URL, and its public endpoints are returned."""
+    import io
+    import json as _json
+
+    import app.main as main_mod
+
+    monkeypatch.setattr(main_mod.authenticator, "mode", "oidc", raising=False)
+    monkeypatch.setenv("NETCI_OIDC_BROWSER_CLIENT_ID", "netci-portal")
+    monkeypatch.setenv("NETCI_OIDC_ISSUER", "http://127.0.0.1:8180/realms/netci")
+    monkeypatch.setenv("NETCI_OIDC_DISCOVERY_URL", "http://172.17.0.1:8180/realms/netci/.well-known/openid-configuration")
+    main_mod._oidc_discovery.update(at=0.0, value=None)
+    seen = []
+
+    def fake_urlopen(url, timeout=5):
+        seen.append(url)
+        body = {"authorization_endpoint": "http://127.0.0.1:8180/realms/netci/protocol/openid-connect/auth",
+                "token_endpoint": "http://127.0.0.1:8180/realms/netci/protocol/openid-connect/token"}
+        return io.BytesIO(_json.dumps(body).encode())
+
+    monkeypatch.setattr(main_mod.urllib.request, "urlopen", fake_urlopen)
+    config = main_mod._oidc_browser_config()
+    main_mod._oidc_discovery.update(at=0.0, value=None)
+    assert seen == ["http://172.17.0.1:8180/realms/netci/.well-known/openid-configuration"]
+    assert config["issuer"] == "http://127.0.0.1:8180/realms/netci"
+    assert config["authorizationEndpoint"].startswith("http://127.0.0.1:8180/")
