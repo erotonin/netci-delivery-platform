@@ -274,6 +274,16 @@ def command_evidence(arguments: argparse.Namespace) -> int:
     print(json.dumps(response, indent=2))
     if response.get("decision") != "allow":
         fail(f"netCI supply-chain policy denied this artifact: {response.get('reason')}")
+
+    # The SBOM itself, after the evidence: netCI records it against the digest that
+    # evidence names, so it keeps what the artifact contains after this agent is gone
+    # and can rescan it for vulnerabilities published later (ADR-045).
+    try:
+        document = json.loads(sbom_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        fail("sbom.json is not JSON")
+    sbom_response = post(f"/pipeline-runs/{run_id()}/sbom", document)
+    print(f"SBOM recorded: {sbom_response.get('components', 0)} components")
     return 0
 
 

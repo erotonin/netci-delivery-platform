@@ -157,6 +157,45 @@ class BreakGlassRecord:
 
 
 @dataclass(frozen=True)
+class ArtifactSbomRecord:
+    """The SBOM of one immutable artifact, as CI produced it (ADR-045)."""
+
+    artifact_digest: str
+    application_id: UUID
+    pipeline_run_id: UUID
+    format: str
+    document: dict[str, Any]
+    component_count: int
+    recorded_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+@dataclass(frozen=True)
+class ArtifactFindingRecord:
+    artifact_digest: str
+    source: str  # ci | rescan
+    vulnerability_id: str
+    severity: str
+    package: str = ""
+    installed_version: str = ""
+    fixed_version: str = ""
+    first_seen_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    last_seen_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+
+    @property
+    def key(self) -> tuple[str, str, str, str, str]:
+        return (self.artifact_digest, self.source, self.vulnerability_id, self.package, self.installed_version)
+
+
+@dataclass(frozen=True)
+class ArtifactRescanRecord:
+    artifact_digest: str
+    scanned_at: datetime
+    status: str  # scanned | failed
+    scanner: str
+    detail: str = ""
+
+
+@dataclass(frozen=True)
 class ResourceQuotaRecord:
     id: UUID
     scope: str

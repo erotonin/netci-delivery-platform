@@ -54,6 +54,9 @@ from ..persistence import (
     VersionConflict,
 )
 from .records import (
+    ArtifactFindingRecord,
+    ArtifactRescanRecord,
+    ArtifactSbomRecord,
     BreakGlassRecord,
     CatalogServiceRecord,
     CatalogTemplateRecord,
@@ -2728,6 +2731,117 @@ class PostgresSession:
                 record.updated_at,
             ),
         )
+
+    # ----------------------------------------------- artifact contents (ADR-045)
+
+    def record_artifact_sbom(self, record: ArtifactSbomRecord) -> bool:
+        # First writer wins: a digest names immutable content, so its SBOM does not change,
+        # and a later build of the same digest must not replace what was recorded.
+        self._cursor.execute(
+            """
+            INSERT INTO artifact_sboms (artifact_digest, application_id, pipeline_run_id, format,
+                                        document, component_count, recorded_at)
+            VALUES (%s, %s, %s, %s, %s::jsonb, %s, %s)
+            ON CONFLICT (artifact_digest) DO NOTHING
+            RETURNING artifact_digest
+            """,
+            (record.artifact_digest, record.application_id, record.pipeline_run_id, record.format,
+             json.dumps(record.document), record.component_count, record.recorded_at),
+        )
+        return self._cursor.fetchone() is not None
+
+    def artifact_sbom(self, artifact_digest: str) -> ArtifactSbomRecord | None:
+        self._cursor.execute(
+            "SELECT artifact_digest, application_id, pipeline_run_id, format, document, component_count,"
+            " recorded_at FROM artifact_sboms WHERE artifact_digest = %s",
+            (artifact_digest,),
+        )
+        row = self._cursor.fetchone()
+        if row is None:
+            return None
+        return ArtifactSbomRecord(
+            artifact_digest=row["artifact_digest"], application_id=row["application_id"],
+            pipeline_run_id=row["pipeline_run_id"], format=row["format"], document=dict(row["document"]),
+            component_count=int(row["component_count"]), recorded_at=row["recorded_at"],
+        )
+
+    def artifact_sbom_digests(self, artifact_digests) -> set[str]:
+        wanted = list(dict.fromkeys(artifact_digests))
+        if not wanted:
+            return set()
+        self._cursor.execute(
+            "SELECT artifact_digest FROM artifact_sboms WHERE artifact_digest = ANY(%s)", (wanted,)
+        )
+        return {row["artifact_digest"] for row in self._cursor.fetchall()}
+
+    def replace_artifact_findings(self, artifact_digest, source, findings, now) -> None:
+        # The whole set for (digest, source) is replaced in this transaction, so a reader
+        # never sees half of one scan and half of the previous. first_seen_at survives for
+        # a finding that is still there: "known since" must not reset on every rescan.
+        self._cursor.execute(
+            "SELECT vulnerability_id, package, installed_version, first_seen_at FROM artifact_findings"
+            " WHERE artifact_digest = %s AND source = %s",
+            (artifact_digest, source),
+        )
+        first_seen = {(r["vulnerability_id"], r["package"], r["installed_version"]): r["first_seen_at"]
+                      for r in self._cursor.fetchall()}
+        self._cursor.execute(
+            "DELETE FROM artifact_findings WHERE artifact_digest = %s AND source = %s", (artifact_digest, source)
+        )
+        seen: set[tuple[str, str, str]] = set()
+        for finding in findings:
+            key = (finding.vulnerability_id, finding.package, finding.installed_version)
+            if key in seen:
+                continue
+            seen.add(key)
+            self._cursor.execute(
+                """
+                INSERT INTO artifact_findings (artifact_digest, source, vulnerability_id, package,
+                                               installed_version, severity, fixed_version,
+                                               first_seen_at, last_seen_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """,
+                (artifact_digest, source, finding.vulnerability_id, finding.package, finding.installed_version,
+                 finding.severity, finding.fixed_version, first_seen.get(key, now), now),
+            )
+
+    def artifact_findings(self, artifact_digests, vulnerability_id=None) -> tuple[ArtifactFindingRecord, ...]:
+        wanted = list(dict.fromkeys(artifact_digests))
+        if not wanted:
+            return ()
+        query = (
+            "SELECT artifact_digest, source, vulnerability_id, package, installed_version, severity,"
+            " fixed_version, first_seen_at, last_seen_at FROM artifact_findings WHERE artifact_digest = ANY(%s)"
+        )
+        params: list[object] = [wanted]
+        if vulnerability_id is not None:
+            query += " AND vulnerability_id = %s"
+            params.append(vulnerability_id)
+        self._cursor.execute(query + " ORDER BY artifact_digest, vulnerability_id, package", tuple(params))
+        return tuple(ArtifactFindingRecord(**row) for row in self._cursor.fetchall())
+
+    def record_artifact_rescan(self, record: ArtifactRescanRecord) -> None:
+        self._cursor.execute(
+            """
+            INSERT INTO artifact_rescans (artifact_digest, scanned_at, status, scanner, detail)
+            VALUES (%s, %s, %s, %s, %s)
+            ON CONFLICT (artifact_digest) DO UPDATE SET
+                scanned_at = EXCLUDED.scanned_at, status = EXCLUDED.status,
+                scanner = EXCLUDED.scanner, detail = EXCLUDED.detail
+            """,
+            (record.artifact_digest, record.scanned_at, record.status, record.scanner, record.detail[:2000]),
+        )
+
+    def artifact_rescans(self, artifact_digests) -> dict[str, ArtifactRescanRecord]:
+        wanted = list(dict.fromkeys(artifact_digests))
+        if not wanted:
+            return {}
+        self._cursor.execute(
+            "SELECT artifact_digest, scanned_at, status, scanner, detail FROM artifact_rescans"
+            " WHERE artifact_digest = ANY(%s)",
+            (wanted,),
+        )
+        return {row["artifact_digest"]: ArtifactRescanRecord(**row) for row in self._cursor.fetchall()}
 
     # ----------------------------------------------- catalog & self-service
 

@@ -34,6 +34,7 @@ logger = logging.getLogger(__name__)
 LOCK_RECONCILE = 0x6E65_7463_0001
 LOCK_OUTBOX = 0x6E65_7463_0002
 LOCK_RETENTION = 0x6E65_7463_0003
+LOCK_SBOM_RESCAN = 0x6E65_7463_0004
 
 
 def replica_identity() -> str:

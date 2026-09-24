@@ -1477,6 +1477,47 @@ paths:
               schema: { type: object, additionalProperties: true }
         '404':
           $ref: '#/components/responses/NotFound'
+  /pipeline-runs/{pipelineRunId}/sbom:
+    post:
+      operationId: recordPipelineSbom
+      summary: Upload CycloneDX SBOM for one immutable artifact
+      security:
+        - PipelineBearer: []
+      parameters:
+        - $ref: '#/components/parameters/PipelineRunId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [bomFormat, components]
+              properties:
+                bomFormat: { type: string }
+                components:
+                  type: array
+                  items: { type: object }
+      responses:
+        '202':
+          description: SBOM recorded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SbomRecorded'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          description: Payload too large
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
   /deployments/{deploymentId}/approve:
     post:
       operationId: approveDeployment
@@ -2952,6 +2993,86 @@ paths:
       responses:
         '200': { description: The latest telemetry an agent reported for this server }
         '404': { description: No agent has ever reported for this server (`TELEMETRY_UNKNOWN`); never answered with invented numbers }
+  /vulnerabilities/exposure:
+    get:
+      operationId: listRunningVulnerabilities
+      summary: Query running vulnerability exposure across modules and environments
+      parameters:
+        - name: minSeverity
+          in: query
+          required: false
+          schema:
+            type: string
+            default: HIGH
+      responses:
+        '200':
+          description: Vulnerability exposure report
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VulnerabilityExposure'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+  /vulnerabilities/{vulnerabilityId}/exposure:
+    get:
+      operationId: getVulnerabilityExposure
+      summary: Query exposure for a specific vulnerability ID across modules and environments
+      parameters:
+        - name: vulnerabilityId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Vulnerability exposure report for the requested vulnerability
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VulnerabilityExposure'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+  /vulnerabilities/rescan:
+    post:
+      operationId: rescanVulnerabilities
+      summary: Trigger SBOM rescanning of in-service artifacts
+      responses:
+        '200':
+          description: SBOM rescan results
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [scanned, failed, skippedNoSbom, scanner]
+                properties:
+                  scanned:
+                    type: array
+                    items: { type: string }
+                  failed:
+                    type: array
+                    items:
+                      type: object
+                      required: [artifactDigest, error]
+                      properties:
+                        artifactDigest: { type: string }
+                        error: { type: string }
+                  skippedNoSbom:
+                    type: array
+                    items: { type: string }
+                  scanner:
+                    type: string
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
 
 components:
   securitySchemes:
@@ -4227,5 +4348,61 @@ components:
         runtime:
           type: string
           default: docker
+    SbomRecorded:
+      type: object
+      required: [artifactDigest, components, recorded]
+      properties:
+        artifactDigest: { type: string }
+        components: { type: integer }
+        recorded: { type: boolean }
+    VulnerabilityExposure:
+      type: object
+      required: [affected, coverage]
+      properties:
+        vulnerabilityId: { type: string, nullable: true }
+        minSeverity: { type: string, nullable: true }
+        affected:
+          type: array
+          items:
+            $ref: '#/components/schemas/AffectedVulnerability'
+        coverage:
+          $ref: '#/components/schemas/VulnerabilityCoverage'
+    AffectedVulnerability:
+      type: object
+      required: [moduleId, systemId, environment, artifactDigest, pipelineRunId, vulnerabilityId, severity, package, installedVersion, fixedVersion, sources, firstSeenAt]
+      properties:
+        moduleId: { type: string }
+        systemId: { type: string }
+        environment: { type: string }
+        artifactDigest: { type: string }
+        pipelineRunId: { type: string, format: uuid }
+        vulnerabilityId: { type: string }
+        severity: { type: string }
+        package: { type: string }
+        installedVersion: { type: string }
+        fixedVersion: { type: string }
+        sources:
+          type: array
+          items: { type: string }
+        firstSeenAt: { type: string, format: date-time }
+    VulnerabilityCoverage:
+      type: object
+      required: [inService, withSbom, rescanned, rescanFailed, oldestRescanAt, notCovered]
+      properties:
+        inService: { type: integer }
+        withSbom: { type: integer }
+        rescanned: { type: integer }
+        rescanFailed: { type: integer }
+        oldestRescanAt: { type: string, format: date-time, nullable: true }
+        notCovered:
+          type: array
+          items:
+            type: object
+            required: [moduleId, environment, artifactDigest, reason]
+            properties:
+              moduleId: { type: string }
+              environment: { type: string }
+              artifactDigest: { type: string }
+              reason: { type: string }
 
 

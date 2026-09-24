@@ -93,6 +93,9 @@ data:
   NETCI_SIGNATURE_VERIFY_MODE: {{ .Values.supplyChain.signatureVerifyMode | quote }}
   NETCI_SIGNATURE_REQUIRE_TLOG: {{ .Values.supplyChain.signatureRequireTlog | quote }}
   NETCI_REQUIRE_PROVENANCE: {{ .Values.supplyChain.requireProvenance | quote }}
+  NETCI_SBOM_RESCAN: {{ .Values.supplyChain.sbomRescan | quote }}
+  NETCI_SBOM_RESCAN_INTERVAL_SECONDS: {{ .Values.supplyChain.sbomRescanIntervalSeconds | quote }}
+  NETCI_TRIVY_INSECURE: {{ .Values.registry.allowHttp | quote }}
   NETCI_COSIGN_PUBLIC_KEY_FILE: /run/secrets/netci-app/cosign.pub
 
   # inventory

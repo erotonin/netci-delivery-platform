@@ -53,7 +53,8 @@ def truncate() -> None:
                 "TRUNCATE security_evidence, delivery_events, pipeline_logs, audit_events, idempotency_records,"
                 " deployments, pipeline_runs, applications, policy_decisions, security_exceptions,"
                 " break_glass_requests, resource_quotas, catalog_services, catalog_service_dependencies,"
-                " catalog_templates, preview_environments, resource_requests RESTART IDENTITY CASCADE"
+                " catalog_templates, preview_environments, resource_requests,"
+                " artifact_sboms, artifact_findings, artifact_rescans RESTART IDENTITY CASCADE"
             )
 
 
@@ -1505,3 +1506,166 @@ def test_healthy_at_is_written_once_and_survives_later_transitions(database):
     after = DeliveryPlatform().get_deployment(deployment.id)
     assert after.status != DeploymentStatus.HEALTHY
     assert after.healthy_at == first
+
+
+# ---------------------------------------------------------------- artifact contents (ADR-045)
+
+
+def test_postgres_artifact_sbom_persistence_and_deduplication(database):
+    from datetime import datetime, timezone
+    from app.store.records import ArtifactSbomRecord
+
+    platform = DeliveryPlatform()
+    app, run = seed(platform, unique_name())
+    now = datetime.now(timezone.utc)
+    doc = {"bomFormat": "CycloneDX", "specVersion": "1.5", "components": [{"name": "openssl", "version": "3.0.1"}]}
+    record = ArtifactSbomRecord(
+        artifact_digest=DIGEST,
+        application_id=app.id,
+        pipeline_run_id=run.id,
+        format="CycloneDX",
+        document=doc,
+        component_count=1,
+        recorded_at=now,
+    )
+
+    with platform.transaction() as tx:
+        # First write succeeds
+        assert tx.record_artifact_sbom(record) is True
+        # Second write of the same digest is a no-op (first writer wins)
+        assert tx.record_artifact_sbom(record) is False
+
+    with platform.transaction() as tx:
+        loaded = tx.artifact_sbom(DIGEST)
+        assert loaded is not None
+        assert loaded.artifact_digest == DIGEST
+        assert loaded.application_id == app.id
+        assert loaded.pipeline_run_id == run.id
+        assert loaded.format == "CycloneDX"
+        assert loaded.document == doc
+        assert loaded.component_count == 1
+        assert abs((loaded.recorded_at - now).total_seconds()) < 1.0
+
+        missing = tx.artifact_sbom("sha256:" + "0" * 64)
+        assert missing is None
+
+        digests = tx.artifact_sbom_digests([DIGEST, "sha256:" + "0" * 64])
+        assert digests == {DIGEST}
+        assert tx.artifact_sbom_digests([]) == set()
+
+
+def test_postgres_artifact_findings_persistence_and_replacement(database):
+    from datetime import datetime, timedelta, timezone
+    from app.store.records import ArtifactFindingRecord
+
+    platform = DeliveryPlatform()
+    t1 = datetime.now(timezone.utc) - timedelta(hours=2)
+    t2 = datetime.now(timezone.utc)
+
+    finding1 = ArtifactFindingRecord(
+        artifact_digest=DIGEST,
+        source="rescan",
+        vulnerability_id="CVE-2024-1001",
+        package="curl",
+        installed_version="7.88.1",
+        severity="HIGH",
+        fixed_version="7.88.2",
+    )
+    finding2 = ArtifactFindingRecord(
+        artifact_digest=DIGEST,
+        source="rescan",
+        vulnerability_id="CVE-2024-1002",
+        package="glibc",
+        installed_version="2.35",
+        severity="MEDIUM",
+        fixed_version="",
+    )
+
+    with platform.transaction() as tx:
+        tx.replace_artifact_findings(DIGEST, "rescan", [finding1, finding2], t1)
+
+    with platform.transaction() as tx:
+        all_findings = tx.artifact_findings([DIGEST])
+        assert len(all_findings) == 2
+        by_vuln = tx.artifact_findings([DIGEST], vulnerability_id="CVE-2024-1001")
+        assert len(by_vuln) == 1
+        assert by_vuln[0].vulnerability_id == "CVE-2024-1001"
+        assert by_vuln[0].package == "curl"
+        assert abs((by_vuln[0].first_seen_at - t1).total_seconds()) < 1.0
+        assert abs((by_vuln[0].last_seen_at - t1).total_seconds()) < 1.0
+
+        # Non-matching digest or empty query
+        assert tx.artifact_findings([]) == ()
+        assert tx.artifact_findings(["sha256:" + "0" * 64]) == ()
+
+    # Now replace findings: CVE-2024-1001 persists (first_seen_at stays t1, last_seen_at updates to t2),
+    # CVE-2024-1002 is fixed/gone, and CVE-2024-1003 is newly added.
+    finding3 = ArtifactFindingRecord(
+        artifact_digest=DIGEST,
+        source="rescan",
+        vulnerability_id="CVE-2024-1003",
+        package="openssl",
+        installed_version="3.0.1",
+        severity="CRITICAL",
+        fixed_version="3.0.2",
+    )
+    with platform.transaction() as tx:
+        tx.replace_artifact_findings(DIGEST, "rescan", [finding1, finding3], t2)
+
+    with platform.transaction() as tx:
+        findings_after = {f.vulnerability_id: f for f in tx.artifact_findings([DIGEST])}
+        assert set(findings_after.keys()) == {"CVE-2024-1001", "CVE-2024-1003"}
+        # CVE-2024-1001 kept original first_seen_at
+        assert abs((findings_after["CVE-2024-1001"].first_seen_at - t1).total_seconds()) < 1.0
+        assert abs((findings_after["CVE-2024-1001"].last_seen_at - t2).total_seconds()) < 1.0
+        # CVE-2024-1003 has new first_seen_at and last_seen_at
+        assert abs((findings_after["CVE-2024-1003"].first_seen_at - t2).total_seconds()) < 1.0
+
+
+def test_postgres_artifact_rescan_persistence_and_update(database):
+    from datetime import datetime, timedelta, timezone
+    from app.store.records import ArtifactRescanRecord
+
+    platform = DeliveryPlatform()
+    t1 = datetime.now(timezone.utc) - timedelta(minutes=10)
+    t2 = datetime.now(timezone.utc)
+
+    record1 = ArtifactRescanRecord(
+        artifact_digest=DIGEST,
+        scanned_at=t1,
+        status="scanned",
+        scanner="trivy",
+        detail="2 finding(s)",
+    )
+
+    with platform.transaction() as tx:
+        tx.record_artifact_rescan(record1)
+
+    with platform.transaction() as tx:
+        rescans = tx.artifact_rescans([DIGEST, "sha256:" + "0" * 64])
+        assert DIGEST in rescans
+        assert rescans[DIGEST].status == "scanned"
+        assert rescans[DIGEST].scanner == "trivy"
+        assert rescans[DIGEST].detail == "2 finding(s)"
+        assert abs((rescans[DIGEST].scanned_at - t1).total_seconds()) < 1.0
+
+        assert tx.artifact_rescans([]) == {}
+        assert tx.artifact_rescans(["sha256:" + "0" * 64]) == {}
+
+    # Updating with newer rescan result replaces the record
+    record2 = ArtifactRescanRecord(
+        artifact_digest=DIGEST,
+        scanned_at=t2,
+        status="failed",
+        scanner="trivy",
+        detail="trivy did not finish within 300s",
+    )
+    with platform.transaction() as tx:
+        tx.record_artifact_rescan(record2)
+
+    with platform.transaction() as tx:
+        rescans = tx.artifact_rescans([DIGEST])
+        assert rescans[DIGEST].status == "failed"
+        assert rescans[DIGEST].detail == "trivy did not finish within 300s"
+        assert abs((rescans[DIGEST].scanned_at - t2).total_seconds()) < 1.0
+

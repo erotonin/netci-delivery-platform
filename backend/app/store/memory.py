@@ -55,6 +55,9 @@ from ..persistence import (
     VersionConflict,
 )
 from .records import (
+    ArtifactFindingRecord,
+    ArtifactRescanRecord,
+    ArtifactSbomRecord,
     BreakGlassRecord,
     CatalogServiceRecord,
     CatalogTemplateRecord,
@@ -101,6 +104,9 @@ class _State:
     security_exceptions: dict[UUID, SecurityExceptionRecord] = field(default_factory=dict)
     break_glass_requests: dict[UUID, BreakGlassRecord] = field(default_factory=dict)
     resource_quotas: dict[tuple[str, str], ResourceQuotaRecord] = field(default_factory=dict)
+    artifact_sboms: dict[str, ArtifactSbomRecord] = field(default_factory=dict)
+    artifact_findings: dict[tuple[str, str, str, str, str], ArtifactFindingRecord] = field(default_factory=dict)
+    artifact_rescans: dict[str, ArtifactRescanRecord] = field(default_factory=dict)
     catalog_services: dict[str, CatalogServiceRecord] = field(default_factory=dict)
     service_dependencies: dict[UUID, ServiceDependencyRecord] = field(default_factory=dict)
     catalog_templates: dict[tuple[str, str], CatalogTemplateRecord] = field(default_factory=dict)
@@ -142,6 +148,9 @@ class _State:
             security_exceptions=dict(self.security_exceptions),
             break_glass_requests=dict(self.break_glass_requests),
             resource_quotas=dict(self.resource_quotas),
+            artifact_sboms=dict(self.artifact_sboms),
+            artifact_findings=dict(self.artifact_findings),
+            artifact_rescans=dict(self.artifact_rescans),
             catalog_services=dict(self.catalog_services),
             service_dependencies=dict(self.service_dependencies),
             catalog_templates=dict(self.catalog_templates),
@@ -1171,6 +1180,43 @@ class InMemorySession:
 
     def set_resource_quota(self, record: ResourceQuotaRecord) -> None:
         self._state.resource_quotas[(record.scope, record.scope_id)] = record
+
+    # ----------------------------------------------- artifact contents (ADR-045)
+
+    def record_artifact_sbom(self, record: ArtifactSbomRecord) -> bool:
+        if record.artifact_digest in self._state.artifact_sboms:
+            return False
+        self._state.artifact_sboms[record.artifact_digest] = record
+        return True
+
+    def artifact_sbom(self, artifact_digest: str) -> ArtifactSbomRecord | None:
+        return self._state.artifact_sboms.get(artifact_digest)
+
+    def artifact_sbom_digests(self, artifact_digests) -> set[str]:
+        return {d for d in artifact_digests if d in self._state.artifact_sboms}
+
+    def replace_artifact_findings(self, artifact_digest, source, findings, now) -> None:
+        existing = {k: v for k, v in self._state.artifact_findings.items() if k[0] == artifact_digest and k[1] == source}
+        for key in existing:
+            del self._state.artifact_findings[key]
+        for finding in findings:
+            before = existing.get(finding.key)
+            self._state.artifact_findings[finding.key] = replace(
+                finding, first_seen_at=before.first_seen_at if before else now, last_seen_at=now,
+            )
+
+    def artifact_findings(self, artifact_digests, vulnerability_id=None) -> tuple[ArtifactFindingRecord, ...]:
+        wanted = set(artifact_digests)
+        return tuple(
+            f for f in self._state.artifact_findings.values()
+            if f.artifact_digest in wanted and (vulnerability_id is None or f.vulnerability_id == vulnerability_id)
+        )
+
+    def record_artifact_rescan(self, record: ArtifactRescanRecord) -> None:
+        self._state.artifact_rescans[record.artifact_digest] = record
+
+    def artifact_rescans(self, artifact_digests) -> dict[str, ArtifactRescanRecord]:
+        return {d: self._state.artifact_rescans[d] for d in artifact_digests if d in self._state.artifact_rescans}
 
     # ----------------------------------------------- catalog & self-service
 

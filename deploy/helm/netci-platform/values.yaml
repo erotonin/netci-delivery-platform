@@ -100,6 +100,12 @@ supplyChain:
   # dispatched (ADR-044). The shared library shipped with this chart attests it; a
   # controller on an older library has none, and its images are refused.
   requireProvenance: true
+  # netCI keeps each artifact's SBOM and rescans what is running for newly published CVEs
+  # (ADR-045). "none" disables it; the exposure API then reports every digest as
+  # "never rescanned" rather than as clean. The API image carries trivy; an air-gapped
+  # install sets registry.trivyDbRepository to a database mirror.
+  sbomRescan: trivy
+  sbomRescanIntervalSeconds: 21600
 
 # ---------------------------------------------------------------- inventory: DCIM
 dcim:

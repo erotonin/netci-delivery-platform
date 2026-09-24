@@ -92,8 +92,12 @@ from .persistence import AuditRecord, UnitOfWork
 from .readiness import probe_readiness, without_operator_detail
 from .reconciler import Reconciler
 from .retention import RetentionManager
+from .adapters.trivy_rescan import build_sbom_scanner
+from .exposure import SEVERITY_ORDER, exposure as vulnerability_exposure, rescan_in_service
 from .store import build_database
 from .store.records import (
+    ArtifactFindingRecord,
+    ArtifactSbomRecord,
     BreakGlassRecord,
     CatalogServiceRecord,
     CatalogTemplateRecord,
@@ -109,7 +113,7 @@ from .catalog.previews import PreviewEnvironmentManager, PreviewEnvironmentError
 from .catalog.resources import SelfServiceResourceManager, ResourceRequestError
 
 from .traffic import TrafficRoutingUnavailable, default_traffic_router
-from .agent_fleet import LOCK_RECONCILE, LOCK_RETENTION, AgentFleet, run_exclusively
+from .agent_fleet import LOCK_RECONCILE, LOCK_RETENTION, LOCK_SBOM_RESCAN, AgentFleet, run_exclusively
 from . import workload_identity
 from .workload_identity import (
     CallbackClaims,
@@ -173,6 +177,7 @@ configure_server_state(DatabaseServerState(database))
 platform = DeliveryPlatform(build_ci_launcher(), build_cd_orchestrator(), database=database)
 portal = PortalService(platform, database=database)
 reconciler = Reconciler(platform, platform.ci_launcher, platform.cd_orchestrator)
+sbom_scanner = build_sbom_scanner()
 # Which replica holds which edge agent, and the commands waiting for them, are rows in
 # the same database (ADR-032); only the sockets themselves are process-local.
 fleet = AgentFleet(database)
@@ -201,8 +206,9 @@ async def lifespan(application: FastAPI):
     # only ever grow (console lines, delivery events, delivered notifications, spent
     # callback tokens) are now thinned on a schedule, one replica per pass.
     retention_task = asyncio.create_task(_purge_retention_periodically())
+    rescan_task = asyncio.create_task(_rescan_sboms_periodically())
     yield
-    for task in (reconcile_task, retention_task):
+    for task in (reconcile_task, retention_task, rescan_task):
         task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await task
@@ -250,6 +256,43 @@ async def _purge_retention_periodically() -> None:
             continue
         if outcome and any(outcome.values()):
             logger.info("retention pass purged %s", outcome)
+
+
+def _sbom_rescan_interval_seconds() -> float:
+    raw = os.getenv("NETCI_SBOM_RESCAN_INTERVAL_SECONDS", "21600").strip()
+    try:
+        return max(0.0, float(raw))
+    except ValueError:
+        return 21600.0
+
+
+async def _rescan_sboms_periodically() -> None:
+    interval = _sbom_rescan_interval_seconds()
+    if interval <= 0:
+        logger.info("periodic SBOM rescanning disabled (NETCI_SBOM_RESCAN_INTERVAL_SECONDS=0)")
+        return
+    if sbom_scanner.name == "none":
+        # Not "every artifact is clean": the exposure API reports each one as never rescanned.
+        logger.info("SBOM rescanning not configured (NETCI_SBOM_RESCAN=none)")
+        return
+    delay = min(interval, 60.0)
+    logger.info("periodic SBOM rescanning every %.0fs (first pass in %.0fs)", interval, delay)
+    while True:
+        await asyncio.sleep(delay)
+        delay = interval
+        try:
+            outcome = await asyncio.to_thread(
+                run_exclusively,
+                database,
+                LOCK_SBOM_RESCAN,
+                lambda: rescan_in_service(platform, sbom_scanner),
+                describe="sbom_rescan",
+            )
+        except Exception:  # noqa: BLE001 - the loop must outlive one bad pass
+            logger.exception("SBOM rescan pass failed; will retry after %.0fs", interval)
+            continue
+        if outcome:
+            logger.info("SBOM rescan pass completed: %s", outcome)
 
 
 def _reconcile_interval_seconds() -> float:
@@ -749,6 +792,12 @@ def _visible_application_ids(principal: Principal) -> set[UUID]:
         for application in platform.list_applications()
         if _can_access_application(application, principal)
     }
+
+
+def _exposure_application_ids(principal: Principal) -> set[UUID] | None:
+    if principal.has_any(Role.PLATFORM_ADMIN):
+        return None
+    return _visible_application_ids(principal)
 
 
 def _application_owner_for_create(owner_team: str | None, principal: Principal) -> str | None:
@@ -3789,6 +3838,136 @@ def get_security_evidence(
         else:
             _authorize_callback(request, scope=Scope.CI_EVIDENCE, pipeline_run_id=pipelineRunId)
     return platform.security_evidence(pipelineRunId)
+
+
+def _findings_from_evidence(
+    evidence: dict[str, Any], digest: str, now: datetime
+) -> list[ArtifactFindingRecord]:
+    """The build's own blocking findings, in the shape `VulnerabilityScanEvidence` accepts."""
+
+    scan = evidence.get("vulnerabilityScan")
+    raw_list = (scan.get("findings") or []) if isinstance(scan, dict) else []
+    return [
+        ArtifactFindingRecord(
+            artifact_digest=digest, source="ci", vulnerability_id=str(entry["id"]).strip(),
+            severity=str(entry.get("severity") or "UNKNOWN").strip().upper(),
+            package=str(entry.get("package") or ""), installed_version=str(entry.get("installedVersion") or ""),
+            fixed_version=str(entry.get("fixedVersion") or ""), first_seen_at=now, last_seen_at=now,
+        )
+        for entry in raw_list
+        if isinstance(entry, dict) and str(entry.get("id") or "").strip()
+    ]
+
+
+@app.post("/pipeline-runs/{pipelineRunId}/sbom", status_code=status.HTTP_202_ACCEPTED)
+async def record_pipeline_sbom(
+    pipelineRunId: UUID,
+    request: Request,
+    _: Principal = PipelineAccess,
+) -> dict[str, object]:
+    _authorize_callback(request, scope=Scope.CI_EVIDENCE, pipeline_run_id=pipelineRunId)
+    raw = await request.body()
+    if len(raw) > 16 * 1024 * 1024:
+        raise HTTPException(
+            status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+            detail={"code": "SBOM_TOO_LARGE", "message": "SBOM payload exceeds maximum permitted size of 16MB"},
+        )
+    try:
+        document = json.loads(raw)
+    except (json.JSONDecodeError, ValueError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"code": "INVALID_SBOM", "message": "SBOM payload is not valid JSON"},
+        ) from exc
+    if (
+        not isinstance(document, dict)
+        or document.get("bomFormat") != "CycloneDX"
+        or not isinstance(document.get("components"), list)
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"code": "INVALID_SBOM", "message": "document must be a CycloneDX SBOM with a components list"},
+        )
+
+    run = platform.get_pipeline(pipelineRunId)
+    try:
+        evidence = platform.security_evidence(pipelineRunId)
+    except DeliveryError:
+        evidence = None
+    digest = str(evidence.get("artifactDigest") or "") if evidence else ""
+    if not digest:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": "EVIDENCE_REQUIRED_FIRST",
+                "message": "publish security evidence before the SBOM: the SBOM is recorded against the digest that evidence names",
+            },
+        )
+
+    now = datetime.now(timezone.utc)
+    components = document["components"]
+    with database.transaction() as tx:
+        record = ArtifactSbomRecord(
+            artifact_digest=digest,
+            application_id=run.application_id,
+            pipeline_run_id=pipelineRunId,
+            format="cyclonedx-json",
+            document=document,
+            component_count=len(components),
+            recorded_at=now,
+        )
+        recorded = tx.record_artifact_sbom(record)
+        ci_findings = _findings_from_evidence(evidence or {}, digest, now)
+        tx.replace_artifact_findings(digest, "ci", ci_findings, now)
+
+    return {
+        "artifactDigest": digest,
+        "components": len(components),
+        "recorded": recorded,
+    }
+
+
+# Plain `def`: these read the store synchronously, and an `async def` would run that on
+# the event loop and stall every other request while it did.
+@app.get("/vulnerabilities/exposure")
+def list_running_vulnerabilities(
+    minSeverity: str = "HIGH",
+    _: Principal = ReadAccess,
+) -> dict[str, object]:
+    sev_key = minSeverity.strip().upper()
+    if sev_key not in SEVERITY_ORDER:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "code": "INVALID_SEVERITY",
+                "message": f"minSeverity must be one of: {', '.join(SEVERITY_ORDER.keys())} (got {minSeverity!r})",
+            },
+        )
+    app_ids = _exposure_application_ids(_)
+    return vulnerability_exposure(platform, min_severity=sev_key, application_ids=app_ids)
+
+
+@app.get("/vulnerabilities/{vulnerabilityId}/exposure")
+def get_vulnerability_exposure(
+    vulnerabilityId: str,
+    _: Principal = ReadAccess,
+) -> dict[str, object]:
+    if not re.fullmatch(r"^[A-Za-z0-9][A-Za-z0-9._:-]{2,63}$", vulnerabilityId):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "code": "INVALID_VULNERABILITY_ID",
+                "message": f"vulnerabilityId must match ^[A-Za-z0-9][A-Za-z0-9._:-]{{2,63}}$ (got {vulnerabilityId!r})",
+            },
+        )
+    app_ids = _exposure_application_ids(_)
+    return vulnerability_exposure(platform, vulnerability_id=vulnerabilityId, application_ids=app_ids)
+
+
+@app.post("/vulnerabilities/rescan")
+async def rescan_vulnerabilities(_: Principal = AdminAccess) -> dict[str, object]:
+    outcome = await asyncio.to_thread(rescan_in_service, platform, sbom_scanner)
+    return outcome
 
 
 @app.post("/deployments/{deploymentId}/approve", status_code=status.HTTP_202_ACCEPTED, response_model=None)

@@ -8,7 +8,7 @@ a property of the code rather than a claim in a document.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Protocol
+from typing import Any, Protocol, Iterable
 from uuid import UUID
 
 from ..domain.models import (
@@ -33,6 +33,9 @@ from ..domain.models import (
 )
 from ..persistence import AuditRecord, IdempotencyRow, UnitOfWork
 from .records import (
+    ArtifactFindingRecord,
+    ArtifactRescanRecord,
+    ArtifactSbomRecord,
     BreakGlassRecord,
     CatalogServiceRecord,
     CatalogTemplateRecord,
@@ -429,6 +432,33 @@ class PlatformSession(Protocol):
     def get_resource_quota(self, scope: str, scope_id: str) -> ResourceQuotaRecord | None: ...
 
     def set_resource_quota(self, record: ResourceQuotaRecord) -> None: ...
+
+    # ----------------------------------------------- artifact contents (ADR-045)
+
+    def record_artifact_sbom(self, record: ArtifactSbomRecord) -> bool:
+        """Keep the first SBOM recorded for a digest; False when one already existed."""
+        ...
+
+    def artifact_sbom(self, artifact_digest: str) -> ArtifactSbomRecord | None: ...
+
+    def artifact_sbom_digests(self, artifact_digests: Iterable[str]) -> set[str]:
+        """Which of these digests have an SBOM."""
+        ...
+
+    def replace_artifact_findings(
+        self, artifact_digest: str, source: str, findings: Iterable[ArtifactFindingRecord], now: datetime
+    ) -> None:
+        """Make `findings` the whole set for (digest, source); a finding seen before
+        keeps its first_seen_at."""
+        ...
+
+    def artifact_findings(
+        self, artifact_digests: Iterable[str], vulnerability_id: str | None = None
+    ) -> tuple[ArtifactFindingRecord, ...]: ...
+
+    def record_artifact_rescan(self, record: ArtifactRescanRecord) -> None: ...
+
+    def artifact_rescans(self, artifact_digests: Iterable[str]) -> dict[str, ArtifactRescanRecord]: ...
 
     # ----------------------------------------------- catalog & self-service
 

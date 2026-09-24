@@ -10,6 +10,15 @@ ARG KUBECTL_SHA256=8efbb9435132a190920eb65a47a8c1ecf755ad85ab57a600c9bedbab460bb
 ADD https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl /kubectl
 RUN echo "${KUBECTL_SHA256}  /kubectl" | sha256sum -c - && chmod 0755 /kubectl
 
+# trivy rescans the SBOMs netCI keeps, so a CVE published after a build is found in what
+# is running (ADR-045). The same release the build agents scan with, checked against the
+# published tarball digest.
+FROM debian:bookworm-slim AS trivy
+ARG TRIVY_VERSION=0.73.0
+ARG TRIVY_SHA256=2edd39da482bb4e9831962487b68f68e3928ec3137794757f54d00383d79547b
+ADD https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz /trivy.tar.gz
+RUN echo "${TRIVY_SHA256}  /trivy.tar.gz" | sha256sum -c - && tar -xzf /trivy.tar.gz -C / trivy && chmod 0755 /trivy
+
 FROM python:3.12.10-slim-bookworm
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -31,6 +40,7 @@ COPY backend/app ./app
 # read v3 bundle signatures).
 COPY --from=cosign /ko-app/cosign /usr/local/bin/cosign
 COPY --from=kubectl /kubectl /usr/local/bin/kubectl
+COPY --from=trivy /trivy /usr/local/bin/trivy
 # The migrations and their runner travel with the API image so a Kubernetes install can
 # apply the schema as a Job before any replica starts: without them a fresh cluster came
 # up against an empty database and every request failed on a missing relation.
