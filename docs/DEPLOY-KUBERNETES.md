@@ -233,8 +233,9 @@ deployTargets:
     ansible_python_interpreter=/usr/bin/python3
 ```
 
-**Đổi Jenkins = đổi `jenkins.controllers[].url` và `username`, cộng token trong secret.**
-Mọi thứ khác về Jenkins là điều kiện ở mục 2, đã được preflight kiểm tra.
+**Nối vào Jenkins của công ty không chỉ là đổi URL.** Credential git/registry, key cosign có
+mật khẩu, folder, pod template, mạng từ agent và transparency log đều phải được chuẩn bị;
+preflight không kiểm tra hết. Làm theo [HUONG_DAN_DAU_NOI_JENKINS_THUC_TE.md](HUONG_DAN_DAU_NOI_JENKINS_THUC_TE.md).
 
 Chart **từ chối render** thay vì cài một netCI không làm được việc: thiếu `externalUrl`,
 `image.registry`, địa chỉ Temporal, issuer OIDC, registry push; hoặc không có DCIM mà vẫn bật
