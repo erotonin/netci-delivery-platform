@@ -1878,9 +1878,13 @@ export type CiCostCounters = {
   /** Never reached CI. */
   supersededBeforeAdmission: number
   supersededWhileBuilding: number
-  /** Measured: the sum of recorded stage durations. */
-  runnerSeconds: number
-  /** Stages with no recorded duration; they are not in runnerSeconds. */
+  /** Measured: dispatch to Jenkins until the run left CI -- how long runs held CI. */
+  ciSeconds: number
+  /** Finished admitted runs with no recorded exit from CI (older than it); not in ciSeconds. */
+  runsWithoutCiTiming: number
+  /** Measured: the sum of recorded stage durations; misses agent start-up and untimed stages. */
+  stageSeconds: number
+  /** Stages with no recorded duration; they are not in stageSeconds. */
   stagesWithoutDuration: number
   queueSeconds: number
   p50QueueSeconds: number | null

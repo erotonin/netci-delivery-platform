@@ -33,7 +33,7 @@ def _cost_dict(
     if price_per_runner_hour is None:
         return None
 
-    # runnerSeconds / 3600 * price
+    # ciSeconds / 3600 * price
     price = Decimal(str(price_per_runner_hour))
     measured_cost = (Decimal(str(runner_seconds)) * price) / Decimal(3600)
     measured_str = str(measured_cost.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
@@ -95,26 +95,36 @@ def ci_cost(
         superseded_before_admission = sum(1 for r in superseded_runs if r.admitted_at is None)
         superseded_while_building = sum(1 for r in superseded_runs if r.admitted_at is not None)
 
-        app_runner_seconds = 0.0
+        app_stage_seconds = 0.0
         stages_without_duration = 0
-        succeeded_run_runner_seconds: list[float] = []
+        app_ci_seconds = 0.0
+        runs_without_ci_timing = 0
+        succeeded_run_ci_seconds: list[float] = []
 
         for run in windowed_runs:
-            stages = platform.list_pipeline_stages(run.id)
-            run_seconds = 0.0
-            for stage in stages:
+            for stage in platform.list_pipeline_stages(run.id):
                 if stage.duration_ms is not None:
-                    run_seconds += stage.duration_ms / 1000.0
+                    app_stage_seconds += stage.duration_ms / 1000.0
                 else:
                     stages_without_duration += 1
-            app_runner_seconds += run_seconds
-            if run.status == PipelineStatus.SUCCEEDED:
-                succeeded_run_runner_seconds.append(run_seconds)
+            # How long the run held CI: dispatched to Jenkins until it left CI. The stage
+            # sum misses the agent starting and untimed stages, so it is not the cost.
+            if run.admitted_at is None or run.status in (PipelineStatus.QUEUED, PipelineStatus.RUNNING):
+                continue
+            if run.ci_finished_at is None:
+                runs_without_ci_timing += 1
+                continue
+            held = max(0.0, (run.ci_finished_at - run.admitted_at).total_seconds())
+            app_ci_seconds += held
+            if run.artifact_digest:
+                # A build that ran to the end: it produced its artifact, whatever the
+                # deployment after it did. That is what a superseded run would have cost.
+                succeeded_run_ci_seconds.append(held)
 
-        rounded_runner_seconds = round(app_runner_seconds, 1)
+        rounded_runner_seconds = round(app_ci_seconds, 1)
 
-        if succeeded_run_runner_seconds:
-            median_succeeded = float(statistics.median(succeeded_run_runner_seconds))
+        if succeeded_run_ci_seconds:
+            median_succeeded = float(statistics.median(succeeded_run_ci_seconds))
             estimated_avoided_runner_seconds: float | None = round(
                 superseded_before_admission * median_succeeded, 1
             )
@@ -153,7 +163,9 @@ def ci_cost(
             "superseded": superseded_count,
             "supersededBeforeAdmission": superseded_before_admission,
             "supersededWhileBuilding": superseded_while_building,
-            "runnerSeconds": rounded_runner_seconds,
+            "ciSeconds": rounded_runner_seconds,
+            "runsWithoutCiTiming": runs_without_ci_timing,
+            "stageSeconds": round(app_stage_seconds, 1),
             "stagesWithoutDuration": stages_without_duration,
             "queueSeconds": queue_seconds,
             "p50QueueSeconds": p50_queue,
@@ -171,7 +183,9 @@ def ci_cost(
     total_superseded = sum(a["superseded"] for a in application_results)
     total_superseded_before = sum(a["supersededBeforeAdmission"] for a in application_results)
     total_superseded_while = sum(a["supersededWhileBuilding"] for a in application_results)
-    total_runner_seconds = round(sum(a["runnerSeconds"] for a in application_results), 1)
+    total_runner_seconds = round(sum(a["ciSeconds"] for a in application_results), 1)
+    total_stage_seconds = round(sum(a["stageSeconds"] for a in application_results), 1)
+    total_without_timing = sum(a["runsWithoutCiTiming"] for a in application_results)
     total_stages_without_duration = sum(a["stagesWithoutDuration"] for a in application_results)
     total_queue_seconds = round(sum(a["queueSeconds"] for a in application_results), 1)
 
@@ -213,7 +227,9 @@ def ci_cost(
         "superseded": total_superseded,
         "supersededBeforeAdmission": total_superseded_before,
         "supersededWhileBuilding": total_superseded_while,
-        "runnerSeconds": total_runner_seconds,
+        "ciSeconds": total_runner_seconds,
+        "runsWithoutCiTiming": total_without_timing,
+        "stageSeconds": total_stage_seconds,
         "stagesWithoutDuration": total_stages_without_duration,
         "queueSeconds": total_queue_seconds,
         "p50QueueSeconds": total_p50_queue,
@@ -230,10 +246,11 @@ def ci_cost(
             "to": effective_now.isoformat(),
         },
         "method": {
-            "runnerSeconds": "sum of recorded stage durations",
+            "ciSeconds": "dispatch to Jenkins until the run left CI, summed over finished admitted runs",
+            "stageSeconds": "sum of recorded stage durations (misses agent start-up and untimed stages)",
             "estimatedAvoidedRunnerSeconds": (
-                "superseded-before-admission runs x median runner seconds of the application's "
-                "succeeded runs in the window"
+                "superseded-before-admission runs x median ciSeconds of the application's "
+                "runs in the window that built their artifact"
             ),
         },
         "applications": application_results,

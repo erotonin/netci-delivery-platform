@@ -387,6 +387,10 @@ class InMemorySession:
                     raise ConcurrentModification(f"pipeline run {run.id} already exists")
             elif current is None or current.version != expected_version:
                 raise ConcurrentModification(f"pipeline run {run.id} changed since it was read")
+            if current is not None and current.ci_finished_at is not None:
+                # Written once, like the PostgreSQL COALESCE: a writer holding an older copy
+                # of the run must not move when it left CI.
+                run = replace(run, ci_finished_at=current.ci_finished_at)
             state.runs[run.id] = run
             state.logs.setdefault(run.id, [])
         for deployment, expected_version in unit.deployments:

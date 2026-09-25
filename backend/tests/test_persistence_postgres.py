@@ -1871,3 +1871,23 @@ def test_a_preview_name_owned_by_another_application_is_not_taken_over(database)
     with db.transaction() as session:
         kept = session.preview_environment("shared-pr-3")
     assert kept.application_id == owner.id and kept.url == "http://a.example"
+
+
+def test_when_a_run_left_ci_is_written_once_even_by_a_stale_copy(database):
+    from dataclasses import replace
+
+    from app.persistence import UnitOfWork
+    from app.store.postgres import PostgresDatabase
+
+    platform = DeliveryPlatform()
+    application, run = seed(platform, unique_name())
+    platform.record_ci_result(run.id, PipelineStatus.RUNNING.value, None, ["stage=build"])
+    platform.record_ci_result(run.id, PipelineStatus.SUCCEEDED.value, DIGEST, ["stage=publish"])
+    left = platform.get_pipeline(run.id)
+    assert left.admitted_at is not None and left.ci_finished_at is not None
+
+    db = PostgresDatabase(database)
+    with db.transaction() as session:
+        session.apply(UnitOfWork(runs=[(replace(left, ci_finished_at=None, version=left.version + 1), left.version)]))
+    with db.transaction() as session:
+        assert session.pipeline_run(run.id).ci_finished_at == left.ci_finished_at

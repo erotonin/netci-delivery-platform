@@ -106,6 +106,9 @@ class PipelineRun:
     concurrency_group: str | None = None
     #: The newer run of the same group that cancelled this one.
     superseded_by: UUID | None = None
+    #: When the run first left CI (terminal, or on to approval). With admitted_at, how long
+    #: it held CI capacity; None for runs that have not left it, or predate the column.
+    ci_finished_at: datetime | None = None
     version: int = 1
     created_at: datetime = field(default_factory=utc_now)
     updated_at: datetime = field(default_factory=utc_now)

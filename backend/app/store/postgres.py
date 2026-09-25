@@ -94,7 +94,7 @@ RUN_COLUMNS = (
     "id, application_id, status, commit_sha, branch, environment, parameters, correlation_id,"
     " jenkins_run_id, workflow_id, artifact_digest, started_by, console_url, retry_of,"
     " config_revision_id, deploy_after_build, publish_artifact, release_tag, trigger,"
-    " admitted_at, concurrency_group, superseded_by,"
+    " admitted_at, concurrency_group, superseded_by, ci_finished_at,"
     " version, created_at, updated_at"
 )
 STAGE_COLUMNS = (
@@ -460,6 +460,7 @@ def _run(row: dict[str, Any]) -> PipelineRun:
         admitted_at=row.get("admitted_at"),
         concurrency_group=row.get("concurrency_group"),
         superseded_by=row.get("superseded_by"),
+        ci_finished_at=row.get("ci_finished_at"),
         version=int(row["version"] or 1),
         created_at=row["created_at"],
         updated_at=row["updated_at"],
@@ -1161,10 +1162,10 @@ class PostgresSession:
                                            artifact_digest, correlation_id, started_by,
                                            console_url, retry_of, config_revision_id,
                                            deploy_after_build, publish_artifact, release_tag, trigger,
-                                           admitted_at, concurrency_group, superseded_by,
+                                           admitted_at, concurrency_group, superseded_by, ci_finished_at,
                                            version, created_at, updated_at)
                 VALUES (%s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                        %s, %s, %s, %s::jsonb, %s, %s, %s, %s, %s, %s)
+                        %s, %s, %s, %s::jsonb, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
                     run.id,
@@ -1189,6 +1190,7 @@ class PostgresSession:
                     run.admitted_at,
                     run.concurrency_group,
                     run.superseded_by,
+                    run.ci_finished_at,
                     run.version,
                     run.created_at,
                     run.updated_at,
@@ -1200,7 +1202,7 @@ class PostgresSession:
             UPDATE pipeline_runs
                SET status = %s, parameters = %s::jsonb, jenkins_run_id = %s, workflow_id = %s,
                    artifact_digest = %s, console_url = %s, admitted_at = %s, superseded_by = %s,
-                   version = %s, updated_at = %s
+                   ci_finished_at = COALESCE(ci_finished_at, %s), version = %s, updated_at = %s
              WHERE id = %s AND version = %s
             """,
             (
@@ -1212,6 +1214,7 @@ class PostgresSession:
                 run.console_url,
                 run.admitted_at,
                 run.superseded_by,
+                run.ci_finished_at,
                 run.version,
                 run.updated_at,
                 run.id,

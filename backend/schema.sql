@@ -1147,3 +1147,12 @@ CREATE INDEX IF NOT EXISTS idx_pipeline_runs_concurrency_group
 ALTER TABLE resource_quotas ADD COLUMN IF NOT EXISTS max_queued_pipelines INTEGER NOT NULL DEFAULT 50;
 ALTER TABLE resource_quotas DROP CONSTRAINT IF EXISTS resource_quotas_max_queued_positive;
 ALTER TABLE resource_quotas ADD CONSTRAINT resource_quotas_max_queued_positive CHECK (max_queued_pipelines > 0);
+
+-- >>> migration: 0034_pipeline_run_ci_finished_at.sql
+-- When a run left CI: its first move out of queued/running, to a terminal state or on to
+-- approval. With admitted_at it measures how long the run held CI capacity, which the sum
+-- of stage durations does not: it misses the agent pod starting and a checkout reported
+-- without timings (on the lab, 17 s of stages in a 46 s build). Not backfilled: for runs
+-- written before this, nobody recorded it, and inventing it from updated_at would make a
+-- later deployment's timestamp look like a build's.
+ALTER TABLE pipeline_runs ADD COLUMN IF NOT EXISTS ci_finished_at TIMESTAMPTZ;

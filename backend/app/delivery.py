@@ -307,6 +307,7 @@ class DeliveryPlatform:
     def _apply(self, session: PlatformSession, unit: UnitOfWork) -> None:
         """Write one unit of work, translating storage failures into API answers."""
 
+        self._stamp_ci_finished(unit)
         try:
             session.apply(unit)
         except ConcurrentModification as exc:
@@ -321,6 +322,20 @@ class DeliveryPlatform:
             raise DeliveryError(
                 "PERSISTENCE_UNAVAILABLE", f"cannot persist delivery state: {exc}", 503
             ) from exc
+
+    @staticmethod
+    def _stamp_ci_finished(unit: UnitOfWork) -> None:
+        """Record when a dispatched run first leaves CI, at the one place every run write
+        passes through -- nine transitions do it, and a stamp set at each would be missed
+        at the tenth. An update (expected version set) of an admitted run to anything but
+        queued or running, not stamped yet, is that moment."""
+
+        now = None
+        for index, (run, expected_version) in enumerate(unit.runs):
+            if (expected_version is not None and run.admitted_at is not None and run.ci_finished_at is None
+                    and run.status not in {PipelineStatus.QUEUED, PipelineStatus.RUNNING}):
+                now = now or _now()
+                unit.runs[index] = (replace(run, ci_finished_at=now), expected_version)
 
     def _commit(self, unit: UnitOfWork, session: PlatformSession | None = None) -> None:
         """Apply a unit of work in its own transaction, or in the caller's."""

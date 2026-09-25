@@ -3293,10 +3293,11 @@ paths:
       operationId: getCiCost
       summary: CI capacity consumed (measured) and avoided by supersession (estimated)
       description: >-
-        Over the applications the caller may see. runnerSeconds is the sum of recorded stage
-        durations; estimatedAvoidedRunnerSeconds is superseded-before-admission runs times the
-        median runner seconds of the application's succeeded runs, and null when there is none
-        to estimate from. cost is null unless NETCI_CI_PRICE_PER_RUNNER_HOUR is configured --
+        Over the applications the caller may see. ciSeconds is how long runs held CI, from
+        dispatch until they left it; stageSeconds is the sum of recorded stage durations, which
+        misses agent start-up. estimatedAvoidedRunnerSeconds is superseded-before-admission runs
+        times the median ciSeconds of the application's runs that built their artifact, and
+        null when there is none to estimate from. cost is null unless NETCI_CI_PRICE_PER_RUNNER_HOUR is configured --
         never 0 for "not configured".
       parameters:
         - name: days
@@ -4011,6 +4012,14 @@ components:
             newer run of the group cancels a waiting one, and a building one when the
             trigger's cancelInProgress says so. Null for tag, manual and retried runs.
         supersededBy: { type: string, format: uuid, nullable: true, description: The newer run that cancelled this one. }
+        ciFinishedAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: >-
+            When the run first left CI (terminal, or on to approval). With admittedAt, how long
+            it held CI capacity. Null while it is still in CI, if it was never admitted, or for
+            runs written before this was recorded.
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
     PromotionCreate:
@@ -4919,7 +4928,9 @@ components:
         superseded: { type: integer }
         supersededBeforeAdmission: { type: integer, description: Never reached CI. }
         supersededWhileBuilding: { type: integer }
-        runnerSeconds: { type: number, description: Measured -- sum of recorded stage durations. }
+        ciSeconds: { type: number, description: Measured -- dispatch to Jenkins until the run left CI, over finished admitted runs. }
+        runsWithoutCiTiming: { type: integer, description: Finished admitted runs with no recorded ciFinishedAt (older than the column); not in ciSeconds. }
+        stageSeconds: { type: number, description: Measured -- sum of recorded stage durations; misses agent start-up and untimed stages. }
         stagesWithoutDuration: { type: integer }
         queueSeconds: { type: number, description: Measured -- admittedAt minus createdAt, summed over admitted runs. }
         p50QueueSeconds: { type: number, nullable: true }

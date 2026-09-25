@@ -64,7 +64,12 @@ function CounterCells({ counters, method, showCost }: { counters: CiCostCounters
         <small>while building: {counters.supersededWhileBuilding}</small>
       </span>
     </td>
-    <td>{formatSeconds(counters.runnerSeconds)} <small className="measured-tag">measured</small></td>
+    <td>
+      <span className="status-stack">
+        <span>{formatSeconds(counters.ciSeconds)} <small className="measured-tag">measured</small></span>
+        <small title="Sum of recorded stage durations; misses agent start-up and untimed stages">stages: {formatSeconds(counters.stageSeconds)}</small>
+      </span>
+    </td>
     <td>{queueText(counters.p50QueueSeconds)} / {queueText(counters.p95QueueSeconds)}</td>
     <td><EstimatedAvoided counters={counters} method={method} /></td>
     {showCost && <td><CostCell counters={counters} method={method} /></td>}
@@ -108,7 +113,7 @@ export function CiCostPage() {
   )
 
   const estimateMethod = data?.method.estimatedAvoidedRunnerSeconds ?? ''
-  const measuredMethod = data?.method.runnerSeconds ?? ''
+  const measuredMethod = data?.method.ciSeconds ?? ''
   // Pricing is one server setting, so the total's cost says whether any row can have one.
   const showCost = data !== null && data.total.cost !== null
 
@@ -137,7 +142,13 @@ export function CiCostPage() {
           {data.total.stagesWithoutDuration > 0 && (
             <div className="inline-warning" role="status" data-testid="ci-cost-stages-without-duration">
               <AlertTriangle size={14} />
-              {data.total.stagesWithoutDuration} stage(s) have no recorded duration and are not counted in runner time.
+              {data.total.stagesWithoutDuration} stage(s) have no recorded duration and are not counted in the stage sum.
+            </div>
+          )}
+          {data.total.runsWithoutCiTiming > 0 && (
+            <div className="inline-warning" role="status" data-testid="ci-cost-untimed-runs">
+              <AlertTriangle size={14} />
+              {data.total.runsWithoutCiTiming} finished run(s) predate CI timing and are not counted in CI time.
             </div>
           )}
           {!showCost && (
@@ -152,7 +163,7 @@ export function CiCostPage() {
                   <th>Runs</th>
                   <th>Succeeded / failed / cancelled</th>
                   <th>Superseded</th>
-                  <th>Runner time (measured)</th>
+                  <th>CI time (measured)</th>
                   <th>Queue p50 / p95</th>
                   <th>Estimated avoided runner time</th>
                   {showCost && <th>Cost</th>}
@@ -184,7 +195,7 @@ export function CiCostPage() {
           </div>
 
           <ul className="ci-cost-footnotes" data-testid="ci-cost-method">
-            <li><small className="measured-tag">measured</small> Runner time: {measuredMethod}.</li>
+            <li><small className="measured-tag">measured</small> CI time: {measuredMethod}.</li>
             <li><span className="estimate-tag">estimate</span> ≈ Estimated avoided runner time: {estimateMethod}.</li>
             <li>Superseded runs end cancelled, so they are also counted in Cancelled (ADR-050).</li>
           </ul>

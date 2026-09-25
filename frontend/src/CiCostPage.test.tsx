@@ -22,7 +22,9 @@ function counters(overrides: Partial<CiCostCounters> = {}): CiCostCounters {
     superseded: 10,
     supersededBeforeAdmission: 9,
     supersededWhileBuilding: 1,
-    runnerSeconds: 3725,
+    ciSeconds: 3725,
+    runsWithoutCiTiming: 0,
+    stageSeconds: 1800,
     stagesWithoutDuration: 0,
     queueSeconds: 90,
     p50QueueSeconds: 4,
@@ -36,16 +38,16 @@ function counters(overrides: Partial<CiCostCounters> = {}): CiCostCounters {
 function response(overrides: Partial<CiCost> = {}): CiCost {
   return {
     window: { days: 30, from: '2026-08-26T00:00:00+00:00', to: '2026-09-25T00:00:00+00:00' },
-    method: { runnerSeconds: 'sum of recorded stage durations', estimatedAvoidedRunnerSeconds: METHOD },
+    method: { ciSeconds: 'dispatch to Jenkins until the run left CI', stageSeconds: 'sum of recorded stage durations', estimatedAvoidedRunnerSeconds: METHOD },
     applications: [
       { ...counters(), applicationId: 'app-payments', name: 'payments-api' },
       {
-        ...counters({ runs: 3, succeeded: 0, failed: 3, cancelled: 0, superseded: 0, supersededBeforeAdmission: 0, supersededWhileBuilding: 0, runnerSeconds: 42, estimatedAvoidedRunnerSeconds: null, p50QueueSeconds: null, p95QueueSeconds: null }),
+        ...counters({ runs: 3, succeeded: 0, failed: 3, cancelled: 0, superseded: 0, supersededBeforeAdmission: 0, supersededWhileBuilding: 0, ciSeconds: 42, estimatedAvoidedRunnerSeconds: null, p50QueueSeconds: null, p95QueueSeconds: null }),
         applicationId: 'app-ledger',
         name: 'ledger',
       },
     ],
-    total: { ...counters({ runs: 15, runnerSeconds: 3767 }), estimatedAvoidedIncomplete: false },
+    total: { ...counters({ runs: 15, ciSeconds: 3767 }), estimatedAvoidedIncomplete: false },
     ...overrides,
   }
 }

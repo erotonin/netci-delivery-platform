@@ -980,6 +980,7 @@ def pipeline_json(item: PipelineRun) -> dict[str, object]:
         "admittedAt": item.admitted_at.isoformat() if item.admitted_at else None,
         "concurrencyGroup": item.concurrency_group,
         "supersededBy": str(item.superseded_by) if item.superseded_by else None,
+        "ciFinishedAt": item.ci_finished_at.isoformat() if item.ci_finished_at else None,
         "createdAt": item.created_at.isoformat(),
         "updatedAt": item.updated_at.isoformat(),
     }
