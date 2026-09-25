@@ -486,6 +486,24 @@ function NewRequest({
       ])
     )
   )
+
+  useEffect(() => {
+    setDrafts((prev) => {
+      const next = { ...prev }
+      availableModules.forEach((m, idx) => {
+        if (!next[m.id]) {
+          next[m.id] = {
+            moduleId: m.id,
+            version: m.versions[0] ?? '',
+            deploymentOrder: idx + 1,
+            dependencies: [],
+          }
+        }
+      })
+      return next
+    })
+  }, [availableModules])
+
   const [scheduledFor, setScheduledFor] = useState(localScheduleDefault)
   const [review, setReview] = useState(false)
   const [strategy, setStrategy] = useState<'rolling' | 'canary' | 'blue_green'>('rolling')
@@ -497,14 +515,33 @@ function NewRequest({
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
 
-  const toggle = (id: string) =>
-    setSelected((current) =>
-      current.includes(id) ? current.filter((item) => item !== id) : [...current, id]
-    )
+  const toggle = (id: string) => {
+    setSelected((current) => {
+      const isSelected = current.includes(id)
+      if (!isSelected && !drafts[id]) {
+        const mod = availableModules.find((m) => m.id === id)
+        setDrafts((prev) => ({
+          ...prev,
+          [id]: {
+            moduleId: id,
+            version: mod?.versions[0] ?? '',
+            deploymentOrder: current.length + 1,
+            dependencies: [],
+          },
+        }))
+      }
+      return isSelected ? current.filter((item) => item !== id) : [...current, id]
+    })
+  }
 
   const toggleDependency = (moduleId: string, depId: string) => {
     setDrafts((prev) => {
-      const cur = prev[moduleId]
+      const cur = prev[moduleId] || {
+        moduleId,
+        version: availableModules.find((m) => m.id === moduleId)?.versions[0] ?? '',
+        deploymentOrder: 1,
+        dependencies: [],
+      }
       const deps = cur.dependencies.includes(depId)
         ? cur.dependencies.filter((d) => d !== depId)
         : [...cur.dependencies, depId]
@@ -517,12 +554,21 @@ function NewRequest({
     setError('')
     try {
       await onCreate({
-        modules: selected.map((id) => ({
-          moduleId: drafts[id].moduleId,
-          version: drafts[id].version,
-          deploymentOrder: drafts[id].deploymentOrder,
-          dependencies: drafts[id].dependencies,
-        })),
+        modules: selected.map((id) => {
+          const mod = availableModules.find((m) => m.id === id)
+          const d = drafts[id] || {
+            moduleId: id,
+            version: mod?.versions[0] ?? '',
+            deploymentOrder: 1,
+            dependencies: [],
+          }
+          return {
+            moduleId: d.moduleId,
+            version: d.version,
+            deploymentOrder: d.deploymentOrder,
+            dependencies: d.dependencies,
+          }
+        }),
         scheduledFor: toOffsetIso(scheduledFor),
         rollbackStrategy: rollback,
         runAutomationTests: automation,
@@ -625,8 +671,14 @@ function NewRequest({
               </div>
               <div className="deployment-order">
                 {selected.map((id) => {
-                  const module = availableModules.find((item) => item.id === id)!
-                  const draft = drafts[id]
+                  const module = availableModules.find((item) => item.id === id)
+                  if (!module) return null
+                  const draft = drafts[id] || {
+                    moduleId: id,
+                    version: module.versions[0] ?? '',
+                    deploymentOrder: selected.indexOf(id) + 1,
+                    dependencies: [],
+                  }
                   const otherSelected = selected.filter((otherId) => otherId !== id)
                   return (
                     <article key={id}>
@@ -839,7 +891,7 @@ function NewRequest({
           <div className="review-grid">
             <div>
               <span>Modules</span>
-              <strong>{selected.map((id) => `${availableModules.find((item) => item.id === id)?.name} ${drafts[id]?.version || ''}`.trim()).join(', ')}</strong>
+              <strong>{selected.map((id) => `${availableModules.find((item) => item.id === id)?.name ?? id} ${drafts[id]?.version || availableModules.find((item) => item.id === id)?.versions[0] || ''}`.trim()).join(', ')}</strong>
             </div>
             <div>
               <span>Strategy</span>

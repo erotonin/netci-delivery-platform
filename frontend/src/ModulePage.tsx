@@ -586,7 +586,14 @@ function PipelineTab({ moduleId, pipelineConfig, deploymentEnvironments, initial
     let active = true
     setBranchCommits(null)
     getModuleGitCommits(moduleId, modalBranch.trim())
-      .then((result) => { if (active) setBranchCommits(result) })
+      .then((result) => {
+        if (active) {
+          setBranchCommits(result)
+          if (result && result.items && result.items.length > 0) {
+            setModalRevision((prev) => (prev.trim() ? prev : result.items[0].sha))
+          }
+        }
+      })
       .catch((cause) => { if (active) setBranchCommits({ moduleId, ref: modalBranch, items: [], error: cause instanceof Error ? cause.message : String(cause) }) })
     return () => { active = false }
   }, [moduleId, modalBranch, runModalPipeline])
