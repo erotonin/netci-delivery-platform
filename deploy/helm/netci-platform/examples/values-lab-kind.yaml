@@ -18,7 +18,7 @@ global:
 
 image:
   registry: 172.17.0.1:55000/netci
-  tag: 0.2.0-rc14
+  tag: 0.2.0-rc15
 
 existingSecret: netci-app
 
