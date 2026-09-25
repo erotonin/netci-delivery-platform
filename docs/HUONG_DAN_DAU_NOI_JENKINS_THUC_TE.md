@@ -1,5 +1,7 @@
 # Tích hợp netCI với Jenkins của công ty
 
+> Cần danh sách lệnh để làm theo từng bước: **[RUNBOOK-NOI-JENKINS-CONG-TY.md](RUNBOOK-NOI-JENKINS-CONG-TY.md)**.
+
 Tài liệu này là **trình tự làm từ đầu đến cuối** để nối netCI vào một Jenkins đang chạy
 của công ty, kèm lý do của từng bước và cách kiểm tra từng bước. Chi tiết cài chart (Secret,
 values, image) nằm ở [DEPLOY-KUBERNETES.md](DEPLOY-KUBERNETES.md); ở đây chỉ nhắc lại phần
