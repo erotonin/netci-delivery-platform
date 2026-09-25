@@ -46,8 +46,9 @@ test.describe.serial('Demo Kahn Algorithm Multi-Module CI/CD & Streamlined UX', 
 
     // Verify streamlined sidebar items
     await expect(page.locator('button:has-text("Systems & Pipelines")')).toBeVisible()
-    await expect(page.locator('button:has-text("CI Cost")')).toBeVisible()
+    await expect(page.locator('button:has-text("Production Requests")')).toBeVisible()
     // Verify removed items are NOT present
+    await expect(page.locator('button:has-text("CI Cost")')).toHaveCount(0)
     await expect(page.locator('button:has-text("Scorecards")')).toHaveCount(0)
     await expect(page.locator('button:has-text("Release Plan")')).toHaveCount(0)
     await expect(page.locator('button:has-text("Stage Catalog")')).toHaveCount(0)
@@ -125,6 +126,32 @@ test.describe.serial('Demo Kahn Algorithm Multi-Module CI/CD & Streamlined UX', 
 
     // Re-verify modal shows approved state and Wave progression
     await page.screenshot({ path: path.join(ARTIFACT_DIR, 'kahn_demo_07_wave1_approved_executing.png'), fullPage: true })
+    await page.click('button:has-text("Close")')
+  })
+
+  test('Step 3: Verification of Successful Kahn Multi-Module Deployment in UI', async ({ page }) => {
+    await ssoLogin(page, 'pat')
+    await page.goto('/#/requests')
+    await page.waitForLoadState('networkidle')
+
+    // Find the row with Succeeded status in requests table
+    const succeededRow = page.locator('.requests-table .table-row:has-text("Succeeded")').first()
+    await expect(succeededRow).toBeVisible()
+
+    // Take overview screenshot showing the completed Kahn release in table
+    await page.screenshot({ path: path.join(ARTIFACT_DIR, 'kahn_demo_09_requests_table_succeeded.png'), fullPage: true })
+
+    // Open request details modal
+    await succeededRow.locator('.row-actions button').click()
+    await expect(page.locator('h2:has-text("PR-")')).toBeVisible()
+
+    // Verify Kahn Waves both show completed (Hoàn tất)
+    await expect(page.locator('text=DAG Release Plan (2 Waves · Kahn\'s Wave Orchestration)')).toBeVisible()
+    await expect(page.locator('text=all release waves completed successfully')).toBeVisible()
+    await expect(page.locator('text=✅ Hoàn tất')).toHaveCount(2)
+
+    // Capture screenshot of successful Kahn deployment
+    await page.screenshot({ path: path.join(ARTIFACT_DIR, 'kahn_demo_08_kahn_success_waves_completed.png'), fullPage: true })
     await page.click('button:has-text("Close")')
   })
 })

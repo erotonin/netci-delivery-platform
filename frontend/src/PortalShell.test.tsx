@@ -48,9 +48,9 @@ describe('PortalShell principal kind (ADR-052)', () => {
 })
 
 describe('PortalShell navigation', () => {
-  it('has a CI Cost entry', () => {
+  it('has a Production Requests entry', () => {
     const navigate = renderShell(session('human'))
-    fireEvent.click(screen.getByRole('button', { name: 'CI Cost' }))
-    expect(navigate).toHaveBeenCalledWith('ci-cost', undefined)
+    fireEvent.click(screen.getByRole('button', { name: 'Production Requests' }))
+    expect(navigate).toHaveBeenCalledWith('requests', undefined)
   })
 })

@@ -1,7 +1,7 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import {
   CalendarDays,
-  Activity, Bell, BookOpen, Box, CheckCircle2, ChevronDown, ChevronRight, ClipboardCheck, Clock3, Coins,
+  Activity, Bell, BookOpen, Box, CheckCircle2, ChevronDown, ChevronRight, ClipboardCheck, Clock3,
   Compass, Gauge, GitBranch, Grid2X2, Layers3, ListChecks, LogOut, Menu, Search, Server, Settings,
   ShieldAlert, X,
 } from 'lucide-react'
@@ -107,7 +107,6 @@ function Sidebar({ page, systemId, moduleId, moduleLinks, navigationSystems, ses
         <button aria-current={page === 'catalog' ? 'page' : undefined} className={page === 'catalog' ? 'nav-item active' : 'nav-item'} onClick={() => navigate('catalog')}><Compass size={17} />Service Catalog</button>
 
         <span className="nav-label nav-label-spaced">Platform & Governance</span>
-        <button aria-current={page === 'ci-cost' ? 'page' : undefined} className={page === 'ci-cost' ? 'nav-item active' : 'nav-item'} onClick={() => navigate('ci-cost')}><Coins size={17} />CI Cost</button>
         <button aria-current={page === 'vulnerabilities' ? 'page' : undefined} className={page === 'vulnerabilities' ? 'nav-item active' : 'nav-item'} onClick={() => navigate('vulnerabilities')}><ShieldAlert size={17} />Vulnerabilities</button>
         <button aria-current={page === 'calendar' ? 'page' : undefined} className={page === 'calendar' ? 'nav-item active' : 'nav-item'} onClick={() => navigate('calendar')}><CalendarDays size={17} />Release Calendar</button>
         <button aria-current={page === 'servers' ? 'page' : undefined} className={page === 'servers' ? 'nav-item active' : 'nav-item'} onClick={() => navigate('servers')}><Server size={17} />Servers</button>
@@ -176,7 +175,6 @@ function TopBar({ page, systemId, moduleId, moduleLinks, navigationSystems, sess
     { key: 'scorecards', label: 'Scorecards', detail: 'Quality', action: () => navigate('scorecards') },
     { key: 'release-plan', label: 'Release Plan', detail: 'Planning', action: () => navigate('release-plan') },
     { key: 'stage-catalog', label: 'Stage Catalog', detail: 'Pipeline stages', action: () => navigate('stage-catalog') },
-    { key: 'ci-cost', label: 'CI Cost', detail: 'FinOps', action: () => navigate('ci-cost') },
     ...navigationSystems.flatMap((system) => [
       { key: `system-${system.id}`, label: system.id, detail: 'System', action: () => navigate('system', { systemId: system.id }) },
       ...system.modules.map((module) => ({ key: `module-${system.id}-${module.id}`, label: module.name, detail: `${system.id} · Module`, action: () => navigate('module', { systemId: system.id, moduleId: module.id }) })),
