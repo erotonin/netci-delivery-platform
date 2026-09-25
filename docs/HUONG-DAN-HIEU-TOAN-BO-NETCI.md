@@ -5,6 +5,11 @@
 > Đọc theo thứ tự sẽ dễ hơn là nhảy cóc.
 >
 > Cập nhật: 2026-09-04 — tương ứng commit `6b38fc3` (Phase 7 xong, Phase 8 đang dở).
+>
+> Bổ sung 2026-09-25 — tương ứng commit `9f114a1`: §2.5 (thuật ngữ mới), §3.4 (hành trình
+> đầy đủ của một thay đổi), §3.5 (AI agent là người dùng netCI), §3.6 (đã kiểm chứng live
+> tới đâu). Các phần này giải thích ADR-043 → ADR-052. Nếu thấy luồng CI/CD khó hiểu,
+> đọc §3.4 trước.
 
 ---
 
@@ -93,7 +98,7 @@ quyết định kiến trúc trong code chỉ tồn tại vì lý do đó.
 | **Signature verification** | Kiểm tra lại chữ ký **ngay trước khi deploy**. Quan trọng: netCI không tin cờ `signature.verified: true` mà CI tự khai — nó tự chạy `cosign verify` lại. Lý do có trong `signature_verifier.py`: nếu hệ thống CI bị chiếm quyền, nó sẽ tự khai là đã ký. |
 | **Security evidence** | Gói bằng chứng gồm SBOM + kết quả scan + chữ ký, gắn với **một** pipeline run và **một** digest. |
 | **Policy decision** | Kết luận `allow`/`deny` tính từ evidence. |
-| **Provenance** | Nguồn gốc: artifact này ra đời từ commit nào, run nào, ai bấm. |
+| **Provenance** | Nguồn gốc: artifact này ra đời từ commit nào, run nào, ai bấm. Từ ADR-044, netCI còn tạo **SLSA provenance** — bản khai nguồn gốc có chữ ký, gắn vào image trong registry (xem §2.5). |
 
 ### 2.3. Thuật ngữ kiến trúc phần mềm (phần khó nhất — đọc kỹ)
 
@@ -246,6 +251,34 @@ hàng phút và gọi ra hệ thống ngoài). Thay vào đó mỗi bước có 
 | **JCasC** | Jenkins Configuration as Code — cấu hình Jenkins bằng file YAML trong Git thay vì bấm chuột. |
 | **Ephemeral agent** | Máy build dùng một lần rồi xoá. Chống việc build này để lại rác ảnh hưởng build sau. |
 
+### 2.5. Thuật ngữ luồng giao hàng mới (ADR-043 → ADR-052)
+
+> Lưu ý chữ **"agent"** có ba nghĩa khác nhau trong project này: *Jenkins agent* (máy
+> build dùng một lần, §2.4), *edge agent* (tiến trình netCI chạy trên server đích), và
+> *AI agent / coding agent* (chương trình AI tự viết code rồi push). Bảng dưới chỉ nói
+> về nghĩa thứ ba khi viết **agent principal**.
+>
+> Chữ **"admission"** cũng có hai nghĩa: *Kubernetes admission* (Phase 11, cụm Kubernetes
+> hỏi netCI có cho image chạy không) và *build admission* (ADR-050, dưới đây). Hai thứ
+> không liên quan tới nhau.
+
+| Thuật ngữ | Giải thích dễ hiểu |
+|---|---|
+| **Delivery rule** (luật giao hàng) | Luật của module nói một sự kiện Git gây ra gì: chỉ build, build rồi deploy dev/staging, hay build rồi đăng ký version. Nằm ở `pipelineConfig.delivery` của config revision. Luật đầu tiên khớp thì thắng, giống firewall. (ADR-043) |
+| **Promote** (thăng cấp) | Đưa **đúng digest đã build** sang môi trường tiếp theo (dev → staging), **không build lại**. `POST /modules/{id}/promotions`. (ADR-043) |
+| **Admission** (build admission) | Bước **cho một run đã ghi `queued` được gửi sang Jenkins**. Run chỉ được admit khi phạm vi quota của nó còn chỗ; nếu không thì nằm chờ trong PostgreSQL chứ không bị từ chối. Run đang chờ có `admittedAt` rỗng. (ADR-050) |
+| **Concurrency group** (nhóm đồng thời) | Tập các run do SCM kích hoạt **trên cùng một ref** của cùng một application, khoá là `<application>:<ref>` — ví dụ một nhánh, hoặc `pr/12`. Run mới vào nhóm có thể thay thế run cũ. Build từ tag, run bấm tay và retry **không** thuộc nhóm nào. (ADR-050) |
+| **Supersede / superseded** (thay thế / bị thay thế) | Khi một commit mới hơn tới cùng nhóm, run cũ đã lỗi thời bị huỷ và ghi `cancelled` kèm `supersededBy` = run thay nó. Có audit, commit status nói rõ lý do. (ADR-050) |
+| **`cancelInProgress`** | Cờ quyết định có huỷ cả run **đang build** (không chỉ run đang chờ) khi commit mới tới không. Mặc định `true` cho pull request, `false` cho push. Chỉnh được theo từng luật trong `pipelineConfig.delivery`; tag không được đặt cờ này. (ADR-050) |
+| **Path filter** (lọc theo đường dẫn) | `paths` / `pathsIgnore` trên một luật: bỏ qua build khi file thay đổi không liên quan (ví dụ chỉ sửa README). Chỉ áp dụng khi netCI **biết chắc** danh sách file thay đổi; không biết thì build đầy đủ. Không bao giờ lọc từng stage. (ADR-051) |
+| **Agent principal** | Một danh tính đăng nhập netCI được **server** xếp loại `agent` (khác `human`). Agent tối đa chỉ có role developer/viewer, không duyệt được gì, và xếp sau con người trong hàng đợi admission. (ADR-052) |
+| **SLSA provenance** | Bản khai nguồn gốc theo chuẩn SLSA v1: "image digest X được build từ repo Y, commit Z, bởi run R trên controller C". Được ký bằng cùng khoá cosign và lưu cạnh image trong registry. Worker kiểm tra lại ngay trước khi deploy. (ADR-044) |
+| **Soak** (ngâm) | Khoảng thời gian một digest đã chạy **healthy** ở môi trường trước, trước khi được phép lên môi trường sau. Khai bằng `requireHealthyIn` (môi trường nào) + `minSoakMinutes` (bao nhiêu phút). Đo từ cột `deployments.healthy_at`. (ADR-043) |
+| **Post-deploy verification** | Sau khi health check qua, worker đọc số liệu Prometheus (tỉ lệ lỗi, độ trễ p95) trong một khoảng thời gian; vượt ngưỡng hoặc **không có dữ liệu** thì rollback. (ADR-046) |
+| **Change freeze** (đóng băng thay đổi) | Một khung thời gian `[bắt đầu, kết thúc)` cấm deploy vào các môi trường đã chọn, được netCI **thực thi** chứ không chỉ hiển thị. (ADR-047) |
+| **Preview** (môi trường xem trước) | Một bản deploy tạm của pull request vào namespace Kubernetes riêng `preview-<module>-pr-<n>`, tự xoá khi PR đóng/merge hoặc hết TTL. Chỉ `active` khi worker thật sự đã deploy xong. (ADR-049) |
+| **Rescan** (quét lại) | netCI tự quét lại SBOM đã lưu của những digest **đang chạy**, để phát hiện CVE được công bố sau ngày build. (ADR-045) |
+
 ---
 
 ## 3. Bức tranh tổng thể
@@ -372,6 +405,497 @@ build + deploy như trước, hoặc tích **Build only** để chỉ build.
 verify **lần thứ ba**. Đây không phải thừa. Mỗi lần kiểm tra ở một ranh giới tin cậy
 khác nhau — nếu Jenkins bị chiếm quyền, nó có thể nói dối ở bước 5, nhưng không thể
 làm giả chữ ký cosign mà worker verify độc lập ở bước 8.
+
+> **Luồng trên là luồng gốc.** Từ ADR-043 và ADR-050 có hai chỗ khác: (a) giữa bước 2
+> và bước 3 có thêm bước **admission** — run đã ghi `queued` chưa chắc được gửi sang
+> Jenkins ngay; (b) ở bước 6, Deployment chỉ được tạo nếu luật giao hàng của module nói
+> "deploy". Luồng đầy đủ hiện tại nằm ở §3.4.
+
+### 3.4. Hành trình đầy đủ của một thay đổi (ADR-043 → ADR-052)
+
+Phần này đi theo **một commit** từ lúc được push tới lúc chạy trên production và sau đó.
+Mỗi bước có hai phần: **làm gì**, và **vì sao** — phần "vì sao" lấy từ mục Context/Decision
+của ADR tương ứng, không phải suy đoán.
+
+```
+ Dev hoặc AI agent push / mở PR / đẩy tag
+        │
+ [1] Webhook có chữ ký ──► netCI xác định ai gửi (human | agent)
+        │
+ [2] Delivery rules ──► không luật nào khớp? ──► 200 "ignored" (kèm lý do)
+        │   (path filter, fork, tag → version)
+        ▼
+ [3] Ghi PipelineRun status=queued, ý định cố định lúc này
+        │   (deploy_after_build, publish_artifact, release_tag, trigger)
+        ▼
+ [4] Admission: quota còn chỗ? ── không ──► chờ trong PostgreSQL
+        │ có                               (người trước, agent sau, cũ trước)
+        │                                  hàng đợi đầy ──► 429 PIPELINE_QUEUE_FULL
+ [5] Supersession: run cũ cùng ref ──► cancelled, supersededBy = run mới
+        ▼                              (trừ run đã tới sign/publish/deploy)
+ [6] Jenkins: checkout → unit-test → build → sbom → vulnerability-scan
+        │         → sign (+ SLSA provenance) → publish
+        ▼
+ [7] Evidence + SBOM gửi về netCI ──► policy; provenance sai commit/repo = deny
+        │
+        ├── luật nói "build only" ──► run succeeded, có digest, KHÔNG có deployment
+        │                              (PR cùng repo + module bật previews ──► [11] Preview)
+        ▼
+ [8] Deploy dev ──► Promote staging (cùng digest; requireHealthyIn dev + soak)
+        │   mỗi deployment: worker verify chữ ký + provenance → deploy → health check
+        │                   → post-deploy verification (Prometheus) → rollback nếu hỏng
+        ▼
+ [9] Version ──► Production Request ──► NGƯỜI THỨ HAI duyệt ──► prod
+        │   change freeze chặn ở lúc tạo request và lúc duyệt; rollback không bao giờ bị chặn
+        ▼
+[10] Đang chạy: rescan SBOM định kỳ ──► "CVE này đang chạy ở đâu?"
+
+[12] Suốt hành trình: mỗi lần đổi trạng thái ──► outbox ──► commit status / PR comment
+```
+
+#### Bước 1 — Push và webhook
+
+**Làm gì.** Một người hoặc một AI agent push commit, mở pull request, hoặc đẩy tag. SCM
+(GitHub/GitLab) gửi webhook có chữ ký tới netCI. netCI kiểm chữ ký, chống gửi lại (ADR-019)
+và map repository → application **phía server**. Với webhook, người gửi (`sender`) nằm
+trong `NETCI_AGENT_SCM_LOGINS` thì run được đánh dấu `trigger.actorKind = agent` (ADR-052).
+
+Run từ webhook đi **cùng một đường** với nút "Run" trên Portal: target do server tính,
+config revision đang active được ghim, build input lấy từ `pipelineConfig.buildInputs`
+và vẫn bị ranh giới `build_inputs` kiểm soát (ADR-043, quyết định 9).
+
+**Vì sao.** Trước ADR-043, run từ webhook chỉ mang `credentialsId`, không có target do
+server quản lý, không ghim config revision, và module nằm trong thư mục con của monorepo
+bị build nhầm thư mục gốc. Còn `actorKind` lấy từ `sender` của webhook có chữ ký vì đó là
+"người SCM nói đã push" — **không** lấy từ tác giả commit, vì ai cũng tự ghi được tác giả.
+
+#### Bước 2 — Delivery rules quyết định sự kiện gây ra gì
+
+**Làm gì.** `domain/delivery_rules.py` là hàm thuần: luật vào, quyết định ra. Luật đầu
+tiên khớp thì thắng. Module không khai báo gì thì nhận luật mặc định (bảng ở §3.2b):
+push `main` → build + deploy môi trường mặc định (chỉ khi đó là dev/staging và có
+target); push nhánh khác và pull request → chỉ build; tag `v*` → build, và nếu tag là
+semantic version thì đăng ký thành version. Mẫu (pattern) theo ngữ nghĩa GitHub: `*`
+dừng ở `/`, `**` thì không.
+
+Các điểm cần nhớ:
+
+- **Không luật nào đưa thẳng lên prod.** `deployTo: prod` bị từ chối 422. Pull request
+  không deploy đi đâu cả.
+- **PR từ fork mặc định bị bỏ qua.** Nếu module bật `forkPullRequests: verify` thì chỉ
+  verify: `NETCI_PUBLISH=false`, không ký, không publish, khoá ký không bao giờ được đưa
+  vào build đó; API từ chối digest của run như vậy (`UNPUBLISHED_RUN_HAS_NO_ARTIFACT`),
+  và database cũng có CHECK constraint chặn.
+- **Sự kiện không luật nào xử lý** được trả **200 `ignored`** kèm lý do.
+- **Path filter (ADR-051).** Một luật có thể khai `paths` (chỉ khớp nếu có file thay đổi
+  nằm trong danh sách) hoặc `pathsIgnore` (không khớp nếu **mọi** file thay đổi đều bị bỏ
+  qua) — không được khai cả hai, và không dùng cho luật tag. Luật bị lọc thì rơi xuống luật
+  kế tiếp. Danh sách file thay đổi lấy từ payload SCM, **chỉ khi payload đầy đủ**. Push
+  GitHub bị coi là "không biết" khi: nhánh mới, force-push, `before` rỗng, danh sách rỗng
+  hoặc sai định dạng, hoặc chạm giới hạn 2048 commit. Push GitLab chỉ đầy đủ khi
+  `total_commits_count` bằng số commit được liệt kê. Pull request **luôn** là "không biết"
+  vì payload không có danh sách file. "Không biết" nghĩa là **không áp dụng filter** — luật
+  vẫn khớp, và lý do của run ghi rõ "changed files unknown, path filter not applied".
+
+**Vì sao.**
+
+- *Tách CI và CD* (ADR-043): trước đây mọi sự kiện đều deploy. Push `feature/x` thay luôn
+  thứ `dev` đang chạy; một PR chưa ai review cũng vậy. CI chỉ nên xác lập một sự thật —
+  "image này, cho component này, đã sẵn sàng"; đưa nó đi đâu là thao tác của platform, có
+  kiểm soát quyền riêng.
+- *Prod không qua trigger*: production phải đi qua production request và người thứ hai
+  (ADR-038/039). PR không deploy vì đó là code chưa review.
+- *Fork không được ký*: build của fork chạy code của fork, và code đó có thể đọc được khoá
+  ký nếu stage Sign chạy.
+- *200 thay vì 4xx*: trả 4xx khiến SCM đánh dấu webhook là lỗi và gửi lại.
+- *Path filter chỉ lọc khi biết chắc* (ADR-051): nguy hiểm thật sự nằm ở chiều ngược lại —
+  một filter bỏ build khi netCI không thực sự biết cái gì đã đổi sẽ đưa lên một thay đổi
+  **chưa ai build**. "Không biết cái gì đổi" không phải bằng chứng "không có gì liên quan đổi".
+- *Không lọc từng stage*: bỏ một stage bắt buộc (SBOM, scan, chữ ký) vì diff sẽ tạo ra
+  artifact mà chính netCI từ chối deploy. Chỉ bỏ nguyên cả run.
+
+#### Bước 3 — Run được ghi `queued`, ý định cố định
+
+**Làm gì.** Mọi run được ghi `queued` **trong chính transaction chấp nhận nó**. Cùng lúc,
+ý định của run được cố định (migration 0028): `deploy_after_build`, `publish_artifact`,
+`release_tag`, `trigger`. Retry giữ nguyên ý định đó.
+
+**Vì sao.** Trước ADR-043 không có cách nào build mà không deploy: mọi build thành công
+đều tạo deployment. Giờ một build không deploy kết thúc `succeeded` với digest và **không
+có** deployment. Với run verify-only của fork, API từ chối digest mà CI báo về, vì báo cáo
+đó đến từ chính code của fork — nên "run này có publish không" phải được ghi **trước** khi
+code đó chạy, chứ không đọc từ những gì nó báo lại (ADR-043, quyết định 3–4).
+
+#### Bước 4 — Admission: chờ tới lượt, không bị từ chối
+
+**Làm gì.** Gửi run sang Jenkins là một bước riêng gọi là **admission** (ADR-050). Run
+chỉ được admit khi phạm vi quota của nó còn chỗ (`max_concurrent_pipelines`, đếm các run
+đang giữ năng lực CI: đã admit mà chưa xong). Quá giới hạn thì run **chờ trong
+PostgreSQL**. Admission chạy sau khi một run được chấp nhận, sau khi một run xong, và theo
+timer; dưới một advisory lock; mỗi lần admit là một compare-and-set trên `version` của
+run, nên hai replica không bao giờ gửi cùng một run hai lần.
+
+Thứ tự: **người trước, agent sau, rồi cũ trước** (ADR-052; câu SQL trong `store/postgres.py`
+sắp theo `actorKind = 'agent'` rồi `created_at`). Hàng đợi có giới hạn:
+`max_queued_pipelines` (mặc định 50 mỗi phạm vi quota) — đầy thì trả
+`429 PIPELINE_QUEUE_FULL`, đây là trường hợp **duy nhất** còn bị từ chối.
+
+Admission còn hỏi chính Jenkins: mỗi controller khỏe chỉ nhận thêm build khi hàng đợi của
+nó còn ít hơn `NETCI_ADMISSION_MAX_JENKINS_QUEUE` (mặc định 2). Controller đang chết, hoặc
+không đọc được hàng đợi, thì không nhận gì: run tiếp tục chờ trong netCI chứ không bị đánh
+`failed` lúc gửi đi. Con số executor cấu hình sẵn không được dùng làm giới hạn, vì agent
+của Jenkins chạy dưới dạng pod nên số executor không phải giới hạn thật.
+
+**Vì sao.** Coding agent push nhanh hơn người: một agent sửa một PR có thể push 20 commit
+trong 2 phút. Trước đây mỗi commit được gửi Jenkins ngay và giữ một executor tới khi xong,
+kể cả 19 cái đã lỗi thời trước khi bắt đầu. Quota cũ (migration 0017) chặn bằng
+`429 PIPELINE_QUOTA_EXCEEDED` — bảo vệ được Jenkins nhưng **mất sự kiện**: GitHub không
+gửi lại webhook bị trả 429, và commit quan trọng nhất (commit cuối) có thể chính là cái
+bị từ chối. Hàng đợi phải có giới hạn vì hàng đợi vô hạn chỉ chuyển quá tải từ Jenkins
+sang database. Người được ưu tiên vì một cơn bão push của agent không được bắt người đang
+chờ đúng một build phải đợi.
+
+> Run `queued` có `admittedAt` rỗng nghĩa là **đang chờ admission**, không phải bị kẹt.
+> Lưu ý: "năng lực" ở đây là quota cấu hình, **không** phải số executor rảnh thật của
+> Jenkins — đọc executor từ controller là bước tiếp theo, chưa làm (ADR-050).
+
+#### Bước 5 — Supersession: huỷ run đã lỗi thời
+
+**Làm gì.** Run do SCM kích hoạt trên cùng một ref tạo thành một **concurrency group**
+(`<application>:<ref>`, ví dụ một nhánh hoặc `pr/12`). Khi run mới vào nhóm:
+
+| Run cũ đang ở đâu | Điều gì xảy ra | Vì sao |
+|---|---|---|
+| Đang **chờ admission** | Huỷ ngay, `supersededBy` = run mới | Nó chưa bắt đầu, nên huỷ không tốn gì và không mất gì: commit mới đã chứa nó |
+| **Đang build**, là pull request | Huỷ (`cancelInProgress` mặc định `true`) | Build cũ của PR trả lời một câu hỏi không còn ai hỏi |
+| **Đang build**, là push nhánh | Để chạy xong (`cancelInProgress` mặc định `false`) | Build cũ của nhánh có thể chính là build sẽ deploy |
+| Đã **bắt đầu sign hoặc publish**, đang **chờ duyệt**, hoặc **đã có deployment** | **Không bao giờ huỷ** | Dừng ở đó sẽ để lại artifact publish dở hoặc môi trường deploy dở — tốn hơn cái build tiết kiệm được |
+
+Trong code, "điểm không quay lại" là các stage `sign`, `publish`, `deploy`, `health-check`
+(`_POINT_OF_NO_RETURN_STAGES` trong `delivery.py`).
+
+**Không bao giờ vào nhóm** (được admit như mọi run, nhưng không thay ai và không bị ai thay):
+
+- **Build từ tag** — một bản release không bao giờ bị bỏ qua.
+- **Run bấm tay** — một người đã yêu cầu **đúng** commit đó.
+- **Retry.**
+
+Run bị thay kết thúc `cancelled` kèm `supersededBy`, commit status nói rõ, và việc huỷ có
+audit (`pipeline.superseded`).
+
+> Về thứ tự thật: supersession xảy ra **ngay trong transaction ghi run mới** (bước 3), nên
+> run cũ đang chờ bị huỷ trước khi admission kịp chọn nó. Build cũ đã được gửi Jenkins thì
+> được abort **sau** khi transaction commit (`_supersede` / `_abort_superseded` trong
+> `delivery.py`). Ở đây tách thành bước riêng cho dễ hiểu.
+
+**Vì sao.** Cùng lý do ở bước 4: 20 push của agent chỉ nên tốn khoảng 2 build (một đang
+chạy, một đang chờ), không phải 20. ADR-050 nói rõ con số "khoảng 2" là **tính chất của
+luật**, chưa phải số đo.
+
+#### Bước 6 — Jenkins chạy các stage
+
+**Làm gì.** Được admit rồi, run mới được gửi sang Jenkins (qua `JenkinsRouter`, như §3.3).
+Template container có các stage `checkout → unit-test → build → sbom → vulnerability-scan
+→ sign → publish → deploy → health-check` (`TEMPLATES` trong `delivery.py`). Run chỉ-build
+dừng sau publish — ví dụ live ở ADR-043 chạy 7 stage. Build verify-only của fork không có
+`sign` và `publish` (Jenkins nhận `NETCI_STAGES` không chứa hai stage đó).
+
+**Vì sao.** Tách build khỏi deploy (ADR-004, ADR-043) — xem §3.2 và §3.2b.
+
+#### Bước 7 — SBOM, scan, chữ ký và SLSA provenance
+
+**Làm gì.**
+
+1. Stage Sign ký image bằng cosign (như trước), rồi **attest SLSA v1 provenance** bằng
+   cùng khoá (`cosign attest --type slsaprovenance1`) và verify ngay tại chỗ
+   (`cosign verify-attestation`). Nội dung provenance do `netci_callback.py provenance`
+   tạo, **chỉ** từ những gì netCI bảo build làm và từ chính Jenkins: repository, commit
+   chính xác, thư mục app, tên image, run id, controller, build URL. Credential trong URL
+   repository bị xoá, vì attestation nằm trong registry — ai pull được là đọc được.
+2. Khi CI gửi evidence, API **gắn provenance với run**: commit hoặc repository khác với
+   cái netCI đã giao → `deny`. Kết luận deny được lưu cùng evidence và **ràng buộc mọi lần
+   đánh giá sau**, nên không thể đọc lại thành allow. Provenance có mặt nhưng chưa verify
+   bị từ chối ngay cả khi không bắt buộc provenance.
+3. CI gửi tài liệu SBOM CycloneDX (`POST /pipeline-runs/{id}/sbom`, ADR-045). netCI lưu
+   nó theo **digest có trong evidence của run đó**, không theo digest người gọi đưa, nên
+   một build không thể gắn SBOM vào artifact khác. Tài liệu đầu tiên cho một digest được
+   giữ (digest = nội dung bất biến). Kết quả scan của chính build cũng được giữ
+   (`source = ci`).
+4. `NETCI_REQUIRE_PROVENANCE` (chart: `supplyChain.requireProvenance`, mặc định `true`)
+   từ chối container image không có provenance đã verify. Mặc định trong code là `false`
+   để stack systemd trong lab (còn dùng library cũ) vẫn chạy. Binary systemd được ký dạng
+   blob, không có attestation — ghi là `not_applicable`, **không bao giờ** ghi là pass.
+
+**Vì sao.** Chữ ký chỉ chứng minh "người giữ khoá đã ký *một thứ gì đó*", không nói cái
+gì đã được build. Một image build từ commit bất kỳ, repo bất kỳ, rồi ký bằng khoá thật vẫn
+qua cả hai lần kiểm chữ ký. Trước ADR-044, bản ghi duy nhất nối digest với commit là dòng
+`pipeline_runs` của netCI — thứ mà cụm Kubernetes hay một netCI khác không đọc được, và
+một build bị chiếm quyền có thể báo bất kỳ digest nào. Còn SBOM (ADR-045): trước đây chỉ
+lưu **đường dẫn trên máy build**, mà máy build bị xoá sau mỗi lần build.
+
+> **Giới hạn phải biết**: đây là SLSA Build **L2**, chưa phải L3. Provenance được tạo trên
+> chính agent đã chạy code của build, với khoá được đưa vào ở bước đó. Một build lấy trộm
+> được khoá cũng làm giả được provenance. Cái ADR-044 đóng lại là lỗ hổng khác: image ký
+> bằng khoá hợp lệ nhưng build từ nguồn khác.
+
+Nếu có change freeze đang hiệu lực (ADR-047), **kết quả CI vẫn được ghi**: build thành
+công dạng chỉ-build, có dòng log nêu tên freeze. Lý do: từ chối callback sẽ làm mất kết quả
+build, còn artifact thì promote được sau khi freeze hết.
+
+#### Bước 8 — Deploy dev, promote lên staging, và kiểm chứng sau deploy
+
+**Làm gì.**
+
+- Nếu luật nói `deployTo: dev`, run tạo deployment dev như luồng §3.3.
+- Lên staging là **promote**: `POST /modules/{id}/promotions` deploy artifact của một run
+  đã publish sang dev hoặc staging qua `redeploy_artifact` — **không build gì cả**, cùng
+  lease, cùng máy trạng thái, cùng workflow như mọi deployment.
+- Luật promotion có thể đòi digest đó đã **healthy ở môi trường trước N phút**:
+  `requireHealthyIn` + `minSoakMinutes` (tối đa 10080 = một tuần; soak cần
+  `requireHealthyIn` để biết đo ở đâu). Mặc định (module không khai luật): nếu module có
+  target staging, promote lên staging đòi digest đã healthy ở dev (khi module có dev).
+- Soak được đo từ `deployments.healthy_at` (migration 0029), ghi **một lần** khi chuyển
+  sang healthy, và ngừng đếm khi deployment kế tiếp ở môi trường đó healthy. Deployment bị
+  rollback hoặc failed không chứng minh gì. Deployment từ trước 0029 không có `healthy_at`
+  nên không chứng minh soak nào.
+- Promote lên prod bị từ chối `422 PRODUCTION_REQUIRES_REQUEST`. Có freeze thì promote /
+  redeploy dev hoặc staging bị từ chối `409 CHANGE_FREEZE`.
+
+Mỗi deployment (mọi môi trường), worker làm theo thứ tự:
+
+1. Verify chữ ký cosign **và** SLSA provenance **từ registry**, ngay trước khi deploy
+   (ADR-044). Nó đòi một statement cho đúng digest, ghi đúng commit của deployment (ở cả
+   `externalParameters` và `resolvedDependencies`) và đúng repository của module — commit
+   và repo lấy **từ server**, không từ evidence do CI viết. Ở chế độ
+   `NETCI_SIGNATURE_VERIFY_MODE=none` không verify được provenance, nên nếu provenance bắt
+   buộc thì **fail closed**.
+2. Deploy (Ansible / Helm / systemd), rồi health check của runtime.
+3. **Post-deploy verification** (ADR-046) nếu module khai `pipelineConfig.verification`:
+   một hoặc hai truy vấn PromQL (`errorRate`, `p95LatencyMs`), ngưỡng, cửa sổ thời gian
+   (1–60 phút), chu kỳ lấy mẫu, và các môi trường áp dụng. Activity `verify_release` lấy
+   mẫu mỗi chu kỳ trong suốt cửa sổ, dừng ở lần vượt ngưỡng đầu tiên. **Vượt ngưỡng, hoặc
+   truy vấn không trả dữ liệu suốt cả cửa sổ**, đi cùng đường với health check hỏng:
+   rollback tự động (khi `rollbackStrategy` là `automatic` — mặc định), ngược lại ghi
+   `failed` để người xử lý.
+
+**Vì sao.**
+
+- *Promote không build lại* (ADR-043): trước đây chỉ production có "deploy digest đã
+  build". Lên staging nghĩa là run mới, tức là build lại commit — digest đã test không còn
+  là digest được deploy.
+- *Soak đo từ `healthy_at`*: `updated_at` không dùng được vì nó đổi ở mọi lần chuyển trạng
+  thái sau đó. Delivery event cũng không dùng được: chúng chỉ ghi cho production vì DORA
+  đọc chúng, thêm môi trường khác sẽ làm sai DORA.
+- *Post-deploy verification* (ADR-046): health check chỉ chứng minh tiến trình đã chạy và
+  trả lời URL health. Một bản trả 500 cho một phần ba request thật vẫn qua. "Không có dữ
+  liệu" bị coi là hỏng vì module đã khai "hãy đánh giá tôi bằng các số này" mà không có số
+  nào để đánh giá. Module không khai gì thì deploy như cũ, và thông báo deploy **không**
+  nói "verified".
+- *Canary* cũng đổi (ADR-046): trước đây số liệu canary lấy từ **body request** — nút
+  "Advance" trên Portal không gửi gì, và `evaluate({})` đọc thành 0% lỗi, 0 ms độ trễ, nên
+  mọi canary đều "qua phân tích" một bộ dữ liệu rỗng. Giờ server tự đọc Prometheus
+  (`{track} = canary`); request mang số liệu bị từ chối 422; không phân tích được thì 409 —
+  không advance cũng không abort, vì "không biết" không phải "xấu". Reviewer có thể
+  advance kèm `overrideReason`, được audit là `canary.advanced_without_analysis` và trả
+  `analysed: false`, không bao giờ là pass.
+- *Placeholder trong PromQL* chỉ có `{release}`, `{environment}`, `{track}`, và giá trị
+  thay vào phải là DNS label (kiểm bằng `fullmatch`), vì chúng được dán vào label matcher
+  của PromQL.
+
+#### Bước 9 — Production: version, request, người thứ hai duyệt, freeze
+
+**Làm gì.**
+
+- Artifact lên production qua **version** (ví dụ tag `v1.2.3` tự đăng ký version trong
+  **cùng transaction** ghi build thành công) → **Production Request** → **một người khác
+  người yêu cầu** duyệt (separation of duties, ADR-038/039).
+- Production request tôn trọng luật promotion cho prod (ví dụ đòi đã healthy ở staging N
+  phút). **Đổi luật promotion của prod cần người thứ hai duyệt**, như đổi target production.
+- **Change freeze** (ADR-047) được thực thi ở nơi deployment bắt đầu di chuyển:
+  - production request có `scheduledFor` rơi vào freeze của prod bị từ chối **ngay lúc
+    tạo** — người lên kế hoạch biết ngay hôm nay, không phải lúc duyệt;
+  - production deployment bị từ chối **lúc được duyệt**, thời điểm nó sắp bắt đầu;
+  - **rollback không bao giờ bị từ chối**;
+  - lối đi qua freeze là **break-glass cho đúng freeze đó** (`target_type = change_freeze`),
+    dùng luồng break-glass sẵn có: người khác duyệt, có hạn.
+  - Freeze là bản ghi (`change_freezes`, migration 0031); release manager và platform
+    admin tạo và huỷ. Freeze hiện trên Release Calendar.
+- Sau khi deploy prod, bước verify / rollback giống bước 8.
+
+**Vì sao.**
+
+- *Version trong cùng transaction*: nếu đăng ký sau, máy chết ở giữa sẽ để lại một tag mà
+  không production request nào gọi tên được — và callback gửi lại cũng không sửa được vì
+  run đã succeeded.
+- *Đổi luật prod cần người thứ hai*: bỏ soak staging là làm yếu cổng production.
+- *Freeze* (ADR-047): trước đây "maintenance" chỉ là cờ đúng/sai trên server, còn freeze
+  ("không đổi production trong đợt sale") nằm trong tin nhắn chat — deploy lúc đó chỉ bị
+  chặn nếu có người nhớ. Rollback không bị chặn vì freeze tồn tại để **bảo vệ** dịch vụ,
+  không phải để ngăn **khôi phục** nó.
+
+> **Lỗ hổng đã biết** (ADR-047): production deployment được duyệt **trước** freeze và lên
+> lịch bắt đầu **trong** freeze (`notBefore`) thì **không** bị chặn — workflow ngủ tới giờ
+> đó, và worker không đọc được bảng freeze. Việc chặn lúc tạo request che trường hợp phổ
+> biến; kiểm tra lại trong workflow là cách sửa, **chưa làm**.
+
+#### Bước 10 — Sau khi chạy: rescan SBOM và "CVE này đang chạy ở đâu?"
+
+**Làm gì** (ADR-045).
+
+- netCI tự quét lại SBOM đã lưu (`trivy sbom`, bật bằng `NETCI_SBOM_RESCAN=trivy`): theo
+  lịch (`NETCI_SBOM_RESCAN_INTERVAL_SECONDS`, mặc định 6 giờ, mỗi lượt chỉ một replica
+  chạy nhờ advisory lock) và theo yêu cầu (`POST /vulnerabilities/rescan`). **Chỉ quét
+  digest đang chạy ở đâu đó.** Mỗi lần quét thay toàn bộ finding `rescan` của digest đó
+  trong một transaction; finding vẫn còn thì giữ `first_seen_at`.
+- **Quét thất bại được ghi là thất bại và không đổi finding nào.** Thiếu trivy, không tới
+  được database của trivy, timeout, output không phải JSON — đều ném lỗi, không bao giờ
+  ra danh sách rỗng.
+- API exposure (`GET /vulnerabilities/{id}/exposure`,
+  `GET /vulnerabilities/exposure?minSeverity=`) trả module + môi trường bị ảnh hưởng **và
+  luôn nói độ phủ**: liệt kê mọi digest đang chạy mà nó không bảo đảm được — chưa có SBOM,
+  chưa từng rescan, hoặc lần rescan gần nhất thất bại.
+
+**Vì sao.** Câu đầu tiên đội bảo mật hỏi khi có CVE mới là *"mình đang chạy nó ở đâu?"*.
+netCI đã biết digest nào đang chạy ở môi trường nào, nhưng dữ liệu lỗ hổng duy nhất nó
+giữ là kết quả scan **ngày build** — một CVE công bố sau đó, theo định nghĩa, không có
+trong đó. "Không quét được" tuyệt đối không được đọc thành "sạch".
+
+> Câu trả lời chỉ mới bằng lần rescan gần nhất và database trivy nó dùng. Artifact build
+> trước thay đổi này không có SBOM trong netCI — hiện là "không phủ" tới khi build lại.
+
+#### Bước 11 — Preview cho pull request (ADR-049)
+
+**Làm gì.**
+
+- Một preview **thuộc về run PR đã build nó**. Nó được yêu cầu khi run PR **cùng
+  repository** thành công với digest đã publish và module bật `pipelineConfig.previews`
+  (hoặc yêu cầu tường minh cho run như vậy). PR từ fork là verify-only nên không có
+  artifact và **không bao giờ** có preview.
+- Worker deploy nó; **chỉ báo cáo của worker** (scope dùng một lần `preview:result`, gắn
+  với run PR) mới làm nó thành `active`. Trước đó nó là `deploying`. URL là host của
+  Ingress mà cụm **thật sự** tạo, do playbook đọc lại — netCI không tự ghép URL. Báo cáo
+  không có URL thì URL để trống.
+- Preview chạy bằng playbook riêng `preview-kubernetes.yml`, chỉ nhận namespace dạng
+  `preview-<module>-pr-<n>`; đọc namespace trước khi tạo; tạo namespace có nhãn
+  `netci.io/preview=true`, và chỉ xoá namespace mang nhãn đó. Playbook production vẫn từ
+  chối mọi namespace ngoài dev, staging, prod.
+- Preview kết thúc khi PR đóng hoặc merge (từ webhook), khi hết TTL (1–72 giờ, có reaper
+  chạy dưới advisory lock), hoặc khi có yêu cầu. Việc xoá cũng là một thao tác của worker
+  có báo cáo kết quả.
+- Chỉ runtime Kubernetes, cần target dev có kubeconfig. Module Docker/systemd cấu hình
+  preview bị từ chối. Các dòng preview từ trước thay đổi này thành `unverified`
+  (migration 0032).
+
+**Vì sao.** Trước ADR-049, "tạo preview" chỉ ghi một dòng `status = active` với URL
+`https://prv-<app>-<pr>.preview.netci.internal` — không có gì được deploy, không có gì trả
+lời URL đó. Reviewer bấm link không thấy gì, trong khi mọi màn hình ở giữa đều nói nó tồn
+tại. Đó đúng là "màu xanh giả" mà §4.6 cấm. Nhãn namespace quan trọng vì kubeconfig của
+worker phải được quyền tạo và xoá namespace — rộng hơn chỉ deploy vào namespace có sẵn;
+nhãn là thứ giữ nó không chạm namespace khác (RBAC chặt hơn được khuyến nghị, chưa đi kèm).
+
+#### Bước 12 — Commit status và PR comment qua outbox (ADR-048)
+
+**Làm gì.** Suốt hành trình, mỗi lần run đổi trạng thái, `_notify_scm_status` **thêm một
+dòng outbox** (`scm.commit_status`) trong cùng unit of work với transition. Khi run PR
+thành công hoặc thất bại thì thêm dòng thứ hai (`scm.pr_comment`), nói build được phép làm
+gì: đã publish kèm digest nhưng chưa deploy, hay chỉ verify (fork). Audit ghi
+`scm.status_queued`. Outbox worker (`adapters/scm_reporter.py`) mới gọi API thật: GitHub
+statuses + issue comments, GitLab statuses + merge-request notes. Token đọc từ file
+(`NETCI_GITHUB_TOKEN_FILE`, `NETCI_GITLAB_TOKEN_FILE`). Thiếu token, repo/SHA/số PR sai,
+hoặc phản hồi không phải 2xx → ném lỗi → outbox thử lại có backoff → rồi dead-letter, và
+cảnh báo `NetciOutboxDeadLetters` (docs/SLO.md) làm nó hiện ra.
+
+**Vì sao.** ADR-048 **sửa lại một tuyên bố sai** của ADR-019. ADR-019 nói netCI báo trạng
+thái run về GitHub/GitLab — thực ra không: hàm `update_commit_status` chỉ đọc token, ghi
+một dòng log rồi trả về, không có HTTP request nào; vậy mà audit vẫn ghi
+`scm.status_updated` mỗi lần. Audit trail khẳng định SCM đã được báo một thứ nó chưa bao
+giờ nhận. Ngoài ra lời gọi nằm **trong** transaction của transition, nên SCM chậm sẽ giữ
+kết nối database. Giờ audit ghi `scm.status_queued` — đúng thứ thực sự biết lúc đó.
+
+> Hệ quả: status tới **ngay sau** transition, không phải trong lúc đó. Mỗi provider chỉ hỗ
+> trợ một token; `credentialReference` theo repository được mang trong payload nhưng
+> **chưa dùng**.
+
+### 3.5. AI agent là người dùng của netCI (ADR-052)
+
+Coding agent giờ tự mở nhánh, push commit và chạy build qua netCI. Trước ADR-052, với
+netCI chúng trông giống người lập trình viên có token mà chúng mang, hoặc giống một người
+gửi SCM ẩn danh. Không có gì ngăn một agent giữ role reviewer rồi duyệt thay đổi — kể cả
+thay đổi của chính nó — và separation of duties so sánh hai cái tên mà có thể cả hai đều là
+agent. Cũng không có gì đưa build mà một người đang chờ lên trước một cơn bão build của agent.
+
+**Server quyết định ai là agent** — không bao giờ từ tác giả commit (ai cũng ghi được):
+
+| Nguồn | Cách nhận biết |
+|---|---|
+| OIDC | Thuộc nhóm trong `NETCI_OIDC_AGENT_GROUPS`, hoặc token cấp cho OAuth client trong `NETCI_OIDC_AGENT_CLIENTS` (đọc từ claim `azp`) |
+| Token file | Trường `kind:` trong file token |
+| Webhook | `sender` nằm trong `NETCI_AGENT_SCM_LOGINS` — **chỉ dùng để xếp hàng, không cấp quyền gì** |
+
+**Agent được làm gì**
+
+- Mọi việc của role **developer** và **viewer** (trừ ba việc bên dưới), ví dụ chạy build
+  qua API và xem kết quả. Push commit là việc ở SCM; webhook của push đó khởi động build
+  như mọi push khác.
+- **Yêu cầu** production release. Nhưng một **người** phải duyệt, và separation of duties
+  chặn người đó trùng với người yêu cầu.
+
+**Agent không được làm gì**
+
+- **Giữ role reviewer hoặc platform admin.** Agent mà role map sẽ biến thành reviewer/admin
+  bị **từ chối**: `403 AGENT_ROLE_NOT_ALLOWED` với token OIDC, lỗi cấu hình với token file.
+  Không âm thầm hạ xuống developer — vì một token nói "reviewer" mà hoạt động như
+  "developer" sẽ che mất lỗi map role (đúng nguyên tắc "từ chối tốt hơn âm thầm bỏ qua").
+- Vì vậy agent **không duyệt được gì**: deployment, production request, cấu hình,
+  break-glass, VEX.
+- **Ba việc của developer dành riêng cho người**:
+  - yêu cầu break-glass (`403 AGENT_MAY_NOT_BREAK_GLASS`);
+  - cấu hình SCM integration — repo nào được phép khởi động build và secret chứng minh
+    điều đó (`403 AGENT_MAY_NOT_CONFIGURE_SCM`);
+  - xoá system (`403 AGENT_MAY_NOT_DELETE_SYSTEMS`).
+
+**Trong hàng đợi**: run ghi `trigger.actorKind` (loại principal với run qua API; `agent` với
+webhook có `sender` trong `NETCI_AGENT_SCM_LOGINS`). Admission xếp **người trước agent**
+(§3.4 bước 4), và supersession (bước 5) là cơ chế khiến 20 push của agent không chiếm 20
+executor.
+
+**Việc của SCM, không phải của netCI**: việc merge vào nhánh được bảo vệ do **SCM** thực
+thi (branch protection). netCI chỉ kiểm soát những gì nó quyết định: build, deployment và
+phê duyệt. Muốn chặn agent merge thẳng vào `main`, phải cấu hình branch protection ở
+GitHub/GitLab.
+
+> Audit record mang `subject` của actor, **không** mang loại (kind); loại hiện ở `/me` và
+> trên run.
+
+### 3.6. Đã kiểm chứng live tới đâu (ADR-043 → ADR-052)
+
+"Live" ở đây nghĩa là chạy với hạ tầng thật của lab (Jenkins A, registry, Temporal worker
+trong cụm, Prometheus lab, server `netci-prod-02`) qua bản cài Kubernetes của netCI. Bảng
+dưới **chỉ** chép những gì mục "Live evidence" của từng ADR tự ghi. ADR nào không có mục đó
+thì mới chỉ **có test tự động**, chưa kiểm chứng live.
+
+| ADR | Đã chạy live (theo chính ADR) | Chưa kiểm chứng live |
+|---|---|---|
+| **043** CI/CD tách riêng | 2026-09-23, bản cài 0.2.0-rc6: hai pod API chạy migration 0028–0029 đồng thời; một run chỉ-build của `payments-api` trên Jenkins A (build #3) qua cả 7 stage, kết thúc `succeeded` với `sha256:7d39140d…`, **không** có deployment; promote run đó lên dev → deployment healthy, có `healthy_at`, container trên `netci-prod-02` báo đúng digest; promote lên prod bị từ chối 422; promote lên staging bị từ chối vì module không có target staging | SCM webhook (git server của lab là HTTP thường, không gửi webhook), pull request và fork, đăng ký version từ tag, luật soak |
+| **044** SLSA provenance | 2026-09-24, rc10: build #5 attest provenance, evidence ghi `provenance.verified = true`, commit `fe28b3a2…`, repo `http://172.17.0.52/payments-api.git`, với `requireProvenance: true`; khi promote lên dev, worker trong cụm log *cosign verified …* và *SLSA provenance verified: built from … at fe28b3a2…* trước khi deploy; deployment healthy | ADR không ghi mục "chưa kiểm chứng". Nó nói rõ: kiểm tra attestation ở Kubernetes admission **chưa được xây**; builder id ghi `jenkins#netci-shared-library` vì container agent không có `JENKINS_URL` |
+| **045** SBOM + rescan | 2026-09-24, rc10: build upload SBOM (938 component, `cyclonedx-json`); lượt rescan theo lịch đầu tiên và `POST /vulnerabilities/rescan` đều quét nó bằng trivy trong image API (mirror database của lab, `--insecure` vì mirror là HTTP); `GET /vulnerabilities/CVE-2025-8869/exposure` trả `payments-api` ở dev (pip 25.0.1, sửa ở 25.3, source `rescan`), coverage 1/1/1, 0 failed, 0 not covered. Scan của build (chỉ HIGH/CRITICAL) không thấy gì — các finding MEDIUM này có trong netCI **chỉ nhờ rescan** | ADR không ghi mục "chưa kiểm chứng" và không mô tả chạy live nhánh quét thất bại |
+| **046** Post-deploy verification | 2026-09-24, rc11, Prometheus lab: `payments-api` chưa xuất metric request, nên lần **qua** dùng truy vấn thay thế trên metric của chính Prometheus (`prometheus_http_requests_total`) — 3 mẫu trong ngưỡng, deployment healthy. Trỏ truy vấn vào metric thật của service (không có series) → *deployment=failed … Prometheus returned no data for the whole window; automatic rollback completed* | **Canary analysis** chưa chạy live (lab không có module hỗ trợ canary có metric request). Lần "qua" chưa dùng metric của chính ứng dụng |
+| **047** Change freeze | — (ADR không có mục live evidence) | **Chỉ có test**, chưa kiểm chứng live |
+| **048** SCM status qua outbox | — | ADR nói rõ: **chưa kiểm chứng với GitHub/GitLab thật** (git server lab là HTTP thường, không có status API). Test dùng HTTP mock transport và vòng outbox |
+| **049** Preview | — | ADR nói rõ: **chưa kiểm chứng live** cho tới khi một PR preview chạy trên cụm lab |
+| **050** Admission + supersession | 2026-09-25, rc15, Jenkins A: 12 commit trên nhánh `agent/storm2` của `payments-api`, mỗi commit một webhook push GitHub có chữ ký, gửi trong 0,9 giây, quota 1 build đồng thời. Cả 12 được nhận (201). Chỉ 2 được gửi Jenkins: commit đầu (admit ngay) và commit thứ 12 (admit 44,9 giây sau khi được ghi, lúc cái đầu xong). Cả hai build thành công. 10 cái còn lại `cancelled` có `supersededBy`, **trước** admission — Jenkins không hề thấy. Tổng 101 giây | `cancelInProgress` (dừng build **đang chạy**) chưa chạy live — push mặc định là `false`. Đọc executor thật của Jenkins chưa làm |
+| **051** Path filter | — | **Chỉ có test**, chưa kiểm chứng live. PR luôn build đầy đủ vì đọc danh sách file từ API SCM chưa làm |
+| **052** Agent principal | — | **Chỉ có test**, chưa kiểm chứng live |
+
+> Hai điểm dễ hiểu nhầm:
+>
+> - ADR-043 ghi "SCM webhook chưa kiểm chứng live". ADR-050 sau đó gửi 12 webhook push
+>   **định dạng GitHub, có chữ ký** tới netCI trong lab — nghĩa là đường nhận webhook của
+>   netCI đã chạy thật, nhưng webhook do bài test tự gửi, **không** phải do GitHub/GitLab
+>   thật gửi. Pull request, fork và tag vẫn chưa chạy live.
+> - Lần đầu thử "cơn bão" ở ADR-050 build một cây thư mục rỗng (bản clone của bài test về
+>   rỗng qua HTTP), netCI báo đúng cả hai build hỏng ở `Build` vì thiếu Dockerfile. Đó là
+>   lỗi dựng bài test, không phải của netCI; nhánh bị xoá và chạy lại.
 
 ---
 
@@ -650,6 +1174,16 @@ sẵn trong ADR-015 chứ không phải trong trí nhớ của người đã ngh
 | **024** | Enterprise Policy Engine, Security Waivers, Break-Glass & Kubernetes Admission (Phase 11) |
 | **025** | Service Catalog, Golden Path Templates, Previews & Self-Service Workflows (Phase 12) |
 | **026** | Comprehensive Production Readiness Certification & Automated Platform Verification (Phase 13) |
+| **043** | CI và CD là hai quyết định riêng: delivery rules, promotion, soak (§3.2b, §3.4) |
+| **044** | SLSA provenance được kiểm tra ở nơi artifact chạy (§3.4 bước 7–8) |
+| **045** | Lưu SBOM của từng artifact và rescan thứ đang chạy (§3.4 bước 10) |
+| **046** | Release được kiểm chứng bằng metric netCI tự đọc; canary không nhận số liệu từ request (§3.4 bước 8) |
+| **047** | Change freeze là khung thời gian được thực thi (§3.4 bước 9) |
+| **048** | Commit status và PR comment đi qua outbox; sửa tuyên bố sai của ADR-019 (§3.4 bước 12) |
+| **049** | Preview được deploy thật, hoặc không tồn tại (§3.4 bước 11) |
+| **050** | Build được admit và supersede, không bị từ chối (§3.4 bước 4–5) |
+| **051** | Path filter chỉ bỏ qua thứ biết chắc là không đổi (§3.4 bước 2) |
+| **052** | Coding agent là principal thuộc loại riêng (§3.5) |
 
 ---
 
@@ -1238,5 +1772,6 @@ Từ chính prompt yêu cầu, đáng nhắc lại:
 
 ---
 
-*Tài liệu này mô tả trạng thái tại commit `6b38fc3`. Khi code đổi, hãy cập nhật lại
-phần §8 (Tiến độ) và §10 (Rủi ro).*
+*Tài liệu này mô tả trạng thái tại commit `6b38fc3`; riêng §2.5, §3.4, §3.5, §3.6 mô tả
+commit `9f114a1` (ADR-043 → ADR-052). Khi code đổi, hãy cập nhật lại phần §8 (Tiến độ),
+§10 (Rủi ro) và §3.6 (Đã kiểm chứng live tới đâu).*
