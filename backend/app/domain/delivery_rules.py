@@ -48,6 +48,11 @@ class Trigger:
     #: Whether a newer run of the same branch or pull request cancels one already building
     #: (ADR-050). None is the default: yes for pull requests, no for pushes.
     cancel_in_progress: bool | None = None
+    #: GitHub Actions' `paths` / `paths-ignore` (ADR-051): the rule matches a push only if
+    #: a changed file matches `paths`, or not every changed file matches `paths_ignore`.
+    #: When the changed files are not known, the filter is not applied -- the rule matches.
+    paths: tuple[str, ...] | None = None
+    paths_ignore: tuple[str, ...] | None = None
 
     def as_json(self) -> dict[str, object]:
         key = "tags" if self.on == "tag" else "branches"
@@ -58,6 +63,10 @@ class Trigger:
             body["registerVersion"] = True
         if self.cancel_in_progress is not None:
             body["cancelInProgress"] = self.cancel_in_progress
+        if self.paths is not None:
+            body["paths"] = list(self.paths)
+        if self.paths_ignore is not None:
+            body["pathsIgnore"] = list(self.paths_ignore)
         return body
 
 
@@ -100,6 +109,8 @@ class ScmEvent:
     branch: str
     tag: str | None = None
     from_fork: bool = False
+    #: The complete set of changed files, or None when the SCM did not say completely.
+    changed_files: tuple[str, ...] | None = None
 
 
 @dataclass(frozen=True)
@@ -215,7 +226,8 @@ def parse_rules(
             on = item.get("on")
             if on not in TRIGGER_EVENTS:
                 raise DeliveryRuleError(f"{where}.on: must be one of {sorted(TRIGGER_EVENTS)}")
-            allowed = {"on", "tags" if on == "tag" else "branches", "deployTo", "registerVersion", "cancelInProgress"}
+            allowed = {"on", "tags" if on == "tag" else "branches", "deployTo", "registerVersion", "cancelInProgress",
+                       "paths", "pathsIgnore"}
             extra = set(item) - allowed
             if extra:
                 raise DeliveryRuleError(f"{where}: unknown field(s) {sorted(extra)}")
@@ -246,8 +258,15 @@ def parse_rules(
             if cancel is not None and on == "tag":
                 # A release is never superseded: each tag is its own build (ADR-050).
                 raise DeliveryRuleError(f"{where}.cancelInProgress: a tag build is never superseded")
+            paths = _patterns(item["paths"], f"{where}.paths") if "paths" in item else None
+            paths_ignore = _patterns(item["pathsIgnore"], f"{where}.pathsIgnore") if "pathsIgnore" in item else None
+            if paths is not None and paths_ignore is not None:
+                raise DeliveryRuleError(f"{where}: use paths or pathsIgnore, not both")
+            if (paths is not None or paths_ignore is not None) and on == "tag":
+                # A release is built from what the tag names, whatever the last push touched.
+                raise DeliveryRuleError(f"{where}: a tag rule cannot filter on paths")
             parsed.append(Trigger(on, patterns, deploy_to=deploy_to, register_version=register,
-                                  cancel_in_progress=cancel))
+                                  cancel_in_progress=cancel, paths=paths, paths_ignore=paths_ignore))
         triggers = tuple(parsed)
 
     fork = raw.get("forkPullRequests", defaults.fork_pull_requests)
@@ -288,14 +307,21 @@ def decide(rules: DeliveryRules, event: ScmEvent) -> TriggerDecision:
     if event.kind == "pull_request" and event.from_fork and rules.fork_pull_requests == "ignore":
         return TriggerDecision(False, "pull request from a fork; forkPullRequests is 'ignore'")
     value = (event.tag or "") if event.kind == "tag" else event.branch
+    unfiltered = ""
     for index, trigger in enumerate(rules.triggers):
         if trigger.on != event.kind or not any(matches(p, value) for p in trigger.patterns):
             continue
+        if trigger.paths is not None or trigger.paths_ignore is not None:
+            if event.changed_files is None:
+                # Not knowing what changed is not evidence that nothing relevant did.
+                unfiltered = "; changed files unknown, path filter not applied"
+            elif not _paths_match(trigger, event.changed_files):
+                continue
         if event.kind == "pull_request" and event.from_fork:
             # Unreviewed code from outside the repository: it is built and tested, never
             # signed or published, so no artifact of it can be deployed or promoted, and
             # the signing key is never bound in its build.
-            return TriggerDecision(True, f"rule {index}: fork pull request, verify only",
+            return TriggerDecision(True, f"rule {index}: fork pull request, verify only{unfiltered}",
                                    publish=False, rule_index=index,
                                    cancel_in_progress=_cancels_in_progress(trigger))
         release_tag = None
@@ -304,10 +330,17 @@ def decide(rules: DeliveryRules, event: ScmEvent) -> TriggerDecision:
         what = f"deploy to {trigger.deploy_to.value}" if trigger.deploy_to else "build only"
         if trigger.register_version:
             what += f", register version {release_tag}" if release_tag else ", tag is not a version"
-        return TriggerDecision(True, f"rule {index}: {what}", deploy_to=trigger.deploy_to,
+        return TriggerDecision(True, f"rule {index}: {what}{unfiltered}", deploy_to=trigger.deploy_to,
                                release_tag=release_tag, rule_index=index,
                                cancel_in_progress=_cancels_in_progress(trigger))
     return TriggerDecision(False, f"no rule matches {event.kind} {value!r}")
+
+
+def _paths_match(trigger: Trigger, changed: tuple[str, ...]) -> bool:
+    if trigger.paths is not None:
+        return any(matches(pattern, name) for name in changed for pattern in trigger.paths)
+    ignored = trigger.paths_ignore or ()
+    return not all(any(matches(pattern, name) for pattern in ignored) for name in changed)
 
 
 def _cancels_in_progress(trigger: Trigger) -> bool:

@@ -21,6 +21,54 @@ logger = logging.getLogger(__name__)
 MAX_WEBHOOK_PAYLOAD_BYTES = 1024 * 1024  # 1MB limit to protect against DOS/OOM
 
 
+#: GitHub's webhook lists at most this many commits; a list that long may be cut short.
+_GITHUB_MAX_PUSH_COMMITS = 2048
+_NULL_SHA = "0" * 40
+
+
+def _files_of(commits: object) -> tuple[str, ...] | None:
+    if not isinstance(commits, list) or not commits:
+        return None
+    files: set[str] = set()
+    for commit in commits:
+        if not isinstance(commit, dict):
+            return None
+        for key in ("added", "removed", "modified"):
+            names = commit.get(key)
+            if not isinstance(names, list) or not all(isinstance(name, str) for name in names):
+                return None
+            files.update(names)
+    # An empty set is "nothing known to have changed", not "only ignored files changed":
+    # a filter must not skip a build on it.
+    return tuple(sorted(files)) or None
+
+
+def _github_changed_files(payload: dict) -> tuple[str, ...] | None:
+    """The complete set of files a push changed, or None when the payload cannot say.
+
+    A new branch lists only some commits, a forced push rewrote history the list does not
+    describe, and a list at GitHub's cap may be truncated: each is None, and a path filter
+    then builds everything rather than guessing.
+    """
+
+    if payload.get("created") or payload.get("forced") or payload.get("before") in (None, _NULL_SHA):
+        return None
+    commits = payload.get("commits")
+    if isinstance(commits, list) and len(commits) >= _GITHUB_MAX_PUSH_COMMITS:
+        return None
+    return _files_of(commits)
+
+
+def _gitlab_changed_files(payload: dict) -> tuple[str, ...] | None:
+    # GitLab sends at most 20 commits and says how many there were.
+    commits = payload.get("commits")
+    if payload.get("before") in (None, _NULL_SHA) or not isinstance(commits, list):
+        return None
+    if payload.get("total_commits_count") != len(commits):
+        return None
+    return _files_of(commits)
+
+
 @dataclass(frozen=True)
 class ScmParsedEvent:
     delivery_id: str
@@ -37,6 +85,10 @@ class ScmParsedEvent:
     base_branch: str | None = None
     from_fork: bool = False
     pull_request_number: int | None = None
+    #: The files this push changed, when the payload says so completely; None when it does
+    #: not (a new branch, a forced push, a truncated commit list, any pull request). A path
+    #: filter never skips a build on None (ADR-051).
+    changed_files: tuple[str, ...] | None = None
     #: The pull/merge request was closed (merged or not) -- a signal to tear down its
     #: preview, never to start a build (ADR-049).
     closed: bool = False
@@ -156,6 +208,7 @@ class GitHubScmProvider:
                 branch=branch,
                 sender=sender,
                 tag=tag,
+                changed_files=_github_changed_files(payload),
             )
 
         if event_type == "pull_request":
@@ -294,6 +347,7 @@ class GitLabScmProvider:
                 branch=branch,
                 sender=sender,
                 tag=tag,
+                changed_files=_gitlab_changed_files(payload),
             )
 
         if event_type == "Merge Request Hook":

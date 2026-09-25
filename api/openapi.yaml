@@ -3997,6 +3997,19 @@ components:
                   already building (ADR-050). Absent: true for pull_request, false for push.
                   Not allowed on tag rules. A run waiting for admission is always superseded,
                   and one that has begun signing or publishing never is.
+              paths:
+                type: array
+                items: { type: string }
+                description: >-
+                  Push and pull_request rules only (ADR-051): the rule matches only if a changed
+                  file matches one of these globs (`*` within a directory, `**` across). When the
+                  SCM did not report the changed files completely -- a new branch, a forced push,
+                  a truncated list, any pull request -- the filter is not applied and the rule
+                  matches. Not with pathsIgnore.
+              pathsIgnore:
+                type: array
+                items: { type: string }
+                description: The rule does not match when every changed file matches one of these globs. Same rules as paths.
         forkPullRequests: { type: string, enum: [ignore, verify] }
         promotion:
           type: object

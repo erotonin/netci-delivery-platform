@@ -3505,6 +3505,7 @@ async def receive_scm_webhook(
         branch=(parsed.base_branch or parsed.branch) if parsed.kind == "pull_request" else parsed.branch,
         tag=parsed.tag,
         from_fork=parsed.from_fork,
+        changed_files=parsed.changed_files,
     )
     decision = decide_trigger(rules, event)
     trigger = {
@@ -3519,6 +3520,8 @@ async def receive_scm_webhook(
         "rule": decision.rule_index,
         "reason": decision.reason,
         "deliveryId": parsed.delivery_id,
+        # How many files the push changed, as far as the SCM said; null when it did not.
+        "changedFiles": len(parsed.changed_files) if parsed.changed_files is not None else None,
     }
     if not decision.run:
         # Answered 200: the delivery was received and understood; there is nothing to do.
