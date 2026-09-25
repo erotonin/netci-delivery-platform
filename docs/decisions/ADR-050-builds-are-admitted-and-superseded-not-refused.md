@@ -71,3 +71,10 @@ running) was not exercised live: pushes default to false.
 A first attempt built an empty tree (the storm's own clone came back empty over HTTP), and
 netCI reported both builds failed at `Build` for a missing Dockerfile. That was the test
 set-up, not netCI; the branch was deleted and the storm repeated from the bare repository.
+
+A second run (rc17, with the Jenkins-queue budget) pushed six commits to six branches, so
+nothing superseded anything, with the quota at five. Five were admitted at once and the
+sixth only when the first finished; all six built and succeeded. Jenkins started every
+build at once, so its queue never filled and the budget never had to hold a build back:
+this shows the probe reads the real controllers without blocking admission wrongly, not
+that it throttles a saturated Jenkins. That case has only been tested.
