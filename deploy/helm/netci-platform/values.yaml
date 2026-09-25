@@ -89,6 +89,11 @@ auth:
     teamsClaim: groups
     # IdP group -> netCI role. Roles: platform-admin, reviewer, developer, viewer.
     roleMap: ""                # "netci-admins=platform-admin,release-managers=reviewer,engineers=developer"
+    # Coding agents (ADR-052): members of these IdP groups, or tokens issued to these OAuth
+    # clients (azp), are agents -- limited to developer/viewer, no break-glass, queued
+    # behind people. An agent the role map makes a reviewer is refused, not downgraded.
+    agentGroups: ""            # "coding-agents"
+    agentClients: ""           # "claude-code-ci,renovate"
   requireSeparationOfDuties: true
 
 # ---------------------------------------------------------------- artifacts
@@ -214,6 +219,10 @@ extraEnv: []                   # [{name: NETCI_RATE_LIMIT, value: "240"}]
 scm:
   githubApiUrl: ""             # default https://api.github.com; GitHub Enterprise: https://ghe.example.com/api/v3
   gitlabUrl: ""                # default https://gitlab.com
+  # SCM logins whose pushes are an agent's (ADR-052): their builds wait behind people's.
+  # The sender of a signed webhook is who the SCM says pushed; this orders the queue, it
+  # grants nothing.
+  agentLogins: ""              # "renovate[bot],claude-agent"
 
 monitoring:
   # A PrometheusRule with netCI's SLO recording rules and alerts (docs/SLO.md). Needs the

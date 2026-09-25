@@ -69,10 +69,17 @@ class Principal:
     # teams say which applications they may do it to. Both are needed: a reviewer role
     # without team scoping lets anyone approve anyone's production release.
     teams: frozenset[str] = frozenset()
+    #: "human" or "agent" (ADR-052). Decided here, from the identity provider's groups or
+    #: client, or the token file -- never from a commit author, which anyone can write.
+    kind: str = "human"
 
     @property
     def is_anonymous(self) -> bool:
         return self.method == "none"
+
+    @property
+    def is_agent(self) -> bool:
+        return self.kind == AGENT
 
     def has_any(self, *roles: Role) -> bool:
         return bool(self.roles.intersection(roles))
@@ -88,10 +95,30 @@ class Principal:
             "roles": sorted(role.value for role in self.roles),
             "teams": sorted(self.teams),
             "method": self.method,
+            "kind": self.kind,
         }
 
 
 ALL_HUMAN_ROLES = frozenset({Role.VIEWER, Role.DEVELOPER, Role.REVIEWER, Role.PLATFORM_ADMIN})
+
+HUMAN = "human"
+AGENT = "agent"
+#: What an agent may hold. Reviewing and administering are a person's: an agent that could
+#: approve could approve its own change, and separation of duties would compare two names
+#: for one author.
+AGENT_ROLES = frozenset({Role.VIEWER, Role.DEVELOPER})
+
+
+def _refuse_agent_roles(roles: frozenset[Role], *, where: str) -> str | None:
+    """None when these roles are fine for an agent, else why not. A refusal, never a silent
+    trim: a token that says "reviewer" and quietly works as "developer" hides the mapping
+    mistake that gave an agent the right to approve."""
+
+    extra = roles - AGENT_ROLES
+    if not extra:
+        return None
+    return (f"{where} is an agent and may not hold {', '.join(sorted(r.value for r in extra))}; "
+            "agents are limited to developer and viewer")
 
 ANONYMOUS = Principal(
     subject="anonymous",
@@ -231,6 +258,11 @@ class TokenAuthenticator:
             raw_teams = entry.get("teams") or []
             if not isinstance(raw_teams, list):
                 raise AuthError("AUTH_NOT_CONFIGURED", f"{source}: teams must be a list", status=503)
+            kind = entry.get("kind", HUMAN)
+            if kind not in (HUMAN, AGENT):
+                raise AuthError("AUTH_NOT_CONFIGURED", f"{source}: kind must be human or agent", status=503)
+            if kind == AGENT and (refusal := _refuse_agent_roles(roles, where=f"{source} ({subject})")):
+                raise AuthError("AUTH_NOT_CONFIGURED", refusal, status=503)
             by_hash[digest] = Principal(
                 teams=frozenset(str(team).strip() for team in raw_teams if str(team).strip()),
                 subject=subject,
@@ -238,6 +270,7 @@ class TokenAuthenticator:
                 email=str(entry.get("email") or ""),
                 roles=roles,
                 method="token",
+                kind=kind,
             )
 
         self._by_hash = by_hash
@@ -298,6 +331,8 @@ class OidcAuthenticator:
         teams_claim: str = "groups",
         cache_seconds: float = 300.0,
         leeway_seconds: float = 60.0,
+        agent_groups: frozenset[str] = frozenset(),
+        agent_clients: frozenset[str] = frozenset(),
     ) -> None:
         self.issuer = issuer.rstrip("/")
         self.audience = audience
@@ -308,6 +343,10 @@ class OidcAuthenticator:
         # names the IdP sends against the owner_team recorded on an application, so the
         # two only have to agree on a string.
         self.teams_claim = teams_claim
+        # Which callers are agents (ADR-052): members of these IdP groups, or tokens issued
+        # to these OAuth clients (`azp`) -- a coding agent usually signs in as a client.
+        self.agent_groups = agent_groups
+        self.agent_clients = agent_clients
         self.cache_seconds = cache_seconds
         self.leeway_seconds = leeway_seconds
         self._lock = threading.Lock()
@@ -473,6 +512,11 @@ class OidcAuthenticator:
         raw_teams = claims.get(self.teams_claim) or []
         if isinstance(raw_teams, str):
             raw_teams = raw_teams.split()
+        groups = {str(item) for item in raw_roles} | {str(team) for team in raw_teams}
+        client = str(claims.get("azp") or claims.get("client_id") or "")
+        kind = AGENT if (groups & self.agent_groups or (client and client in self.agent_clients)) else HUMAN
+        if kind == AGENT and (refusal := _refuse_agent_roles(frozenset(roles), where=f"{subject!r}")):
+            raise AuthError("AGENT_ROLE_NOT_ALLOWED", refusal, status=403)
         return Principal(
             subject=subject,
             display_name=str(claims.get("name") or claims.get("preferred_username") or subject),
@@ -480,10 +524,15 @@ class OidcAuthenticator:
             roles=frozenset(roles),
             teams=frozenset(str(team).strip() for team in raw_teams if str(team).strip()),
             method="oidc",
+            kind=kind,
         )
 
 
 # ------------------------------------------------------------------ composition root
+
+
+def _csv(raw: str) -> frozenset[str]:
+    return frozenset(item.strip() for item in raw.split(",") if item.strip())
 
 
 def _configured_role_map() -> dict[str, Role]:
@@ -541,5 +590,7 @@ def build_authenticator() -> Authenticator:
             roles_claim=os.getenv("NETCI_OIDC_ROLES_CLAIM", "roles").strip() or "roles",
             teams_claim=os.getenv("NETCI_OIDC_TEAMS_CLAIM", "groups").strip() or "groups",
             role_map=role_map,
+            agent_groups=_csv(os.getenv("NETCI_OIDC_AGENT_GROUPS", "")),
+            agent_clients=_csv(os.getenv("NETCI_OIDC_AGENT_CLIENTS", "")),
         )
     raise ValueError(f"NETCI_AUTH_MODE must be one of none, token, oidc (got {mode!r})")

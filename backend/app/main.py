@@ -313,6 +313,17 @@ async def _rescan_sboms_periodically() -> None:
             logger.info("SBOM rescan pass completed: %s", outcome)
 
 
+def _refuse_agent(principal: Principal, code: str, message: str) -> None:
+    """ADR-052: the few things a developer may do and an agent may not."""
+
+    if principal.is_agent:
+        raise HTTPException(status_code=403, detail={"code": code, "message": message})
+
+
+def _agent_scm_logins() -> frozenset[str]:
+    return frozenset(item.strip() for item in os.getenv("NETCI_AGENT_SCM_LOGINS", "").split(",") if item.strip())
+
+
 def _admission_interval_seconds() -> float:
     raw = os.getenv("NETCI_ADMISSION_INTERVAL_SECONDS", "15").strip()
     try:
@@ -2034,6 +2045,7 @@ def get_system(systemId: str, principal: Principal = ReadAccess) -> dict[str, ob
 
 @app.delete("/systems/{systemId}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_system(systemId: str, principal: Principal = DeveloperAccess):
+    _refuse_agent(principal, "AGENT_MAY_NOT_DELETE_SYSTEMS", "deleting a system is a person's decision")
     try:
         for module in portal.system(systemId).get("modules") or []:
             _require_module_access(str(module["id"]), principal)
@@ -2214,7 +2226,7 @@ def start_module_pipeline_run(
             started_by=principal.subject,
             config_revision_id=active_rev_id,
             deploy_after_build=payload.deploy,
-            trigger={"event": "manual", "sender": principal.subject,
+            trigger={"event": "manual", "sender": principal.subject, "actorKind": principal.kind,
                      "reason": "started from the portal" + ("" if payload.deploy else ", build only")},
         )
         return pipeline_json(run)
@@ -3358,6 +3370,9 @@ def configure_application_scm(
     principal: Principal = DeveloperAccess,
 ) -> dict[str, object]:
     """Configure or update SCM webhook & repository identity for an application."""
+    # Which repository may start this application's builds, and the secret that proves it,
+    # is a trust boundary -- not something the agent pushing to that repository may move.
+    _refuse_agent(principal, "AGENT_MAY_NOT_CONFIGURE_SCM", "an SCM integration is configured by a person")
     app = platform.get_application(applicationId)
     _require_application_access(app, principal)
 
@@ -3517,6 +3532,9 @@ async def receive_scm_webhook(
         "baseBranch": parsed.base_branch,
         "fromFork": parsed.from_fork,
         "sender": parsed.sender,
+        # A signed webhook's sender is who the SCM says pushed -- good enough to put an
+        # agent's builds behind people's, never to grant anything (ADR-052).
+        "actorKind": "agent" if parsed.sender in _agent_scm_logins() else "human",
         "rule": decision.rule_index,
         "reason": decision.reason,
         "deliveryId": parsed.delivery_id,
@@ -5181,6 +5199,9 @@ def create_break_glass_request(
     payload: BreakGlassCreate,
     principal: Principal = DeveloperAccess,
 ) -> dict[str, object]:
+    # Break-glass is a person accepting a risk out loud; an agent asking for one is an agent
+    # asking to bypass the control it is subject to.
+    _refuse_agent(principal, "AGENT_MAY_NOT_BREAK_GLASS", "break-glass must be requested by a person")
     with database.transaction() as session:
         try:
             record = BreakGlassService.create_request(

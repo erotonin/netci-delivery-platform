@@ -914,7 +914,12 @@ paths:
       operationId: getCurrentUser
       responses:
         '200':
-          description: Current user identity and authentication status
+          description: >-
+            Current user identity and authentication status. `principal.kind` is `human` or
+            `agent` (ADR-052), decided by the server from the identity provider's groups or
+            OAuth client, or the token file. An agent holds at most developer and viewer, and
+            is refused break-glass (AGENT_MAY_NOT_BREAK_GLASS), SCM integration changes
+            (AGENT_MAY_NOT_CONFIGURE_SCM) and system deletion (AGENT_MAY_NOT_DELETE_SYSTEMS).
           content:
             application/json:
               schema: { type: object, additionalProperties: true }

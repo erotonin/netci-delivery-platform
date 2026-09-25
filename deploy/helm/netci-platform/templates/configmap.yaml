@@ -42,6 +42,8 @@ data:
   NETCI_OIDC_ROLES_CLAIM: {{ .Values.auth.oidc.rolesClaim | quote }}
   NETCI_OIDC_TEAMS_CLAIM: {{ .Values.auth.oidc.teamsClaim | quote }}
   NETCI_OIDC_ROLE_MAP: {{ required "auth.oidc.roleMap is required: which IdP groups are platform-admin, reviewer and developer" .Values.auth.oidc.roleMap | quote }}
+  NETCI_OIDC_AGENT_GROUPS: {{ .Values.auth.oidc.agentGroups | default "" | quote }}
+  NETCI_OIDC_AGENT_CLIENTS: {{ .Values.auth.oidc.agentClients | default "" | quote }}
   {{- end }}
   NETCI_REQUIRE_SEPARATION_OF_DUTIES: {{ .Values.auth.requireSeparationOfDuties | quote }}
 
@@ -117,6 +119,7 @@ data:
   {{- with .Values.scm.gitlabUrl }}
   NETCI_GITLAB_URL: {{ . | quote }}
   {{- end }}
+  NETCI_AGENT_SCM_LOGINS: {{ .Values.scm.agentLogins | default "" | quote }}
   NETCI_REQUIRE_DCIM_REVALIDATION: {{ .Values.dcim.requireRevalidation | quote }}
   {{- if .Values.dcim.provider }}
   NETCI_DCIM_PROVIDER: {{ .Values.dcim.provider | quote }}

@@ -1158,7 +1158,7 @@ class InMemorySession:
 
     def pipeline_runs_awaiting_admission(self, limit: int) -> tuple[PipelineRun, ...]:
         waiting = [r for r in self._state.runs.values() if r.admitted_at is None and r.status == PipelineStatus.QUEUED]
-        return tuple(sorted(waiting, key=lambda r: (r.created_at, str(r.id)))[:limit])
+        return tuple(sorted(waiting, key=lambda r: (r.trigger.get("actorKind") == "agent", r.created_at, str(r.id)))[:limit])
 
     def lock_active_runs_in_group(self, concurrency_group: str) -> tuple[PipelineRun, ...]:
         active = [r for r in self._state.runs.values()

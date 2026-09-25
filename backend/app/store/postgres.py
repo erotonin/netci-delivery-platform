@@ -2684,8 +2684,10 @@ class PostgresSession:
         self._cursor.execute(
             # SKIP LOCKED: a run that a supersession has locked is about to be cancelled;
             # waiting for it would only make admission wait on a push.
+            # People before agents, then oldest first (ADR-052): a storm of agent pushes
+            # waits behind the one build a person is waiting on.
             f"SELECT {RUN_COLUMNS} FROM pipeline_runs WHERE admitted_at IS NULL AND status = %s"
-            " ORDER BY created_at, id LIMIT %s FOR UPDATE SKIP LOCKED",
+            " ORDER BY (trigger->>'actorKind' = 'agent') IS TRUE, created_at, id LIMIT %s FOR UPDATE SKIP LOCKED",
             (PipelineStatus.QUEUED.value, limit),
         )
         return tuple(_run(row) for row in self._cursor.fetchall())
