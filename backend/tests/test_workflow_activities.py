@@ -369,3 +369,24 @@ async def test_the_health_probe_is_aimed_at_the_host_the_playbook_deployed_to(tm
     ))
     server.shutdown()
     assert ok is True and hits == ["/healthz"]
+
+
+def test_a_preview_passes_only_named_parameters_to_its_playbook(tmp_path, monkeypatch):
+    # The playbook also reads chart_path and kube_context; a stray parameter must not
+    # decide which chart runs or which cluster it runs against -- nor carry the token.
+    import json as _json
+    from app.workflows.provision_and_deploy import PreviewInput
+
+    runner = AnsibleRuntimeRunner(project_root=tmp_path, inventory=tmp_path / "inventory.ini")
+    command = runner.command_for_preview(PreviewInput(
+        application_id="app", pipeline_run_id="run", preview_id="checkout-pr-1", action="deploy",
+        namespace="preview-checkout-pr-1", release="checkout-pr-1", artifact_digest="sha256:" + "a" * 64,
+        parameters={
+            "image_repository": "registry.local/checkout", "chart_path": "/tmp/evil-chart",
+            "kube_context": "prod-cluster", "callback_token": "secret-token",
+        },
+    ))
+    extra_vars = _json.loads(command[command.index("--extra-vars") + 1])
+    assert extra_vars["image_repository"] == "registry.local/checkout"
+    assert not {"chart_path", "kube_context", "callback_token"} & set(extra_vars)
+    assert "secret-token" not in " ".join(command)

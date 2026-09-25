@@ -43,6 +43,7 @@ _CONTROL_PLANE_PARAMETERS = frozenset({"callback_token", "fencing_token"})
 _WORKER_BLOB_SHA256 = "_netci_worker_blob_sha256"
 _SAFE_INVENTORY_HOST = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,252}$")
 _SAFE_SECRET_REF = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+_PREVIEW_PLAYBOOK_PARAMETERS = ("image_repository", "image_pull_host", "kubeconfig")
 
 
 class EvidenceStore(Protocol):
@@ -581,8 +582,12 @@ class AnsibleRuntimeRunner:
                 raise ValueError("kubeconfig_ref escapes NETCI_KUBECONFIG_DIR")
             parameters["kubeconfig"] = str(kubeconfig)
 
+        # Named, not spread: the playbook also reads chart_path and kube_context, and a
+        # stray parameter must not become which chart runs or which cluster it runs in.
         extra_vars: dict[str, object] = {
-            **parameters,
+            key: parameters[key] for key in _PREVIEW_PLAYBOOK_PARAMETERS if key in parameters
+        }
+        extra_vars |= {
             "preview_action": preview.action,
             "preview_namespace": preview.namespace,
             "preview_release": preview.release,

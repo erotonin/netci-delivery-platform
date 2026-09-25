@@ -4496,7 +4496,7 @@ components:
       properties:
         status: { type: string, enum: [active, failed, destroyed] }
         message: { type: string, maxLength: 2000, default: "" }
-        url: { type: string, maxLength: 2000, nullable: true }
+        url: { type: string, maxLength: 2000, nullable: true, pattern: '^https?://[A-Za-z0-9.-]+(:[0-9]{1,5})?(/[^\s]*)?$', description: 'What the cluster serves, read back by the worker; an http(s) URL or null.' }
     PreviewEnvironment:
       type: object
       required: [previewId, applicationId, pullRequestId, commitSha, namespace, url, status, ttlSeconds, expiresAt, createdBy, createdAt]

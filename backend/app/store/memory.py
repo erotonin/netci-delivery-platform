@@ -65,6 +65,7 @@ from .records import (
     DeploymentLease,
     ModuleRow,
     PolicyDecisionRecord,
+    PREVIEW_TEARDOWN_STATES,
     PreviewEnvironmentRecord,
     RequestRow,
     ResourceQuotaRecord,
@@ -1131,6 +1132,18 @@ class InMemorySession:
         # Transactions on the in-memory store are already serialized by its lock.
         return None
 
+    @contextmanager
+    def savepoint(self):
+        snapshot = self._state.copy()
+        try:
+            yield
+        except BaseException:
+            # In place: the store's transaction commits this very object on exit.
+            restored = snapshot.copy()
+            for name in self._state.__dataclass_fields__:
+                setattr(self._state, name, getattr(restored, name))
+            raise
+
     def count_active_pipeline_runs(self, application_ids) -> int:
         active = {PipelineStatus.QUEUED, PipelineStatus.RUNNING, PipelineStatus.WAITING_APPROVAL}
         wanted = set(application_ids) if application_ids is not None else None
@@ -1391,7 +1404,7 @@ class InMemorySession:
         candidates = [
             p for p in self._state.preview_environments.values()
             if p.application_id == application_id and p.pull_request_id == pull_request_id
-            and p.status in ("active", "deploying")
+            and p.status in PREVIEW_TEARDOWN_STATES
         ]
         candidates.sort(key=lambda p: p.created_at, reverse=True)
         return candidates[0] if candidates else None
@@ -1411,7 +1424,7 @@ class InMemorySession:
         expired = [
             p
             for p in self._state.preview_environments.values()
-            if p.status in ("active", "deploying") and p.expires_at <= now
+            if p.status in PREVIEW_TEARDOWN_STATES and p.expires_at <= now
         ]
         return tuple(expired)
 

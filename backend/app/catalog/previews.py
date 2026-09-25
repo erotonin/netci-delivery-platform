@@ -22,7 +22,7 @@ from typing import Any
 from uuid import UUID
 
 from ..errors import ApiError
-from ..store.records import PreviewEnvironmentRecord
+from ..store.records import PREVIEW_TEARDOWN_STATES, PreviewEnvironmentRecord
 from ..store.session import PlatformSession
 
 
@@ -64,6 +64,12 @@ class PreviewRequest:
     release: str
     artifact_digest: str = ""
     parameters: dict[str, Any] = field(default_factory=dict)
+
+
+def _lock_key(text: str) -> int:
+    """A stable signed 64-bit advisory-lock key."""
+
+    return int.from_bytes(hashlib.sha256(text.encode()).digest()[:8], "big", signed=True)
 
 
 def _slug(module_id: str) -> str:
@@ -123,7 +129,22 @@ class PreviewEnvironmentManager:
         now = datetime.now(timezone.utc)
         ttl_seconds = max(MIN_TTL_HOURS, min(ttl_hours, MAX_TTL_HOURS)) * 3600
         expires_at = now + timedelta(seconds=ttl_seconds)
+        # Two successes of one pull request's builds would otherwise both find no row and
+        # both insert it; serialized here, the second finds the first's and redeploys.
+        self._session.advisory_xact_lock(_lock_key(f"preview:{release}"))
         existing = self._session.preview_environment(release)
+        if existing is not None and existing.application_id != application_id:
+            # Names are derived, not chosen; if two modules ever derive one, the second
+            # must not take over the first's row -- and with it, its namespace.
+            raise PreviewEnvironmentError(
+                "PREVIEW_NAME_TAKEN", f"preview '{release}' belongs to another application", 409
+            )
+        if existing is not None and existing.status == "destroying":
+            # A teardown is deleting that namespace now; deploying into it would race the
+            # delete, and whichever report came second would describe the wrong one.
+            raise PreviewEnvironmentError(
+                "PREVIEW_TEARING_DOWN", f"preview '{release}' is being torn down; push again once it is gone", 409
+            )
         if existing is None:
             record = PreviewEnvironmentRecord(
                 id=release,
@@ -153,10 +174,11 @@ class PreviewEnvironmentManager:
             pipeline_run_id=pipeline_run_id,
             expires_at=expires_at,
             commit_sha=commit_sha,
+            expected_status=existing.status,
         )
         if updated is None:
             raise PreviewEnvironmentError(
-                "PREVIEW_UPDATE_FAILED", f"failed to update preview environment '{release}'", 500
+                "INVALID_PREVIEW_STATE", f"preview environment '{release}' was concurrently modified", 409
             )
         return updated
 
@@ -218,13 +240,13 @@ class PreviewEnvironmentManager:
         """
 
         current = self._session.preview_environment(preview_id)
-        if current is None or current.status not in ("active", "deploying"):
+        if current is None or current.status not in PREVIEW_TEARDOWN_STATES:
             return None
         return self._session.update_preview_environment(
             preview_id,
             status="destroying",
             detail=detail,
-            expected_status=("active", "deploying"),
+            expected_status=PREVIEW_TEARDOWN_STATES,
         )
 
     def reconcile_expiry(self, now: datetime | None = None) -> list[PreviewEnvironmentRecord]:
@@ -237,7 +259,7 @@ class PreviewEnvironmentManager:
                 expired.id,
                 status="destroying",
                 detail=f"{EXPIRY_DETAIL_PREFIX} at {expired.expires_at.isoformat()}",
-                expected_status=("active", "deploying"),
+                expected_status=PREVIEW_TEARDOWN_STATES,
             )
             if updated is not None:
                 reconciled.append(updated)

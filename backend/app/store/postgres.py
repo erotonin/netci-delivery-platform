@@ -17,7 +17,7 @@ import threading
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from ..domain.models import (
     Application,
@@ -64,6 +64,7 @@ from .records import (
     DeploymentLease,
     ModuleRow,
     PolicyDecisionRecord,
+    PREVIEW_TEARDOWN_STATES,
     PreviewEnvironmentRecord,
     RequestModuleRow,
     RequestRow,
@@ -2634,6 +2635,18 @@ class PostgresSession:
         # the second counts the run the first has just written instead of both passing.
         self._cursor.execute("SELECT pg_advisory_xact_lock(%s)", (key,))
 
+    @contextmanager
+    def savepoint(self):
+        name = f"netci_sp_{uuid4().hex[:12]}"
+        self._cursor.execute(f"SAVEPOINT {name}")
+        try:
+            yield
+        except BaseException:
+            self._cursor.execute(f"ROLLBACK TO SAVEPOINT {name}")
+            self._cursor.execute(f"RELEASE SAVEPOINT {name}")
+            raise
+        self._cursor.execute(f"RELEASE SAVEPOINT {name}")
+
     def count_active_pipeline_runs(self, application_ids) -> int:
         statuses = [PipelineStatus.QUEUED.value, PipelineStatus.RUNNING.value, PipelineStatus.WAITING_APPROVAL.value]
         if application_ids is None:
@@ -3123,14 +3136,6 @@ class PostgresSession:
                 ttl_seconds, expires_at, created_by, created_at, destroyed_at,
                 pipeline_run_id, artifact_digest, release_name, detail
             ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-            ON CONFLICT (id) DO UPDATE
-               SET status = EXCLUDED.status,
-                   detail = EXCLUDED.detail,
-                   url = EXCLUDED.url,
-                   artifact_digest = EXCLUDED.artifact_digest,
-                   pipeline_run_id = EXCLUDED.pipeline_run_id,
-                   expires_at = EXCLUDED.expires_at,
-                   commit_sha = EXCLUDED.commit_sha
             """,
             (
                 preview.id,
@@ -3213,10 +3218,10 @@ class PostgresSession:
         self._cursor.execute(
             f"""
             SELECT {PREVIEW_ENVIRONMENT_COLUMNS} FROM preview_environments
-             WHERE application_id = %s AND pull_request_id = %s AND status IN ('active', 'deploying')
+             WHERE application_id = %s AND pull_request_id = %s AND status = ANY(%s)
              ORDER BY created_at DESC LIMIT 1
             """,
-            (application_id, pull_request_id),
+            (application_id, pull_request_id, list(PREVIEW_TEARDOWN_STATES)),
         )
         row = self._cursor.fetchone()
         return _preview_environment(row) if row else None
@@ -3243,8 +3248,8 @@ class PostgresSession:
     def expired_preview_environments(self, now: datetime) -> tuple[PreviewEnvironmentRecord, ...]:
         self._cursor.execute(
             f"SELECT {PREVIEW_ENVIRONMENT_COLUMNS} FROM preview_environments "
-            "WHERE status IN ('active', 'deploying') AND expires_at <= %s",
-            (now,),
+            "WHERE status = ANY(%s) AND expires_at <= %s",
+            (list(PREVIEW_TEARDOWN_STATES), now),
         )
         return tuple(_preview_environment(row) for row in self._cursor.fetchall())
 

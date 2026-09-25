@@ -8,7 +8,7 @@ a property of the code rather than a claim in a document.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Protocol, Iterable
+from typing import Any, ContextManager, Protocol, Iterable
 from uuid import UUID
 
 from ..domain.models import (
@@ -463,6 +463,16 @@ class PlatformSession(Protocol):
 
     def advisory_xact_lock(self, key: int) -> None:
         """Wait for, then hold until commit, a transaction-scoped advisory lock."""
+        ...
+
+    def savepoint(self) -> ContextManager[None]:
+        """Undo only this block's writes if it raises; the enclosing transaction goes on.
+
+        For a side effect that must not take the main write down with it -- a preview
+        requested inside the transaction that records a build's success. Catching the
+        exception is not enough on PostgreSQL: after a failed statement the transaction
+        is aborted, the next write fails too, and the build's success is rolled back.
+        """
         ...
 
     def count_active_pipeline_runs(self, application_ids: list[UUID] | None) -> int:

@@ -264,6 +264,13 @@ class CatalogTemplateRecord:
     updated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
 
+#: Preview states that may still have a namespace in the cluster, so teardown -- by a
+#: person, a closed pull request or the TTL -- applies to them. `failed` belongs here: a
+#: deploy that failed after creating its namespace left it there, and nothing else would
+#: ever remove it. Tearing down one that was never created is a no-op in the playbook.
+PREVIEW_TEARDOWN_STATES = ("active", "deploying", "failed")
+
+
 @dataclass(frozen=True)
 class PreviewEnvironmentRecord:
     """A pull request's own deployment (ADR-049).
@@ -296,7 +303,7 @@ class PreviewEnvironmentRecord:
         return self.status == "active" and self.expires_at > now and self.destroyed_at is None
 
     def is_expired(self, now: datetime) -> bool:
-        return self.status in ("active", "deploying") and self.expires_at <= now
+        return self.status in PREVIEW_TEARDOWN_STATES and self.expires_at <= now
 
 
 @dataclass(frozen=True)

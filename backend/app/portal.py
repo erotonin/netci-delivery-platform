@@ -2042,23 +2042,27 @@ class PortalService:
         previews = _module_previews(module.pipeline_config)
         if not previews["enabled"]:
             return None
+        # A preview is a side effect of the build, never a condition of recording it. The
+        # savepoint is what makes that true on PostgreSQL: a failed statement would
+        # otherwise abort the whole transaction, and the build's success with it.
         try:
-            record = PreviewEnvironmentManager(transaction).request(
-                application_id=run.application_id,
-                module_id=module.id,
-                pull_request_id=str(pull_request_number),
-                pull_request_number=pull_request_number,
-                pipeline_run_id=run.id,
-                commit_sha=run.commit_sha,
-                artifact_digest=run.artifact_digest,
-                ttl_hours=previews["ttlHours"],
-                created_by=run.started_by or "scm",
-            )
-            transaction.apply(UnitOfWork(audit=[AuditRecord(
-                "preview.requested", application_id=run.application_id, pipeline_run_id=run.id,
-                payload={"previewId": record.id, "namespace": record.namespace, "pullRequest": pull_request_number},
-            )]))
-            return self.preview_start_request(transaction, record)
+            with transaction.savepoint():
+                record = PreviewEnvironmentManager(transaction).request(
+                    application_id=run.application_id,
+                    module_id=module.id,
+                    pull_request_id=str(pull_request_number),
+                    pull_request_number=pull_request_number,
+                    pipeline_run_id=run.id,
+                    commit_sha=run.commit_sha,
+                    artifact_digest=run.artifact_digest,
+                    ttl_hours=previews["ttlHours"],
+                    created_by=run.started_by or "scm",
+                )
+                transaction.apply(UnitOfWork(audit=[AuditRecord(
+                    "preview.requested", application_id=run.application_id, pipeline_run_id=run.id,
+                    payload={"previewId": record.id, "namespace": record.namespace, "pullRequest": pull_request_number},
+                )]))
+                return self.preview_start_request(transaction, record)
         except Exception as exc:
             logger.warning("preview request failed for run %s: %s", run.id, exc, exc_info=True)
             transaction.apply(UnitOfWork(audit=[AuditRecord(

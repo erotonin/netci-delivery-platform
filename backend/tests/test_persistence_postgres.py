@@ -1754,3 +1754,120 @@ def test_postgres_change_freeze_persistence_filtering_and_cancel(database):
         assert freeze_future.id not in [f.id for f in active_after_cancel]
 
 
+
+
+# ---------------------------------------------------------------- previews (ADR-049)
+
+
+def _preview_row(application_id, preview_id: str, **overrides):
+    from app.store.records import PreviewEnvironmentRecord
+
+    values = dict(
+        id=preview_id, application_id=application_id, pull_request_id="1", commit_sha="a" * 40,
+        namespace=f"preview-{preview_id}", url=None, status="deploying",
+    )
+    values.update(overrides)
+    return PreviewEnvironmentRecord(**values)
+
+
+def test_a_failed_statement_inside_a_savepoint_leaves_the_transaction_usable(database):
+    """Why the preview hook needs a savepoint and not just `except`: on PostgreSQL a failed
+    statement aborts the transaction, so the build success written beside it is lost."""
+
+    import psycopg
+    from app.store.postgres import PostgresDatabase
+
+    db = PostgresDatabase(database)
+    application, _ = seed(DeliveryPlatform(), unique_name())
+    with db.transaction() as session:
+        session.insert_preview_environment(_preview_row(application.id, "taken-pr-1"))
+
+    with db.transaction() as session:
+        session.insert_preview_environment(_preview_row(application.id, "before-pr-1"))
+        with pytest.raises(psycopg.errors.UniqueViolation):
+            with session.savepoint():
+                session.insert_preview_environment(_preview_row(application.id, "inside-pr-1"))
+                session.insert_preview_environment(_preview_row(application.id, "taken-pr-1"))
+        session.insert_preview_environment(_preview_row(application.id, "after-pr-1"))
+
+    with db.transaction() as session:
+        assert session.preview_environment("before-pr-1") is not None
+        assert session.preview_environment("after-pr-1") is not None
+        # Undone with the statement that failed, not committed half-way.
+        assert session.preview_environment("inside-pr-1") is None
+
+
+def test_concurrent_requests_for_one_pull_request_write_one_preview_and_none_fail(database):
+    import threading
+    import time
+    from app.catalog.previews import PreviewEnvironmentManager
+    from app.store.postgres import PostgresDatabase
+
+    db = PostgresDatabase(database)
+    platform = DeliveryPlatform()
+    application, run = seed(platform, unique_name())
+    start = threading.Barrier(8)
+    errors: list[BaseException] = []
+
+    class SlowRead:
+        """Widens the read-then-insert window, so without the lock every thread reads
+        "no row" and all but one insert fails -- which is what this test must catch."""
+
+        def __init__(self, session):
+            self._session = session
+
+        def __getattr__(self, name):
+            return getattr(self._session, name)
+
+        def preview_environment(self, preview_id):
+            found = self._session.preview_environment(preview_id)
+            time.sleep(0.2)
+            return found
+
+    def request() -> None:
+        try:
+            own = PostgresDatabase(database)  # a connection per writer, as replicas have
+            start.wait()
+            with own.transaction() as session:
+                PreviewEnvironmentManager(SlowRead(session)).request(
+                    application_id=application.id, module_id="race", pull_request_id="9",
+                    pull_request_number=9, pipeline_run_id=run.id, commit_sha="b" * 40,
+                    artifact_digest=DIGEST, ttl_hours=1, created_by="scm",
+                )
+        except BaseException as exc:  # noqa: BLE001 - collected and asserted below
+            errors.append(exc)
+
+    threads = [threading.Thread(target=request) for _ in range(8)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert errors == []
+    with db.transaction() as session:
+        rows = session.list_preview_environments(application.id)
+    assert [row.id for row in rows] == ["race-pr-9"] and rows[0].status == "deploying"
+
+
+def test_a_preview_name_owned_by_another_application_is_not_taken_over(database):
+    from app.catalog.previews import PreviewEnvironmentError, PreviewEnvironmentManager
+    from app.store.postgres import PostgresDatabase
+
+    db = PostgresDatabase(database)
+    platform = DeliveryPlatform()
+    owner, _ = seed(platform, unique_name())
+    other, other_run = seed(platform, unique_name())
+    with db.transaction() as session:
+        session.insert_preview_environment(_preview_row(owner.id, "shared-pr-3", status="active", url="http://a.example"))
+
+    with pytest.raises(PreviewEnvironmentError) as refused:
+        with db.transaction() as session:
+            PreviewEnvironmentManager(session).request(
+                application_id=other.id, module_id="shared", pull_request_id="3",
+                pull_request_number=3, pipeline_run_id=other_run.id, commit_sha="c" * 40,
+                artifact_digest=DIGEST, ttl_hours=1, created_by="scm",
+            )
+    assert refused.value.code == "PREVIEW_NAME_TAKEN" and refused.value.status_code == 409
+    with db.transaction() as session:
+        kept = session.preview_environment("shared-pr-3")
+    assert kept.application_id == owner.id and kept.url == "http://a.example"

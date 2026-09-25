@@ -132,10 +132,22 @@ def test_start_teardown_moves_active_or_deploying_to_destroying(preview_setup):
     assert destroying.detail == "teardown requested by alice"
 
 
+def test_a_failed_preview_is_still_torn_down_because_its_namespace_may_exist(preview_setup):
+    # A deploy can fail after the playbook created the namespace. Left at "failed" with
+    # no path to teardown, that namespace would outlive the pull request forever.
+    mgr, session, app_id = preview_setup
+    prv = _request(mgr, app_id)
+    mgr.record_result(prv.id, status="failed", message="helm upgrade timed out")
+
+    torn = mgr.start_teardown(prv.id, detail="pull request closed")
+    assert torn is not None and torn.status == "destroying"
+
+
 def test_start_teardown_is_none_for_a_row_already_gone(preview_setup):
     mgr, session, app_id = preview_setup
     prv = _request(mgr, app_id)
-    mgr.record_result(prv.id, status="failed", message="deploy failed")
+    mgr.start_teardown(prv.id, detail="teardown requested")
+    mgr.record_result(prv.id, status="destroyed")
 
     assert mgr.start_teardown(prv.id, detail="again") is None
     assert mgr.start_teardown("does-not-exist", detail="again") is None
@@ -190,3 +202,27 @@ def test_reconcile_expiry_ignores_rows_not_yet_due(preview_setup):
     _request(mgr, app_id, pr_number=8, ttl_hours=72)
 
     assert mgr.reconcile_expiry(now=datetime.now(timezone.utc)) == []
+
+
+def test_a_preview_being_torn_down_is_not_redeployed_into(preview_setup):
+    # The teardown is deleting that namespace; a deploy racing it would leave whichever
+    # report arrived second describing a namespace that is not there.
+    mgr, session, app_id = preview_setup
+    prv = _request(mgr, app_id)
+    mgr.start_teardown(prv.id, detail="pull request closed")
+
+    with pytest.raises(PreviewEnvironmentError) as refused:
+        _request(mgr, app_id)
+    assert refused.value.code == "PREVIEW_TEARING_DOWN" and refused.value.status_code == 409
+    assert session.preview_environment(prv.id).status == "destroying"
+
+
+def test_a_savepoint_undoes_only_its_own_writes_in_the_memory_store_too(preview_setup):
+    mgr, session, app_id = preview_setup
+    kept = _request(mgr, app_id, pr_number=1)
+    with pytest.raises(RuntimeError):
+        with session.savepoint():
+            _request(mgr, app_id, pr_number=2)
+            raise RuntimeError("the preview failed")
+    assert session.preview_environment(kept.id) is not None
+    assert [p.id for p in session.list_preview_environments(app_id)] == [kept.id]

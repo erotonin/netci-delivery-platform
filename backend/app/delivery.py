@@ -2043,6 +2043,10 @@ class DeliveryPlatform:
             )
         )
         self._apply(transaction, unit)
+        # The tagged version belongs to this same transaction (ADR-043); the preview is a
+        # side effect after it. bf30e27 replaced this call with the preview hook, and a
+        # v* tag silently stopped becoming a version.
+        self._build_published(transaction, updated)
         preview_request = None
         if self.preview_hook is not None:
             try:

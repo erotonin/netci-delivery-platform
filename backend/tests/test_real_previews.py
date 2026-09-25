@@ -422,3 +422,19 @@ def test_preview_hook_exception_does_not_rollback_ci_success(monkeypatch):
     run_status = client.get(f"/pipeline-runs/{run_id}").json()
     assert run_status["status"] == "succeeded"
 
+
+
+def test_a_preview_url_that_is_not_http_is_refused_because_the_portal_renders_it_as_a_link():
+    module, repo = _kubernetes_module()
+    run_id = _pull_request(repo, number=23).json()["pipelineRunId"]
+    _succeed(run_id)
+    preview = _previews(module["applicationId"])[0]
+
+    refused = client.post(
+        f"/preview-environments/{preview['previewId']}/result",
+        json={"status": "active", "url": "javascript:alert(document.cookie)"},
+        headers={"Authorization": f"Bearer {_preview_token(preview)}"},
+    )
+
+    assert refused.status_code == 422, refused.text
+    assert _previews(module["applicationId"])[0]["status"] == "deploying"

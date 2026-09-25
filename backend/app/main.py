@@ -108,6 +108,7 @@ from .store.records import (
     CatalogTemplateRecord,
     ChangeFreezeRecord,
     PolicyDecisionRecord,
+    PREVIEW_TEARDOWN_STATES,
     PreviewEnvironmentRecord,
     ResourceQuotaRecord,
     ResourceRequestRecord,
@@ -5320,8 +5321,9 @@ class PreviewEnvironmentCreate(StrictBody):
 class PreviewResultRequest(StrictBody):
     status: Literal["active", "failed", "destroyed"]
     message: str = Field(default="", max_length=2000)
-    #: What the cluster actually serves, or absent -- never invented here either.
-    url: str | None = Field(default=None, max_length=2000)
+    #: What the cluster actually serves, or absent -- never invented here either. The
+    #: portal renders it as a link, so it is an http(s) URL or nothing (no javascript:).
+    url: str | None = Field(default=None, max_length=2000, pattern=r"^https?://[A-Za-z0-9.-]+(:[0-9]{1,5})?(/[^\s]*)?$")
 
 
 class ResourceRequestCreate(StrictBody):
@@ -5692,7 +5694,7 @@ def teardown_preview_environment(
         preview = session.preview_environment(previewId)
         if preview is None:
             raise HTTPException(status_code=404, detail={"code": "PREVIEW_NOT_FOUND", "message": f"preview '{previewId}' not found"})
-        if preview.status not in ("active", "deploying"):
+        if preview.status not in PREVIEW_TEARDOWN_STATES:
             raise HTTPException(
                 status_code=409,
                 detail={"code": "PREVIEW_NOT_TEARDOWNABLE", "message": f"a preview in status {preview.status} cannot be torn down"},
