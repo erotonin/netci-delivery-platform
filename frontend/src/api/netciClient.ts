@@ -301,6 +301,8 @@ export type Principal = {
   // Which applications this caller may act on. Roles say what kind of thing they may do.
   teams: string[]
   method: string
+  /** Decided by the server (ADR-052). Absent from an older API; treat that as unknown, not agent. */
+  kind?: 'human' | 'agent' | string
 }
 
 export type Identity = {
@@ -1856,6 +1858,52 @@ export type ModuleInsights = {
 
 export function getModuleInsights(moduleId: string, days = 30): Promise<ModuleInsights> {
   return request<ModuleInsights>(`/modules/${encodeURIComponent(moduleId)}/insights?days=${encodeURIComponent(String(days))}`)
+}
+
+/** Money for a counter set. The server sends it only when NETCI_CI_PRICE_PER_RUNNER_HOUR is set. */
+export type CiCostMoney = {
+  currency: string
+  /** Decimal string for the measured runner time. */
+  measured: string
+  /** Decimal string for the estimate; null when there is no estimate. */
+  estimatedAvoided: string | null
+}
+
+export type CiCostCounters = {
+  runs: number
+  succeeded: number
+  failed: number
+  cancelled: number
+  superseded: number
+  /** Never reached CI. */
+  supersededBeforeAdmission: number
+  supersededWhileBuilding: number
+  /** Measured: the sum of recorded stage durations. */
+  runnerSeconds: number
+  /** Stages with no recorded duration; they are not in runnerSeconds. */
+  stagesWithoutDuration: number
+  queueSeconds: number
+  p50QueueSeconds: number | null
+  p95QueueSeconds: number | null
+  /** An estimate, not a measurement; null when there is no succeeded run to estimate from. */
+  estimatedAvoidedRunnerSeconds: number | null
+  /** null means no price is configured -- never "free". */
+  cost: CiCostMoney | null
+}
+
+export type CiCostApplication = CiCostCounters & { applicationId: string; name: string }
+
+/** What `GET /finops/ci` returns: measured CI capacity and the estimate of what supersession avoided. */
+export type CiCost = {
+  window: { days: number; from: string; to: string }
+  /** How each figure was computed, in the server's words. */
+  method: Record<string, string>
+  applications: CiCostApplication[]
+  total: CiCostCounters & { estimatedAvoidedIncomplete: boolean }
+}
+
+export function getCiCost(days = 30): Promise<CiCost> {
+  return request<CiCost>(`/finops/ci?days=${encodeURIComponent(String(days))}`)
 }
 
 export type ReleasePlanModuleInput = {

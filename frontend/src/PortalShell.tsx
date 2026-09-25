@@ -1,7 +1,7 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import {
   CalendarDays,
-  Activity, Bell, BookOpen, Box, CheckCircle2, ChevronDown, ChevronRight, ClipboardCheck, Clock3,
+  Activity, Bell, BookOpen, Box, CheckCircle2, ChevronDown, ChevronRight, ClipboardCheck, Clock3, Coins,
   Compass, Gauge, GitBranch, Grid2X2, Layers3, ListChecks, LogOut, Menu, Search, Server, Settings,
   ShieldAlert, X,
 } from 'lucide-react'
@@ -111,6 +111,7 @@ function Sidebar({ page, systemId, moduleId, moduleLinks, navigationSystems, ses
         <button aria-current={page === 'scorecards' ? 'page' : undefined} className={page === 'scorecards' ? 'nav-item active' : 'nav-item'} onClick={() => navigate('scorecards')}><ClipboardCheck size={17} />Scorecards</button>
         <button aria-current={page === 'release-plan' ? 'page' : undefined} className={page === 'release-plan' ? 'nav-item active' : 'nav-item'} onClick={() => navigate('release-plan')}><GitBranch size={17} />Release Plan</button>
         <button aria-current={page === 'stage-catalog' ? 'page' : undefined} className={page === 'stage-catalog' ? 'nav-item active' : 'nav-item'} onClick={() => navigate('stage-catalog')}><ListChecks size={17} />Stage Catalog</button>
+        <button aria-current={page === 'ci-cost' ? 'page' : undefined} className={page === 'ci-cost' ? 'nav-item active' : 'nav-item'} onClick={() => navigate('ci-cost')}><Coins size={17} />CI Cost</button>
         <span className="nav-label nav-label-spaced">Systems</span>
         {navigationSystems.map((system) => <button key={system.id} className="nav-item system-link" onClick={() => navigate('system', { systemId: system.id })}><i className={`system-health health-${systemTone[system.status] ?? 'gray'}`} />{system.id}</button>)}
       </>}
@@ -132,7 +133,7 @@ function Sidebar({ page, systemId, moduleId, moduleLinks, navigationSystems, ses
       >
         <span className="avatar">{session.identity.principal.displayName.slice(0, 2).toUpperCase()}</span>
         <span>
-          <strong>{session.identity.principal.displayName}</strong>
+          <strong>{session.identity.principal.displayName}<AgentBadge session={session} /></strong>
           <small>{roleLabel(session)}</small>
         </span>
         <LogOut size={17} style={{ marginLeft: 'auto', opacity: 0.8 }} />
@@ -140,6 +141,16 @@ function Sidebar({ page, systemId, moduleId, moduleLinks, navigationSystems, ses
     )}
     <button className="sidebar-close" aria-label="Đóng menu" onClick={close}><X size={20} /></button>
   </aside>
+}
+
+/**
+ * Marks a coding agent (ADR-052). The server decides the kind and refuses an agent what it
+ * may not do; this only says who is signed in, so it shows for 'agent' and nothing else --
+ * a missing kind is not guessed either way.
+ */
+export function AgentBadge({ session }: { session: AuthSession }) {
+  if (session.identity.principal.kind !== 'agent') return null
+  return <span className="agent-badge" data-testid="agent-badge" title="Signed in as a coding agent (ADR-052)">agent</span>
 }
 
 /** The caller's netCI roles, which is what actually decides what they can do. */
@@ -154,7 +165,7 @@ function TopBar({ page, systemId, moduleId, moduleLinks, navigationSystems, sess
   const [query, setQuery] = useState('')
   const [searchOpen, setSearchOpen] = useState(false)
   const moduleName = moduleLinks.find((item) => item.id === moduleId)?.name ?? navigationSystems.flatMap((system) => system.modules).find((item) => item.id === moduleId)?.name
-  const labels: Partial<Record<PageId, string>> = { dashboard: 'Dashboard', systems: 'All Systems', servers: 'Servers', catalog: 'Service Catalog', calendar: 'Release Calendar', vulnerabilities: 'Vulnerabilities', scorecards: 'Scorecards', 'release-plan': 'Release Plan', 'stage-catalog': 'Stage Catalog', architecture: 'Architecture & IDP 2026 Roadmap', system: 'Overview', requests: 'Production Requests', module: moduleName, 'new-module': 'New Module' }
+  const labels: Partial<Record<PageId, string>> = { dashboard: 'Dashboard', systems: 'All Systems', servers: 'Servers', catalog: 'Service Catalog', calendar: 'Release Calendar', vulnerabilities: 'Vulnerabilities', scorecards: 'Scorecards', 'release-plan': 'Release Plan', 'stage-catalog': 'Stage Catalog', 'ci-cost': 'CI Cost', architecture: 'Architecture & IDP 2026 Roadmap', system: 'Overview', requests: 'Production Requests', module: moduleName, 'new-module': 'New Module' }
   const crumbs = ['system', 'requests', 'module', 'new-module'].includes(page) ? ['Systems', systemId, labels[page]] : [labels[page]]
   const searchItems = [
     { key: 'dashboard', label: 'Dashboard', detail: 'General', action: () => navigate('dashboard') },
@@ -166,6 +177,7 @@ function TopBar({ page, systemId, moduleId, moduleLinks, navigationSystems, sess
     { key: 'scorecards', label: 'Scorecards', detail: 'Quality', action: () => navigate('scorecards') },
     { key: 'release-plan', label: 'Release Plan', detail: 'Planning', action: () => navigate('release-plan') },
     { key: 'stage-catalog', label: 'Stage Catalog', detail: 'Pipeline stages', action: () => navigate('stage-catalog') },
+    { key: 'ci-cost', label: 'CI Cost', detail: 'FinOps', action: () => navigate('ci-cost') },
     ...navigationSystems.flatMap((system) => [
       { key: `system-${system.id}`, label: system.id, detail: 'System', action: () => navigate('system', { systemId: system.id }) },
       ...system.modules.map((module) => ({ key: `module-${system.id}-${module.id}`, label: module.name, detail: `${system.id} · Module`, action: () => navigate('module', { systemId: system.id, moduleId: module.id }) })),
@@ -207,6 +219,7 @@ function TopBar({ page, systemId, moduleId, moduleLinks, navigationSystems, sess
             {session.identity.principal.displayName.slice(0, 2).toUpperCase()}
           </span>
           <span style={{ fontWeight: 500 }}>{session.identity.principal.displayName.split(' ')[0]}</span>
+          <AgentBadge session={session} />
           <LogOut size={14} style={{ color: 'var(--text-muted)' }} />
         </button>
       )}

@@ -759,3 +759,15 @@ textarea { min-height: 78px; padding: 9px 10px; resize: vertical; font-size: 11p
 .release-plan-blocked h2 { font-size: 14px; }
 .release-plan-cycle { font-family: var(--mono, ui-monospace, monospace); font-size: 13px; font-weight: 600; }
 @media (max-width: 850px) { .release-plan-waves { flex-direction: column; } .release-plan-wave { flex-basis: auto; } }
+
+/* CI Cost: a measured figure and an estimate must never look alike. */
+.muted-text { color: var(--muted); font-size: 11px; }
+.inline-warning { margin: 10px 0; border: 1px solid #f1d49a; border-radius: 6px; background: #fff8e8; color: #8a5d07; display: flex; align-items: center; gap: 7px; padding: 8px 10px; font-size: 11px; line-height: 1.4; }
+.ci-cost-table { border-collapse: collapse; }
+.ci-cost-table th, .ci-cost-table td { padding: 10px 14px; text-align: left; vertical-align: top; font-size: 12px; border-bottom: 1px solid var(--border); }
+.ci-cost-total td { background: var(--canvas); font-weight: 600; }
+.measured-tag { display: inline-block; margin-left: 4px; padding: 0 6px; border-radius: 10px; background: #eaf8f2; color: #16875c; font-size: 9px; font-weight: 600; }
+.estimated-value { font-style: italic; color: #6a4fa3; }
+.estimate-tag { display: inline-block; margin-left: 4px; padding: 0 6px; border: 1px dashed #9d86cf; border-radius: 10px; color: #6a4fa3; font-size: 9px; font-style: normal; font-weight: 600; cursor: help; }
+.ci-cost-footnotes { margin: 12px 0 0; padding-left: 18px; color: var(--muted); font-size: 11px; line-height: 1.6; }
+.agent-badge { display: inline-block; margin-left: 6px; padding: 0 6px; border-radius: 10px; background: #eef1f8; color: #4b5a78; font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; vertical-align: middle; }

@@ -4,6 +4,7 @@ import { createModule, getPortalDashboard, setAuthToken, setUnauthenticatedHandl
 import { DashboardPage, ServersPage, SystemPage, SystemsPage } from './GeneralPages'
 import { ArchitectureRoadmapPage } from './ArchitectureRoadmapPage'
 import { CatalogPage } from './CatalogPage'
+import { CiCostPage } from './CiCostPage'
 import { ErrorBoundary } from './AsyncState'
 import { LoginPage, type AuthSession } from './LoginPage'
 import { endOidcSession } from './auth/oidc'
@@ -63,6 +64,7 @@ function readRoute(): RouteState {
   if (parts[0] === 'scorecards') return { page: 'scorecards', systemId: '', moduleId: '', settingsOpen: false }
   if (parts[0] === 'release-plan') return { page: 'release-plan', systemId: '', moduleId: '', settingsOpen: false }
   if (parts[0] === 'stage-catalog') return { page: 'stage-catalog', systemId: '', moduleId: '', settingsOpen: false }
+  if (parts[0] === 'ci-cost') return { page: 'ci-cost', systemId: '', moduleId: '', settingsOpen: false }
   if (parts[0] === 'servers') return { page: 'servers', systemId: '', moduleId: '', settingsOpen: false }
   if (parts[0] === 'architecture') return { page: 'architecture', systemId: '', moduleId: '', settingsOpen: false }
   return { page: 'dashboard', systemId: '', moduleId: '', settingsOpen: false }
@@ -76,6 +78,7 @@ function routePath(route: RouteState): string {
   if (route.page === 'scorecards') return '/scorecards'
   if (route.page === 'release-plan') return '/release-plan'
   if (route.page === 'stage-catalog') return '/stage-catalog'
+  if (route.page === 'ci-cost') return '/ci-cost'
   if (route.page === 'servers') return '/servers'
   if (route.page === 'architecture') return '/architecture'
   if (route.page === 'system') return route.systemId ? `/systems/${route.systemId}` : '/systems'
@@ -176,6 +179,7 @@ function PortalApp({ session, onLogout }: { session: AuthSession; onLogout: () =
       {page === 'scorecards' && <ScorecardsPage navigate={navigate} />}
       {page === 'release-plan' && <ReleasePlanPage />}
       {page === 'stage-catalog' && <StageCatalogPage session={session} />}
+      {page === 'ci-cost' && <CiCostPage />}
       {page === 'architecture' && <ArchitectureRoadmapPage />}
       {page === 'system' && <SystemPage systemId={systemId} navigate={navigate} />}
       {page === 'requests' && <ProductionRequestsPage systemId={systemId} />}
