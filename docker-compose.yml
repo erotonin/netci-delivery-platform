@@ -138,6 +138,9 @@ services:
       NETCI_SHARED_LIBRARY: ${NETCI_SHARED_LIBRARY:-netci-shared-library}
       NETCI_REGISTRY_PUSH_HOST: ${NETCI_REGISTRY_PUSH_HOST:-registry:5000}
       NETCI_REGISTRY_PULL_HOST: ${NETCI_REGISTRY_PULL_HOST:-registry:5000}
+      # The compose registry is plain HTTP. netCI now tells every build whether to verify
+      # TLS (ADR-054), and unset means "verify", which this registry cannot satisfy.
+      NETCI_REGISTRY_ALLOW_HTTP: ${NETCI_REGISTRY_ALLOW_HTTP:-true}
       NETCI_BUILD_BASE_IMAGE: ${NETCI_BUILD_BASE_IMAGE:-}
       NETCI_TRIVY_DB_REPOSITORY: ${NETCI_TRIVY_DB_REPOSITORY:-}
       NETCI_COSIGN_CREDENTIALS_ID: ${NETCI_COSIGN_CREDENTIALS_ID:-netci-cosign-key}

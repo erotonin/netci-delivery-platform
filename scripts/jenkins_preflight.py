@@ -18,6 +18,8 @@ Checks, each reported PASS/FAIL with what to do:
   permissions      the account can create jobs where netCI creates them (the folder, or the root)
   library          the shared library the jobs load is configured
   cosign credential  the signing credential the Sign stage binds exists
+  git / registry / cosign password credential
+                   the optional credentials, only when named (--git-credential ...)
   agents           something can run a build with the agent label
 
 Reported INFO, never a failure -- what a missing piece costs is a feature, not a build:
@@ -131,7 +133,7 @@ def folder_path(folder: str) -> str:
 
 
 def check(controller: Controller, *, library: str, cosign_id: str, agent_label: str, report: Report,
-          folder: str = "") -> None:
+          folder: str = "", optional_credentials: dict[str, tuple[str, str]] | None = None) -> None:
     # reachable + authenticated
     try:
         status, who = controller.json("/me/api/json")
@@ -246,6 +248,18 @@ def check(controller: Controller, *, library: str, cosign_id: str, agent_label: 
         report.result("cosign credential", cosign_id in ids,
                       f"'{cosign_id}' {'exists' if cosign_id in ids else 'missing'}",
                       f"add a global Secret text credential '{cosign_id}' holding the cosign private key")
+    # The optional ones (ADR-054): checked only when netCI is configured to use them, and
+    # then a missing one is a failure -- the build would stop at the step that binds it.
+    for check_name, (credential_id, kind) in (optional_credentials or {}).items():
+        if not credential_id:
+            continue
+        if status != 200:
+            report.result(check_name, False, f"HTTP {status}: cannot list global credentials",
+                          f"confirm by hand that a {kind} credential '{credential_id}' exists")
+        else:
+            report.result(check_name, credential_id in ids,
+                          f"'{credential_id}' {'exists' if credential_id in ids else 'missing'}",
+                          f"add a global {kind} credential '{credential_id}'")
 
     # agents: a label with at least one executor, or a cloud that can provide one
     status, label = controller.json(f"/label/{urllib.parse.quote(agent_label)}/api/json?tree=nodes%5BnodeName%5D,clouds%5Bname%5D,totalExecutors")
@@ -269,6 +283,11 @@ def main() -> int:
     parser.add_argument("--token-file", help="file holding the API token (default: $JENKINS_API_TOKEN)")
     parser.add_argument("--library", default="netci-shared-library", help="name[@version] the jobs load")
     parser.add_argument("--cosign-credential", default="netci-cosign-key")
+    parser.add_argument("--cosign-password-credential", default="",
+                        help="jenkins.cosignPasswordCredentialsId, when the key has a password")
+    parser.add_argument("--git-credential", default="", help="jenkins.gitCredentialsId, for a private git server")
+    parser.add_argument("--registry-credential", default="",
+                        help="jenkins.registryCredentialsId, for an authenticated registry")
     parser.add_argument("--agent-label", default="netci-ephemeral")
     parser.add_argument("--folder", default="",
                         help="Jenkins folder netCI creates its jobs in (NETCI_JENKINS_FOLDER), e.g. platform/netci")
@@ -292,7 +311,12 @@ def main() -> int:
     report = Report()
     print(f"netCI preflight for {args.url} as {args.user}")
     check(Controller(args.url, args.user, token, args.timeout), library=args.library,
-          cosign_id=args.cosign_credential, agent_label=args.agent_label, report=report, folder=folder)
+          cosign_id=args.cosign_credential, agent_label=args.agent_label, report=report, folder=folder,
+          optional_credentials={
+              "cosign password credential": (args.cosign_password_credential, "Secret text"),
+              "git credential": (args.git_credential, "Username with password"),
+              "registry credential": (args.registry_credential, "Username with password"),
+          })
     print("ready for netCI" if not report.failed else f"{report.failed} check(s) failed")
     return 0 if not report.failed else 1
 

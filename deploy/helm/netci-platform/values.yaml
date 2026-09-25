@@ -77,6 +77,16 @@ jenkins:
   # It must already exist -- netCI never creates it -- and the account needs Job/Create
   # (and the rest above) inside it. Segments: letters, digits, '.', '_', '-'.
   folder: ""
+  # Optional credentials on the controller (ADR-054). Empty is what the lab runs with: an
+  # unencrypted signing key, anonymous git and an anonymous registry.
+  #   cosignPasswordCredentialsId  Secret text: the cosign key's password, bound in Sign only
+  #   gitCredentialsId             Username with password (HTTPS token): checkout and the
+  #                                project cache's git mirror
+  #   registryCredentialsId        Username with password for registry.pushHost: Build, SBOM,
+  #                                Scan, Sign, Publish; never a fork's verify-only build
+  cosignPasswordCredentialsId: ""
+  gitCredentialsId: ""
+  registryCredentialsId: ""
   # Where builds report back. Defaults to <externalUrl>/api. Set it when Jenkins reaches
   # netCI by another route than people do (inside the cluster, through a private LB).
   callbackUrl: ""
@@ -115,7 +125,7 @@ auth:
 registry:
   pushHost: ""                 # where builds push, e.g. harbor.example.com
   pullHost: ""                 # where clusters and hosts pull from (often the same)
-  allowHttp: false             # plain-HTTP registry; lab only
+  allowHttp: false             # plain-HTTP registry; lab only. Builds verify TLS unless set
   buildBaseImage: ""           # base image mirrored into the registry
   trivyDbRepository: ""        # Trivy DB mirror for build farms without internet
 
@@ -123,6 +133,13 @@ supplyChain:
   requireSecurityEvidence: true
   signatureVerifyMode: cosign  # cosign | none is refused outside local mode
   signatureRequireTlog: true   # false only for keys with no transparency log (air-gapped)
+  # The transparency log builds upload signatures to and netCI verifies against (ADR-054).
+  # Required when signatureRequireTlog is true, and never defaulted: cosign's default is
+  # the public Rekor, which would publish every internal image digest and signing
+  # identity. A company's own Rekor, or https://rekor.sigstore.dev only if that is intended.
+  # A private Rekor's public key must also be trusted by cosign on the agents and here.
+  rekorUrl: ""
+                               # true also makes the Sign stage upload to the tlog
   # Refuse a container image without verified SLSA provenance naming the commit netCI
   # dispatched (ADR-044). The shared library shipped with this chart attests it; a
   # controller on an older library has none, and its images are refused.

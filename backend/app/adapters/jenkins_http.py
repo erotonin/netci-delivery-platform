@@ -16,6 +16,7 @@ from uuid import UUID
 from xml.sax.saxutils import escape
 
 from .interfaces import JenkinsRun
+from .signature_verifier import rekor_url_setting
 
 if TYPE_CHECKING:  # pragma: no cover - typing only, avoids an import cycle at runtime
     from .ci_launcher import CiLaunchRequest
@@ -59,6 +60,22 @@ class JenkinsHttpConfig:
     cosign_credentials_id: str = "netci-cosign-key"
     # A Jenkins folder ("platform/netci") netCI's jobs live in. Empty means the root.
     folder: str = ""
+    # Optional Jenkins credentials for a private git server and an authenticated registry
+    # (ADR-054). Empty is anonymous, which is what the lab's git server and registry are.
+    # They name credentials on the controller; netCI never holds the secrets themselves.
+    git_credentials_id: str = ""
+    registry_credentials_id: str = ""
+    # Secret text holding the cosign key's password. Empty is a key with no password.
+    cosign_password_credentials_id: str = ""
+    # What the build is told about TLS and the transparency log. Left to the scripts'
+    # defaults, every build ran with `REGISTRY_TLS_VERIFY=false`, cosign's
+    # --allow-insecure-registry and no tlog upload, whatever netCI itself demanded -- and
+    # a signature netCI requires to be in the tlog could never verify.
+    registry_allow_http: bool = False
+    signature_require_tlog: bool = False
+    #: The transparency log to upload to when the tlog is required. Never defaulted: an
+    #: unset one would be the public Rekor, publishing every internal image digest.
+    rekor_url: str = ""
 
     @classmethod
     def from_env(cls, prefix: str = "JENKINS") -> "JenkinsHttpConfig":
@@ -80,9 +97,40 @@ class JenkinsHttpConfig:
             registry_pull_host=os.getenv("NETCI_REGISTRY_PULL_HOST", ""),
             base_image=os.getenv("NETCI_BUILD_BASE_IMAGE", ""),
             trivy_db_repository=os.getenv("NETCI_TRIVY_DB_REPOSITORY", ""),
-            cosign_credentials_id=os.getenv("NETCI_COSIGN_CREDENTIALS_ID", "netci-cosign-key"),
+            cosign_credentials_id=_credentials_id(
+                "NETCI_COSIGN_CREDENTIALS_ID", os.getenv("NETCI_COSIGN_CREDENTIALS_ID", "netci-cosign-key")),
+            git_credentials_id=_credentials_id(
+                "NETCI_GIT_CREDENTIALS_ID", os.getenv("NETCI_GIT_CREDENTIALS_ID", "")),
+            registry_credentials_id=_credentials_id(
+                "NETCI_REGISTRY_CREDENTIALS_ID", os.getenv("NETCI_REGISTRY_CREDENTIALS_ID", "")),
+            cosign_password_credentials_id=_credentials_id(
+                "NETCI_COSIGN_PASSWORD_CREDENTIALS_ID", os.getenv("NETCI_COSIGN_PASSWORD_CREDENTIALS_ID", "")),
+            # Read the way the worker reads NETCI_REGISTRY_ALLOW_HTTP and the signature
+            # verifier reads NETCI_SIGNATURE_REQUIRE_TLOG, so the build and netCI agree.
+            registry_allow_http=os.getenv("NETCI_REGISTRY_ALLOW_HTTP", "").strip().lower() in {"1", "true", "yes"},
+            signature_require_tlog=os.getenv("NETCI_SIGNATURE_REQUIRE_TLOG", "false").strip().lower()
+            in {"1", "true", "yes"},
+            rekor_url=rekor_url_setting(),
             folder=jenkins_folder(os.getenv("NETCI_JENKINS_FOLDER", "")),
         )
+
+
+#: What Jenkins accepts as a credential id (BaseStandardCredentials' id check).
+_CREDENTIALS_ID = re.compile(r"[A-Za-z0-9_.-]{0,256}")
+
+
+def _credentials_id(name: str, value: str) -> str:
+    """A credential id from the environment, refused unless Jenkins could hold it.
+
+    The id is written into the job's Groovy as a string literal. One Jenkins would never
+    accept as an id is a mistake or an injection; either way the job would not bind what
+    was configured, so it stops startup instead.
+    """
+
+    value = value.strip()
+    if not _CREDENTIALS_ID.fullmatch(value):
+        raise ValueError(f"{name} is not a Jenkins credential id (letters, digits, '_', '.', '-')")
+    return value
 
 
 def _parameter_xml(name: str, default: str = "") -> str:
@@ -148,6 +196,12 @@ JOB_PARAMETERS: tuple[str, ...] = (
     "REGISTRY_PUSH_HOST",
     "REGISTRY_PULL_HOST",
     "NETCI_TRIVY_DB_REPOSITORY",
+    # "true" unless netCI is configured for a plain-HTTP registry; cosign's
+    # --allow-insecure-registry follows it (ADR-054).
+    "REGISTRY_TLS_VERIFY",
+    # "true" when netCI requires a transparency-log entry to accept a signature.
+    "COSIGN_TLOG_UPLOAD",
+    "COSIGN_REKOR_URL",
 )
 
 
@@ -171,6 +225,24 @@ def _stages_for(request: "CiLaunchRequest") -> list[str]:
     if not request.publish_artifact:
         stages = [stage for stage in stages if stage not in UNPUBLISHED_STAGES]
     return stages
+
+
+def _registry_parameters(config: JenkinsHttpConfig) -> dict[str, str]:
+    """Registry TLS and transparency log, sent with every build rather than left to defaults.
+
+    The scripts keep their old insecure defaults for a controller an older netCI drives.
+    A build this netCI dispatches is always told, so it checks what netCI checks.
+    """
+
+    if config.signature_require_tlog and not config.rekor_url:
+        raise ValueError("NETCI_SIGNATURE_REQUIRE_TLOG=true needs NETCI_REKOR_URL: the build would otherwise "
+                         "upload to the public Rekor")
+    return {
+        "REGISTRY_TLS_VERIFY": "false" if config.registry_allow_http else "true",
+        "COSIGN_TLOG_UPLOAD": "true" if config.signature_require_tlog else "false",
+        "COSIGN_REKOR_URL": config.rekor_url if config.signature_require_tlog else "",
+    }
+
 
 
 def image_name_for(application_name: str) -> str:
@@ -464,7 +536,11 @@ class JenkinsHttpAdapter:
             f"    template: params.NETCI_TEMPLATE ?: '{template_id}',\n"
             f"    agentLabel: '{self.config.agent_label}',\n"
             f"    callbackCredentialsId: '{self.config.callback_credentials_id}',\n"
-            f"    cosignCredentialsId: '{self.config.cosign_credentials_id}'\n"
+            f"    cosignCredentialsId: '{self.config.cosign_credentials_id}',\n"
+            # Empty is an unencrypted key, anonymous git, an anonymous registry (ADR-054).
+            f"    cosignPasswordCredentialsId: '{self.config.cosign_password_credentials_id}',\n"
+            f"    gitCredentialsId: '{self.config.git_credentials_id}',\n"
+            f"    registryCredentialsId: '{self.config.registry_credentials_id}'\n"
             ")\n"
         )
         parameters = "".join(_parameter_xml(name) for name in JOB_PARAMETERS)
@@ -564,6 +640,7 @@ class JenkinsHttpAdapter:
                 "REGISTRY_PUSH_HOST": self.config.registry_push_host,
                 "REGISTRY_PULL_HOST": self.config.registry_pull_host,
                 "NETCI_TRIVY_DB_REPOSITORY": self.config.trivy_db_repository,
+                **_registry_parameters(self.config),
             }
         )
         # `query` is sent as the form body, never in the URL: it carries the callback

@@ -120,3 +120,127 @@ def test_the_pull_request_ref_reaches_jenkins_only_in_its_validated_form():
 
 def test_the_job_declares_the_new_parameters():
     assert {"NETCI_PUBLISH", "NETCI_GIT_REF"} <= set(JOB_PARAMETERS)
+
+
+# ------------------------------------------- registry TLS, tlog and build credentials (ADR-054)
+
+
+def _sent_with(**config) -> dict[str, str]:
+    adapter = JenkinsHttpAdapter(JenkinsHttpConfig(base_url="http://jenkins", username="u", api_token="t", **config))
+    sent: dict[str, str] = {}
+
+    def fake(method, path, *args, body=None, **kwargs):
+        if "buildWithParameters" in path:
+            # Form body, not the URL: the callback token is among them.
+            sent.update(dict(urllib.parse.parse_qsl(body.decode(), keep_blank_values=True)))
+            return 201, {"Location": "http://jenkins/queue/item/7/"}, b""
+        raise RuntimeError("stop after the trigger")
+
+    adapter._request = fake  # type: ignore[method-assign]
+    with pytest.raises(Exception):
+        adapter.trigger_ci_run("netci-x", _request(), callback_token="tok")
+    return sent
+
+
+def test_a_build_verifies_registry_tls_unless_netci_is_configured_for_plain_http():
+    # The scripts' own default is "false"; a build netCI dispatches must not inherit it.
+    assert _sent_with()["REGISTRY_TLS_VERIFY"] == "true"
+    assert _sent_with(registry_allow_http=True)["REGISTRY_TLS_VERIFY"] == "false"
+
+
+def test_a_build_uploads_to_the_tlog_exactly_when_netci_requires_the_tlog():
+    assert _sent_with()["COSIGN_TLOG_UPLOAD"] == "false"
+    assert _sent_with(signature_require_tlog=True, rekor_url="https://rekor.corp.example")["COSIGN_TLOG_UPLOAD"] == "true"
+
+
+def test_the_tls_and_tlog_parameters_are_declared_on_the_job():
+    assert {"REGISTRY_TLS_VERIFY", "COSIGN_TLOG_UPLOAD"} <= set(JOB_PARAMETERS)
+
+
+def test_no_credential_id_is_a_build_parameter():
+    # Credential ids are part of the job's script, which netCI owns and rewrites before
+    # every build; a parameter could be set by anyone allowed to start the job by hand.
+    assert not [name for name in JOB_PARAMETERS if "CREDENTIALS" in name]
+
+
+def _config_from(monkeypatch, **values) -> JenkinsHttpConfig:
+    monkeypatch.setenv("JENKINS_URL", "http://jenkins")
+    monkeypatch.setenv("JENKINS_USERNAME", "u")
+    monkeypatch.setenv("JENKINS_API_TOKEN", "t")
+    for name in ("NETCI_GIT_CREDENTIALS_ID", "NETCI_REGISTRY_CREDENTIALS_ID", "NETCI_COSIGN_PASSWORD_CREDENTIALS_ID",
+                 "NETCI_REGISTRY_ALLOW_HTTP", "NETCI_SIGNATURE_REQUIRE_TLOG", "NETCI_COSIGN_CREDENTIALS_ID"):
+        monkeypatch.delenv(name, raising=False)
+    for name, value in values.items():
+        monkeypatch.setenv(name, value)
+    return JenkinsHttpConfig.from_env("JENKINS")
+
+
+def _job_script(config: JenkinsHttpConfig) -> str:
+    from xml.sax.saxutils import unescape
+
+    xml = JenkinsHttpAdapter(config)._job_config_xml("container-ci-cd-v1").decode()
+    return unescape(xml.split("<script>", 1)[1].split("</script>", 1)[0], {"&apos;": "'", "&quot;": '"'})
+
+
+def test_with_nothing_configured_builds_are_anonymous_and_the_key_has_no_password(monkeypatch):
+    config = _config_from(monkeypatch)
+    assert (config.git_credentials_id, config.registry_credentials_id, config.cosign_password_credentials_id) == ("", "", "")
+    assert config.registry_allow_http is False and config.signature_require_tlog is False
+    script = _job_script(config)
+    for key in ("gitCredentialsId", "registryCredentialsId", "cosignPasswordCredentialsId"):
+        assert f"{key}: ''" in script, key
+    assert "cosignCredentialsId: 'netci-cosign-key'" in script
+
+
+def test_configured_credential_ids_reach_the_job_script(monkeypatch):
+    config = _config_from(monkeypatch, NETCI_GIT_CREDENTIALS_ID="corp-git", NETCI_REGISTRY_CREDENTIALS_ID="corp-harbor",
+                          NETCI_COSIGN_PASSWORD_CREDENTIALS_ID="corp-cosign.password",
+                          NETCI_REGISTRY_ALLOW_HTTP="true", NETCI_SIGNATURE_REQUIRE_TLOG="true",
+                          NETCI_REKOR_URL="https://rekor.corp.example")
+    assert config.registry_allow_http is True and config.signature_require_tlog is True
+    script = _job_script(config)
+    assert "gitCredentialsId: 'corp-git'" in script
+    assert "registryCredentialsId: 'corp-harbor'" in script
+    assert "cosignPasswordCredentialsId: 'corp-cosign.password'" in script
+
+
+@pytest.mark.parametrize("variable", ["NETCI_GIT_CREDENTIALS_ID", "NETCI_REGISTRY_CREDENTIALS_ID",
+                                      "NETCI_COSIGN_PASSWORD_CREDENTIALS_ID", "NETCI_COSIGN_CREDENTIALS_ID"])
+@pytest.mark.parametrize("value", ["a'b", "x')\nsh('id", "id with space", "${evil}", "a\\b"])
+def test_a_credential_id_jenkins_could_not_hold_stops_startup(monkeypatch, variable, value):
+    # It is written into the job's Groovy as a string literal: refused, never escaped.
+    with pytest.raises(ValueError, match=variable):
+        _config_from(monkeypatch, **{variable: value})
+
+
+# ------------------------------------------- the transparency log is named, never defaulted
+
+
+def test_a_required_tlog_without_a_named_rekor_stops_startup(monkeypatch):
+    from app.adapters.signature_verifier import rekor_url_setting
+
+    monkeypatch.setenv("NETCI_SIGNATURE_REQUIRE_TLOG", "true")
+    monkeypatch.delenv("NETCI_REKOR_URL", raising=False)
+    with pytest.raises(ValueError, match="public Rekor"):
+        rekor_url_setting()
+    monkeypatch.setenv("NETCI_REKOR_URL", "http://rekor.corp.example")
+    with pytest.raises(ValueError, match="https"):
+        rekor_url_setting()
+    monkeypatch.setenv("NETCI_REKOR_URL", "https://rekor.corp.example/")
+    assert rekor_url_setting() == "https://rekor.corp.example"
+
+
+def test_the_build_is_told_which_rekor_only_when_the_tlog_is_required():
+    required = _sent_with(signature_require_tlog=True, rekor_url="https://rekor.corp.example")
+    assert required["COSIGN_TLOG_UPLOAD"] == "true" and required["COSIGN_REKOR_URL"] == "https://rekor.corp.example"
+    optional = _sent_with(rekor_url="https://rekor.corp.example")
+    assert optional["COSIGN_TLOG_UPLOAD"] == "false" and optional["COSIGN_REKOR_URL"] == ""
+
+
+def test_netci_verifies_against_the_same_rekor_the_build_uploaded_to():
+    from app.adapters.signature_verifier import CosignSignatureVerifier
+
+    with pytest.raises(ValueError):
+        CosignSignatureVerifier(key="k", require_tlog=True)
+    verifier = CosignSignatureVerifier(key="k", require_tlog=True, rekor_url="https://rekor.corp.example")
+    assert verifier.rekor_url == "https://rekor.corp.example"

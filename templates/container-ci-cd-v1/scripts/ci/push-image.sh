@@ -3,6 +3,12 @@ set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
 
 require_command buildah
+# The last line of defence for a fork's pull request (ADR-043/054): whatever calls this, a
+# verify-only build's image never reaches the registry.
+if [[ "${NETCI_PUBLISH}" == "false" ]]; then
+  echo "verify-only build (NETCI_PUBLISH=false): refusing to push its image to the registry" >&2
+  exit 1
+fi
 require_file "${OCI_ARCHIVE}"
 
 digest_file="${NETCI_OUTPUT_DIR}/artifact-digest.txt"

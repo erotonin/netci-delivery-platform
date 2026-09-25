@@ -71,6 +71,9 @@ data:
   {{- with .Values.jenkins.folder }}
   NETCI_JENKINS_FOLDER: {{ . | quote }}
   {{- end }}
+  NETCI_COSIGN_PASSWORD_CREDENTIALS_ID: {{ .Values.jenkins.cosignPasswordCredentialsId | default "" | quote }}
+  NETCI_GIT_CREDENTIALS_ID: {{ .Values.jenkins.gitCredentialsId | default "" | quote }}
+  NETCI_REGISTRY_CREDENTIALS_ID: {{ .Values.jenkins.registryCredentialsId | default "" | quote }}
   NETCI_REGISTRY_PUSH_HOST: {{ required "registry.pushHost is required: where builds push images" .Values.registry.pushHost | quote }}
   NETCI_REGISTRY_PULL_HOST: {{ default .Values.registry.pushHost .Values.registry.pullHost | quote }}
   NETCI_REGISTRY_ALLOW_HTTP: {{ .Values.registry.allowHttp | quote }}
@@ -104,6 +107,10 @@ data:
   NETCI_REQUIRE_SECURITY_EVIDENCE: {{ .Values.supplyChain.requireSecurityEvidence | quote }}
   NETCI_SIGNATURE_VERIFY_MODE: {{ .Values.supplyChain.signatureVerifyMode | quote }}
   NETCI_SIGNATURE_REQUIRE_TLOG: {{ .Values.supplyChain.signatureRequireTlog | quote }}
+  {{- if and .Values.supplyChain.signatureRequireTlog (not .Values.supplyChain.rekorUrl) }}
+  {{- fail "supplyChain.signatureRequireTlog=true needs supplyChain.rekorUrl: name the transparency log (a private Rekor, or the public one if publishing digests is intended), or set signatureRequireTlog=false" }}
+  {{- end }}
+  NETCI_REKOR_URL: {{ .Values.supplyChain.rekorUrl | default "" | quote }}
   NETCI_REQUIRE_PROVENANCE: {{ .Values.supplyChain.requireProvenance | quote }}
   NETCI_SBOM_RESCAN: {{ .Values.supplyChain.sbomRescan | quote }}
   NETCI_SBOM_RESCAN_INTERVAL_SECONDS: {{ .Values.supplyChain.sbomRescanIntervalSeconds | quote }}

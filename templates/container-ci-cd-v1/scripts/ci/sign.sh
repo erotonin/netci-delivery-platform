@@ -34,10 +34,20 @@ if [[ "${COSIGN_TLOG_UPLOAD:-false}" == "false" ]]; then
   cosign_args+=(--tlog-upload=false)
   verify_args+=(--insecure-ignore-tlog=true)
 fi
-# cosign 3.x loads a signing config by default and then refuses --tlog-upload=false;
-# cosign 2.x has no such flag. Detect it rather than pinning the pipeline to one major
-# version, because the agent toolbox and a developer's workstation often differ.
-if [[ "${COSIGN_TLOG_UPLOAD:-false}" == "false" ]] && cosign sign --help 2>&1 | grep -q -- '--use-signing-config'; then
+if [[ "${COSIGN_TLOG_UPLOAD:-false}" == "true" ]]; then
+  # Upload only to the transparency log netCI named. Left to cosign, it would be the
+  # public Rekor: every internal image digest and signing identity, published.
+  [[ -n "${COSIGN_REKOR_URL:-}" ]] || {
+    echo "COSIGN_TLOG_UPLOAD=true needs COSIGN_REKOR_URL (netCI's supplyChain.rekorUrl)" >&2
+    exit 1
+  }
+  cosign_args+=(--rekor-url "${COSIGN_REKOR_URL}")
+  verify_args+=(--rekor-url "${COSIGN_REKOR_URL}")
+fi
+# cosign 3.x loads a signing config by default and then refuses --tlog-upload=false, and
+# refuses an explicit --rekor-url alongside it; cosign 2.x has no such flag. Detect it
+# rather than pinning the pipeline to one major version.
+if cosign sign --help 2>&1 | grep -q -- '--use-signing-config'; then
   cosign_args+=(--use-signing-config=false)
 fi
 
@@ -66,9 +76,12 @@ if [[ "${COSIGN_ATTEST_PROVENANCE:-true}" == "true" ]]; then
     if [[ "${COSIGN_TLOG_UPLOAD:-false}" == "false" ]]; then
       attest_args+=(--tlog-upload=false)
       verify_attest_args+=(--insecure-ignore-tlog=true)
-      if cosign attest --help 2>&1 | grep -q -- '--use-signing-config'; then
-        attest_args+=(--use-signing-config=false)
-      fi
+    else
+      attest_args+=(--rekor-url "${COSIGN_REKOR_URL}")
+      verify_attest_args+=(--rekor-url "${COSIGN_REKOR_URL}")
+    fi
+    if cosign attest --help 2>&1 | grep -q -- '--use-signing-config'; then
+      attest_args+=(--use-signing-config=false)
     fi
     cosign "${attest_args[@]}" "${registry_artifact_ref}"
     cosign "${verify_attest_args[@]}" "${registry_artifact_ref}" > "${NETCI_OUTPUT_DIR}/provenance.verify.json"

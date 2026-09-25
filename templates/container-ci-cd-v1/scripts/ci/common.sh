@@ -28,6 +28,33 @@ if [[ "${REGISTRY_TLS_VERIFY}" != "true" && "${REGISTRY_TLS_VERIFY}" != "false" 
   echo "REGISTRY_TLS_VERIFY must be true or false" >&2
   exit 1
 fi
+# Cosign talks to the same registry, so it is insecure exactly when buildah is. It used to
+# default to --allow-insecure-registry whatever REGISTRY_TLS_VERIFY said. The defaults of
+# a run nothing configured (false / insecure / no tlog) are unchanged; netCI sends
+# REGISTRY_TLS_VERIFY and COSIGN_TLOG_UPLOAD with every build it dispatches (ADR-054).
+if [[ -z "${COSIGN_ALLOW_INSECURE_REGISTRY:-}" ]]; then
+  if [[ "${REGISTRY_TLS_VERIFY}" == "false" ]]; then
+    COSIGN_ALLOW_INSECURE_REGISTRY=true
+  else
+    COSIGN_ALLOW_INSECURE_REGISTRY=false
+  fi
+fi
+if [[ "${COSIGN_ALLOW_INSECURE_REGISTRY}" == "true" && "${REGISTRY_TLS_VERIFY}" == "true" ]]; then
+  echo "COSIGN_ALLOW_INSECURE_REGISTRY=true contradicts REGISTRY_TLS_VERIFY=true; refusing to sign insecurely" >&2
+  exit 1
+fi
+COSIGN_TLOG_UPLOAD="${COSIGN_TLOG_UPLOAD:-false}"
+if [[ "${COSIGN_TLOG_UPLOAD}" != "true" && "${COSIGN_TLOG_UPLOAD}" != "false" ]]; then
+  echo "COSIGN_TLOG_UPLOAD must be true or false" >&2
+  exit 1
+fi
+# "false" for a verify-only build -- a fork's pull request (ADR-043): it is tested, built
+# and scanned from the local archive, and nothing it produced may reach the registry.
+NETCI_PUBLISH="${NETCI_PUBLISH:-true}"
+if [[ "${NETCI_PUBLISH}" != "true" && "${NETCI_PUBLISH}" != "false" ]]; then
+  echo "NETCI_PUBLISH must be true or false" >&2
+  exit 1
+fi
 
 mkdir -p "${NETCI_OUTPUT_DIR}"
 

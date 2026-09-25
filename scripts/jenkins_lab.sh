@@ -349,6 +349,8 @@ Jenkins controllers are up. Point netCI at them:
   # localhost -- inside a pod, localhost is the pod.
   export NETCI_REGISTRY_PUSH_HOST=$(kind_gateway):${REGISTRY_HOST_PORT}
   export NETCI_REGISTRY_PULL_HOST=$(kind_gateway):${REGISTRY_HOST_PORT}
+  # The lab registry is plain HTTP; without this netCI tells builds to verify TLS.
+  export NETCI_REGISTRY_ALLOW_HTTP=true
   export NETCI_BUILD_BASE_IMAGE=$(kind_gateway):${REGISTRY_HOST_PORT}/${GOLDEN_BASE_IMAGE}
   export NETCI_TRIVY_DB_REPOSITORY=$(kind_gateway):${REGISTRY_HOST_PORT}/${TRIVY_DB_IMAGE}
   export NETCI_GIT_URL=http://${GIT_SERVER_IP}/netci.git

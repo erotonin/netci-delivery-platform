@@ -17,6 +17,16 @@ def call(Map config = [:]) {
     def ciScriptDirOverride = config.get('ciScriptDir', '')
     def callbackCredentialsId = config.get('callbackCredentialsId', 'netci-pipeline-api-key')
     def cosignCredentialsId = config.get('cosignCredentialsId', 'netci-cosign-key')
+    // Optional, all empty in the lab (ADR-054): a Secret text with the cosign key's
+    // password, a Username with password for the application's git server, and one for
+    // the registry. Empty means what it always meant: no password, anonymous git,
+    // anonymous registry.
+    def cosignPasswordCredentialsId = config.get('cosignPasswordCredentialsId', '')?.trim() ?: ''
+    def gitCredentialsId = config.get('gitCredentialsId', '')?.trim() ?: ''
+    def gitToolName = config.get('gitToolName', 'Default')
+    // A verify-only build runs a fork's unreviewed code and must not reach the registry
+    // (ADR-043/054): it pushes nothing, so it is given no registry credential at all.
+    def registryCredentialsId = netciVerifyOnly() ? '' : (config.get('registryCredentialsId', '')?.trim() ?: '')
 
     // Per-project isolation (ADR-030). netCI provisions a namespace, a service account
     // and a cache claim for the application and names them in the build parameters;
@@ -69,6 +79,11 @@ def call(Map config = [:]) {
             REGISTRY_PUSH_HOST = "${params.REGISTRY_PUSH_HOST ?: 'netci-registry:5000'}"
             REGISTRY_PULL_HOST = "${params.REGISTRY_PULL_HOST ?: params.REGISTRY_PUSH_HOST ?: 'localhost:5000'}"
             TRIVY_DB_REPOSITORY = "${params.NETCI_TRIVY_DB_REPOSITORY ?: ''}"
+            // netCI always sends both (ADR-054). Empty -- a build started by hand, or by a
+            // netCI that predates them -- leaves the scripts' own defaults in force.
+            REGISTRY_TLS_VERIFY = "${params.REGISTRY_TLS_VERIFY ?: ''}"
+            COSIGN_TLOG_UPLOAD = "${params.COSIGN_TLOG_UPLOAD ?: ''}"
+            COSIGN_REKOR_URL = "${params.COSIGN_REKOR_URL ?: ''}"
             // Syft phones home for a version check that a build farm cannot reach and
             // does not need; the check timing out would otherwise add 30s per build.
             SYFT_CHECK_FOR_APP_UPDATE = "false"
@@ -121,15 +136,34 @@ def call(Map config = [:]) {
                             def prRefspec = prRef ? " '+${prRef}:${prRef}'" : ''
                             if (params.NETCI_BUILD_CACHE_CLAIM?.trim() && fileExists('/netci-cache') && commit ==~ /[0-9a-f]{40}/) {
                                 def mirror = '/netci-cache/git/mirror.git'
+                                // With a credential, the git plugin's binding hands git the
+                                // password through GIT_ASKPASS for these commands only; it is
+                                // never in the URL, so never in the mirror's config. An empty
+                                // credential.helper stops a helper on the agent image from
+                                // storing it where the next build could read it.
+                                def git = gitCredentialsId ? 'git -c credential.helper=' : 'git'
+                                def refreshMirror = {
+                                    sh """
+                                      set -eu
+                                      if [ -d '${mirror}' ]; then
+                                        git -C '${mirror}' remote set-url origin '${params.GIT_URL}'
+                                        ${git} -C '${mirror}' fetch --prune origin '+refs/heads/*:refs/heads/*'${prRefspec} || { rm -rf '${mirror}'; ${git} clone --mirror '${params.GIT_URL}' '${mirror}'; }
+                                      else
+                                        mkdir -p /netci-cache/git
+                                        ${git} clone --mirror '${params.GIT_URL}' '${mirror}'
+                                      fi
+                                    """
+                                }
+                                if (gitCredentialsId) {
+                                    withCredentials([gitUsernamePassword(credentialsId: gitCredentialsId, gitToolName: gitToolName)]) {
+                                        refreshMirror()
+                                    }
+                                } else {
+                                    refreshMirror()
+                                }
+                                // Everything after the refresh is local to the mirror.
                                 sh """
                                   set -eu
-                                  if [ -d '${mirror}' ]; then
-                                    git -C '${mirror}' remote set-url origin '${params.GIT_URL}'
-                                    git -C '${mirror}' fetch --prune origin '+refs/heads/*:refs/heads/*'${prRefspec} || { rm -rf '${mirror}'; git clone --mirror '${params.GIT_URL}' '${mirror}'; }
-                                  else
-                                    mkdir -p /netci-cache/git
-                                    git clone --mirror '${params.GIT_URL}' '${mirror}'
-                                  fi
                                   git -C '${mirror}' cat-file -e '${commit}^{commit}' || { echo "commit ${commit} is not in ${params.GIT_URL}" >&2; exit 1; }
                                   find . -mindepth 1 -maxdepth 1 -exec rm -rf {} +
                                   git -C '${mirror}' archive --format=tar '${commit}' | tar -x
@@ -138,6 +172,10 @@ def call(Map config = [:]) {
                                 env.GIT_COMMIT = commit
                             } else {
                                 def remote = [url: params.GIT_URL]
+                                if (gitCredentialsId) {
+                                    // The git plugin passes it through its own askpass helper.
+                                    remote.credentialsId = gitCredentialsId
+                                }
                                 if (prRef) {
                                     remote.refspec = "+refs/heads/*:refs/remotes/origin/* +${prRef}:refs/remotes/origin/netci-pr-head"
                                 }
@@ -205,7 +243,9 @@ def call(Map config = [:]) {
             }
             stage('Build') {
                 when { expression { netciStageEnabled('build', defaultStages) } }
-                steps { script { netciStage('build', 'Build', callbackCredentialsId) { netciInBuilder { sh 'bash "${NETCI_CI_SCRIPT_DIR}/build.sh"'} } } }
+                // The registry credential is bound in the stages that talk to the registry
+                // -- Build pulls the base image -- and in no other.
+                steps { script { netciStage('build', 'Build', callbackCredentialsId) { netciInBuilder { netciRegistryAuth(registryCredentialsId) { sh 'bash "${NETCI_CI_SCRIPT_DIR}/build.sh"' } } } } }
 
             }
             stage('Custom: after build') {
@@ -214,7 +254,7 @@ def call(Map config = [:]) {
             }
             stage('SBOM') {
                 when { expression { netciStageEnabled('sbom', defaultStages) } }
-                steps { script { netciStage('sbom', 'Generate SBOM', callbackCredentialsId) { netciInBuilder { sh 'bash "${NETCI_CI_SCRIPT_DIR}/sbom.sh"'} } } }
+                steps { script { netciStage('sbom', 'Generate SBOM', callbackCredentialsId) { netciInBuilder { netciRegistryAuth(registryCredentialsId) { sh 'bash "${NETCI_CI_SCRIPT_DIR}/sbom.sh"' } } } } }
 
             }
             stage('Custom: after sbom') {
@@ -223,7 +263,7 @@ def call(Map config = [:]) {
             }
             stage('Vulnerability Scan') {
                 when { expression { netciStageEnabled('vulnerability-scan', defaultStages) } }
-                steps { script { netciStage('vulnerability-scan', 'Vulnerability Scan', callbackCredentialsId) { netciInBuilder { sh 'bash "${NETCI_CI_SCRIPT_DIR}/scan.sh"'} } } }
+                steps { script { netciStage('vulnerability-scan', 'Vulnerability Scan', callbackCredentialsId) { netciInBuilder { netciRegistryAuth(registryCredentialsId) { sh 'bash "${NETCI_CI_SCRIPT_DIR}/scan.sh"' } } } } }
 
             }
             stage('Custom: after vulnerability-scan') {
@@ -234,19 +274,31 @@ def call(Map config = [:]) {
                 when { expression { netciStageEnabled('sign', defaultStages) } }
                 steps { script { netciStage('sign', 'Sign Artifact', callbackCredentialsId) {
                     netciInBuilder {
-                        // The signing key is written to the ephemeral workspace and dies
-                        // with the pod. It is never passed on a command line, where it
-                        // would appear in the process table and the build log.
-                        withCredentials([string(credentialsId: cosignCredentialsId, variable: 'NETCI_COSIGN_PRIVATE_KEY')]) {
-                            sh '''
-                              set -eu
-                              umask 077
-                              printf '%s' "${NETCI_COSIGN_PRIVATE_KEY}" > "${NETCI_OUTPUT_DIR}/cosign.key"
-                              COSIGN_KEY_REF="${NETCI_OUTPUT_DIR}/cosign.key" \\
-                              COSIGN_PASSWORD="" \\
-                                bash "${NETCI_CI_SCRIPT_DIR}/sign.sh"
-                              rm -f "${NETCI_OUTPUT_DIR}/cosign.key"
-                            '''
+                        // The signing key is written beside the workspace, never in it, and
+                        // removed on every exit. It used to be written to NETCI_OUTPUT_DIR and
+                        // removed only after sign.sh succeeded: a failed Sign left the key
+                        // there for post/always to archive as a build artifact. It is never
+                        // passed on a command line, where it would appear in the process
+                        // table and the build log; neither is its password.
+                        def signingCredentials = [string(credentialsId: cosignCredentialsId, variable: 'NETCI_COSIGN_PRIVATE_KEY')]
+                        if (cosignPasswordCredentialsId) {
+                            signingCredentials << string(credentialsId: cosignPasswordCredentialsId, variable: 'NETCI_COSIGN_PASSWORD')
+                        }
+                        netciRegistryAuth(registryCredentialsId) {
+                            withCredentials(signingCredentials) {
+                                sh '''
+                                  set +x
+                                  set -eu
+                                  umask 077
+                                  key_dir="${WORKSPACE_TMP:-${WORKSPACE}@tmp}/netci-signing"
+                                  trap 'rm -rf "${key_dir}"' EXIT
+                                  mkdir -p "${key_dir}"
+                                  printf '%s' "${NETCI_COSIGN_PRIVATE_KEY}" > "${key_dir}/cosign.key"
+                                  COSIGN_KEY_REF="${key_dir}/cosign.key" \\
+                                  COSIGN_PASSWORD="${NETCI_COSIGN_PASSWORD:-}" \\
+                                    bash "${NETCI_CI_SCRIPT_DIR}/sign.sh"
+                                '''
+                            }
                         }
                     }
                 } } }
@@ -257,7 +309,7 @@ def call(Map config = [:]) {
             }
             stage('Publish') {
                 when { expression { netciStageEnabled('publish', defaultStages) } }
-                steps { script { netciStage('publish', 'Publish Artifact', callbackCredentialsId) { netciInBuilder { sh 'bash "${NETCI_CI_SCRIPT_DIR}/publish.sh"'} } } }
+                steps { script { netciStage('publish', 'Publish Artifact', callbackCredentialsId) { netciInBuilder { netciRegistryAuth(registryCredentialsId) { sh 'bash "${NETCI_CI_SCRIPT_DIR}/publish.sh"' } } } } }
 
             }
             stage('Custom: after publish') {
@@ -280,6 +332,11 @@ def call(Map config = [:]) {
         post {
             always {
                 netciInBuilder {
+                    // Each stage removes its own on the way out; this catches a build that
+                    // was killed between the write and the removal, on an agent that is
+                    // kept for the next build.
+                    sh(label: 'remove build credentials',
+                       script: 'rm -rf "${WORKSPACE_TMP:-${WORKSPACE}@tmp}/netci-registry-auth" "${WORKSPACE_TMP:-${WORKSPACE}@tmp}/netci-signing"')
                     // Scoped with dir() rather than archived as '.netci-out/**' from the
                     // workspace root: the pattern makes Jenkins walk the entire workspace
                     // over the agent channel, .git included, to find a handful of evidence
@@ -290,7 +347,9 @@ def call(Map config = [:]) {
                     // the agent channel to keep a copy Jenkins never serves was most of
                     // the post-build time on an ephemeral agent.
                     dir("${env.NETCI_OUTPUT_DIR}") {
-                        archiveArtifacts(artifacts: '**', excludes: '*.oci.tar', allowEmptyArchive: true)
+                        // No key file is written here any more; excluding one anyway keeps a
+                        // script that writes one from publishing it with the evidence.
+                        archiveArtifacts(artifacts: '**', excludes: '*.oci.tar,**/*.key', allowEmptyArchive: true)
                     }
                 }
             }

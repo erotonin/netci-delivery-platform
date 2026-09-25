@@ -127,9 +127,11 @@ async def test_a_signed_blob_is_verified_against_its_bundle(tmp_path):
 async def test_requiring_a_transparency_log_drops_the_ignore_flag(tmp_path):
     """A deployment with a real Rekor must actually demand the log entry."""
 
-    strict = verifier(tmp_path, require_tlog=True)
+    strict = verifier(tmp_path, require_tlog=True, rekor_url="https://rekor.corp.example")
     await strict.verify(ArtifactIdentity(digest=DIGEST, reference="registry.local/netci/app:1.4.2"))
     assert "--insecure-ignore-tlog" not in invocations(tmp_path)[0]
+    # ...and against the log the build uploaded to, not cosign's public default.
+    assert "--rekor-url https://rekor.corp.example" in invocations(tmp_path)[0]
 
 
 # ----------------------------------------------------------------- failing closed
@@ -363,4 +365,5 @@ async def test_real_cosign_accepts_a_genuine_signature_and_refuses_everything_el
     # Demanding a transparency-log entry the signature never got is also a refusal, so
     # `require_tlog` is a real setting rather than a decorative one.
     with pytest.raises(SignatureVerificationError):
-        await CosignSignatureVerifier(key=str(tmp_path / "cosign.pub"), require_tlog=True).verify(identity)
+        await CosignSignatureVerifier(key=str(tmp_path / "cosign.pub"), require_tlog=True,
+                                      rekor_url="https://rekor.corp.example").verify(identity)

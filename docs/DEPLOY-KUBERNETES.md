@@ -51,7 +51,7 @@ Jenkins cần:
 | Tài khoản dịch vụ | `Overall/Read`, `Job/Create`, `Job/Configure`, `Job/Read`, `Job/Build`, `Job/Cancel` (netCI huỷ queue item và dừng build khi run bị huỷ hoặc bị thay thế). **Không** cần `Job/Delete`. Drift cần thêm `Overall/SystemRead`, reload cần `Overall/Administer`; thiếu thì hai tính năng đó báo controller "unreachable", build vẫn chạy. |
 | Folder (tuỳ chọn) | `jenkins.folder` (vd `platform/netci`, lồng nhau bằng `/`) khi tổ chức chỉ cấp `Job/Create` trong một folder. Folder **phải có sẵn** — netCI không tạo; thiếu thì lần tạo job đầu tiên báo lỗi nêu tên folder. Các quyền `Job/*` ở trên cấp trên folder đó. |
 | Shared library | Global Pipeline Library tên `netci-shared-library`, trỏ tới repo chứa `jenkins/shared-library`. Nếu trỏ thẳng vào repo netCI, đặt *Library Path* = `jenkins/shared-library/`. Phiên bản được dùng **phải có** `resources/netci/tooling/` (từ bản 0.2). |
-| Credential | Secret text `netci-cosign-key` chứa private key cosign. Với workload identity, credential `netci-pipeline-api-key` **không cần** tồn tại. |
+| Credential | Secret text `netci-cosign-key` chứa private key cosign. Với workload identity, credential `netci-pipeline-api-key` **không cần** tồn tại. Git riêng, registry có xác thực và key cosign có mật khẩu: xem "Git riêng, registry có xác thực" bên dưới. |
 | Agent | Kubernetes cloud có pod template gắn label `netci-ephemeral`, chứa container `builder` có python3, docker/buildah, syft, trivy, cosign (xem `jenkins/agent-toolbox/`). |
 | Mạng | Agent phải tới được địa chỉ callback của netCI (mục 5, `jenkins.callbackUrl`), registry, và repo git của ứng dụng. |
 
@@ -61,6 +61,35 @@ chỉ chạy được vì mọi module trong lab đều build từ chính repo n
 không có những file đó, nên build hỏng ngay stage đầu. Giờ `vars/netciTooling.groovy` ghi công
 cụ từ resources của library ra `WORKSPACE_TMP` — ngoài workspace, nên không lọt vào build context.
 
+### Git riêng, registry có xác thực, TLS và transparency log (ADR-054)
+
+Mặc định build chạy **ẩn danh** như trong lab (git server và registry của lab không đòi mật
+khẩu). Với Jenkins/registry của công ty, tạo credential trên controller rồi đặt ID vào values;
+netCI ghi các ID này vào script của job (như `cosignCredentialsId`), không bao giờ giữ secret:
+
+| Values | Loại credential | Được bind ở đâu |
+| :--- | :--- | :--- |
+| `jenkins.gitCredentialsId` | Username with password (token HTTPS) | Checkout (GitSCM `credentialsId`) và fetch vào git mirror của cache dự án (binding `gitUsernamePassword` của plugin git, mật khẩu qua `GIT_ASKPASS`, không bao giờ nằm trong URL hay config của mirror). URL SSH không dùng được cho đường mirror. |
+| `jenkins.registryCredentialsId` | Username with password cho `registry.pushHost` | Chỉ các stage nói chuyện với registry: Build (kéo base image), SBOM, Scan, Sign, Publish. `buildah login --password-stdin` tạo **một** file auth (umask 077) dưới `WORKSPACE_TMP`; buildah đọc qua `REGISTRY_AUTH_FILE`, cosign/syft/trivy đọc qua `DOCKER_CONFIG/config.json`. Xoá khi stage kết thúc, dù thành công hay không. **Không bao giờ** có trong build verify-only của fork. |
+| `jenkins.cosignPasswordCredentialsId` | Secret text: mật khẩu của key cosign | Chỉ bước sign/attest, dưới dạng `COSIGN_PASSWORD`. Trống = key không mật khẩu (như lab). |
+
+Base image và mirror Trivy DB phải nằm trong chính registry đó: build chỉ đăng nhập vào
+`pushHost`. `pullHost` là nơi cụm/host kéo image; không bước build nào gọi tới nó.
+
+Mỗi build netCI gửi thêm hai tham số, không còn để script tự đoán:
+
+- `REGISTRY_TLS_VERIFY` = `false` **chỉ khi** `registry.allowHttp: true`, ngược lại `true`.
+  `--allow-insecure-registry` của cosign đi theo nó; đặt cosign insecure trong khi TLS được
+  kiểm tra sẽ bị từ chối.
+- `COSIGN_TLOG_UPLOAD` = `true` khi `supplyChain.signatureRequireTlog: true` (mặc định của
+  chart), nên agent phải tới được Rekor (mặc định là Rekor công khai của Sigstore). Môi
+  trường air-gapped: đặt `signatureRequireTlog: false`.
+
+**Build verify-only của fork (ADR-043) không đẩy gì lên registry:** SBOM đọc
+`oci-archive` cục bộ, Trivy quét OCI layout giải nén từ archive đó; `push-image.sh` từ chối
+chạy khi `NETCI_PUBLISH=false`. Nếu base image cần đăng nhập mới kéo được, build verify-only
+sẽ **hỏng ở Build** (không có credential) — đó là chủ ý, không phải lỗi cấu hình.
+
 ### Kiểm tra trước khi cài
 
 ```bash
@@ -68,8 +97,9 @@ export JENKINS_API_TOKEN='...'          # token của tài khoản dịch vụ; 
 python3 scripts/jenkins_preflight.py \
   --url https://jenkins.example.com --user netci-sa \
   --library netci-shared-library@<phiên-bản> \
-  --cosign-credential netci-cosign-key --agent-label netci-ephemeral \
-  --folder platform/netci                # chỉ khi đặt jenkins.folder
+  --cosign-credential netci-cosign-key --agent-label netci-ephemeral
+  # chỉ khi có cấu hình tương ứng trong values:
+  # --folder platform/netci --git-credential corp-git --registry-credential corp-harbor --cosign-password-credential corp-cosign-pw
 ```
 
 Script chỉ đọc: không tạo, sửa hay chạy gì trên Jenkins. Mỗi mục in PASS/FAIL kèm cách sửa;
@@ -165,6 +195,10 @@ jenkins:
   # folder: platform/netci            # khi job phải nằm trong một folder có sẵn
   # Mặc định là <externalUrl>/api. Khi agent chạy trong cùng cụm với netCI, dùng Service:
   # callbackUrl: http://netci-netci-platform-api.netci-system.svc:8000
+  # Trống = ẩn danh như lab (mục 2, "Git riêng, registry có xác thực"):
+  # gitCredentialsId: corp-git
+  # registryCredentialsId: corp-harbor
+  # cosignPasswordCredentialsId: corp-cosign-password
 
 temporal:
   address: temporal-frontend.temporal.svc:7233
@@ -265,3 +299,11 @@ kind (Keycloak lab gắn issuer `127.0.0.1`, pod không tới được địa ch
 một máy); runtime Kubernetes và systemd; `buildIsolation: kubernetes`; DCIM/NetBox; traffic
 router (canary, blue/green); Ingress có TLS. Những mục này có code và test, nhưng chưa có một
 lần chạy qua chính bản cài này.
+
+**Chưa chạy thật trên Jenkins nào (ADR-054):** git riêng qua `gitCredentialsId`, registry có
+xác thực qua `registryCredentialsId`, key cosign có mật khẩu, registry TLS với
+`REGISTRY_TLS_VERIFY=true`, và upload lên Rekor. Đã chạy thật **ngoài Jenkins**, bằng chính các
+script CI và đoạn `buildah login` của library, với buildah/syft/trivy/cosign thật và một
+registry đòi mật khẩu: build verify-only quét được từ archive cục bộ và registry vẫn trống;
+push ẩn danh bị từ chối; sau khi đăng nhập thì push, SBOM, scan theo digest và ký bằng key có
+mật khẩu đều qua.

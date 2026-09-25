@@ -5,6 +5,12 @@ source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
 require_command cosign
 require_command sha256sum
 require_file "${ARTIFACT_PATH}"
+# The pipeline skips Sign for a verify-only build; this is the step that uploads, so it
+# refuses one too rather than rely on that alone (ADR-043/054).
+if [[ "${NETCI_PUBLISH}" == "false" ]]; then
+  echo "verify-only build (NETCI_PUBLISH=false): refusing to upload its artifact to the registry" >&2
+  exit 1
+fi
 if [[ -z "${COSIGN_KEY_REF:-}" ]]; then
   echo "COSIGN_KEY_REF is required; refusing unsigned publish" >&2
   exit 1
@@ -51,10 +57,21 @@ fi
 if [[ "${COSIGN_TLOG_UPLOAD:-false}" == "false" ]]; then
   cosign_args+=(--tlog-upload=false)
   verify_args+=(--insecure-ignore-tlog=true)
-  # cosign 3.x loads a signing config by default and then refuses --tlog-upload=false.
-  if cosign sign --help 2>&1 | grep -q -- '--use-signing-config'; then
-    cosign_args+=(--use-signing-config=false)
-  fi
+fi
+if [[ "${COSIGN_TLOG_UPLOAD:-false}" == "true" ]]; then
+  # Upload only to the transparency log netCI named. Left to cosign, it would be the
+  # public Rekor: every internal image digest and signing identity, published.
+  [[ -n "${COSIGN_REKOR_URL:-}" ]] || {
+    echo "COSIGN_TLOG_UPLOAD=true needs COSIGN_REKOR_URL (netCI's supplyChain.rekorUrl)" >&2
+    exit 1
+  }
+  cosign_args+=(--rekor-url "${COSIGN_REKOR_URL}")
+  verify_args+=(--rekor-url "${COSIGN_REKOR_URL}")
+fi
+# cosign 3.x loads a signing config by default and then refuses --tlog-upload=false and
+# an explicit --rekor-url alike.
+if cosign sign --help 2>&1 | grep -q -- '--use-signing-config'; then
+  cosign_args+=(--use-signing-config=false)
 fi
 
 cosign "${cosign_args[@]}" "${registry_artifact_ref}"

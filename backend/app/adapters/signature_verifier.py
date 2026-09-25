@@ -25,6 +25,7 @@ import base64
 import json
 import logging
 import os
+import re
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
@@ -36,6 +37,25 @@ from ..runtime_environment import require_live_mode
 logger = logging.getLogger(__name__)
 
 DIGEST_PREFIX = "sha256:"
+
+
+
+def rekor_url_setting() -> str:
+    """NETCI_REKOR_URL, required whenever the transparency log is (ADR-054).
+
+    Read by both the build parameters and netCI's verifier, so the log a signature was
+    uploaded to is the log it is checked against. Refused at startup when the tlog is
+    required and no log is named: cosign's default is the public instance.
+    """
+
+    url = os.getenv("NETCI_REKOR_URL", "").strip().rstrip("/")
+    required = os.getenv("NETCI_SIGNATURE_REQUIRE_TLOG", "false").strip().lower() in {"1", "true", "yes"}
+    if required and not url:
+        raise ValueError("NETCI_SIGNATURE_REQUIRE_TLOG=true needs NETCI_REKOR_URL (a transparency log you choose; "
+                         "cosign's default is the public Rekor)")
+    if url and not re.fullmatch(r"https://[A-Za-z0-9.-]+(:[0-9]{1,5})?(/[A-Za-z0-9._~/-]*)?", url):
+        raise ValueError("NETCI_REKOR_URL must be an https URL")
+    return url
 
 
 class SignatureVerificationError(RuntimeError):
@@ -191,6 +211,7 @@ class CosignSignatureVerifier:
         timeout_seconds: float = 60.0,
         allow_unpinned: bool = False,
         require_tlog: bool = False,
+        rekor_url: str = "",
     ) -> None:
         self.executable = executable
         self._key = key
@@ -202,6 +223,10 @@ class CosignSignatureVerifier:
         # configuration mismatch. A deployment with a real Rekor should set this true, and
         # then a signature that was never logged is correctly refused.
         self.require_tlog = require_tlog
+        # The log the build uploaded to (ADR-054); cosign's own default is the public one.
+        if require_tlog and not rekor_url:
+            raise ValueError("require_tlog needs the Rekor URL the build uploads to")
+        self.rekor_url = rekor_url
         # An artifact with no recorded reference cannot be located, let alone verified.
         # Off by default: "we could not find it, so we shipped it" is the failure this
         # whole module exists to prevent.
@@ -250,7 +275,7 @@ class CosignSignatureVerifier:
             )
 
         key = self.key()
-        tlog = [] if self.require_tlog else ["--insecure-ignore-tlog=true"]
+        tlog = ["--rekor-url", self.rekor_url] if self.require_tlog else ["--insecure-ignore-tlog=true"]
         if artifact.is_oci:
             target = artifact.pinned_reference()
             command = [self.executable, "verify", "--key", key, *tlog, target]
@@ -299,7 +324,7 @@ class CosignSignatureVerifier:
         if not commit:
             raise SignatureVerificationError("the deployment carries no commit to compare provenance against")
         target = artifact.pinned_reference()
-        tlog = [] if self.require_tlog else ["--insecure-ignore-tlog=true"]
+        tlog = ["--rekor-url", self.rekor_url] if self.require_tlog else ["--insecure-ignore-tlog=true"]
         code, output = await self._run([
             self.executable, "verify-attestation", "--key", self.key(), "--type", "slsaprovenance1", *tlog, target,
         ])
@@ -325,5 +350,6 @@ def build_signature_verifier() -> SignatureVerifier:
             in {"true", "1", "yes"},
             require_tlog=os.getenv("NETCI_SIGNATURE_REQUIRE_TLOG", "false").strip().lower()
             in {"true", "1", "yes"},
+            rekor_url=rekor_url_setting(),
         )
     raise ValueError(f"NETCI_SIGNATURE_VERIFY_MODE must be none or cosign (got {mode!r})")
