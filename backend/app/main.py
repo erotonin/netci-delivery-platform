@@ -17,7 +17,7 @@ import urllib.request
 logger = logging.getLogger("netci.main")
 from datetime import datetime, timedelta, timezone
 from contextlib import asynccontextmanager
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 from urllib.parse import urlsplit
 from uuid import UUID, uuid4
 
@@ -45,6 +45,7 @@ from .auth import AuthError, Principal, build_authenticator
 from .build_inputs import BuildInputError, validate_build_inputs
 from .client_address import LOOPBACK_HOSTS, resolve_client
 from .ratelimit import build_rate_limiter
+from .domain.dag import DagValidationError, compute_dag_waves, find_cycle
 from .domain.delivery_rules import (
     ScmEvent,
     decide as decide_trigger,
@@ -1458,6 +1459,27 @@ class ProductionRequestCreate(StrictBody):
         return self
 
 
+class ReleasePlanModule(StrictBody):
+    moduleId: str = Field(pattern=r"^[a-z0-9][a-z0-9-]{0,62}$")
+    dependencies: list[Annotated[str, Field(pattern=r"^[a-z0-9][a-z0-9-]{0,62}$")]] = Field(
+        default_factory=list, max_length=50
+    )
+    deploymentOrder: int = Field(default=1, ge=1, le=100)
+
+
+class ReleasePlanSimulation(StrictBody):
+    # Exactly one of the two. Both at once would leave the server silently picking one,
+    # which reads to the caller like the other one was used.
+    modules: list[ReleasePlanModule] | None = Field(default=None, min_length=1, max_length=200)
+    systemId: str | None = Field(default=None, pattern=r"^[a-zA-Z][a-zA-Z0-9-]{2,62}$")
+
+    @model_validator(mode="after")
+    def exactly_one_source(self) -> "ReleasePlanSimulation":
+        if (self.modules is None) == (self.systemId is None):
+            raise ValueError("give either modules or systemId, not both and not neither")
+        return self
+
+
 class SecurityWaiverCreate(StrictBody):
     cveId: str = Field(min_length=3, max_length=64)
     reason: str = Field(min_length=5, max_length=1000)
@@ -2745,6 +2767,60 @@ def list_production_requests(principal: Principal = ReadAccess) -> list[dict[str
             raise
         visible.append(request)
     return visible
+
+
+@app.post("/release-plans/simulate")
+def simulate_release_plan(payload: ReleasePlanSimulation, principal: Principal = ReadAccess) -> dict[str, object]:
+    """Run the production-request release algorithm on a proposed plan; nothing is stored.
+
+    The waves come from the same `compute_dag_waves` a production request is validated
+    with, so what this shows is what a request with these dependencies would get. A plan
+    the algorithm refuses is a result here, not a request error: 200 with `valid: false`
+    and the algorithm's own error code.
+    """
+
+    if payload.systemId is not None:
+        try:
+            unfiltered = portal.system(payload.systemId)
+            visible = portal.system(payload.systemId, _visible_application_ids(principal))
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail={"code": "SYSTEM_NOT_FOUND", "message": str(exc)}) from exc
+        if unfiltered["modules"] and not visible["modules"]:
+            raise HTTPException(
+                status_code=403,
+                detail={"code": "APPLICATION_FORBIDDEN", "message": "system has no modules accessible to this principal"},
+            )
+        # netCI records dependency edges only on a production request's members; a system
+        # and its modules carry none. Planning from the system would mean inventing edges
+        # (or showing one wave that looks like "no dependencies" when it means "unknown").
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "SYSTEM_HAS_NO_DEPENDENCY_DATA",
+                "message": "netCI stores no module dependencies for a system; send the modules and their dependencies instead",
+            },
+        )
+
+    modules = [item.model_dump() for item in payload.modules or []]
+    try:
+        plan = compute_dag_waves(modules)
+    except DagValidationError as exc:
+        return {
+            "valid": False,
+            "code": exc.code,
+            "message": str(exc),
+            "cycle": find_cycle(modules) if exc.code == "CYCLIC_DEPENDENCY" else None,
+        }
+    waves = [list(wave["moduleIds"]) for wave in plan["waves"]]
+    dependencies = plan["dependencies"]
+    return {
+        "valid": True,
+        "waves": waves,
+        "order": [module_id for wave in waves for module_id in wave],
+        # With no edges at all compute_dag_waves groups by deploymentOrder instead; say
+        # so, or a plan of independent modules reads as a dependency analysis.
+        "groupedBy": "dependencies" if any(dependencies.values()) else "deploymentOrder",
+    }
 
 
 @app.post("/production-requests", status_code=status.HTTP_201_CREATED)

@@ -273,6 +273,9 @@ textarea { min-height: 78px; padding: 9px 10px; resize: vertical; font-size: 11p
 .status-critical i, .status-offline i, .status-failed i, .status-blocked i, .status-rejected i, .status-rolled-back i { background: #e44e59; }
 .status-not-deployed, .status-unknown { background: #f1f2f4; color: #69717d; }
 .status-not-deployed i, .status-unknown i { background: #8a919d; }
+/* Waiting for admission (ADR-050): not the amber of a running build -- nothing has started. */
+.status-waiting-admission { background: #eef1f8; color: #4b5a78; }
+.status-waiting-admission i { background: #8e9bb8; }
 
 .modal-backdrop { position: fixed; inset: 0; z-index: 100; background: rgba(22, 25, 34, .48); display: grid; place-items: center; padding: 24px; }
 .modal { width: min(560px, 100%); max-height: calc(100vh - 48px); border-radius: 9px; background: #fff; box-shadow: 0 22px 70px rgba(15, 20, 31, .28); display: flex; flex-direction: column; overflow: hidden; }
@@ -736,5 +739,23 @@ textarea { min-height: 78px; padding: 9px 10px; resize: vertical; font-size: 11p
 .delivery-flow h3 { margin: 0 0 6px; font-size: 0.95rem; }
 .delivery-flow ol { margin: 0 0 6px 18px; padding: 0; font-family: var(--mono, ui-monospace, monospace); font-size: 0.82rem; }
 .delivery-flow p { margin: 4px 0 0; font-size: 0.82rem; color: var(--text-muted); }
+.run-notice { margin: 6px 0 0; padding: 6px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--canvas); font-size: 0.82rem; }
 .run-intent { color: var(--text-muted); }
 .checkbox-field span { display: flex; align-items: center; gap: 8px; }
+
+/* Release plan simulation: the production-request wave algorithm, shown as columns. */
+.release-plan-form { display: grid; gap: 8px; padding: 14px 16px; margin-bottom: 14px; }
+.release-plan-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 2fr) 34px; gap: 8px; align-items: center; }
+.release-plan-row input { min-height: 32px; padding: 0 10px; font-size: 12px; }
+.release-plan-row-head span { color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: .04em; }
+.release-plan-actions { display: flex; justify-content: space-between; gap: 8px; margin-top: 4px; }
+.release-plan-result { margin-bottom: 14px; }
+.release-plan-waves { display: flex; gap: 12px; padding: 14px 16px; overflow-x: auto; }
+.release-plan-wave { flex: 1 0 170px; display: flex; flex-direction: column; gap: 8px; }
+.release-plan-wave h3 { font-size: 10px; font-weight: 700; color: #6550b1; text-transform: uppercase; letter-spacing: .04em; }
+.release-plan-chip { display: flex; flex-direction: column; gap: 3px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px; background: #f8f9fb; font-size: 12px; }
+.release-plan-chip small { color: var(--muted); font-size: 10px; }
+.release-plan-blocked { margin-bottom: 14px; padding: 14px 16px; border: 1px solid #f0bbc2; border-radius: 8px; background: #fff4f5; color: #b83240; display: grid; gap: 6px; font-size: 12px; }
+.release-plan-blocked h2 { font-size: 14px; }
+.release-plan-cycle { font-family: var(--mono, ui-monospace, monospace); font-size: 13px; font-weight: 600; }
+@media (max-width: 850px) { .release-plan-waves { flex-direction: column; } .release-plan-wave { flex-basis: auto; } }

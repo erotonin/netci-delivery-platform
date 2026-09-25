@@ -15,6 +15,8 @@ import { Modal, PortalShell, type Navigate } from './PortalShell'
 import { ProductionRequestsPage } from './ProductionRequestsPage'
 import { ReleaseCalendarPage } from './ReleaseCalendarPage'
 import { ScorecardsPage } from './ScorecardsPage'
+import { ReleasePlanPage } from './ReleasePlanPage'
+import { StageCatalogPage } from './StageCatalogPage'
 import { VulnerabilitiesPage } from './VulnerabilitiesPage'
 import type { PageId } from './portalTypes'
 import './styles.css'
@@ -59,6 +61,8 @@ function readRoute(): RouteState {
   if (parts[0] === 'calendar') return { page: 'calendar', systemId: '', moduleId: '', settingsOpen: false }
   if (parts[0] === 'vulnerabilities') return { page: 'vulnerabilities', systemId: '', moduleId: '', settingsOpen: false }
   if (parts[0] === 'scorecards') return { page: 'scorecards', systemId: '', moduleId: '', settingsOpen: false }
+  if (parts[0] === 'release-plan') return { page: 'release-plan', systemId: '', moduleId: '', settingsOpen: false }
+  if (parts[0] === 'stage-catalog') return { page: 'stage-catalog', systemId: '', moduleId: '', settingsOpen: false }
   if (parts[0] === 'servers') return { page: 'servers', systemId: '', moduleId: '', settingsOpen: false }
   if (parts[0] === 'architecture') return { page: 'architecture', systemId: '', moduleId: '', settingsOpen: false }
   return { page: 'dashboard', systemId: '', moduleId: '', settingsOpen: false }
@@ -70,6 +74,8 @@ function routePath(route: RouteState): string {
   if (route.page === 'calendar') return '/calendar'
   if (route.page === 'vulnerabilities') return '/vulnerabilities'
   if (route.page === 'scorecards') return '/scorecards'
+  if (route.page === 'release-plan') return '/release-plan'
+  if (route.page === 'stage-catalog') return '/stage-catalog'
   if (route.page === 'servers') return '/servers'
   if (route.page === 'architecture') return '/architecture'
   if (route.page === 'system') return route.systemId ? `/systems/${route.systemId}` : '/systems'
@@ -168,6 +174,8 @@ function PortalApp({ session, onLogout }: { session: AuthSession; onLogout: () =
       {page === 'calendar' && <ReleaseCalendarPage />}
       {page === 'vulnerabilities' && <VulnerabilitiesPage />}
       {page === 'scorecards' && <ScorecardsPage navigate={navigate} />}
+      {page === 'release-plan' && <ReleasePlanPage />}
+      {page === 'stage-catalog' && <StageCatalogPage session={session} />}
       {page === 'architecture' && <ArchitectureRoadmapPage />}
       {page === 'system' && <SystemPage systemId={systemId} navigate={navigate} />}
       {page === 'requests' && <ProductionRequestsPage systemId={systemId} />}

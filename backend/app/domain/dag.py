@@ -125,3 +125,46 @@ def compute_dag_waves(modules: list[dict[str, Any]]) -> dict[str, Any]:
         "waves": waves,
         "dependencies": dependencies_map,
     }
+
+
+def find_cycle(modules: list[dict[str, Any]]) -> list[str] | None:
+    """Return one dependency cycle as ``[a, b, c]`` (a depends on b, b on c, c on a), or None.
+
+    `compute_dag_waves` only says *that* the graph is cyclic: Kahn's algorithm stops with
+    nodes left over, and those leftovers include everything downstream of the cycle, not
+    just the cycle. A person told "release blocked" needs the loop itself to break it, so
+    this walks the "depends on" edges depth-first and returns the first back edge's path.
+
+    Deterministic: modules are visited in input order and dependencies in listed order,
+    so the same plan always names the same cycle. Unknown dependencies are skipped and a
+    duplicated module id keeps its first definition -- those are other errors, reported by
+    `compute_dag_waves`, and this must not raise over them. Iterative, so a long chain
+    cannot hit Python's recursion limit.
+    """
+
+    graph: dict[str, list[str]] = {}
+    for module in modules:
+        graph.setdefault(str(module["moduleId"]), [str(d) for d in (module.get("dependencies") or [])])
+
+    done: set[str] = set()
+    for root in graph:
+        if root in done:
+            continue
+        path: list[str] = [root]
+        on_path: set[str] = {root}
+        pending: list[Any] = [iter(graph[root])]
+        while pending:
+            dep = next(pending[-1], None)
+            if dep is None:
+                done.add(path[-1])
+                on_path.discard(path.pop())
+                pending.pop()
+                continue
+            if dep not in graph or dep in done:
+                continue
+            if dep in on_path:
+                return path[path.index(dep):]
+            path.append(dep)
+            on_path.add(dep)
+            pending.append(iter(graph[dep]))
+    return None

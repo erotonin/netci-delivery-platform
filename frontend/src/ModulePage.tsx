@@ -7,7 +7,7 @@ import {
 import {
   approveConfigRevision, approvePipelineRun, cancelPipelineRun, createModuleVersion, detectDrift,
   diffConfigRevisions, getDora, getModule, getModuleGitCommits, getModuleGitRefs, getModuleInsights, getModuleOverview, getModuleScorecard, getPipelineLogs,
-  getModuleDeliveryRules, getPipelineStages, listConfigRevisions, listModulePipelineRuns, listModuleVersions, promoteModuleArtifact,
+  getModuleDeliveryRules, getPipelineRun, getPipelineStages, listConfigRevisions, listModulePipelineRuns, listModuleVersions, promoteModuleArtifact,
   proposeConfigRevision, rejectConfigRevision, retryPipelineRun, rollbackConfigRevision,
   startModulePipeline, applyModuleConfig, whoami, NetciApiError, type ConfigApplyResponse, type ConfigDriftReport, type ConfigRevision, type ConfigRevisionDiff,
   listDcimServers, type DcimServer, type RuntimeSettings, type DeploymentEnvironmentConfig, type Environment, type GitCommits, type GitRefs, type ModuleInsights, type ModuleOverview, type ModulePipelineConfig, type ModuleScorecard, type ModuleVersion,
@@ -131,7 +131,7 @@ function OverviewTab({ moduleId, onOpenRun }: { moduleId: string; onOpenRun?: (r
     <div className="module-overview-grid">
       <section className="panel"><div className="panel-heading"><div><h2>Build gần đây</h2><p>{overview.recentRuns.length} lượt chạy mới nhất</p></div></div>
         <div className="data-table history-table compact"><div className="table-row table-head"><span>Trạng thái</span><span>Môi trường</span><span>Commit</span><span>Artifact</span><span>Bởi</span><span>Khi nào</span></div>
-          {overview.recentRuns.map((run) => <button className="table-row table-button" key={run.id} onClick={() => onOpenRun?.(run)} title={run.id}><StatusPill status={run.status.replace('_', ' ')} /><span>{run.environment}</span><span className="mono">{shortSha(run.commitSha)}</span><span className="mono">{shortDigest(run.artifactDigest)}</span><span title={run.startedBy ?? ''}>{person(run.startedBy)}</span><span title={run.createdAt}>{timeAgo(run.createdAt)}</span></button>)}
+          {overview.recentRuns.map((run) => <button className="table-row table-button" key={run.id} onClick={() => onOpenRun?.(run)} title={run.id}><RunStatus run={run} /><span>{run.environment}</span><span className="mono">{shortSha(run.commitSha)}</span><span className="mono">{shortDigest(run.artifactDigest)}</span><span title={run.startedBy ?? ''}>{person(run.startedBy)}</span><span title={run.createdAt}>{timeAgo(run.createdAt)}</span></button>)}
         </div>
       </section>
       <section className="panel"><div className="panel-heading"><div><h2>Deployment gần đây</h2><p>{overview.recentDeployments.length} bản ghi mới nhất</p></div></div>
@@ -192,10 +192,37 @@ export function isPromotable(run: PipelineRun | null): boolean {
     && (run.status === 'succeeded' || run.status === 'rolled_back')
 }
 
+/** A queued run the server has not admitted to CI: its quota scope is full (ADR-050). Only
+ * an explicit null says so -- a response without the field is not read as waiting. */
+export function isWaitingForAdmission(run: PipelineRun): boolean {
+  return run.status === 'queued' && run.admittedAt === null
+}
+
+const shortRunId = (id: string) => `#${id.slice(0, 8)}`
+
+/** A run's state as the server recorded it. A run waiting for admission has not reached
+ * Jenkins, so it must never read as dispatched or running; a superseded run names the run
+ * that replaced it, so a cancellation nobody asked for is not mistaken for a failure. */
+export function RunStatus({ run }: { run: PipelineRun }) {
+  if (isWaitingForAdmission(run)) {
+    return <span className="status status-waiting-admission" title="Waiting for admission: quota của phạm vi này đã đủ build đồng thời; run chưa được gửi tới Jenkins (ADR-050)."><i />chờ tới lượt</span>
+  }
+  if (run.status === 'cancelled' && run.supersededBy) {
+    return <span className="status status-cancelled" title={`Cancelled: superseded by run ${run.supersededBy}`}><i />superseded by {shortRunId(run.supersededBy)}</span>
+  }
+  return <StatusPill status={run.status.replace('_', ' ')} />
+}
+
 function describeTrigger(rule: DeliveryRules['triggers'][number]): string {
   const patterns = (rule.on === 'tag' ? rule.tags : rule.branches) ?? []
   const what = rule.deployTo ? `build → deploy ${rule.deployTo}` : 'build only'
-  return `${rule.on} ${patterns.join(', ')} → ${what}${rule.registerVersion ? ' + register version' : ''}`
+  // Stated only when the rule sets them: the server serialises what the module declared.
+  const options = [
+    rule.cancelInProgress === undefined ? '' : ` · cancelInProgress: ${rule.cancelInProgress}`,
+    rule.paths?.length ? ` · paths: ${rule.paths.join(', ')}` : '',
+    rule.pathsIgnore?.length ? ` · pathsIgnore: ${rule.pathsIgnore.join(', ')}` : '',
+  ].join('')
+  return `${rule.on} ${patterns.join(', ')} → ${what}${rule.registerVersion ? ' + register version' : ''}${options}`
 }
 
 /** The rules in force, stated as the server evaluates them -- first match wins. */
@@ -214,6 +241,8 @@ export function DeliveryFlowPanel({ moduleId }: { moduleId: string }) {
   return <section className="panel delivery-flow" data-testid="delivery-flow">
     <h3>Delivery flow{rules.defaulted ? ' (defaults)' : ''}</h3>
     <ol>{rules.triggers.map((rule, i) => <li key={i}>{describeTrigger(rule)}</li>)}</ol>
+    {/* A path filter reads as "this change was skipped" unless it says when it is not applied (ADR-051). */}
+    {rules.triggers.some((rule) => rule.paths?.length || rule.pathsIgnore?.length) && <p>Path filters skip a run only when the SCM reported every changed file; otherwise the rule matches and the run says so. Pull requests always build in full.</p>}
     <p>Fork pull requests: {rules.forkPullRequests === 'ignore' ? 'ignored' : 'verified only — never signed or published'}.</p>
     <p>{Object.entries(rules.promotion).map(([env, rule]) => rule.requireHealthyIn
       ? `${env} needs the artifact healthy in ${rule.requireHealthyIn}${rule.minSoakMinutes ? ` for ${rule.minSoakMinutes} min` : ''}`
@@ -228,6 +257,7 @@ function PipelineRunView({
   onBack,
   onBackToEnvironments,
   onRunUpdated,
+  onOpenRun,
 }: {
   pipeline: PipelineDefinition
   liveRun: PipelineRun | null
@@ -236,6 +266,8 @@ function PipelineRunView({
   /** Straight back to the environment list. Without it, leaving a run took two hops. */
   onBackToEnvironments: () => void
   onRunUpdated: (updated: PipelineRun) => void
+  /** Open another run by id -- the one that superseded this run. */
+  onOpenRun?: (runId: string) => void
 }) {
   const { notify } = usePortalFeedback()
   const [stage, setStage] = useState(pipeline.stages[0] ?? 'Checkout')
@@ -280,7 +312,10 @@ function PipelineRunView({
         listModulePipelineRuns(moduleId)
           .then((res) => {
             const matched = res.items.find((r) => r.id === liveRun.id)
-            if (matched && (matched.status !== liveRun.status || matched.jenkinsRunId !== liveRun.jenkinsRunId)) {
+            // Admission changes no status (queued stays queued), so it is compared on its own:
+            // without it a run admitted while open kept saying it was waiting.
+            if (matched && (matched.status !== liveRun.status || matched.jenkinsRunId !== liveRun.jenkinsRunId
+              || matched.admittedAt !== liveRun.admittedAt || matched.supersededBy !== liveRun.supersededBy)) {
               onRunUpdated(matched)
             }
           })
@@ -379,10 +414,20 @@ function PipelineRunView({
       <div>
         <div className="title-status">
           <h2>{pipeline.name} {liveRun ? `· build ${buildLabel(liveRun)}` : ''}</h2>
-          <StatusPill status={liveRun?.status.replace('_', ' ') ?? 'Not started'} />
+          {liveRun ? <RunStatus run={liveRun} /> : <StatusPill status="Not started" />}
           {liveRun?.retryOf && <span className="mono" style={{ marginLeft: 8, fontSize: '0.85em', opacity: 0.8 }}>(retry of #{liveRun.retryOf.slice(0, 8)})</span>}
         </div>
-        <p>{liveRun ? `${liveRun.branch} · ${liveRun.commitSha} · ${triggerText(liveRun)} · ${runIntent(liveRun)} · triggered by ${liveRun.startedBy ?? 'unknown actor'}` : 'No pipeline run selected.'}{liveRun?.releaseTag && <> · version <b>{liveRun.releaseTag}</b></>}{liveRun?.jenkinsRunId && <><br /><span className="mono" style={{ opacity: 0.7 }}>Jenkins: {liveRun.jenkinsRunId}</span></>}</p>
+        <p>{liveRun ? `${liveRun.branch} · ${liveRun.commitSha} · ${triggerText(liveRun)} · ${runIntent(liveRun)} · triggered by ${liveRun.startedBy ?? 'unknown actor'}` : 'No pipeline run selected.'}{liveRun?.releaseTag && <> · version <b>{liveRun.releaseTag}</b></>}{liveRun?.jenkinsRunId && <><br /><span className="mono" style={{ opacity: 0.7 }}>Jenkins: {liveRun.jenkinsRunId}</span></>}{liveRun?.trigger?.reason && <><br /><small>{liveRun.trigger.reason}{typeof liveRun.trigger.changedFiles === 'number' ? ` · ${liveRun.trigger.changedFiles} changed file${liveRun.trigger.changedFiles === 1 ? '' : 's'}` : ''}</small></>}</p>
+        {liveRun && isWaitingForAdmission(liveRun) && <p className="run-notice" role="status" data-testid="run-admission-notice">
+          Chờ tới lượt: quota của phạm vi này đã đủ build đồng thời, nên run chưa được gửi tới Jenkins. netCI admit run khi một build khác kết thúc (ADR-050).
+          {liveRun.concurrencyGroup ? <> Một commit mới hơn của <span className="mono">{liveRun.concurrencyGroup}</span> sẽ thay thế run này.</> : null}
+        </p>}
+        {liveRun?.status === 'cancelled' && liveRun.supersededBy && <p className="run-notice" data-testid="run-superseded-notice">
+          Superseded by {onOpenRun
+            ? <button className="link-button mono" onClick={() => onOpenRun(liveRun.supersededBy!)}>{shortRunId(liveRun.supersededBy)}</button>
+            : <span className="mono" title={liveRun.supersededBy}>{shortRunId(liveRun.supersededBy)}</span>}
+          {liveRun.concurrencyGroup ? <>: a newer run of <span className="mono">{liveRun.concurrencyGroup}</span> cancelled this one.</> : '.'}
+        </p>}
       </div>
       <div className="run-actions">
         {liveRun?.status === 'waiting_approval' && (
@@ -577,7 +622,8 @@ function PipelineTab({ moduleId, pipelineConfig, deploymentEnvironments, initial
       })
       setLiveRuns((current) => [next, ...current.filter((item) => item.id !== next.id)])
       setTriggered(runModalPipeline.name)
-      notify(modalDeploy ? `Queued build ${rev.slice(0, 8)} → ${modalEnv}.` : `Queued build ${rev.slice(0, 8)} (build only, not deployed).`)
+      const waiting = isWaitingForAdmission(next) ? ' Chờ tới lượt: quota đang đầy, chưa gửi tới Jenkins.' : ''
+      notify((modalDeploy ? `Queued build ${rev.slice(0, 8)} → ${modalEnv}.` : `Queued build ${rev.slice(0, 8)} (build only, not deployed).`) + waiting)
       setRunModalPipeline(null)
       setRun({ pipeline: runModalPipeline, liveRun: next })
     } catch (error) {
@@ -588,9 +634,20 @@ function PipelineTab({ moduleId, pipelineConfig, deploymentEnvironments, initial
   }
 
   const runsForPipeline = (pipeline: PipelineDefinition) => liveRuns.filter((item) => item.environment === pipeline.id.replace('cd-', ''))
+  // The superseding run may be newer than the list this tab loaded, so it is fetched when unknown.
+  const openRunById = (runId: string) => {
+    const open = (target: PipelineRun) => {
+      const pipeline = definitions.find((d) => d.id === `cd-${target.environment}`) ?? definitions[0]
+      if (pipeline) setRun({ pipeline, liveRun: target })
+    }
+    const known = liveRuns.find((item) => item.id === runId)
+    if (known) { open(known); return }
+    getPipelineRun(runId).then(open).catch((error) => notify(error instanceof Error ? error.message : 'Không tải được pipeline run.', 'error'))
+  }
   if (run) {
     return (
       <PipelineRunView
+        key={run.liveRun?.id ?? 'new'}
         pipeline={run.pipeline}
         liveRun={run.liveRun}
         moduleId={moduleId}
@@ -600,14 +657,15 @@ function PipelineTab({ moduleId, pipelineConfig, deploymentEnvironments, initial
           setRun({ pipeline: run.pipeline, liveRun: updated })
           setLiveRuns((current) => [updated, ...current.filter((item) => item.id !== updated.id)])
         }}
+        onOpenRun={openRunById}
       />
     )
   }
-  if (historyPipeline) { const historyRuns = runsForPipeline(historyPipeline); return <section className="history-view"><button className="back-button" onClick={() => setHistoryPipeline(null)}><ArrowLeft size={16} />All Environments</button><div className="run-heading"><div><h2>{historyPipeline.name} · Build History</h2><p>Runs targeting this environment, newest first; status reported by Jenkins and worker.</p></div><button className="primary-button" disabled={busyPipeline === historyPipeline.id} onClick={() => openRunModal(historyPipeline)}><Play size={15} />{busyPipeline === historyPipeline.id ? 'Queuing…' : 'Run Pipeline'}</button></div><section className="panel table-panel"><div className="data-table history-table"><div className="table-row table-head"><span>Build</span><span>Commit</span><span>Branch</span><span>Triggered By</span><span>Started</span><span>Status</span><span /></div>{historyRuns.map((item) => <button className="table-row table-button" onClick={() => setRun({ pipeline: historyPipeline, liveRun: item })} key={item.id}><span className="request-id" title={item.jenkinsRunId ?? item.id}>#{item.jenkinsRunId ? item.jenkinsRunId.split('#').pop() : item.id.slice(0, 8)}</span><span className="mono" title={item.commitSha}>{shortSha(item.commitSha)}</span><span title={item.trigger?.reason ?? ''}>{item.branch}<small className="run-intent"> · {triggerText(item)}{runIntent(item) !== 'deploys' ? ` · ${runIntent(item)}` : ''}</small></span><span title={item.startedBy ?? ''}>{person(item.startedBy)}</span><span title={item.createdAt}>{new Date(item.createdAt).toLocaleString('en-US')}</span><StatusPill status={item.status.replace('_', ' ')} /><ExternalLink size={15} /></button>)}</div>{!historyRuns.length && <div className="empty-table"><History size={22} /><strong>No pipeline runs for this environment yet</strong><span>Click "Run Pipeline" to build a commit and deploy.</span></div>}</section>{triggered && <div className="toast success-toast"><CheckCircle2 size={17} />{triggered} has been queued.</div>}</section> }
+  if (historyPipeline) { const historyRuns = runsForPipeline(historyPipeline); return <section className="history-view"><button className="back-button" onClick={() => setHistoryPipeline(null)}><ArrowLeft size={16} />All Environments</button><div className="run-heading"><div><h2>{historyPipeline.name} · Build History</h2><p>Runs targeting this environment, newest first; status reported by Jenkins and worker.</p></div><button className="primary-button" disabled={busyPipeline === historyPipeline.id} onClick={() => openRunModal(historyPipeline)}><Play size={15} />{busyPipeline === historyPipeline.id ? 'Queuing…' : 'Run Pipeline'}</button></div><section className="panel table-panel"><div className="data-table history-table"><div className="table-row table-head"><span>Build</span><span>Commit</span><span>Branch</span><span>Triggered By</span><span>Started</span><span>Status</span><span /></div>{historyRuns.map((item) => <button className="table-row table-button" onClick={() => setRun({ pipeline: historyPipeline, liveRun: item })} key={item.id}><span className="request-id" title={item.jenkinsRunId ?? item.id}>#{item.jenkinsRunId ? item.jenkinsRunId.split('#').pop() : item.id.slice(0, 8)}</span><span className="mono" title={item.commitSha}>{shortSha(item.commitSha)}</span><span title={item.trigger?.reason ?? ''}>{item.branch}<small className="run-intent"> · {triggerText(item)}{runIntent(item) !== 'deploys' ? ` · ${runIntent(item)}` : ''}</small></span><span title={item.startedBy ?? ''}>{person(item.startedBy)}</span><span title={item.createdAt}>{new Date(item.createdAt).toLocaleString('en-US')}</span><RunStatus run={item} /><ExternalLink size={15} /></button>)}</div>{!historyRuns.length && <div className="empty-table"><History size={22} /><strong>No pipeline runs for this environment yet</strong><span>Click "Run Pipeline" to build a commit and deploy.</span></div>}</section>{triggered && <div className="toast success-toast"><CheckCircle2 size={17} />{triggered} has been queued.</div>}</section> }
   return <><section className="panel repo-strip"><div><span>Repository</span><strong className="mono">{refs?.repositoryUrl ?? '…'}</strong></div>{refs?.error ? <div className="repo-error"><ShieldAlert size={14} />Failed to read branches from repository: {refs.error}</div> : <div><span>Branch</span><strong>{refs ? refs.branches.map((b) => `${b.name} @ ${b.sha.slice(0, 7)}`).join(' · ') || 'no branches' : 'loading…'}</strong></div>}{refs && refs.tags.length > 0 && <div><span>Latest Tags</span><strong>{refs.tags.slice(0, 3).map((t) => t.name).join(' · ')}</strong></div>}</section><DeliveryFlowPanel moduleId={moduleId} /><div className="pipeline-card-grid">{definitions.map((pipeline) => {
     const live = runsForPipeline(pipeline)[0]
     const env = pipeline.id.replace('cd-', '')
-    return <article className="pipeline-card panel" key={pipeline.id}><div className="pipeline-card-title"><span className={`pipeline-icon pipeline-${pipeline.id}`}><GitBranch size={18} /></span><div><h3>{pipeline.name}</h3><p>build → publish → deploy to <b>{env}</b> · branch {pipeline.branch}{env === 'prod' ? ' · approval required' : ''}</p></div><button aria-label={`Open history ${pipeline.name}`} onClick={() => setHistoryPipeline(pipeline)}><MoreHorizontal size={18} /></button></div><div className="last-build" style={live ? { cursor: 'pointer' } : undefined} title={live ? "Click để mở chi tiết Pipeline Run này" : undefined} onClick={() => { if (live) setRun({ pipeline, liveRun: live }) }}><span>Latest Run</span><strong title={live?.jenkinsRunId ?? live?.id}>{live ? `#${live.jenkinsRunId ? live.jenkinsRunId.split('#').pop() : live.id.slice(0, 8)}` : '—'}</strong><StatusPill status={live?.status.replace('_', ' ') ?? 'idle'} /></div>{live?.status === 'waiting_approval' && <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: '#fff4df', border: '1px solid #dda11d', borderRadius: '6px', padding: '6px 10px', margin: '8px 0', fontSize: '0.82rem', color: '#9d6b0c', cursor: 'pointer' }} onClick={() => setRun({ pipeline, liveRun: live })}><span>⏳ <strong>Chờ phê duyệt</strong> để deploy Prod</span><span style={{ textDecoration: 'underline', fontWeight: 600 }}>Duyệt ngay →</span></div>}<dl><div><dt>Commit</dt><dd className="mono" title={live?.commitSha}>{shortSha(live?.commitSha)}{live?.branch ? ` (${live.branch})` : ''}</dd></div><div><dt>Artifact</dt><dd className="mono" title={live?.artifactDigest ?? ''}>{shortDigest(live?.artifactDigest)}</dd></div><div><dt>Triggered By</dt><dd title={live?.startedBy ?? ''}>{person(live?.startedBy)}</dd></div><div><dt>Started</dt><dd title={live?.createdAt}>{live ? timeAgo(live.createdAt) : 'none'}</dd></div></dl><footer><button className="secondary-button" onClick={() => setHistoryPipeline(pipeline)}><History size={15} />History</button><button className="primary-button" style={{ height: '32px', padding: '0 12px', fontSize: '0.82rem', display: 'flex', alignItems: 'center', gap: '6px' }} disabled={busyPipeline === pipeline.id} aria-label={`Run ${pipeline.name}`} onClick={() => openRunModal(pipeline)}><Play size={14} />Run Pipeline</button></footer></article>
+    return <article className="pipeline-card panel" key={pipeline.id}><div className="pipeline-card-title"><span className={`pipeline-icon pipeline-${pipeline.id}`}><GitBranch size={18} /></span><div><h3>{pipeline.name}</h3><p>build → publish → deploy to <b>{env}</b> · branch {pipeline.branch}{env === 'prod' ? ' · approval required' : ''}</p></div><button aria-label={`Open history ${pipeline.name}`} onClick={() => setHistoryPipeline(pipeline)}><MoreHorizontal size={18} /></button></div><div className="last-build" style={live ? { cursor: 'pointer' } : undefined} title={live ? "Click để mở chi tiết Pipeline Run này" : undefined} onClick={() => { if (live) setRun({ pipeline, liveRun: live }) }}><span>Latest Run</span><strong title={live?.jenkinsRunId ?? live?.id}>{live ? `#${live.jenkinsRunId ? live.jenkinsRunId.split('#').pop() : live.id.slice(0, 8)}` : '—'}</strong>{live ? <RunStatus run={live} /> : <StatusPill status="idle" />}</div>{live?.status === 'waiting_approval' && <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: '#fff4df', border: '1px solid #dda11d', borderRadius: '6px', padding: '6px 10px', margin: '8px 0', fontSize: '0.82rem', color: '#9d6b0c', cursor: 'pointer' }} onClick={() => setRun({ pipeline, liveRun: live })}><span>⏳ <strong>Chờ phê duyệt</strong> để deploy Prod</span><span style={{ textDecoration: 'underline', fontWeight: 600 }}>Duyệt ngay →</span></div>}<dl><div><dt>Commit</dt><dd className="mono" title={live?.commitSha}>{shortSha(live?.commitSha)}{live?.branch ? ` (${live.branch})` : ''}</dd></div><div><dt>Artifact</dt><dd className="mono" title={live?.artifactDigest ?? ''}>{shortDigest(live?.artifactDigest)}</dd></div><div><dt>Triggered By</dt><dd title={live?.startedBy ?? ''}>{person(live?.startedBy)}</dd></div><div><dt>Started</dt><dd title={live?.createdAt}>{live ? timeAgo(live.createdAt) : 'none'}</dd></div></dl><footer><button className="secondary-button" onClick={() => setHistoryPipeline(pipeline)}><History size={15} />History</button><button className="primary-button" style={{ height: '32px', padding: '0 12px', fontSize: '0.82rem', display: 'flex', alignItems: 'center', gap: '6px' }} disabled={busyPipeline === pipeline.id} aria-label={`Run ${pipeline.name}`} onClick={() => openRunModal(pipeline)}><Play size={14} />Run Pipeline</button></footer></article>
   })}</div>
   {runModalPipeline && (
     <Modal

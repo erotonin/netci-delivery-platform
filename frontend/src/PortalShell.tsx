@@ -2,7 +2,7 @@ import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import {
   CalendarDays,
   Activity, Bell, BookOpen, Box, CheckCircle2, ChevronDown, ChevronRight, ClipboardCheck, Clock3,
-  Compass, Gauge, Grid2X2, Layers3, LogOut, Menu, Search, Server, Settings,
+  Compass, Gauge, GitBranch, Grid2X2, Layers3, ListChecks, LogOut, Menu, Search, Server, Settings,
   ShieldAlert, X,
 } from 'lucide-react'
 import { listSystems } from './api/netciClient'
@@ -109,6 +109,8 @@ function Sidebar({ page, systemId, moduleId, moduleLinks, navigationSystems, ses
         <button aria-current={page === 'calendar' ? 'page' : undefined} className={page === 'calendar' ? 'nav-item active' : 'nav-item'} onClick={() => navigate('calendar')}><CalendarDays size={17} />Release Calendar</button>
         <button aria-current={page === 'vulnerabilities' ? 'page' : undefined} className={page === 'vulnerabilities' ? 'nav-item active' : 'nav-item'} onClick={() => navigate('vulnerabilities')}><ShieldAlert size={17} />Vulnerabilities</button>
         <button aria-current={page === 'scorecards' ? 'page' : undefined} className={page === 'scorecards' ? 'nav-item active' : 'nav-item'} onClick={() => navigate('scorecards')}><ClipboardCheck size={17} />Scorecards</button>
+        <button aria-current={page === 'release-plan' ? 'page' : undefined} className={page === 'release-plan' ? 'nav-item active' : 'nav-item'} onClick={() => navigate('release-plan')}><GitBranch size={17} />Release Plan</button>
+        <button aria-current={page === 'stage-catalog' ? 'page' : undefined} className={page === 'stage-catalog' ? 'nav-item active' : 'nav-item'} onClick={() => navigate('stage-catalog')}><ListChecks size={17} />Stage Catalog</button>
         <span className="nav-label nav-label-spaced">Systems</span>
         {navigationSystems.map((system) => <button key={system.id} className="nav-item system-link" onClick={() => navigate('system', { systemId: system.id })}><i className={`system-health health-${systemTone[system.status] ?? 'gray'}`} />{system.id}</button>)}
       </>}
@@ -152,7 +154,7 @@ function TopBar({ page, systemId, moduleId, moduleLinks, navigationSystems, sess
   const [query, setQuery] = useState('')
   const [searchOpen, setSearchOpen] = useState(false)
   const moduleName = moduleLinks.find((item) => item.id === moduleId)?.name ?? navigationSystems.flatMap((system) => system.modules).find((item) => item.id === moduleId)?.name
-  const labels: Partial<Record<PageId, string>> = { dashboard: 'Dashboard', systems: 'All Systems', servers: 'Servers', catalog: 'Service Catalog', calendar: 'Release Calendar', vulnerabilities: 'Vulnerabilities', scorecards: 'Scorecards', architecture: 'Architecture & IDP 2026 Roadmap', system: 'Overview', requests: 'Production Requests', module: moduleName, 'new-module': 'New Module' }
+  const labels: Partial<Record<PageId, string>> = { dashboard: 'Dashboard', systems: 'All Systems', servers: 'Servers', catalog: 'Service Catalog', calendar: 'Release Calendar', vulnerabilities: 'Vulnerabilities', scorecards: 'Scorecards', 'release-plan': 'Release Plan', 'stage-catalog': 'Stage Catalog', architecture: 'Architecture & IDP 2026 Roadmap', system: 'Overview', requests: 'Production Requests', module: moduleName, 'new-module': 'New Module' }
   const crumbs = ['system', 'requests', 'module', 'new-module'].includes(page) ? ['Systems', systemId, labels[page]] : [labels[page]]
   const searchItems = [
     { key: 'dashboard', label: 'Dashboard', detail: 'General', action: () => navigate('dashboard') },
@@ -162,6 +164,8 @@ function TopBar({ page, systemId, moduleId, moduleLinks, navigationSystems, sess
     { key: 'calendar', label: 'Release Calendar', detail: 'Planning', action: () => navigate('calendar') },
     { key: 'vulnerabilities', label: 'Vulnerabilities', detail: 'Security', action: () => navigate('vulnerabilities') },
     { key: 'scorecards', label: 'Scorecards', detail: 'Quality', action: () => navigate('scorecards') },
+    { key: 'release-plan', label: 'Release Plan', detail: 'Planning', action: () => navigate('release-plan') },
+    { key: 'stage-catalog', label: 'Stage Catalog', detail: 'Pipeline stages', action: () => navigate('stage-catalog') },
     ...navigationSystems.flatMap((system) => [
       { key: `system-${system.id}`, label: system.id, detail: 'System', action: () => navigate('system', { systemId: system.id }) },
       ...system.modules.map((module) => ({ key: `module-${system.id}-${module.id}`, label: module.name, detail: `${system.id} · Module`, action: () => navigate('module', { systemId: system.id, moduleId: module.id }) })),

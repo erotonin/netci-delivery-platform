@@ -98,7 +98,10 @@ export type RunTrigger = {
   fromFork?: boolean
   sender?: string
   rule?: number | null
+  /** Reads "changed files unknown, path filter not applied" when a path filter could not be evaluated (ADR-051). */
   reason?: string
+  /** How many files the SCM reported as changed; null when it did not report them completely. */
+  changedFiles?: number | null
 }
 
 export type PipelineRun = {
@@ -120,6 +123,14 @@ export type PipelineRun = {
   publishArtifact?: boolean
   releaseTag?: string | null
   trigger?: RunTrigger
+  /** When the run was admitted to CI capacity and dispatched (ADR-050). A queued run with
+   * null here is waiting for its quota scope to have room -- not dispatched, not stuck.
+   * Optional only so a response from an older API (field absent) is never read as waiting. */
+  admittedAt?: string | null
+  /** `<application>:branch/<name>` or `<application>:pr/<n>`; null for tag, manual and retried runs. */
+  concurrencyGroup?: string | null
+  /** The newer run that cancelled this one. */
+  supersededBy?: string | null
   createdAt: string
   updatedAt: string
 }
@@ -729,6 +740,12 @@ export type DeliveryTrigger = {
   tags?: string[]
   deployTo?: 'dev' | 'staging'
   registerVersion?: boolean
+  /** Whether a newer run of the same branch or PR cancels one already building (ADR-050). Never on tag rules. */
+  cancelInProgress?: boolean
+  /** The rule matches only if a changed file matches one of these globs (ADR-051). Never with pathsIgnore. */
+  paths?: string[]
+  /** The rule does not match when every changed file matches one of these globs. */
+  pathsIgnore?: string[]
 }
 
 export type DeliveryRules = {
@@ -1102,6 +1119,8 @@ export type ResourceQuota = {
   maxConcurrentPipelines: number
   maxConcurrentDeployments: number
   maxProductionRequestsPerDay: number
+  /** Runs that may wait for admission in this scope; the only limit that refuses a new run (ADR-050). */
+  maxQueuedPipelines: number
   createdAt: string
   updatedAt: string
 }
@@ -1179,7 +1198,7 @@ export function getResourceQuota(scope: string, scopeId: string): Promise<Resour
 export function setResourceQuota(
   scope: string,
   scopeId: string,
-  payload: { maxConcurrentPipelines: number; maxConcurrentDeployments: number; maxProductionRequestsPerDay: number }
+  payload: { maxConcurrentPipelines: number; maxConcurrentDeployments: number; maxProductionRequestsPerDay: number; maxQueuedPipelines?: number }
 ): Promise<ResourceQuota> {
   return request<ResourceQuota>(`/quotas/${encodeURIComponent(scope)}/${encodeURIComponent(scopeId)}`, {
     method: 'PUT',
@@ -1837,4 +1856,23 @@ export type ModuleInsights = {
 
 export function getModuleInsights(moduleId: string, days = 30): Promise<ModuleInsights> {
   return request<ModuleInsights>(`/modules/${encodeURIComponent(moduleId)}/insights?days=${encodeURIComponent(String(days))}`)
+}
+
+export type ReleasePlanModuleInput = {
+  moduleId: string
+  dependencies: string[]
+  deploymentOrder?: number
+}
+
+/** What `POST /release-plans/simulate` returns: waves when the plan is valid, or why not. */
+export type ReleasePlanSimulationResult =
+  | { valid: true; waves: string[][]; order: string[]; groupedBy: 'dependencies' | 'deploymentOrder' }
+  | { valid: false; code: string; message: string; cycle: string[] | null }
+
+/** Read-only: the server runs the production-request release algorithm and stores nothing. */
+export function simulateReleasePlan(modules: ReleasePlanModuleInput[]): Promise<ReleasePlanSimulationResult> {
+  return request<ReleasePlanSimulationResult>('/release-plans/simulate', {
+    method: 'POST',
+    body: JSON.stringify({ modules }),
+  })
 }

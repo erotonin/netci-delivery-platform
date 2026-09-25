@@ -691,6 +691,34 @@ paths:
         - $ref: '#/components/parameters/ModuleId'
       responses:
         '200': { description: Four DORA metrics for module }
+  /release-plans/simulate:
+    post:
+      operationId: simulateReleasePlan
+      summary: Compute release waves for a proposed plan; stores nothing and starts nothing
+      description: >-
+        Runs the same dependency algorithm a production request is validated with
+        (Kahn's topological sort into waves). A plan the algorithm refuses -- a cycle, an
+        unknown dependency, a duplicated module -- is a 200 with `valid: false` and the
+        algorithm's error code; `cycle` names the loop for CYCLIC_DEPENDENCY. `systemId`
+        is refused with 422 SYSTEM_HAS_NO_DEPENDENCY_DATA because netCI records
+        dependencies only on production-request members, never on a system.
+      parameters:
+        - $ref: '#/components/parameters/CorrelationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ReleasePlanSimulation' }
+      responses:
+        '200':
+          description: Simulation result (valid waves, or why the plan is refused)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ReleasePlanSimulationResult' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/UnprocessableEntity' }
   /production-requests:
     get:
       operationId: listProductionRequests
@@ -4208,6 +4236,60 @@ components:
         deploymentOrder: { type: integer, minimum: 1, maximum: 100, default: 1 }
         dependencies:
           type: array
+          items: { type: string }
+    ReleasePlanModule:
+      type: object
+      required: [moduleId]
+      additionalProperties: false
+      properties:
+        moduleId: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,62}$' }
+        dependencies:
+          type: array
+          maxItems: 50
+          description: Modules that must be released before this one.
+          items: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,62}$' }
+        deploymentOrder: { type: integer, minimum: 1, maximum: 100, default: 1 }
+    ReleasePlanSimulation:
+      type: object
+      additionalProperties: false
+      description: Exactly one of `modules` or `systemId`.
+      oneOf:
+        - required: [modules]
+        - required: [systemId]
+      properties:
+        modules:
+          type: array
+          minItems: 1
+          maxItems: 200
+          items: { $ref: '#/components/schemas/ReleasePlanModule' }
+        systemId: { type: string, pattern: '^[a-zA-Z][a-zA-Z0-9-]{2,62}$' }
+    ReleasePlanSimulationResult:
+      type: object
+      required: [valid]
+      properties:
+        valid: { type: boolean }
+        waves:
+          type: array
+          description: Present when valid. Wave N may start once every module in waves 1..N-1 is released.
+          items:
+            type: array
+            items: { type: string }
+        order:
+          type: array
+          description: Present when valid. The waves flattened, in release order.
+          items: { type: string }
+        groupedBy:
+          type: string
+          enum: [dependencies, deploymentOrder]
+          description: Present when valid. deploymentOrder means no module named a dependency, so waves follow deploymentOrder.
+        code:
+          type: string
+          description: Present when invalid, e.g. CYCLIC_DEPENDENCY, INVALID_DEPENDENCY, DUPLICATE_MODULE.
+        message: { type: string }
+        cycle:
+          type: array
+          nullable: true
+          description: For CYCLIC_DEPENDENCY, the loop [a, b, c] meaning a depends on b, b on c, c on a; null for other errors.
           items: { type: string }
     ApprovalRequest:
       type: object
