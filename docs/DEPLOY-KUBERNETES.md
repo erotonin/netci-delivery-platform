@@ -82,8 +82,12 @@ Mỗi build netCI gửi thêm hai tham số, không còn để script tự đoá
   `--allow-insecure-registry` của cosign đi theo nó; đặt cosign insecure trong khi TLS được
   kiểm tra sẽ bị từ chối.
 - `COSIGN_TLOG_UPLOAD` = `true` khi `supplyChain.signatureRequireTlog: true` (mặc định của
-  chart), nên agent phải tới được Rekor (mặc định là Rekor công khai của Sigstore). Môi
-  trường air-gapped: đặt `signatureRequireTlog: false`.
+  chart), kèm `COSIGN_REKOR_URL` = `supplyChain.rekorUrl`. **Phải nêu tên Rekor**: đòi tlog mà
+  không có `rekorUrl` thì chart không render và netCI không khởi động, vì mặc định của cosign
+  là Rekor công khai — nghĩa là công bố digest của mọi image nội bộ. Dùng Rekor riêng của công
+  ty (và cho cosign trên agent lẫn trong image netCI tin public key của nó), hoặc chỉ ghi
+  `https://rekor.sigstore.dev` khi thật sự chấp nhận công khai. Không có Rekor: đặt
+  `signatureRequireTlog: false`.
 
 **Build verify-only của fork (ADR-043) không đẩy gì lên registry:** SBOM đọc
 `oci-archive` cục bộ, Trivy quét OCI layout giải nén từ archive đó; `push-image.sh` từ chối

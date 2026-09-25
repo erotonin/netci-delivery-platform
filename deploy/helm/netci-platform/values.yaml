@@ -61,7 +61,8 @@ jenkins:
   driftProbe: true
   # One or more controllers; netCI routes builds across them. It creates and updates its
   # own jobs (netci-<application-id>) through the API, so the service account needs
-  # Job/Create, Job/Configure, Job/Build, Job/Read and Overall/Read.
+  # Overall/Read and Job/Create, Configure, Build, Read and Cancel (in `folder` when set).
+  # Not Job/Delete. Overall/Administer only for driftProbe and the JCasC reload endpoint.
   controllers:
     - id: A
       url: ""                  # https://jenkins.example.com
@@ -132,14 +133,14 @@ registry:
 supplyChain:
   requireSecurityEvidence: true
   signatureVerifyMode: cosign  # cosign | none is refused outside local mode
-  signatureRequireTlog: true   # false only for keys with no transparency log (air-gapped)
+  signatureRequireTlog: true   # false only for keys with no transparency log (air-gapped);
+                               # true also makes the Sign stage upload to rekorUrl
   # The transparency log builds upload signatures to and netCI verifies against (ADR-054).
   # Required when signatureRequireTlog is true, and never defaulted: cosign's default is
   # the public Rekor, which would publish every internal image digest and signing
   # identity. A company's own Rekor, or https://rekor.sigstore.dev only if that is intended.
   # A private Rekor's public key must also be trusted by cosign on the agents and here.
   rekorUrl: ""
-                               # true also makes the Sign stage upload to the tlog
   # Refuse a container image without verified SLSA provenance naming the commit netCI
   # dispatched (ADR-044). The shared library shipped with this chart attests it; a
   # controller on an older library has none, and its images are refused.
