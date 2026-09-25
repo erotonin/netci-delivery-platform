@@ -4228,7 +4228,7 @@ async def record_pipeline_sbom(
         document = json.loads(raw)
     except (json.JSONDecodeError, ValueError) as exc:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail={"code": "INVALID_SBOM", "message": "SBOM payload is not valid JSON"},
         ) from exc
     if (
@@ -4237,7 +4237,7 @@ async def record_pipeline_sbom(
         or not isinstance(document.get("components"), list)
     ):
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail={"code": "INVALID_SBOM", "message": "document must be a CycloneDX SBOM with a components list"},
         )
 
@@ -4289,7 +4289,7 @@ def list_running_vulnerabilities(
     sev_key = minSeverity.strip().upper()
     if sev_key not in SEVERITY_ORDER:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail={
                 "code": "INVALID_SEVERITY",
                 "message": f"minSeverity must be one of: {', '.join(SEVERITY_ORDER.keys())} (got {minSeverity!r})",
@@ -4306,7 +4306,7 @@ def get_vulnerability_exposure(
 ) -> dict[str, object]:
     if not re.fullmatch(r"^[A-Za-z0-9][A-Za-z0-9._:-]{2,63}$", vulnerabilityId):
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail={
                 "code": "INVALID_VULNERABILITY_ID",
                 "message": f"vulnerabilityId must match ^[A-Za-z0-9][A-Za-z0-9._:-]{{2,63}}$ (got {vulnerabilityId!r})",

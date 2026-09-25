@@ -1,5 +1,5 @@
 SHELL := /usr/bin/env bash
-PYTHON ?= python3
+PYTHON ?= $(shell test -x .venv/bin/python && echo .venv/bin/python || echo python3)
 NPM ?= npm
 NODE ?= node
 
