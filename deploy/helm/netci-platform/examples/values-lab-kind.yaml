@@ -23,6 +23,9 @@ image:
 existingSecret: netci-app
 
 jenkins:
+  # netci-shared keeps its workspace between builds: allowed here only for the lab's
+  # benchmark baseline, never on a company controller.
+  allowedAgentLabels: "netci-ephemeral,netci-shared"
   controllers:
     - {id: A, url: "http://172.17.0.50:8080", username: admin, executors: 2}
     - {id: B, url: "http://172.17.0.51:8080", username: admin, executors: 2}

@@ -26,6 +26,8 @@ worked, and the operator finds out at the incident review.
 
 from __future__ import annotations
 
+import os
+import re
 from typing import Any
 
 #: Keys that decide where or how something is deployed. A caller naming one of these is
@@ -175,6 +177,8 @@ def validate_build_inputs(supplied: dict[str, Any] | None) -> dict[str, Any]:
             _check_scalar(key, value)
         if key == "NETCI_APP_DIR":
             value = application_directory(value)
+        if key == "agentLabel":
+            value = agent_label(value)
         cleaned[key] = value
 
     total = _approximate_size(cleaned)
@@ -184,6 +188,31 @@ def validate_build_inputs(supplied: dict[str, Any] | None) -> dict[str, Any]:
             f"parameters exceed {MAX_TOTAL_BYTES} bytes in total",
         )
     return cleaned
+
+
+_AGENT_LABEL = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$")
+
+
+def agent_label(value: Any) -> str:
+    """A pod template the platform lets a run choose, or a refusal.
+
+    The label is the Kubernetes pod template the build inherits (`inheritFrom`). Taken
+    as given, a caller could pick any template on the controller -- a reusable one that
+    keeps its workspace between builds, one with another service account -- and step
+    out of the one-pod-per-build isolation (ADR-007). So only labels the operator listed
+    in NETCI_ALLOWED_AGENT_LABELS are accepted; with none listed, choosing is refused.
+    """
+
+    if not isinstance(value, str) or not _AGENT_LABEL.fullmatch(value.strip()):
+        raise BuildInputError("BUILD_INPUT_INVALID", "agentLabel must be a pod template label")
+    allowed = {item.strip() for item in os.getenv("NETCI_ALLOWED_AGENT_LABELS", "").split(",") if item.strip()}
+    label = value.strip()
+    if label not in allowed:
+        raise BuildInputError(
+            "AGENT_LABEL_NOT_ALLOWED",
+            f"agentLabel {label!r} is not one the platform allows (NETCI_ALLOWED_AGENT_LABELS)",
+        )
+    return label
 
 
 def application_directory(value: Any) -> str:

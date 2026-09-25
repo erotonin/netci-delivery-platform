@@ -23,7 +23,7 @@ from .build_isolation import (
     SharedNamespaceIsolation,
     build_isolation_provisioner,
 )
-from ..runtime_environment import require_live_mode
+from ..runtime_environment import is_local_runtime, require_live_mode
 
 logger = logging.getLogger(__name__)
 
@@ -301,6 +301,13 @@ def build_ci_launcher() -> CiLauncher:
 
     from .jenkins_http import JenkinsHttpAdapter, JenkinsHttpConfig
 
+    if not is_local_runtime():
+        # Both have lab defaults ("A,B", host.docker.internal). Outside local mode a missing
+        # one would point every build's callbacks at a host that is not netCI, and every
+        # build would fail at its first report -- so it stops startup instead.
+        missing = [name for name in ("NETCI_JENKINS_CONTROLLERS", "NETCI_CALLBACK_URL") if not os.getenv(name, "").strip()]
+        if missing:
+            raise ValueError(f"NETCI_CI_MODE=jenkins outside local mode requires {', '.join(missing)}")
     controller_ids = [item.strip() for item in os.getenv("NETCI_JENKINS_CONTROLLERS", "A,B").split(",") if item.strip()]
     controllers: list[JenkinsController] = []
     adapters: dict[str, JenkinsAdapter] = {}

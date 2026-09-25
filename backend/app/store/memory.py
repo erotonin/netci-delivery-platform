@@ -216,7 +216,7 @@ class InMemorySession:
         return tuple(
             run for run in ordered
             if run.status in {PipelineStatus.QUEUED, PipelineStatus.RUNNING}
-            and not run.artifact_digest
+            and not run.artifact_digest and run.admitted_at is not None
         )[:limit]
 
     def deployments_with_status(

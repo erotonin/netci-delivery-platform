@@ -186,7 +186,12 @@ database = build_database()
 configure_server_state(DatabaseServerState(database))
 platform = DeliveryPlatform(build_ci_launcher(), build_cd_orchestrator(), database=database)
 portal = PortalService(platform, database=database)
-reconciler = Reconciler(platform, platform.ci_launcher, platform.cd_orchestrator)
+reconciler = Reconciler(
+    platform, platform.ci_launcher, platform.cd_orchestrator,
+    # How long an admitted run may go unreported while the CI engine does not know it.
+    # A company build can outlast an hour; the lab's did not.
+    default_timeout_seconds=int(os.getenv("NETCI_RECONCILE_RUN_TIMEOUT_SECONDS", "3600")),
+)
 sbom_scanner = build_sbom_scanner()
 # The canary's metrics come from here, never from the request (ADR-046).
 metrics_source = build_metrics_source()
@@ -1759,6 +1764,12 @@ def _controller_drift_observation() -> dict[str, object] | None:
     probe = getattr(platform.ci_launcher, "controller_drift", None)
     if probe is None:
         return None
+    # Drift reads each controller's JCasC export and plugin list, which Jenkins allows
+    # only administrators. A least-privilege service account would publish drift=1 for
+    # ever; an operator who has not granted that turns the probe off, and the metric is
+    # then absent rather than wrong.
+    if os.getenv("NETCI_CONTROLLER_DRIFT_PROBE", "true").strip().lower() in {"false", "0", "no", "off"}:
+        return None
     now = time.monotonic()
     if _drift_observation["value"] is None or now - float(_drift_observation["at"]) > _drift_metric_interval_seconds():
         try:
@@ -2724,8 +2735,19 @@ def publish_module_ci_report(
     moduleId: str,
     tag: str,
     payload: VersionCiReport,
+    request: Request,
     _: Principal = PipelineAccess,
 ) -> dict[str, object]:
+    # Any build's token used to be enough to write a CI report onto any module's version.
+    # A report is evidence about one application's release, so the token must carry the
+    # ci:report scope and have been minted for this module's application.
+    claims = _authorize_callback(request, scope=Scope.CI_REPORT, workload=Workload.JENKINS)
+    if claims is not None:
+        module = portal.module_for_application(claims.application_id) if claims.application_id else None
+        if module is None or str(module.get("id")) != moduleId:
+            raise HTTPException(status_code=403, detail={
+                "code": "RESOURCE_MISMATCH",
+                "message": "this token was not issued for this module's application"})
     try:
         return portal.record_ci_report(moduleId, tag, payload.model_dump())
     except KeyError as exc:

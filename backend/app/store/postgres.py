@@ -711,8 +711,10 @@ class PostgresSession:
         """
 
         self._cursor.execute(
+            # admitted_at: a run still waiting for admission (ADR-050) has no build in any
+            # CI engine to ask about -- and its wait must not count towards a timeout.
             f"SELECT {RUN_COLUMNS} FROM pipeline_runs"
-            " WHERE status = ANY(%s) AND artifact_digest IS NULL"
+            " WHERE status = ANY(%s) AND artifact_digest IS NULL AND admitted_at IS NOT NULL"
             " ORDER BY created_at, id LIMIT %s",
             ([PipelineStatus.QUEUED.value, PipelineStatus.RUNNING.value], limit),
         )

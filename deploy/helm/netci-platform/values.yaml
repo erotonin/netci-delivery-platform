@@ -51,6 +51,14 @@ jenkins:
   # Admission (ADR-050) hands a controller more builds only while its own queue holds
   # fewer than this many; the rest wait in netCI, oldest and people first.
   admissionMaxQueue: 2
+  # Pod templates a run may pick with the agentLabel build input; empty refuses any choice,
+  # so builds use agentLabel below. A template listed here must also be isolated (ADR-007).
+  allowedAgentLabels: ""
+  # How long an admitted run may go unreported while Jenkins does not know it (seconds).
+  reconcileRunTimeoutSeconds: 3600
+  # The drift probe reads JCasC and the plugin list, which needs Overall/Administer (or
+  # SystemRead). Turn it off for a least-privilege service account.
+  driftProbe: true
   # One or more controllers; netCI routes builds across them. It creates and updates its
   # own jobs (netci-<application-id>) through the API, so the service account needs
   # Job/Create, Job/Configure, Job/Build, Job/Read and Overall/Read.

@@ -17,6 +17,7 @@ from .adapters.ci_launcher import CiLauncher
 from .domain.models import DeploymentStatus, PipelineRun, PipelineStatus
 from .delivery import DeliveryPlatform
 from .persistence import AuditRecord, UnitOfWork
+from . import workload_identity
 
 logger = logging.getLogger(__name__)
 
@@ -111,7 +112,9 @@ class Reconciler:
 
     def _reconcile_one_run(self, run: PipelineRun, timeout_seconds: int) -> dict[str, Any] | None:
         now = _utc_now()
-        age = (now - run.created_at).total_seconds()
+        # Measured from when the run reached CI, not from when it was written: time spent
+        # waiting for admission is netCI's own queue, not a build that stopped reporting.
+        age = (now - (run.admitted_at or run.created_at)).total_seconds()
 
         target_ci_id = run.jenkins_run_id or str(run.id)
         try:
@@ -185,18 +188,36 @@ class Reconciler:
                 self._audit_run_reconciled(run, "jenkins_cancelled_reconciled", ext_status_str)
                 return {"pipelineRunId": str(run.id), "action": "reconciled_cancelled", "externalStatus": ext_status_str}
 
+        if ext_status is not None and str(ext_status).lower() in {"running", "queued", "building"}:
+            # The CI engine says the build is alive: a long build is not a lost callback.
+            # Only past the lifetime of its callback token can it no longer report, so that
+            # is the one point at which it is failed -- and stopped, not left running.
+            if age <= workload_identity.MAX_TTL_SECONDS:
+                return None
+            self._fail_and_stop(run, target_ci_id, f"the build is still running after {int(age)}s, past the "
+                                f"{workload_identity.MAX_TTL_SECONDS}s lifetime of its callback token; it can no "
+                                "longer report, so it was stopped")
+            return {"pipelineRunId": str(run.id), "action": "reconciled_token_expired_stopped"}
+
         if age > timeout_seconds:
             logger.warning("reconciler: run %s timed out after %ds without terminal status, marking failed", run.id, age)
-            self.platform.record_ci_result(
-                run.id,
-                result_status="failed",
-                artifact_digest=None,
-                log_lines=[f"reconciled: run timed out after {int(age)}s without reporting back"],
-            )
-            self._audit_run_reconciled(run, "timeout_lost_callback", None)
+            self._fail_and_stop(run, target_ci_id,
+                                f"run timed out after {int(age)}s without reporting back, and the CI engine does "
+                                "not know it")
             return {"pipelineRunId": str(run.id), "action": "reconciled_timeout_failed"}
 
         return None
+
+    def _fail_and_stop(self, run: PipelineRun, target_ci_id: str, reason: str) -> None:
+        self.platform.record_ci_result(
+            run.id, result_status="failed", artifact_digest=None, log_lines=[f"reconciled: {reason}"],
+        )
+        self._audit_run_reconciled(run, "timeout_lost_callback", None)
+        try:
+            # Best effort: failed in netCI, the build must not go on holding an executor.
+            self.ci_launcher.abort(target_ci_id)
+        except Exception as exc:  # noqa: BLE001 - the failure stands either way
+            logger.warning("reconciler: could not stop CI build %s: %s", target_ci_id, exc)
 
     def _audit_run_reconciled(self, run: PipelineRun, reason: str, external_status: str | None) -> None:
         with self.platform._transaction() as tx:
