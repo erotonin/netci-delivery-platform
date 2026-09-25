@@ -59,7 +59,7 @@ mattered, the last one, could be the one refused.
 Twelve commits on `agent/storm2` of the lab's `payments-api` repository, one signed GitHub
 push webhook each, sent in 0.9 s, with the application's quota at one concurrent build.
 All twelve were accepted (201). Two were dispatched to Jenkins: the first commit, admitted
-at once, and the twelfth, admitted 22 s later when the first finished. Both builds
+at once, and the twelfth, admitted 44.9 s after it was written, when the first finished. Both builds
 succeeded. The other ten ended `cancelled` with `supersededBy` set, before admission, so
 Jenkins never saw them. Elapsed: 101 s. `cancelInProgress` (stopping a build already
 running) was not exercised live: pushes default to false.
