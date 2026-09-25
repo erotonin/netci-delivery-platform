@@ -78,3 +78,8 @@ sixth only when the first finished; all six built and succeeded. Jenkins started
 build at once, so its queue never filled and the budget never had to hold a build back:
 this shows the probe reads the real controllers without blocking admission wrongly, not
 that it throttles a saturated Jenkins. That case has only been tested.
+
+`cancelInProgress` ran live too (rc20, 2026-09-25): a pull request's build was running on
+Jenkins B (#10) when a second commit was pushed to the same pull request. The first run
+ended `cancelled` with `supersededBy` naming the second, Jenkins reported build #10
+`ABORTED`, and the second build succeeded with its digest.

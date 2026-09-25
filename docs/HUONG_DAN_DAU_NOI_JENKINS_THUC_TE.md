@@ -320,6 +320,8 @@ build number trên Jenkins.
 4. **Build dài và hàng đợi Jenkins.**
    - ⚠ Để một build nằm trong hàng đợi của Jenkins (ví dụ khi hết agent), rồi huỷ run trên
      netCI: queue item phải bị huỷ. Khi build đã bắt đầu, trạng thái phải được theo dõi tiếp.
+   - Push commit mới vào một PR đang build: build cũ phải bị dừng (ABORTED trên Jenkins), build
+     mới chạy (đã kiểm chứng trên lab).
    - Một build chạy quá `reconcileRunTimeoutSeconds` mà Jenkins vẫn báo đang chạy thì
      **không** bị đánh `failed`.
 5. **Tải.** Với quota nhỏ, push liên tục vào một nhánh: chỉ build đầu và build cuối lên
