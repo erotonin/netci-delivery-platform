@@ -626,7 +626,14 @@ class JenkinsHttpAdapter:
                 "COMMIT_SHA": request.commit_sha,
                 # A build input, validated by build_inputs.application_directory; the
                 # repository root unless the module lives in a subdirectory.
-                "NETCI_APP_DIR": str(request.parameters.get("NETCI_APP_DIR") or "."),
+                "NETCI_APP_DIR": str(
+                    request.parameters.get("NETCI_APP_DIR")
+                    or (
+                        f"sample-apps/{request.application_name}"
+                        if ("netci.git" in request.repository_url or "sample-apps" in request.repository_url)
+                        else "."
+                    )
+                ),
                 # Decided here, not by the caller: the image repository is where the
                 # artifact lands, and one module must not be able to publish as another.
                 "NETCI_IMAGE_NAME": image_name_for(request.application_name),

@@ -98,8 +98,15 @@ def call(Map config = [:]) {
                         // reached the build before, so the CI scripts fell back to
                         // sample-apps/hello-container and every container module in the lab
                         // built and pushed that one sample app. Set here rather than in
-                        // `environment {}`, whose restricted interpolation rejects `?.`.
-                        env.NETCI_APP_DIR = "${env.WORKSPACE}/${params.NETCI_APP_DIR?.trim() ?: '.'}"
+                        def rawAppDir = params.NETCI_APP_DIR?.trim()
+                        def resolvedAppDir = rawAppDir ?: '.'
+                        if ((!rawAppDir || rawAppDir == '.') && !fileExists('Dockerfile')) {
+                            def candidate = "sample-apps/${params.NETCI_IMAGE_NAME ?: ''}"
+                            if (fileExists("${candidate}/Dockerfile")) {
+                                resolvedAppDir = candidate
+                            }
+                        }
+                        env.NETCI_APP_DIR = "${env.WORKSPACE}/${resolvedAppDir}"
                         env.NETCI_IMAGE_NAME = params.NETCI_IMAGE_NAME?.trim() ?: ''
                         // A build netCI dispatched always says what it is building. Without
                         // a name the scripts would publish under their sample default --
