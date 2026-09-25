@@ -35,9 +35,10 @@ def _sent_query(request: CiLaunchRequest) -> dict[str, str]:
     adapter = JenkinsHttpAdapter(JenkinsHttpConfig(base_url="http://jenkins", username="u", api_token="t"))
     sent: dict[str, str] = {}
 
-    def fake(method, path, *args, **kwargs):
+    def fake(method, path, *args, body=None, **kwargs):
         if "buildWithParameters" in path:
-            sent.update(dict(urllib.parse.parse_qsl(path.split("?", 1)[1], keep_blank_values=True)))
+            # Sent as the form body, not the URL (the callback token is among them).
+            sent.update(dict(urllib.parse.parse_qsl(body.decode(), keep_blank_values=True)))
             return 201, {"Location": "http://jenkins/queue/item/7/"}, b""
         raise RuntimeError("stop after the trigger")
 

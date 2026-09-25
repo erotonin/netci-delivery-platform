@@ -93,15 +93,16 @@ def test_a_down_controller_or_an_unreadable_queue_contributes_nothing():
 
 
 def test_the_http_adapter_reports_an_unreachable_queue_as_unknown_not_empty(monkeypatch):
-    from app.adapters.jenkins_http import JenkinsHttpAdapter, JenkinsHttpError
+    from app.adapters.jenkins_http import JenkinsHttpAdapter, JenkinsHttpConfig, JenkinsHttpError
 
-    adapter = JenkinsHttpAdapter.__new__(JenkinsHttpAdapter)
+    adapter = JenkinsHttpAdapter(JenkinsHttpConfig(base_url="http://jenkins", username="u", api_token="t"))
 
     def refuse(*args, **kwargs):
         raise JenkinsHttpError(0, "connection refused")
 
     monkeypatch.setattr(adapter, "_request", refuse, raising=False)
     assert adapter.queued_builds() is None
-    monkeypatch.setattr(adapter, "_request", lambda *a, **k: (200, {}, b'{"items": [{"id": 1}, {"id": 2}]}'),
-                        raising=False)
+    queue = (b'{"items": [{"id": 1, "task": {"name": "netci-a", "url": "http://jenkins/job/netci-a/"}},'
+             b' {"id": 2, "task": {"name": "netci-b", "url": "http://jenkins/job/netci-b/"}}]}')
+    monkeypatch.setattr(adapter, "_request", lambda *a, **k: (200, {}, queue), raising=False)
     assert adapter.queued_builds() == 2

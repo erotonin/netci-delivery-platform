@@ -73,6 +73,10 @@ jenkins:
   sharedLibrary: netci-shared-library
   callbackCredentialsId: netci-pipeline-api-key
   cosignCredentialsId: netci-cosign-key
+  # A Jenkins folder for netCI's jobs ("platform/netci"; nested with "/"). Empty: the root.
+  # It must already exist -- netCI never creates it -- and the account needs Job/Create
+  # (and the rest above) inside it. Segments: letters, digits, '.', '_', '-'.
+  folder: ""
   # Where builds report back. Defaults to <externalUrl>/api. Set it when Jenkins reaches
   # netCI by another route than people do (inside the cluster, through a private LB).
   callbackUrl: ""

@@ -68,6 +68,9 @@ data:
   NETCI_SHARED_LIBRARY: {{ .Values.jenkins.sharedLibrary | quote }}
   NETCI_CALLBACK_CREDENTIALS_ID: {{ .Values.jenkins.callbackCredentialsId | quote }}
   NETCI_COSIGN_CREDENTIALS_ID: {{ .Values.jenkins.cosignCredentialsId | quote }}
+  {{- with .Values.jenkins.folder }}
+  NETCI_JENKINS_FOLDER: {{ . | quote }}
+  {{- end }}
   NETCI_REGISTRY_PUSH_HOST: {{ required "registry.pushHost is required: where builds push images" .Values.registry.pushHost | quote }}
   NETCI_REGISTRY_PULL_HOST: {{ default .Values.registry.pushHost .Values.registry.pullHost | quote }}
   NETCI_REGISTRY_ALLOW_HTTP: {{ .Values.registry.allowHttp | quote }}

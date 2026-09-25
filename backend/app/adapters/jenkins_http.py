@@ -57,6 +57,8 @@ class JenkinsHttpConfig:
     # access needs a mirror; a stale or missing database would silently weaken the scan.
     trivy_db_repository: str = ""
     cosign_credentials_id: str = "netci-cosign-key"
+    # A Jenkins folder ("platform/netci") netCI's jobs live in. Empty means the root.
+    folder: str = ""
 
     @classmethod
     def from_env(cls, prefix: str = "JENKINS") -> "JenkinsHttpConfig":
@@ -79,6 +81,7 @@ class JenkinsHttpConfig:
             base_image=os.getenv("NETCI_BUILD_BASE_IMAGE", ""),
             trivy_db_repository=os.getenv("NETCI_TRIVY_DB_REPOSITORY", ""),
             cosign_credentials_id=os.getenv("NETCI_COSIGN_CREDENTIALS_ID", "netci-cosign-key"),
+            folder=jenkins_folder(os.getenv("NETCI_JENKINS_FOLDER", "")),
         )
 
 
@@ -184,6 +187,73 @@ def image_name_for(application_name: str) -> str:
     return name[:128]
 
 
+_FOLDER_SEGMENT = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,99}")
+
+
+def jenkins_folder(value: str) -> str:
+    """Validate a folder path ("platform/netci") and return it normalised.
+
+    Refused rather than quoted: a segment is spliced into every job URL, and a name like
+    `..` or one holding `?`/`#` would address something other than the folder meant. A
+    company that uses other characters in folder names can rename or alias the folder;
+    guessing at an encoding here could send builds to the wrong place.
+    """
+
+    folder = value.strip().strip("/")
+    if not folder:
+        return ""
+    for segment in folder.split("/"):
+        if not _FOLDER_SEGMENT.fullmatch(segment):
+            raise ValueError(
+                f"NETCI_JENKINS_FOLDER segment {segment!r} is not a plain folder name "
+                "(letters, digits, '.', '_', '-'; not starting with a separator)"
+            )
+    return folder
+
+
+# A run id names a build on one controller. Resolved: `<job>#<number>`. Not yet resolved
+# -- still in Jenkins' queue when the trigger stopped waiting, which is the normal case
+# on a controller with a quiet period and busy agents: `<job>@q<queueId>/<pipelineRunId>`.
+# The queue id is how Jenkins itself links the queue item to its build; the pipeline run
+# id is the NETCI_PIPELINE_RUN_ID parameter the build carries, which is what still finds
+# it after Jenkins has forgotten the queue item (about five minutes after it started).
+# `<job>@<queueId>` and `<job>@queue` are the forms stored before this, still parsed.
+_RESOLVED_RUN = re.compile(r"(?P<job>[^#@/]+)#(?P<number>\d+)")
+_QUEUED_RUN = re.compile(r"(?P<job>[^#@/]+)@q(?P<queue>\d*)/(?P<run>[0-9a-fA-F-]{36})")
+_LEGACY_QUEUED_RUN = re.compile(r"(?P<job>[^#@/]+)@(?P<queue>\d+|queue)")
+
+_BUILD_STATUS = {"SUCCESS": "succeeded", "FAILURE": "failed", "ABORTED": "cancelled", "UNSTABLE": "failed"}
+
+
+@dataclass(frozen=True)
+class _RunRef:
+    job: str
+    number: int | None = None
+    queue_id: str = ""
+    pipeline_run_id: str = ""
+
+
+def queued_run_id(job_name: str, queue_id: str, pipeline_run_id: str) -> str:
+    return f"{job_name}@q{queue_id}/{pipeline_run_id}"
+
+
+def _parse_run_id(run_id: str) -> _RunRef:
+    if match := _RESOLVED_RUN.fullmatch(run_id):
+        return _RunRef(job=match["job"], number=int(match["number"]))
+    if match := _QUEUED_RUN.fullmatch(run_id):
+        return _RunRef(job=match["job"], queue_id=match["queue"], pipeline_run_id=match["run"].lower())
+    if match := _LEGACY_QUEUED_RUN.fullmatch(run_id):
+        return _RunRef(job=match["job"], queue_id="" if match["queue"] == "queue" else match["queue"])
+    raise JenkinsHttpError(422, f"run id {run_id!r} is not a Jenkins run id netCI issued")
+
+
+def _jenkins_message(detail: str, limit: int = 300) -> str:
+    """Jenkins' error text without the page chrome, short enough for a log line."""
+
+    text = re.sub(r"<[^>]+>", " ", detail)
+    return re.sub(r"\s+", " ", text).strip()[:limit]
+
+
 class JenkinsHttpAdapter:
     """Jenkins REST adapter.
 
@@ -195,6 +265,9 @@ class JenkinsHttpAdapter:
 
     def __init__(self, config: JenkinsHttpConfig) -> None:
         self.config = config
+        # Validated here as well as in from_env: a config built in code must not be able
+        # to splice an unchecked segment into job URLs either.
+        self.folder = jenkins_folder(config.folder)
         self._crumb: tuple[str, str] | None = None
         # Jenkins issues a CSRF crumb bound to the HTTP session it was requested in.
         # Without a cookie jar the crumb is fetched in one session and presented in
@@ -207,6 +280,14 @@ class JenkinsHttpAdapter:
 
     def _url(self, path: str) -> str:
         return f"{self.config.base_url}/{path.lstrip('/')}"
+
+    def _folder_path(self) -> str:
+        """`/job/platform/job/netci` for folder `platform/netci`; empty at the root."""
+
+        return "".join(f"/job/{urllib.parse.quote(segment)}" for segment in self.folder.split("/") if segment)
+
+    def _job_path(self, job_name: str) -> str:
+        return f"{self._folder_path()}/job/{urllib.parse.quote(job_name)}"
 
     def _request(
         self,
@@ -299,9 +380,12 @@ class JenkinsHttpAdapter:
         makes a build behave differently depending on where the router sent it.
         """
 
-        status, _, body = self._request("POST", "/manage/configuration-as-code/export", body=b"", content_type="text/plain")
+        # The plugin's own path, like reload below. `/manage/configuration-as-code/` is
+        # the same page reached through the Manage Jenkins alias of newer cores; using one
+        # form for both calls keeps a proxy allow-list or a permission probe to one path.
+        status, _, body = self._request("POST", "/configuration-as-code/export", body=b"", content_type="text/plain")
         if not 200 <= status < 300:
-            raise JenkinsHttpError(f"JCasC export returned {status}")
+            raise JenkinsHttpError(status, f"JCasC export returned {status}")
         exported = body.decode(errors="replace")
         normalized = self._normalize_jcasc(exported)
         _, _, plugins_body = self._request("GET", "/pluginManager/api/json?depth=1&tree=plugins%5BshortName,version%5D", use_crumb=False)
@@ -328,7 +412,7 @@ class JenkinsHttpAdapter:
 
         status, _, body = self._request("POST", "/configuration-as-code/reload", body=b"", content_type="text/plain")
         if not 200 <= status < 300:
-            raise JenkinsHttpError(f"JCasC reload returned {status}: {body.decode(errors='replace')[:200]}")
+            raise JenkinsHttpError(status, f"JCasC reload returned {status}: {_jenkins_message(body.decode(errors='replace'), 200)}")
 
     def queued_builds(self) -> int | None:
         """Builds waiting in this controller's own queue, or None when it cannot say.
@@ -338,21 +422,34 @@ class JenkinsHttpAdapter:
         that is not keeping up.
         """
 
+        # Only netCI's own items. On a controller other teams share, their queued builds
+        # would otherwise count against netCI's budget and netCI would admit nothing.
         try:
-            status, _, body = self._request("GET", "/queue/api/json?tree=items[id]", use_crumb=False)
+            status, _, body = self._request("GET", "/queue/api/json?tree=items[id,task[name,url]]", use_crumb=False)
             if not 200 <= status < 300:
                 return None
             items = json.loads(body or b"{}").get("items")
-            return len(items) if isinstance(items, list) else None
+            if not isinstance(items, list):
+                return None
+            return sum(1 for item in items if isinstance(item, dict) and self._is_netci_task(item.get("task")))
         except (JenkinsHttpError, OSError, ValueError):
             return None
 
+    def _is_netci_task(self, task: object) -> bool:
+        if not isinstance(task, dict):
+            return False
+        name = str(task.get("name") or "")
+        if not name.startswith("netci-"):
+            return False
+        if not self.folder:
+            return True
+        # Compared by path suffix: the task url carries Jenkins' configured root URL,
+        # which need not be the address netCI calls it by (a context path, a proxy).
+        path = urllib.parse.urlparse(str(task.get("url") or "")).path.rstrip("/")
+        return path.endswith(self._job_path(name))
+
     def queue_depth(self) -> int:
-        try:
-            _, _, body = self._request("GET", "/queue/api/json?tree=items[id]", use_crumb=False)
-            return len(json.loads(body or b"{}").get("items", []))
-        except (JenkinsHttpError, OSError, ValueError):
-            return 0
+        return self.queued_builds() or 0
 
     # ------------------------------------------------------------------- jobs
 
@@ -396,16 +493,39 @@ class JenkinsHttpAdapter:
         try:
             self._request(
                 "POST",
-                f"/createItem?name={quoted}&mode=org.jenkinsci.plugins.workflow.job.WorkflowJob",
+                f"{self._folder_path()}/createItem?name={quoted}&mode=org.jenkinsci.plugins.workflow.job.WorkflowJob",
                 body=config_xml,
                 content_type="application/xml",
             )
         except JenkinsHttpError as exc:
-            if exc.status not in {400, 409}:
-                raise
+            if exc.status == 404 and self.folder:
+                # netCI never creates the folder: where its jobs live, and who may reach
+                # them, is the Jenkins owners' decision, made once, by hand.
+                raise JenkinsHttpError(
+                    404,
+                    f"Jenkins folder {self.folder!r} does not exist, or the service account cannot "
+                    "see it; netCI does not create it -- ask the Jenkins owners to create it and "
+                    "grant the account Job/Create inside it",
+                ) from exc
+            if exc.status != 409 and not (exc.status == 400 and self._job_exists(name)):
+                # Any other refusal -- a bad name, a missing plugin behind the job type, a
+                # rejected config -- was once taken for "already exists" and answered by
+                # overwriting config.xml, which hid the real reason until the first build.
+                raise JenkinsHttpError(
+                    exc.status, f"Jenkins refused to create job {name}: {_jenkins_message(exc.message)}"
+                ) from exc
             # Already exists: reconcile it to the current template definition.
-            self._request("POST", f"/job/{quoted}/config.xml", body=config_xml, content_type="application/xml")
+            self._request("POST", f"{self._job_path(name)}/config.xml", body=config_xml, content_type="application/xml")
         return name
+
+    def _job_exists(self, name: str) -> bool:
+        # Asked, not read from the 400 page: Jenkins words "already exists" in its own
+        # locale and inside a full HTML page, so the text is no contract.
+        try:
+            status, _, _ = self._request("GET", f"{self._job_path(name)}/api/json?tree=name", use_crumb=False)
+        except JenkinsHttpError:
+            return False
+        return 200 <= status < 300
 
     # --------------------------------------------------------------- triggering
 
@@ -446,16 +566,39 @@ class JenkinsHttpAdapter:
                 "NETCI_TRIVY_DB_REPOSITORY": self.config.trivy_db_repository,
             }
         )
-        _, headers, _ = self._request("POST", f"/job/{urllib.parse.quote(job_name)}/buildWithParameters?{query}")
+        # `query` is sent as the form body, never in the URL: it carries the callback
+        # token, and a URL lands in Jenkins' and every proxy's access log -- and, through
+        # JenkinsHttpError, in netCI's own launch-failure log and audit record. Jenkins
+        # reads buildWithParameters' values from a form-encoded POST body.
+        _, headers, _ = self._request(
+            "POST",
+            f"{self._job_path(job_name)}/buildWithParameters",
+            body=query.encode(),
+            content_type="application/x-www-form-urlencoded",
+        )
         location = next((value for key, value in headers.items() if key.lower() == "location"), "")
         queue_id = location.rstrip("/").rsplit("/", 1)[-1] if location else ""
         if not queue_id.isdigit():
-            return JenkinsRun(run_id=f"{job_name}@queue", status="queued")
-        build = self.resolve_queue_item(queue_id)
+            queue_id = ""
+        build = self.resolve_queue_item(queue_id) if queue_id else None
         if build is None:
-            return JenkinsRun(run_id=f"{job_name}@{queue_id}", status="queued")
+            # Still waiting (quiet period, no free agent). The id keeps what is needed to
+            # find the build later; get_status and abort resolve it on every call.
+            return JenkinsRun(run_id=queued_run_id(job_name, queue_id, str(request.pipeline_run_id)), status="queued")
         number, url = build
         return JenkinsRun(run_id=f"{job_name}#{number}", status="running", console_url=url)
+
+    def _queue_item(self, queue_id: str) -> dict[str, Any] | None:
+        """The queue item, or None once Jenkins has forgotten it (404)."""
+
+        try:
+            _, _, body = self._request("GET", f"/queue/item/{urllib.parse.quote(queue_id)}/api/json", use_crumb=False)
+        except JenkinsHttpError as exc:
+            if exc.status == 404:
+                return None
+            raise
+        payload = json.loads(body or b"{}")
+        return payload if isinstance(payload, dict) else {}
 
     def resolve_queue_item(self, queue_id: str, *, attempts: int = 10, delay_seconds: float = 1.0) -> tuple[int, str] | None:
         """Poll a queue item until Jenkins assigns it a build number."""
@@ -477,33 +620,119 @@ class JenkinsHttpAdapter:
 
     # ------------------------------------------------------------ run inspection
 
-    @staticmethod
-    def _build_path(run_id: str) -> str:
-        job, _, number = run_id.partition("#")
-        if not number:
-            raise JenkinsHttpError(422, f"run id {run_id!r} has no resolved build number")
-        return f"/job/{urllib.parse.quote(job)}/{urllib.parse.quote(number)}"
+    def _locate(self, ref: _RunRef) -> tuple[str, int | None]:
+        """Where a run is now: ("build", number), ("queued", None) or ("cancelled", None).
+
+        Raises JenkinsHttpError(404) when neither the queue nor the job's recent builds
+        know it -- "unknown", which the caller must not read as any status.
+        """
+
+        if ref.number is not None:
+            return "build", ref.number
+        if ref.queue_id:
+            item = self._queue_item(ref.queue_id)
+            if item is not None:
+                if item.get("cancelled"):
+                    return "cancelled", None
+                executable = item.get("executable")
+                if isinstance(executable, dict) and executable.get("number") is not None:
+                    return "build", int(executable["number"])
+                return "queued", None
+        # Jenkins keeps a left queue item for about five minutes; after that only the
+        # build itself says which run it was.
+        return "build", self._find_build(ref)
+
+    def _find_build(self, ref: _RunRef) -> int:
+        if not ref.pipeline_run_id and not ref.queue_id:
+            raise JenkinsHttpError(422, f"run of {ref.job} has neither a queue id nor a pipeline run id to find it by")
+        tree = urllib.parse.quote("builds[number,queueId,actions[parameters[name,value]]]{0,50}", safe=",")
+        _, _, body = self._request("GET", f"{self._job_path(ref.job)}/api/json?tree={tree}", use_crumb=False)
+        builds = json.loads(body or b"{}").get("builds") or []
+        by_queue: list[int] = []
+        by_parameter: list[int] = []
+        for build in builds:
+            if not isinstance(build, dict) or build.get("number") is None:
+                continue
+            number = int(build["number"])
+            if ref.queue_id and str(build.get("queueId")) == ref.queue_id:
+                by_queue.append(number)
+            if ref.pipeline_run_id and any(
+                isinstance(parameter, dict)
+                and parameter.get("name") == "NETCI_PIPELINE_RUN_ID"
+                and str(parameter.get("value") or "").lower() == ref.pipeline_run_id
+                for action in build.get("actions") or [] if isinstance(action, dict)
+                for parameter in action.get("parameters") or []
+            ):
+                by_parameter.append(number)
+        if ref.pipeline_run_id:
+            # The parameter is the identity; the queue id only narrows a double trigger.
+            both = [number for number in by_parameter if number in by_queue]
+            candidates = both or by_parameter
+        else:
+            # A run id stored before the pipeline run id was part of it.
+            candidates = by_queue
+        if len(candidates) == 1:
+            return candidates[0]
+        if not candidates:
+            raise JenkinsHttpError(404, f"no recent build of {ref.job} belongs to this run")
+        raise JenkinsHttpError(409, f"builds {sorted(candidates)} of {ref.job} all claim this run")
+
+    def _build_path(self, job: str, number: int) -> str:
+        return f"{self._job_path(job)}/{number}"
 
     def get_status(self, run_id: str) -> JenkinsRun:
-        _, _, body = self._request("GET", f"{self._build_path(run_id)}/api/json", use_crumb=False)
+        """The run's status now, resolving a queued run id on every call.
+
+        The returned `run_id` is the resolved `<job>#<n>` once a build exists, so a caller
+        that can store it may; one that cannot loses nothing, because the queued form is
+        resolved again next time.
+        """
+
+        ref = _parse_run_id(run_id)
+        where, number = self._locate(ref)
+        if where != "build" or number is None:
+            return JenkinsRun(run_id=run_id, status=where)
+        _, _, body = self._request("GET", f"{self._build_path(ref.job, number)}/api/json", use_crumb=False)
         payload: dict[str, Any] = json.loads(body or b"{}")
         result = payload.get("result")
         if payload.get("building"):
             status = "running"
         elif result:
-            status = {"SUCCESS": "succeeded", "FAILURE": "failed", "ABORTED": "cancelled", "UNSTABLE": "failed"}.get(
-                str(result).upper(), str(result).lower()
-            )
+            status = _BUILD_STATUS.get(str(result).upper(), str(result).lower())
         else:
             status = "queued"
-        return JenkinsRun(run_id=run_id, status=status, console_url=payload.get("url"))
+        return JenkinsRun(run_id=f"{ref.job}#{number}", status=status, console_url=payload.get("url"))
 
     def get_logs(self, run_id: str) -> list[str]:
-        _, _, body = self._request("GET", f"{self._build_path(run_id)}/consoleText", use_crumb=False)
+        ref = _parse_run_id(run_id)
+        where, number = self._locate(ref)
+        if where != "build" or number is None:
+            return []  # nothing has run, so there is no console yet
+        _, _, body = self._request("GET", f"{self._build_path(ref.job, number)}/consoleText", use_crumb=False)
         return body.decode(errors="replace").splitlines()
 
     def abort(self, run_id: str) -> None:
-        self._request("POST", f"{self._build_path(run_id)}/stop")
+        ref = _parse_run_id(run_id)
+        where, number = self._locate(ref)
+        if where == "cancelled":
+            return
+        if where == "queued":
+            refused: JenkinsHttpError | None = None
+            try:
+                self._request("POST", f"/queue/cancelItem?id={urllib.parse.quote(ref.queue_id)}")
+            except JenkinsHttpError as exc:
+                refused = exc
+            # Read back rather than trusting the answer: the item can leave the queue for
+            # an executor between the read above and the cancel, and cancelItem then does
+            # nothing. Some cores also answer a successful cancel with a 404.
+            where, number = self._locate(ref)
+            if where == "cancelled":
+                return
+            if where == "queued":
+                raise refused or JenkinsHttpError(409, f"Jenkins kept queue item {ref.queue_id} after cancelItem")
+        if number is None:
+            raise JenkinsHttpError(404, f"no build of {ref.job} to stop")
+        self._request("POST", f"{self._build_path(ref.job, number)}/stop")
 
     # `trigger_ci` keeps the narrow JenkinsAdapter protocol usable on its own.
     def trigger_ci(self, job_name: str, commit_sha: str, correlation_id: str) -> JenkinsRun:

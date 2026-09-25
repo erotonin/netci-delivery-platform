@@ -12,14 +12,26 @@ a failed first build.
 Checks, each reported PASS/FAIL with what to do:
   reachable        the controller answers and the token authenticates
   crumb            CSRF crumbs can be issued (netCI's POSTs need one)
-  plugins          the plugins the generated pipeline job uses are installed
-  permissions      the account can create and configure jobs (netCI manages its own)
-  library          the shared library the jobs load is configured, at the version asked
+  plugins          the plugins the generated job and the shared library use are installed
+                   (including pipeline-utility-steps for readJSON and ws-cleanup for cleanWs)
+  folder           with --folder: the folder exists (netCI never creates it)
+  permissions      the account can create jobs where netCI creates them (the folder, or the root)
+  library          the shared library the jobs load is configured
   cosign credential  the signing credential the Sign stage binds exists
   agents           something can run a build with the agent label
 
+Reported INFO, never a failure -- what a missing piece costs is a feature, not a build:
+  jcasc plugin     configuration-as-code, used only by controller drift and reload
+  drift/reload     whether the account may use them (Overall/SystemRead to export,
+                   Overall/Administer to reload); without it they report "unreachable"
+
+Reported NOT CHECKED, because a read-only probe cannot establish them:
+  library version  whether the ref in --library name@ref exists (Jenkins resolves it
+                   only when a build loads the library)
+  build/cancel     Job/Build and Job/Cancel (proving them means starting and stopping a build)
+
 It never creates, changes or triggers anything on the controller. Exit status 0 means
-every check passed.
+no check FAILed; INFO and NOT CHECKED lines do not change it.
 """
 
 from __future__ import annotations
@@ -29,6 +41,7 @@ import base64
 import http.cookiejar
 import json
 import os
+import re
 import sys
 import urllib.error
 import urllib.parse
@@ -47,8 +60,18 @@ REQUIRED_PLUGINS = {
     "plain-credentials": "Secret text credentials",
     "timestamper": "timestamps() in the job options",
     "git": "Checkout of the application repository",
+    # Used by jenkins/shared-library/vars/netciPipeline.groovy; a controller without them
+    # fails the first build at the step, not at job creation.
+    "pipeline-utility-steps": "readJSON, used to read custom stages (NETCI_CUSTOM_STAGES)",
+    "ws-cleanup": "cleanWs, run before checkout and in post",
+}
+#: Needed only for controller drift and JCasC reload (ADR-030, ADR-033), not for builds.
+OPTIONAL_PLUGINS = {
+    "configuration-as-code": "controller drift (export) and reload",
 }
 KUBERNETES_PLUGIN = "kubernetes"
+#: backend/app/adapters/jenkins_http.py _FOLDER_SEGMENT; kept in step by a test.
+FOLDER_SEGMENT = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,99}")
 LIBRARY_PLUGIN_ALIASES = {"pipeline-groovy-lib", "workflow-cps-global-lib"}
 
 
@@ -89,8 +112,26 @@ class Report:
             if fix:
                 print(f"      -> {fix}")
 
+    def info(self, name: str, detail: str, fix: str = "") -> None:
+        print(f"INFO  {name:18} {detail}")
+        if fix:
+            print(f"      -> {fix}")
 
-def check(controller: Controller, *, library: str, cosign_id: str, agent_label: str, report: Report) -> None:
+    def not_checked(self, name: str, detail: str, fix: str = "") -> None:
+        # Its own mark, so a reader never takes an unverified item for a PASS.
+        print(f"NOT CHECKED  {name:18} {detail}")
+        if fix:
+            print(f"      -> {fix}")
+
+
+def folder_path(folder: str) -> str:
+    """`/job/a/job/b` for `a/b`, the same way netCI addresses a folder."""
+
+    return "".join(f"/job/{urllib.parse.quote(segment)}" for segment in folder.strip("/").split("/") if segment)
+
+
+def check(controller: Controller, *, library: str, cosign_id: str, agent_label: str, report: Report,
+          folder: str = "") -> None:
     # reachable + authenticated
     try:
         status, who = controller.json("/me/api/json")
@@ -128,15 +169,48 @@ def check(controller: Controller, *, library: str, cosign_id: str, agent_label: 
                       "present" if KUBERNETES_PLUGIN in installed else "absent",
                       "netciPipeline runs builds in ephemeral Kubernetes pods; install the kubernetes plugin "
                       "and a cloud with a pod template labelled for netCI")
+        for name, why in OPTIONAL_PLUGINS.items():
+            if name in installed:
+                report.info("jcasc plugin", f"{name} present ({why})")
+            else:
+                report.info("jcasc plugin", f"{name} absent: {why} will report the controller unreachable",
+                            "optional; builds do not need it")
+
+    # folder: companies usually grant Job/Create only inside one. netCI never creates it.
+    prefix = folder_path(folder) if folder else ""
+    if folder:
+        status, item = controller.json(f"{prefix}/api/json?tree=name")
+        report.result("folder", status == 200 and isinstance(item, dict), f"'{folder}': HTTP {status}",
+                      f"create folder '{folder}' (netCI does not) and grant the account Job/Read in it; "
+                      "Jenkins answers 404 both for a missing folder and for one the account cannot see")
 
     # permissions: what netCI does with the account is create and reconfigure its own jobs
-    status_items, _ = controller.json("/api/json?tree=jobs%5Bname%5D")
+    status_items, _ = controller.json(f"{prefix}/api/json?tree=jobs%5Bname%5D")
     can_list = status_items == 200
-    # Jenkins exposes the effective permission for "create item" as the newJob page.
-    create_status, _, _ = controller.get("/view/all/newJob")
+    # Jenkins exposes the effective permission for "create item" as the newJob page: the
+    # folder's when netCI creates jobs there, the root's otherwise.
+    create_status, _, _ = controller.get(f"{prefix}/newJob" if folder else "/view/all/newJob")
+    where = f"in '{folder}'" if folder else "at the root"
     report.result("permissions", can_list and create_status == 200,
-                  f"list jobs: HTTP {status_items}, create job page: HTTP {create_status}",
-                  "grant the account Overall/Read and Job/Create, Configure, Build, Read, Cancel")
+                  f"list jobs {where}: HTTP {status_items}, create job page: HTTP {create_status}",
+                  "grant the account Overall/Read and, " + (f"in folder '{folder}', " if folder else "")
+                  + "Job/Create, Configure, Build, Read and Cancel "
+                  "(Cancel: netCI cancels a queued item and stops a build when its run is cancelled or superseded)")
+    report.not_checked("build/cancel", "Job/Build and Job/Cancel cannot be proven without starting and stopping a build",
+                       "confirm both in the authorization matrix for the account"
+                       + (f" on folder '{folder}'" if folder else ""))
+
+    # drift/reload: admin-only calls, used by netCI's controller comparison, not by builds.
+    # A GET of the plugin's page answers 200 only to Overall/SystemRead (or Administer).
+    status, _, _ = controller.get("/configuration-as-code/")
+    if status == 200:
+        report.info("drift/reload", "the account can read JCasC (Overall/SystemRead or Administer): drift can export; "
+                    "reload needs Overall/Administer, which a read-only probe cannot tell apart")
+    elif status == 404:
+        report.info("drift/reload", "configuration-as-code is not served: drift/reload will report unreachable")
+    else:
+        report.info("drift/reload", f"HTTP {status}: drift/reload will report unreachable for this controller",
+                    "only if you want them: Overall/SystemRead for drift, Overall/Administer for reload")
 
     # shared library
     name, _, version = library.partition("@")
@@ -149,10 +223,18 @@ def check(controller: Controller, *, library: str, cosign_id: str, agent_label: 
     else:
         found = f'value="{name}"' in page or f">{name}<" in page
         report.result("library", found,
-                      f"'{name}' {'configured' if found else 'not found'}"
-                      + (f"; version '{version}' is resolved by Jenkins at build time, not checked here" if version else ""),
+                      f"'{name}' {'configured' if found else 'not found'}",
                       f"add Global Pipeline Library '{name}' pointing at the repository that holds "
                       "jenkins/shared-library (Library Path: jenkins/shared-library/ when it is the netCI repository)")
+    if version:
+        # Jenkins resolves a library ref only when a build loads it. Its form validation
+        # (checkDefaultVersion) is a POST that sees global libraries only as an
+        # administrator, and the library's SCM credentials are Jenkins' to use, not ours.
+        report.not_checked("library version",
+                           f"'{version}': Jenkins resolves it only when a build loads the library",
+                           f"confirm the ref '{version}' exists in the library repository and that "
+                           f"'{name}' allows default version override; a missing ref fails the first build "
+                           "at 'Loading library'")
 
     # cosign credential: existence only; its secret is never read
     status, creds = controller.json("/credentials/store/system/domain/_/api/json?depth=1&tree=credentials%5Bid%5D")
@@ -188,6 +270,8 @@ def main() -> int:
     parser.add_argument("--library", default="netci-shared-library", help="name[@version] the jobs load")
     parser.add_argument("--cosign-credential", default="netci-cosign-key")
     parser.add_argument("--agent-label", default="netci-ephemeral")
+    parser.add_argument("--folder", default="",
+                        help="Jenkins folder netCI creates its jobs in (NETCI_JENKINS_FOLDER), e.g. platform/netci")
     parser.add_argument("--timeout", type=float, default=15.0)
     args = parser.parse_args()
 
@@ -196,11 +280,19 @@ def main() -> int:
     if not token:
         print("an API token is required: --token-file or JENKINS_API_TOKEN", file=sys.stderr)
         return 2
+    # The same rule netCI applies to NETCI_JENKINS_FOLDER at startup, so a folder that
+    # passes here is one netCI will accept.
+    folder = args.folder.strip().strip("/")
+    bad = [segment for segment in folder.split("/") if not FOLDER_SEGMENT.fullmatch(segment)] if folder else []
+    if bad:
+        print(f"--folder segment {bad[0]!r} is not a plain folder name (letters, digits, '.', '_', '-')",
+              file=sys.stderr)
+        return 2
 
     report = Report()
     print(f"netCI preflight for {args.url} as {args.user}")
     check(Controller(args.url, args.user, token, args.timeout), library=args.library,
-          cosign_id=args.cosign_credential, agent_label=args.agent_label, report=report)
+          cosign_id=args.cosign_credential, agent_label=args.agent_label, report=report, folder=folder)
     print("ready for netCI" if not report.failed else f"{report.failed} check(s) failed")
     return 0 if not report.failed else 1
 

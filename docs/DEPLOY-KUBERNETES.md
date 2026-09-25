@@ -47,8 +47,9 @@ Jenkins cần:
 
 | Thứ cần có | Chi tiết |
 | :--- | :--- |
-| Plugin | `workflow-job`, `workflow-cps`, `pipeline-model-definition`, `pipeline-groovy-lib` (bản cũ: `workflow-cps-global-lib`), `credentials-binding`, `plain-credentials`, `timestamper`, `git`, `kubernetes` |
-| Tài khoản dịch vụ | `Overall/Read`, `Job/Create`, `Job/Configure`, `Job/Read`, `Job/Build`, `Job/Cancel` (netCI dừng build khi run bị huỷ). **Không** cần `Job/Delete`. |
+| Plugin | `workflow-job`, `workflow-cps`, `pipeline-model-definition`, `pipeline-groovy-lib` (bản cũ: `workflow-cps-global-lib`), `credentials-binding`, `plain-credentials`, `timestamper`, `git`, `pipeline-utility-steps` (`readJSON` cho custom stage), `ws-cleanup` (`cleanWs`), `kubernetes`. Tuỳ chọn: `configuration-as-code` — chỉ cho so sánh drift và reload JCasC, build không cần. |
+| Tài khoản dịch vụ | `Overall/Read`, `Job/Create`, `Job/Configure`, `Job/Read`, `Job/Build`, `Job/Cancel` (netCI huỷ queue item và dừng build khi run bị huỷ hoặc bị thay thế). **Không** cần `Job/Delete`. Drift cần thêm `Overall/SystemRead`, reload cần `Overall/Administer`; thiếu thì hai tính năng đó báo controller "unreachable", build vẫn chạy. |
+| Folder (tuỳ chọn) | `jenkins.folder` (vd `platform/netci`, lồng nhau bằng `/`) khi tổ chức chỉ cấp `Job/Create` trong một folder. Folder **phải có sẵn** — netCI không tạo; thiếu thì lần tạo job đầu tiên báo lỗi nêu tên folder. Các quyền `Job/*` ở trên cấp trên folder đó. |
 | Shared library | Global Pipeline Library tên `netci-shared-library`, trỏ tới repo chứa `jenkins/shared-library`. Nếu trỏ thẳng vào repo netCI, đặt *Library Path* = `jenkins/shared-library/`. Phiên bản được dùng **phải có** `resources/netci/tooling/` (từ bản 0.2). |
 | Credential | Secret text `netci-cosign-key` chứa private key cosign. Với workload identity, credential `netci-pipeline-api-key` **không cần** tồn tại. |
 | Agent | Kubernetes cloud có pod template gắn label `netci-ephemeral`, chứa container `builder` có python3, docker/buildah, syft, trivy, cosign (xem `jenkins/agent-toolbox/`). |
@@ -67,12 +68,24 @@ export JENKINS_API_TOKEN='...'          # token của tài khoản dịch vụ; 
 python3 scripts/jenkins_preflight.py \
   --url https://jenkins.example.com --user netci-sa \
   --library netci-shared-library@<phiên-bản> \
-  --cosign-credential netci-cosign-key --agent-label netci-ephemeral
+  --cosign-credential netci-cosign-key --agent-label netci-ephemeral \
+  --folder platform/netci                # chỉ khi đặt jenkins.folder
 ```
 
 Script chỉ đọc: không tạo, sửa hay chạy gì trên Jenkins. Mỗi mục in PASS/FAIL kèm cách sửa;
-thoát 0 nghĩa là mọi mục đều đạt. Mục nào tài khoản không có quyền đọc (ví dụ cấu hình toàn
+thoát 0 nghĩa là không mục nào FAIL. Mục nào tài khoản không có quyền đọc (ví dụ cấu hình toàn
 cục) được báo FAIL kèm hướng dẫn kiểm tra bằng tay — không được coi là đạt.
+
+| Mục | Mức | Kiểm tra gì |
+| :--- | :--- | :--- |
+| `reachable`, `crumb` | PASS/FAIL | controller trả lời, token xác thực được, cấp được CSRF crumb |
+| `plugins`, `kubernetes plugin` | PASS/FAIL | đủ plugin bắt buộc ở bảng trên |
+| `folder` | PASS/FAIL | chỉ khi có `--folder`: folder tồn tại và tài khoản thấy được |
+| `permissions` | PASS/FAIL | liệt kê job và mở được trang *New Item* ở nơi netCI tạo job (folder, hoặc gốc) |
+| `library`, `cosign credential`, `agents` | PASS/FAIL | library được cấu hình, credential ký tồn tại, có agent/cloud cho label |
+| `jcasc plugin`, `drift/reload` | INFO | `configuration-as-code` có không; tài khoản đọc được JCasC không. Không bao giờ làm FAIL |
+| `library version` | NOT CHECKED | ref trong `--library tên@ref` có tồn tại không — Jenkins chỉ resolve khi build nạp library, và kiểm tra bằng form validation cần quyền admin; ref sai làm build đầu tiên hỏng ở "Loading library" |
+| `build/cancel` | NOT CHECKED | `Job/Build`, `Job/Cancel` — muốn chứng minh thì phải chạy và dừng một build thật |
 
 ---
 
@@ -149,6 +162,7 @@ jenkins:
   controllers:
     - {id: A, url: "https://jenkins.example.com", username: netci-sa, executors: 4}
   sharedLibrary: netci-shared-library@<phiên-bản có resources/netci/tooling>
+  # folder: platform/netci            # khi job phải nằm trong một folder có sẵn
   # Mặc định là <externalUrl>/api. Khi agent chạy trong cùng cụm với netCI, dùng Service:
   # callbackUrl: http://netci-netci-platform-api.netci-system.svc:8000
 
