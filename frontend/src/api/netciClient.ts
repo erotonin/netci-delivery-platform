@@ -512,6 +512,7 @@ export type ProductionRequestModule = {
 export type ReleasePlanWave = {
   wave: number
   moduleIds: string[]
+  status?: string
 }
 
 export type ReleasePlan = {

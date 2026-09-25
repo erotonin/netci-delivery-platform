@@ -85,7 +85,7 @@ type NavigationSystem = { id: string; status: string; modules: NavigationModule[
 const initialNavigationSystems: NavigationSystem[] = []
 
 function Sidebar({ page, systemId, moduleId, moduleLinks, navigationSystems, session, navigate, onLogout, open, close }: { page: PageId; systemId: string; moduleId: string; moduleLinks: NavigationModule[]; navigationSystems: NavigationSystem[]; session: AuthSession; navigate: Navigate; onLogout: () => void; open: boolean; close: () => void }) {
-  const inSystem = ['system', 'requests', 'module', 'new-module'].includes(page)
+  const inSystem = Boolean(systemId) && ['system', 'requests', 'module', 'new-module'].includes(page)
   const currentSystemTone = systemTone[navigationSystems.find((system) => system.id === systemId)?.status ?? 'unknown'] ?? 'gray'
   return <aside className={`sidebar ${open ? 'sidebar-open' : ''}`}>
     <button className="brand" onClick={() => navigate('dashboard')}>
@@ -100,18 +100,17 @@ function Sidebar({ page, systemId, moduleId, moduleLinks, navigationSystems, ses
         <span className="nav-label">Modules</span>
         {moduleLinks.map((module) => <button key={module.id} aria-current={page === 'module' && moduleId === module.id ? 'page' : undefined} className={page === 'module' && moduleId === module.id ? 'nav-item active' : 'nav-item'} onClick={() => navigate('module', { systemId, moduleId: module.id })}><Box size={17} />{module.name}</button>)}
       </> : <>
-        <span className="nav-label">General</span>
+        <span className="nav-label">Core Delivery</span>
         <button aria-current={page === 'dashboard' ? 'page' : undefined} className={page === 'dashboard' ? 'nav-item active' : 'nav-item'} onClick={() => navigate('dashboard')}><Grid2X2 size={17} />Dashboard</button>
-        <button aria-current={page === 'systems' ? 'page' : undefined} className={page === 'systems' ? 'nav-item active' : 'nav-item'} onClick={() => navigate('systems')}><Layers3 size={17} />Systems</button>
-        <button aria-current={page === 'catalog' ? 'page' : undefined} className={page === 'catalog' ? 'nav-item active' : 'nav-item'} onClick={() => navigate('catalog')}><Compass size={17} />Service Catalog</button>
-        <button aria-current={page === 'servers' ? 'page' : undefined} className={page === 'servers' ? 'nav-item active' : 'nav-item'} onClick={() => navigate('servers')}><Server size={17} />Servers</button>
+        <button aria-current={page === 'systems' ? 'page' : undefined} className={page === 'systems' ? 'nav-item active' : 'nav-item'} onClick={() => navigate('systems')}><Layers3 size={17} />Systems & Pipelines</button>
         <button aria-current={page === 'requests' ? 'page' : undefined} className={page === 'requests' ? 'nav-item active' : 'nav-item'} onClick={() => navigate('requests')}><ShieldAlert size={17} />Production Requests</button>
-        <button aria-current={page === 'calendar' ? 'page' : undefined} className={page === 'calendar' ? 'nav-item active' : 'nav-item'} onClick={() => navigate('calendar')}><CalendarDays size={17} />Release Calendar</button>
-        <button aria-current={page === 'vulnerabilities' ? 'page' : undefined} className={page === 'vulnerabilities' ? 'nav-item active' : 'nav-item'} onClick={() => navigate('vulnerabilities')}><ShieldAlert size={17} />Vulnerabilities</button>
-        <button aria-current={page === 'scorecards' ? 'page' : undefined} className={page === 'scorecards' ? 'nav-item active' : 'nav-item'} onClick={() => navigate('scorecards')}><ClipboardCheck size={17} />Scorecards</button>
-        <button aria-current={page === 'release-plan' ? 'page' : undefined} className={page === 'release-plan' ? 'nav-item active' : 'nav-item'} onClick={() => navigate('release-plan')}><GitBranch size={17} />Release Plan</button>
-        <button aria-current={page === 'stage-catalog' ? 'page' : undefined} className={page === 'stage-catalog' ? 'nav-item active' : 'nav-item'} onClick={() => navigate('stage-catalog')}><ListChecks size={17} />Stage Catalog</button>
+        <button aria-current={page === 'catalog' ? 'page' : undefined} className={page === 'catalog' ? 'nav-item active' : 'nav-item'} onClick={() => navigate('catalog')}><Compass size={17} />Service Catalog</button>
+
+        <span className="nav-label nav-label-spaced">Platform & Governance</span>
         <button aria-current={page === 'ci-cost' ? 'page' : undefined} className={page === 'ci-cost' ? 'nav-item active' : 'nav-item'} onClick={() => navigate('ci-cost')}><Coins size={17} />CI Cost</button>
+        <button aria-current={page === 'vulnerabilities' ? 'page' : undefined} className={page === 'vulnerabilities' ? 'nav-item active' : 'nav-item'} onClick={() => navigate('vulnerabilities')}><ShieldAlert size={17} />Vulnerabilities</button>
+        <button aria-current={page === 'calendar' ? 'page' : undefined} className={page === 'calendar' ? 'nav-item active' : 'nav-item'} onClick={() => navigate('calendar')}><CalendarDays size={17} />Release Calendar</button>
+        <button aria-current={page === 'servers' ? 'page' : undefined} className={page === 'servers' ? 'nav-item active' : 'nav-item'} onClick={() => navigate('servers')}><Server size={17} />Servers</button>
         <span className="nav-label nav-label-spaced">Systems</span>
         {navigationSystems.map((system) => <button key={system.id} className="nav-item system-link" onClick={() => navigate('system', { systemId: system.id })}><i className={`system-health health-${systemTone[system.status] ?? 'gray'}`} />{system.id}</button>)}
       </>}

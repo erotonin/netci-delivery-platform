@@ -354,12 +354,17 @@ function RequestDetails({
         <div className="release-plan-container">
           <h4>
             <Layers size={14} style={{ display: 'inline', verticalAlign: 'middle', marginRight: 5 }} />
-            DAG Release Plan ({currentReq.releasePlan.totalWaves} Waves)
+            DAG Release Plan ({currentReq.releasePlan.totalWaves} Waves · Kahn's Wave Orchestration)
           </h4>
           <div className="wave-list">
             {currentReq.releasePlan.waves.map((wave) => (
-              <div key={wave.wave} className="wave-card">
-                <div className="wave-header">Wave {wave.wave}</div>
+              <div key={wave.wave} className={`wave-card ${wave.status === 'in_progress' ? 'wave-active' : wave.status === 'succeeded' ? 'wave-done' : ''}`}>
+                <div className="wave-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span>Wave {wave.wave}</span>
+                  <span style={{ fontSize: '11px', fontWeight: 600 }}>
+                    {wave.status === 'in_progress' ? '⚡ Đang thực thi' : wave.status === 'succeeded' ? '✅ Hoàn tất' : '⏳ Chờ Wave trước'}
+                  </span>
+                </div>
                 <div className="wave-modules">
                   {wave.moduleIds.map((modId) => {
                     const mod = currentReq.modules.find((m) => m.moduleId === modId)
@@ -367,7 +372,7 @@ function RequestDetails({
                       <div key={modId} className="wave-module-item">
                         <strong>{mod?.moduleName ?? modId}</strong>
                         <span>{mod?.version}</span>
-                        <StatusPill status={statusLabel(mod?.status ?? 'pending')} />
+                        <StatusPill status={statusLabel(mod?.status ?? (wave.status === 'in_progress' ? 'deploying' : 'pending'))} />
                       </div>
                     )
                   })}
@@ -549,6 +554,98 @@ function NewRequest({
     })
   }
 
+  const selectAllVersioned = () => {
+    setSelected(versionedModules.map((m) => m.id))
+  }
+
+  const applyDagWavePreset = () => {
+    const payment = versionedModules.find((m) => m.id === 'payment-gateway')
+    const ledger = versionedModules.find((m) => m.id === 'ledger-service')
+    if (payment && ledger) {
+      setSelected([payment.id, ledger.id])
+      setDrafts((prev) => ({
+        ...prev,
+        [payment.id]: {
+          moduleId: payment.id,
+          version: payment.versions[0] ?? '',
+          deploymentOrder: 1,
+          dependencies: [],
+        },
+        [ledger.id]: {
+          moduleId: ledger.id,
+          version: ledger.versions[0] ?? '',
+          deploymentOrder: 2,
+          dependencies: [payment.id],
+        },
+      }))
+      return
+    }
+    if (versionedModules.length >= 2) {
+      const first = versionedModules[0].id
+      const second = versionedModules[1].id
+      setSelected([first, second])
+      setDrafts((prev) => ({
+        ...prev,
+        [first]: {
+          moduleId: first,
+          version: versionedModules[0].versions[0] ?? '',
+          deploymentOrder: 1,
+          dependencies: [],
+        },
+        [second]: {
+          moduleId: second,
+          version: versionedModules[1].versions[0] ?? '',
+          deploymentOrder: 2,
+          dependencies: [first],
+        },
+      }))
+    }
+  }
+
+  const dagAnalysis = useMemo(() => {
+    if (selected.length <= 1) return { waves: [selected], cycle: null, isMultiWave: false }
+    const inDegree: Record<string, number> = {}
+    const adj: Record<string, string[]> = {}
+    selected.forEach((id) => {
+      inDegree[id] = 0
+      adj[id] = []
+    })
+    selected.forEach((id) => {
+      const deps = (drafts[id]?.dependencies || []).filter((dep) => selected.includes(dep))
+      deps.forEach((dep) => {
+        adj[dep].push(id)
+        inDegree[id]++
+      })
+    })
+    let currentWave = selected.filter((id) => inDegree[id] === 0)
+    const waves: string[][] = []
+    let processedCount = 0
+    const inDegCopy = { ...inDegree }
+    while (currentWave.length > 0) {
+      currentWave.sort()
+      waves.push(currentWave)
+      processedCount += currentWave.length
+      const nextWave: string[] = []
+      for (const node of currentWave) {
+        for (const neighbor of adj[node] || []) {
+          inDegCopy[neighbor]--
+          if (inDegCopy[neighbor] === 0) {
+            nextWave.push(neighbor)
+          }
+        }
+      }
+      currentWave = nextWave
+    }
+    if (processedCount < selected.length) {
+      return {
+        waves: [],
+        cycle: 'Phát hiện chu trình phụ thuộc vòng (Cyclic Dependency)! Thuật toán chu trình đã chặn cấu hình này để ngăn deadlock.',
+        isMultiWave: false,
+      }
+    }
+    return { waves, cycle: null, isMultiWave: waves.length > 1 }
+  }, [selected, drafts])
+
   const submit = async () => {
     setSaving(true)
     setError('')
@@ -618,7 +715,7 @@ function NewRequest({
           ) : (
             <button
               className="primary-button"
-              disabled={!selected.length || !scheduledFor}
+              disabled={!selected.length || !scheduledFor || Boolean(dagAnalysis.cycle)}
               onClick={() => setReview(true)}
             >
               Review Request
@@ -636,6 +733,26 @@ function NewRequest({
                 <h3>Select modules</h3>
                 <p>Select one or more modules. DAG wave coordination schedules safe sequential rollouts.</p>
               </div>
+            </div>
+            <div style={{ display: 'flex', gap: '8px', marginBottom: '12px', flexWrap: 'wrap' }}>
+              <button
+                type="button"
+                className="secondary-button"
+                style={{ fontSize: '11px', padding: '4px 10px' }}
+                onClick={selectAllVersioned}
+              >
+                ⚡ Chọn tất cả module có version
+              </button>
+              {versionedModules.length >= 2 && (
+                <button
+                  type="button"
+                  className="secondary-button"
+                  style={{ fontSize: '11px', padding: '4px 10px', borderColor: '#38bdf8', color: '#0284c7' }}
+                  onClick={applyDagWavePreset}
+                >
+                  🔗 1-Click Multi-Module DAG Waves (Kahn Preset)
+                </button>
+              )}
             </div>
             <div className="selectable-modules">
               {availableModules.map((module) => (
@@ -730,6 +847,29 @@ function NewRequest({
                   )
                 })}
               </div>
+              {dagAnalysis.cycle ? (
+                <div style={{ marginTop: '12px', padding: '10px 14px', background: 'rgba(239, 68, 68, 0.1)', border: '1px solid #ef4444', borderRadius: '8px', color: '#dc2626', fontSize: '12px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <CircleAlert size={16} />
+                  <strong>{dagAnalysis.cycle}</strong>
+                </div>
+              ) : dagAnalysis.isMultiWave ? (
+                <div style={{ marginTop: '12px', padding: '10px 14px', background: 'rgba(14, 165, 233, 0.08)', border: '1px solid #38bdf8', borderRadius: '8px', color: '#0369a1', fontSize: '12px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px' }}>
+                    <Layers size={15} />
+                    <strong>Thuật toán Kahn xác định {dagAnalysis.waves.length} Waves triển khai tuần tự:</strong>
+                  </div>
+                  <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
+                    {dagAnalysis.waves.map((wave, idx) => (
+                      <span key={idx} style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                        <span className="mono" style={{ background: '#e0f2fe', padding: '2px 8px', borderRadius: '4px', fontWeight: 600 }}>
+                          Wave {idx + 1}: {wave.join(', ')}
+                        </span>
+                        {idx < dagAnalysis.waves.length - 1 && <span style={{ color: '#0284c7' }}>➔</span>}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
             </section>
           )}
 
@@ -818,6 +958,16 @@ function NewRequest({
                 <h3>Schedule</h3>
                 <p>Production window in Asia/Saigon timezone.</p>
               </div>
+            </div>
+            <div className="full" style={{ display: 'flex', gap: '8px', marginBottom: '6px' }}>
+              <button
+                type="button"
+                className="secondary-button"
+                style={{ fontSize: '11px', padding: '3px 8px' }}
+                onClick={() => setScheduledFor(localScheduleDefault())}
+              >
+                ⚡ Triển khai ngay sau khi được duyệt
+              </button>
             </div>
             <label className="field full">
               <span>Deployment date and time</span>
@@ -909,6 +1059,23 @@ function NewRequest({
               <span>Automation evidence</span>
               <strong>{automation ? 'Passing result required' : 'Not required'}</strong>
             </div>
+            {dagAnalysis.isMultiWave && (
+              <div style={{ gridColumn: '1 / -1', padding: '10px 14px', background: 'rgba(14, 165, 233, 0.08)', borderRadius: '8px', border: '1px solid #38bdf8' }}>
+                <span style={{ display: 'block', fontSize: '11px', color: '#0369a1', fontWeight: 600, marginBottom: '6px' }}>
+                  Kahn's Topological Waves ({dagAnalysis.waves.length} Waves tuần tự)
+                </span>
+                <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                  {dagAnalysis.waves.map((wave, idx) => (
+                    <span key={idx} style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                      <span className="mono" style={{ background: '#e0f2fe', padding: '3px 8px', borderRadius: '4px', fontWeight: 600, color: '#0369a1' }}>
+                        Wave {idx + 1}: {wave.join(', ')}
+                      </span>
+                      {idx < dagAnalysis.waves.length - 1 && <span style={{ color: '#0284c7' }}>➔</span>}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
           <div className="approval-flow">
             <span>
