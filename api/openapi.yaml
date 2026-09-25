@@ -3939,6 +3939,21 @@ components:
           type: object
           additionalProperties: true
           description: What started the run -- event, ref, pull request, fork, rule and reason.
+        admittedAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: >-
+            When the run was admitted to CI capacity and dispatched (ADR-050). A queued run
+            without it is waiting for its quota scope to have room, not stuck.
+        concurrencyGroup:
+          type: string
+          nullable: true
+          description: >-
+            `<application>:branch/<name>` or `<application>:pr/<n>` for SCM-triggered runs. A
+            newer run of the group cancels a waiting one, and a building one when the
+            trigger's cancelInProgress says so. Null for tag, manual and retried runs.
+        supersededBy: { type: string, format: uuid, nullable: true, description: The newer run that cancelled this one. }
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
     PromotionCreate:
@@ -3975,6 +3990,13 @@ components:
               tags: { type: array, items: { type: string } }
               deployTo: { type: string, enum: [dev, staging] }
               registerVersion: { type: boolean }
+              cancelInProgress:
+                type: boolean
+                description: >-
+                  Whether a newer run of the same branch or pull request cancels one of these
+                  already building (ADR-050). Absent: true for pull_request, false for push.
+                  Not allowed on tag rules. A run waiting for admission is always superseded,
+                  and one that has begun signing or publishing never is.
         forkPullRequests: { type: string, enum: [ignore, verify] }
         promotion:
           type: object
@@ -4331,9 +4353,17 @@ components:
         maxConcurrentPipelines: { type: integer, default: 5, minimum: 1, maximum: 1000 }
         maxConcurrentDeployments: { type: integer, default: 2, minimum: 1, maximum: 1000 }
         maxProductionRequestsPerDay: { type: integer, default: 20, minimum: 1, maximum: 10000 }
+        maxQueuedPipelines:
+          type: integer
+          default: 50
+          minimum: 1
+          maximum: 10000
+          description: >-
+            Runs that may wait for admission in this scope (ADR-050). maxConcurrentPipelines
+            admits; this is the only limit that refuses a new run (429 PIPELINE_QUEUE_FULL).
     ResourceQuota:
       type: object
-      required: [id, scope, scopeId, maxConcurrentPipelines, maxConcurrentDeployments, maxProductionRequestsPerDay, createdAt, updatedAt]
+      required: [id, scope, scopeId, maxConcurrentPipelines, maxConcurrentDeployments, maxProductionRequestsPerDay, maxQueuedPipelines, createdAt, updatedAt]
       properties:
         id: { type: string, format: uuid }
         scope: { type: string }
@@ -4341,6 +4371,7 @@ components:
         maxConcurrentPipelines: { type: integer }
         maxConcurrentDeployments: { type: integer }
         maxProductionRequestsPerDay: { type: integer }
+        maxQueuedPipelines: { type: integer }
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
     CatalogServiceCreate:

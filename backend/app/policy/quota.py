@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from uuid import UUID
 
 from ..domain.models import DeploymentStatus, PipelineStatus
@@ -13,6 +14,14 @@ from .rules import PolicyViolation
 class QuotaViolation(PolicyViolation):
     """Raised when an operation exceeds configured concurrency or rate quotas."""
     pass
+
+
+@dataclass(frozen=True)
+class PipelineScope:
+    quota: ResourceQuotaRecord
+    #: The applications whose runs count against this quota; None is all of them.
+    application_ids: list[UUID] | None
+    key: str
 
 
 DEFAULT_QUOTA = ResourceQuotaRecord(
@@ -75,37 +84,52 @@ class QuotaEnforcer:
         return DEFAULT_QUOTA
 
     @classmethod
-    def check_pipeline_quota(
+    def pipeline_scope(
         cls,
         session: PlatformSession,
         *,
         application_id: UUID,
         team: str | None = None,
-    ) -> None:
-        """Refuse a new run when its quota's scope already has the maximum running.
+    ) -> "PipelineScope":
+        """Which quota governs this application's builds, and which runs it counts.
 
         The count is over the quota's own scope. It used to be this application's runs
         whatever the scope, so a team quota of 10 allowed 10 per application. The built-in
         default (nothing configured) stays per application: counted platform-wide, it would
-        cap every installation at five concurrent runs. A lock per scope, held until the
-        run is written, stops two starts both seeing room for one.
+        cap every installation at five concurrent runs.
         """
 
         quota = cls.resolve_quota(session, application_id=application_id, team=team)
         if quota is DEFAULT_QUOTA or quota.scope == "application":
-            scope_apps: list[UUID] | None = [application_id]
-        elif quota.scope == "team":
-            scope_apps = [a.id for a in session.applications() if a.owner_team == quota.scope_id]
-        else:
-            scope_apps = None
-        key_scope = f"application:{application_id}" if quota is DEFAULT_QUOTA else f"{quota.scope}:{quota.scope_id}"
-        session.advisory_xact_lock(_lock_key(f"netci-quota:{key_scope}"))
-        active_count = session.count_active_pipeline_runs(scope_apps)
-        if active_count >= quota.max_concurrent_pipelines:
+            return PipelineScope(quota, [application_id], f"application:{application_id}")
+        if quota.scope == "team":
+            apps = [a.id for a in session.applications() if a.owner_team == quota.scope_id]
+            return PipelineScope(quota, apps, f"team:{quota.scope_id}")
+        return PipelineScope(quota, None, f"{quota.scope}:{quota.scope_id}")
+
+    @classmethod
+    def check_queue_room(cls, session: PlatformSession, scope: "PipelineScope", *, freed: int = 0) -> None:
+        """Refuse a new run only when its scope's queue is full (ADR-050).
+
+        `freed` is how many waiting runs this very request supersedes: they leave the queue
+        in the same transaction, so a pull request pushed again never finds its own queue
+        full. A lock per scope, held until the run is written, stops two starts both
+        seeing room for one.
+        """
+
+        session.advisory_xact_lock(_lock_key(f"netci-quota:{scope.key}"))
+        waiting = session.count_waiting_pipeline_runs(scope.application_ids) - freed
+        if waiting >= scope.quota.max_queued_pipelines:
             raise QuotaViolation(
-                f"Concurrent pipeline limit reached for scope {quota.scope}:{quota.scope_id} "
-                f"({active_count}/{quota.max_concurrent_pipelines} active)"
+                f"pipeline queue is full for scope {scope.key} "
+                f"({waiting}/{scope.quota.max_queued_pipelines} waiting for admission)"
             )
+
+    @staticmethod
+    def admission_room(session: PlatformSession, scope: "PipelineScope") -> int:
+        """How many more runs this scope may have holding CI capacity right now."""
+
+        return scope.quota.max_concurrent_pipelines - session.count_admitted_pipeline_runs(scope.application_ids)
 
     @classmethod
     def check_deployment_quota(

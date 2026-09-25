@@ -98,6 +98,14 @@ class PipelineRun:
     release_tag: str | None = None
     #: What started the run, for people: {event, ref, rule, reason, pullRequest, fromFork}.
     trigger: dict[str, object] = field(default_factory=dict)
+    #: When the run was allowed to take CI capacity and was dispatched (ADR-050). A queued
+    #: run with none is waiting for admission, not stuck.
+    admitted_at: datetime | None = None
+    #: `<application>:<ref>` for SCM runs of one branch or pull request; None for runs that
+    #: supersede nothing and are superseded by nothing (tags, manual runs, retries).
+    concurrency_group: str | None = None
+    #: The newer run of the same group that cancelled this one.
+    superseded_by: UUID | None = None
     version: int = 1
     created_at: datetime = field(default_factory=utc_now)
     updated_at: datetime = field(default_factory=utc_now)

@@ -1144,6 +1144,28 @@ class InMemorySession:
                 setattr(self._state, name, getattr(restored, name))
             raise
 
+    def count_admitted_pipeline_runs(self, application_ids) -> int:
+        wanted = set(application_ids) if application_ids is not None else None
+        return sum(1 for r in self._state.runs.values()
+                   if r.admitted_at is not None and r.status in {PipelineStatus.QUEUED, PipelineStatus.RUNNING}
+                   and (wanted is None or r.application_id in wanted))
+
+    def count_waiting_pipeline_runs(self, application_ids) -> int:
+        wanted = set(application_ids) if application_ids is not None else None
+        return sum(1 for r in self._state.runs.values()
+                   if r.admitted_at is None and r.status == PipelineStatus.QUEUED
+                   and (wanted is None or r.application_id in wanted))
+
+    def pipeline_runs_awaiting_admission(self, limit: int) -> tuple[PipelineRun, ...]:
+        waiting = [r for r in self._state.runs.values() if r.admitted_at is None and r.status == PipelineStatus.QUEUED]
+        return tuple(sorted(waiting, key=lambda r: (r.created_at, str(r.id)))[:limit])
+
+    def lock_active_runs_in_group(self, concurrency_group: str) -> tuple[PipelineRun, ...]:
+        active = [r for r in self._state.runs.values()
+                  if r.concurrency_group == concurrency_group
+                  and r.status in {PipelineStatus.QUEUED, PipelineStatus.RUNNING}]
+        return tuple(sorted(active, key=lambda r: (r.created_at, str(r.id))))
+
     def count_active_pipeline_runs(self, application_ids) -> int:
         active = {PipelineStatus.QUEUED, PipelineStatus.RUNNING, PipelineStatus.WAITING_APPROVAL}
         wanted = set(application_ids) if application_ids is not None else None

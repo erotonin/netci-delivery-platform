@@ -222,8 +222,11 @@ async def lifespan(application: FastAPI):
     # A preview nobody tears down is a preview that runs forever; this is what makes the
     # TTL a promise rather than a number nobody reads (ADR-049).
     preview_reaper_task = asyncio.create_task(_reap_previews_periodically())
+    # Admission is triggered by every start and every finish; this is the backstop for
+    # one that was missed -- a replica stopped between a finish and its admission pass.
+    admission_task = asyncio.create_task(_admit_waiting_runs_periodically())
     yield
-    for task in (reconcile_task, retention_task, rescan_task, preview_reaper_task):
+    for task in (reconcile_task, retention_task, rescan_task, preview_reaper_task, admission_task):
         task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await task
@@ -308,6 +311,24 @@ async def _rescan_sboms_periodically() -> None:
             continue
         if outcome:
             logger.info("SBOM rescan pass completed: %s", outcome)
+
+
+def _admission_interval_seconds() -> float:
+    raw = os.getenv("NETCI_ADMISSION_INTERVAL_SECONDS", "15").strip()
+    try:
+        return max(0.0, float(raw))
+    except ValueError:
+        return 15.0
+
+
+async def _admit_waiting_runs_periodically() -> None:
+    interval = _admission_interval_seconds()
+    if interval <= 0:
+        logger.info("admission timer disabled (NETCI_ADMISSION_INTERVAL_SECONDS=0)")
+        return
+    while True:
+        await asyncio.sleep(interval)
+        await asyncio.to_thread(platform.admit_waiting_runs_quietly)
 
 
 def _preview_reaper_interval_seconds() -> float:
@@ -942,6 +963,9 @@ def pipeline_json(item: PipelineRun) -> dict[str, object]:
         "publishArtifact": item.publish_artifact,
         "releaseTag": item.release_tag,
         "trigger": dict(item.trigger),
+        "admittedAt": item.admitted_at.isoformat() if item.admitted_at else None,
+        "concurrencyGroup": item.concurrency_group,
+        "supersededBy": str(item.superseded_by) if item.superseded_by else None,
         "createdAt": item.created_at.isoformat(),
         "updatedAt": item.updated_at.isoformat(),
     }
@@ -1056,6 +1080,7 @@ def resource_quota_json(item: ResourceQuotaRecord) -> dict[str, object]:
         "maxConcurrentPipelines": item.max_concurrent_pipelines,
         "maxConcurrentDeployments": item.max_concurrent_deployments,
         "maxProductionRequestsPerDay": item.max_production_requests_per_day,
+        "maxQueuedPipelines": item.max_queued_pipelines,
         "createdAt": item.created_at.isoformat(),
         "updatedAt": item.updated_at.isoformat(),
     }
@@ -1556,6 +1581,8 @@ class ResourceQuotaUpdate(StrictBody):
     maxConcurrentPipelines: int = Field(default=5, ge=1, le=1000)
     maxConcurrentDeployments: int = Field(default=2, ge=1, le=1000)
     maxProductionRequestsPerDay: int = Field(default=20, ge=1, le=10000)
+    #: How many runs may wait for admission before a new one is refused (ADR-050).
+    maxQueuedPipelines: int = Field(default=50, ge=1, le=10000)
 
 
 @app.exception_handler(StarletteHTTPException)
@@ -3533,6 +3560,7 @@ async def receive_scm_webhook(
         publish_artifact=decision.publish,
         release_tag=decision.release_tag,
         trigger=trigger,
+        cancel_in_progress=decision.cancel_in_progress,
     )
 
     return JSONResponse(
@@ -5246,6 +5274,7 @@ def set_resource_quota(
         max_concurrent_pipelines=payload.maxConcurrentPipelines,
         max_concurrent_deployments=payload.maxConcurrentDeployments,
         max_production_requests_per_day=payload.maxProductionRequestsPerDay,
+        max_queued_pipelines=payload.maxQueuedPipelines,
         created_at=datetime.now(timezone.utc),
         updated_at=datetime.now(timezone.utc),
     )

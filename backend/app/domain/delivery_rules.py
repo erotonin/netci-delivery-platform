@@ -45,6 +45,9 @@ class Trigger:
     patterns: tuple[str, ...]
     deploy_to: Environment | None = None
     register_version: bool = False
+    #: Whether a newer run of the same branch or pull request cancels one already building
+    #: (ADR-050). None is the default: yes for pull requests, no for pushes.
+    cancel_in_progress: bool | None = None
 
     def as_json(self) -> dict[str, object]:
         key = "tags" if self.on == "tag" else "branches"
@@ -53,6 +56,8 @@ class Trigger:
             body["deployTo"] = self.deploy_to.value
         if self.register_version:
             body["registerVersion"] = True
+        if self.cancel_in_progress is not None:
+            body["cancelInProgress"] = self.cancel_in_progress
         return body
 
 
@@ -105,6 +110,8 @@ class TriggerDecision:
     publish: bool = True
     release_tag: str | None = None
     rule_index: int | None = None
+    #: Resolved, default included: whether this run cancels an older one still building.
+    cancel_in_progress: bool = False
 
 
 def _glob(pattern: str) -> re.Pattern[str]:
@@ -208,7 +215,7 @@ def parse_rules(
             on = item.get("on")
             if on not in TRIGGER_EVENTS:
                 raise DeliveryRuleError(f"{where}.on: must be one of {sorted(TRIGGER_EVENTS)}")
-            allowed = {"on", "tags" if on == "tag" else "branches", "deployTo", "registerVersion"}
+            allowed = {"on", "tags" if on == "tag" else "branches", "deployTo", "registerVersion", "cancelInProgress"}
             extra = set(item) - allowed
             if extra:
                 raise DeliveryRuleError(f"{where}: unknown field(s) {sorted(extra)}")
@@ -233,7 +240,14 @@ def parse_rules(
                 raise DeliveryRuleError(f"{where}.registerVersion: must be true or false")
             if register and on != "tag":
                 raise DeliveryRuleError(f"{where}.registerVersion: only a tag names a version")
-            parsed.append(Trigger(on, patterns, deploy_to=deploy_to, register_version=register))
+            cancel = item.get("cancelInProgress")
+            if cancel is not None and not isinstance(cancel, bool):
+                raise DeliveryRuleError(f"{where}.cancelInProgress: must be true or false")
+            if cancel is not None and on == "tag":
+                # A release is never superseded: each tag is its own build (ADR-050).
+                raise DeliveryRuleError(f"{where}.cancelInProgress: a tag build is never superseded")
+            parsed.append(Trigger(on, patterns, deploy_to=deploy_to, register_version=register,
+                                  cancel_in_progress=cancel))
         triggers = tuple(parsed)
 
     fork = raw.get("forkPullRequests", defaults.fork_pull_requests)
@@ -282,7 +296,8 @@ def decide(rules: DeliveryRules, event: ScmEvent) -> TriggerDecision:
             # signed or published, so no artifact of it can be deployed or promoted, and
             # the signing key is never bound in its build.
             return TriggerDecision(True, f"rule {index}: fork pull request, verify only",
-                                   publish=False, rule_index=index)
+                                   publish=False, rule_index=index,
+                                   cancel_in_progress=_cancels_in_progress(trigger))
         release_tag = None
         if trigger.register_version and event.tag and SEMVER_TAG.fullmatch(event.tag):
             release_tag = event.tag
@@ -290,8 +305,20 @@ def decide(rules: DeliveryRules, event: ScmEvent) -> TriggerDecision:
         if trigger.register_version:
             what += f", register version {release_tag}" if release_tag else ", tag is not a version"
         return TriggerDecision(True, f"rule {index}: {what}", deploy_to=trigger.deploy_to,
-                               release_tag=release_tag, rule_index=index)
+                               release_tag=release_tag, rule_index=index,
+                               cancel_in_progress=_cancels_in_progress(trigger))
     return TriggerDecision(False, f"no rule matches {event.kind} {value!r}")
+
+
+def _cancels_in_progress(trigger: Trigger) -> bool:
+    """A pull request's older build answers a question nobody is asking any more; a
+    branch's older build may be the one that deploys, so it is left to finish."""
+
+    if trigger.on == "tag":
+        return False
+    if trigger.cancel_in_progress is not None:
+        return trigger.cancel_in_progress
+    return trigger.on == "pull_request"
 
 
 @dataclass(frozen=True)

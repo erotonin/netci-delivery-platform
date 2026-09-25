@@ -58,6 +58,7 @@ from .policy.rules import PolicyDecision, evaluate_artifact_evidence
 from .domain.delivery_rules import pull_request_ref
 from .domain.freezes import applicable_freeze
 from .policy.quota import QuotaEnforcer, QuotaViolation
+from .agent_fleet import LOCK_ADMISSION
 from .domain.models import (
     Application,
     StageDefinition,
@@ -101,6 +102,36 @@ TEMPLATES: dict[str, TemplateDefinition] = {
         ("checkout", "unit-test", "build", "sbom", "vulnerability-scan", "sign", "publish", "deploy", "health-check"),
     ),
 }
+
+
+#: Once one of these has started, the run may have pushed or signed its artifact or be
+#: deploying it; it is never superseded from there (ADR-050).
+_POINT_OF_NO_RETURN_STAGES = frozenset({"sign", "publish", "deploy", "health-check"})
+
+
+def _lock_key(text: str) -> int:
+    return int.from_bytes(hashlib.sha256(text.encode()).digest()[:8], "big", signed=True)
+
+
+def _concurrency_group(application_id: UUID, trigger: dict[str, object], release_tag: str | None) -> str | None:
+    """`<application>:branch/<name>` or `<application>:pr/<n>` for SCM-triggered runs.
+
+    None for everything that must not be superseded: tag builds (a release is never
+    skipped), manual runs (a person asked for that commit) and anything else.
+    """
+
+    if release_tag:
+        return None
+    event = trigger.get("event")
+    if event == "pull_request":
+        number = trigger.get("pullRequest")
+        if isinstance(number, int) and not isinstance(number, bool) and number > 0:
+            return f"{application_id}:pr/{number}"
+        return None
+    if event == "push":
+        branch = str(trigger.get("branch") or "").strip()
+        return f"{application_id}:branch/{branch}" if branch else None
+    return None
 
 
 class DeliveryError(ApiError):
@@ -892,6 +923,7 @@ class DeliveryPlatform:
         publish_artifact: bool = True,
         release_tag: str | None = None,
         trigger: dict[str, object] | None = None,
+        cancel_in_progress: bool = False,
     ) -> PipelineRun:
         if deploy_after_build and not publish_artifact:
             # Nothing unpublished has a digest, so there would be nothing to deploy.
@@ -923,7 +955,19 @@ class DeliveryPlatform:
                         "IDEMPOTENCY_KEY_REUSED", "same key was used with a different request", 409
                     )
                 return replay
-            self._enforce_pipeline_quota(transaction, application)
+            group = _concurrency_group(application_id, trigger or {}, release_tag)
+            superseded: list[PipelineRun] = []
+            if group is not None:
+                # One writer per group: two pushes a second apart must not both find the
+                # other's run missing and both survive.
+                transaction.advisory_xact_lock(_lock_key(f"netci-group:{group}"))
+                superseded = [
+                    older for older in transaction.lock_active_runs_in_group(group)
+                    if older.admitted_at is None or (cancel_in_progress and self._may_supersede(transaction, older))
+                ]
+            self._check_queue_room(
+                transaction, application, freed=sum(1 for older in superseded if older.admitted_at is None)
+            )
             run = self._write_queued_run(
                 transaction,
                 application_id=application_id,
@@ -940,8 +984,11 @@ class DeliveryPlatform:
                 publish_artifact=publish_artifact,
                 release_tag=release_tag,
                 trigger=dict(trigger or {}),
+                concurrency_group=group,
             )
-        return self._launch_ci(application, run)
+            to_abort = self._supersede(transaction, superseded, by=run)
+        self._abort_superseded(to_abort)
+        return self._admit_now(run)
 
     def _write_queued_run(
         self,
@@ -961,6 +1008,7 @@ class DeliveryPlatform:
         publish_artifact: bool = True,
         release_tag: str | None = None,
         trigger: dict[str, object] | None = None,
+        concurrency_group: str | None = None,
     ) -> PipelineRun:
         run = PipelineRun(
             application_id=application_id,
@@ -979,6 +1027,7 @@ class DeliveryPlatform:
             publish_artifact=publish_artifact,
             release_tag=release_tag,
             trigger=dict(trigger or {}),
+            concurrency_group=concurrency_group,
         )
         unit = UnitOfWork(runs=[(run, None)])
         unit.logs.append(
@@ -1308,6 +1357,7 @@ class DeliveryPlatform:
             except Exception as exc:
                 logger.warning("failed to cancel CD workflow %s: %s", run.workflow_id, exc)
 
+        self.admit_waiting_runs_quietly()
         return updated_run
 
     def cancel_deployment(self, deployment_id: UUID, actor: str, reason: str = "") -> Deployment:
@@ -1411,9 +1461,7 @@ class DeliveryPlatform:
                     raise AssertionError("pipeline retry idempotency scope returned another result type")
                 return replay
 
-            application_for_quota = transaction.application(parent.application_id)
-            if application_for_quota is not None:
-                self._enforce_pipeline_quota(transaction, application_for_quota)
+            self._check_queue_room(transaction, application)
             corr_id = f"retry-{parent.correlation_id or parent.id}-{uuid4().hex[:6]}"
             new_run = PipelineRun(
                 application_id=parent.application_id,
@@ -1476,7 +1524,7 @@ class DeliveryPlatform:
                 )
             self._apply(transaction, unit)
 
-        return self._launch_ci(application, new_run)
+        return self._admit_now(new_run)
 
     def record_stage_event(
         self,
@@ -1716,6 +1764,10 @@ class DeliveryPlatform:
         with self._transaction() as transaction:
             outcome = self._record_ci_result(transaction, pipeline_run_id, result_status,
                                              artifact_digest, log_lines)
+        if result_status != PipelineStatus.RUNNING.value:
+            # The run left Jenkins -- succeeded, failed, or on to approval -- so its slot is
+            # free for the next waiting one (ADR-050), whatever this result goes on to do.
+            self.admit_waiting_runs_quietly()
         if outcome.deferred_error is not None:
             raise outcome.deferred_error
         if outcome.pending_preview is not None:
@@ -1954,13 +2006,148 @@ class DeliveryPlatform:
         return _CiOutcome(CiResult(updated, deployment), pending_cd=(application, updated, deployment))
 
     @staticmethod
-    def _enforce_pipeline_quota(transaction: PlatformSession, application: Application) -> None:
+    def _check_queue_room(transaction: PlatformSession, application: Application, *, freed: int = 0) -> None:
+        scope = QuotaEnforcer.pipeline_scope(transaction, application_id=application.id, team=application.owner_team)
         try:
-            QuotaEnforcer.check_pipeline_quota(
-                transaction, application_id=application.id, team=application.owner_team
-            )
+            QuotaEnforcer.check_queue_room(transaction, scope, freed=freed)
         except QuotaViolation as exc:
-            raise DeliveryError("PIPELINE_QUOTA_EXCEEDED", str(exc), 429) from exc
+            raise DeliveryError("PIPELINE_QUEUE_FULL", str(exc), 429) from exc
+
+    # ------------------------------------------------------------- admission (ADR-050)
+
+    @staticmethod
+    def _may_supersede(transaction: PlatformSession, run: PipelineRun) -> bool:
+        """Whether a run already building may be stopped for a newer one of its group.
+
+        Not once it has begun signing or publishing, is waiting for approval, or has a
+        deployment: stopped there it leaves a half-published artifact or a half-deployed
+        environment, which costs more than the build it saves.
+        """
+
+        if run.status not in {PipelineStatus.QUEUED, PipelineStatus.RUNNING}:
+            return False
+        if transaction.deployments(pipeline_run_id=run.id):
+            return False
+        started = {
+            stage.stage_id for stage in transaction.pipeline_stages(run.id)
+            if stage.started_at is not None or stage.status not in {"queued", "pending"}
+        }
+        return not (started & _POINT_OF_NO_RETURN_STAGES)
+
+    def _supersede(self, transaction: PlatformSession, runs: list[PipelineRun], *, by: PipelineRun) -> list[PipelineRun]:
+        """Cancel `runs` in favour of `by`, in the transaction that wrote `by`. Returns the
+        ones that had been dispatched, whose CI build must be stopped after commit."""
+
+        if not runs:
+            return []
+        now = _now()
+        unit = UnitOfWork()
+        dispatched: list[PipelineRun] = []
+        for older in runs:
+            cancelled = replace(older, status=PipelineStatus.CANCELLED, superseded_by=by.id,
+                                version=older.version + 1, updated_at=now)
+            unit.runs.append((cancelled, older.version))
+            state = "while building" if older.admitted_at is not None else "before it was admitted"
+            unit.logs.append((older.id, [f"superseded {state} by run {by.id} (commit {by.commit_sha[:12]})"]))
+            unit.audit.append(AuditRecord(
+                "pipeline.superseded",
+                application_id=older.application_id,
+                pipeline_run_id=older.id,
+                actor="netci",
+                correlation_id=older.correlation_id,
+                payload={"supersededBy": str(by.id), "commitSha": by.commit_sha,
+                         "wasAdmitted": older.admitted_at is not None, "group": older.concurrency_group},
+            ))
+            self._notify_scm_status(
+                transaction, older.application_id, older.commit_sha, ScmCommitStatus.CANCELLED,
+                pipeline_run_id=older.id, correlation_id=older.correlation_id, unit=unit,
+            )
+            if older.admitted_at is not None:
+                dispatched.append(cancelled)
+        self._apply(transaction, unit)
+        return dispatched
+
+    def _abort_superseded(self, runs: list[PipelineRun]) -> None:
+        # After commit, like every other network call: the run is already cancelled in
+        # netCI whatever Jenkins answers, and a late callback from it is refused.
+        for run in runs:
+            try:
+                self.ci_launcher.abort(run.jenkins_run_id or str(run.id))
+            except Exception as exc:  # noqa: BLE001 - the cancellation stands either way
+                logger.warning("failed to abort superseded CI run %s: %s", run.id, exc)
+
+    def admit_waiting_runs(self, *, limit: int = 100) -> dict[UUID, PipelineRun | DeliveryError]:
+        """Dispatch waiting runs while their quota scopes have room, oldest first.
+
+        One admitter at a time (an advisory lock), and each run it takes is locked so a
+        supersession of it waits or is skipped -- never both writers. A scope that is full
+        does not hold up runs of another scope behind it.
+        """
+
+        admitted: list[tuple[Application, PipelineRun]] = []
+        with self._transaction() as transaction:
+            transaction.advisory_xact_lock(LOCK_ADMISSION)
+            waiting = transaction.pipeline_runs_awaiting_admission(limit)
+            if not waiting:
+                return {}
+            room: dict[str, int] = {}
+            applications: dict[UUID, Application | None] = {}
+            unit = UnitOfWork()
+            now = _now()
+            for run in waiting:
+                if run.application_id not in applications:
+                    applications[run.application_id] = transaction.application(run.application_id)
+                application = applications[run.application_id]
+                if application is None:
+                    continue
+                scope = QuotaEnforcer.pipeline_scope(
+                    transaction, application_id=application.id, team=application.owner_team
+                )
+                if scope.key not in room:
+                    room[scope.key] = QuotaEnforcer.admission_room(transaction, scope)
+                if room[scope.key] <= 0:
+                    continue
+                room[scope.key] -= 1
+                waited = max(0.0, (now - run.created_at).total_seconds())
+                updated = replace(run, admitted_at=now, version=run.version + 1, updated_at=now)
+                unit.runs.append((updated, run.version))
+                unit.logs.append((run.id, [f"admitted after {waited:.0f}s waiting ({scope.key})"]))
+                unit.audit.append(AuditRecord(
+                    "pipeline.admitted", application_id=run.application_id, pipeline_run_id=run.id,
+                    actor="netci", correlation_id=run.correlation_id,
+                    payload={"scope": scope.key, "waitedSeconds": round(waited, 3)},
+                ))
+                admitted.append((application, updated))
+            if admitted:
+                self._apply(transaction, unit)
+        outcome: dict[UUID, PipelineRun | DeliveryError] = {}
+        for application, run in admitted:
+            try:
+                outcome[run.id] = self._launch_ci(application, run)
+            except DeliveryError as exc:
+                outcome[run.id] = exc
+        return outcome
+
+    def admit_waiting_runs_quietly(self) -> None:
+        """Admission after something freed capacity, from a path that must not fail
+        because of it -- a CI callback's own result is already committed."""
+
+        try:
+            self.admit_waiting_runs()
+        except Exception:  # noqa: BLE001 - the timer retries; the caller's work stands
+            logger.exception("admitting waiting pipeline runs failed; the admission timer will retry")
+
+    def _admit_now(self, run: PipelineRun) -> PipelineRun:
+        """Admit what can be admitted, and answer for this run: dispatched, still waiting,
+        or failed to launch -- which is still the caller's 502, as it was before admission."""
+
+        outcome = self.admit_waiting_runs().get(run.id)
+        if isinstance(outcome, DeliveryError):
+            raise outcome
+        if outcome is not None:
+            return outcome
+        with self._transaction() as transaction:
+            return transaction.pipeline_run(run.id) or run
 
     def _active_freeze(self, transaction: PlatformSession, application_id: UUID, environment: Environment):
         """The change freeze that stops a deployment starting now, unless a break-glass

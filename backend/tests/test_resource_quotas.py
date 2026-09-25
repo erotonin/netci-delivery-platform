@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from uuid import uuid4
 
+from dataclasses import replace
 import pytest
 from fastapi.testclient import TestClient
 
@@ -69,48 +70,36 @@ def test_pipeline_concurrency_quota_enforcement():
             )
         )
 
-        # 1 active run
-        run1 = PipelineRun(
-            id=uuid4(),
-            application_id=app_id,
-            status=PipelineStatus.RUNNING,
-            commit_sha="abcdef123456",
-            branch="main",
-            environment=Environment.DEV,
-            parameters={},
-            correlation_id="c-1",
-            jenkins_run_id=1,
-            workflow_id=None,
-            artifact_digest=None,
-            started_by="dev1",
-            created_at=datetime.now(timezone.utc),
-            updated_at=datetime.now(timezone.utc),
-        )
-        session.apply(UnitOfWork(runs=[(run1, None)]))
-        # Should pass
-        QuotaEnforcer.check_pipeline_quota(session, application_id=app_id)
+        scope = QuotaEnforcer.pipeline_scope(session, application_id=app_id)
+        assert QuotaEnforcer.admission_room(session, scope) == 2
 
-        # 2nd active run
-        run2 = PipelineRun(
-            id=uuid4(),
-            application_id=app_id,
-            status=PipelineStatus.QUEUED,
-            commit_sha="abcdef123457",
-            branch="main",
-            environment=Environment.DEV,
-            parameters={},
-            correlation_id="c-2",
-            jenkins_run_id=2,
-            workflow_id=None,
-            artifact_digest=None,
-            started_by="dev2",
-            created_at=datetime.now(timezone.utc),
-            updated_at=datetime.now(timezone.utc),
-        )
-        session.apply(UnitOfWork(runs=[(run2, None)]))
-        # Reached limit -> raises QuotaViolation
-        with pytest.raises(QuotaViolation, match="Concurrent pipeline limit reached"):
-            QuotaEnforcer.check_pipeline_quota(session, application_id=app_id)
+        def run(status, *, admitted):
+            now = datetime.now(timezone.utc)
+            return PipelineRun(
+                id=uuid4(), application_id=app_id, status=status, commit_sha="abcdef123456",
+                branch="main", environment=Environment.DEV, parameters={}, correlation_id="c",
+                started_by="dev1", admitted_at=now if admitted else None, created_at=now, updated_at=now,
+            )
+
+        # Holding CI capacity: admitted and not finished (ADR-050).
+        session.apply(UnitOfWork(runs=[(run(PipelineStatus.RUNNING, admitted=True), None)]))
+        session.apply(UnitOfWork(runs=[(run(PipelineStatus.QUEUED, admitted=True), None)]))
+        assert QuotaEnforcer.admission_room(session, scope) == 0
+        # Waiting and waiting-for-approval runs hold none; finished ones hold none.
+        session.apply(UnitOfWork(runs=[(run(PipelineStatus.QUEUED, admitted=False), None)]))
+        session.apply(UnitOfWork(runs=[(run(PipelineStatus.WAITING_APPROVAL, admitted=True), None)]))
+        session.apply(UnitOfWork(runs=[(run(PipelineStatus.SUCCEEDED, admitted=True), None)]))
+        assert QuotaEnforcer.admission_room(session, scope) == 0
+        assert session.count_waiting_pipeline_runs([app_id]) == 1
+
+        # The queue is what refuses, and only when full.
+        QuotaEnforcer.check_queue_room(session, scope)
+        tight = QuotaEnforcer.pipeline_scope(session, application_id=app_id)
+        tight = type(tight)(replace(tight.quota, max_queued_pipelines=1), tight.application_ids, tight.key)
+        with pytest.raises(QuotaViolation, match="queue is full"):
+            QuotaEnforcer.check_queue_room(session, tight)
+        # ...unless this very request supersedes the waiting run.
+        QuotaEnforcer.check_queue_room(session, tight, freed=1)
 
 
 def test_resource_quota_api_flow():

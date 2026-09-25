@@ -219,6 +219,8 @@ class ResourceQuotaRecord:
     scope: str
     scope_id: str
     max_concurrent_pipelines: int = 5
+    #: Runs that may wait for admission in this scope before a new one is refused (ADR-050).
+    max_queued_pipelines: int = 50
     max_concurrent_deployments: int = 2
     max_production_requests_per_day: int = 20
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))

@@ -94,6 +94,7 @@ RUN_COLUMNS = (
     "id, application_id, status, commit_sha, branch, environment, parameters, correlation_id,"
     " jenkins_run_id, workflow_id, artifact_digest, started_by, console_url, retry_of,"
     " config_revision_id, deploy_after_build, publish_artifact, release_tag, trigger,"
+    " admitted_at, concurrency_group, superseded_by,"
     " version, created_at, updated_at"
 )
 STAGE_COLUMNS = (
@@ -151,7 +152,8 @@ BREAK_GLASS_COLUMNS = (
     "id, target_type, target_id, requested_by, reason, incident_ticket, status, approved_by, created_at, approved_at, expires_at"
 )
 RESOURCE_QUOTA_COLUMNS = (
-    "id, scope, scope_id, max_concurrent_pipelines, max_concurrent_deployments, max_production_requests_per_day, created_at, updated_at"
+    "id, scope, scope_id, max_concurrent_pipelines, max_concurrent_deployments, max_production_requests_per_day,"
+    " max_queued_pipelines, created_at, updated_at"
 )
 CATALOG_SERVICE_COLUMNS = (
     "id, name, description, owning_team, tier, lifecycle, repo_url, docs_url, metadata, created_at, updated_at"
@@ -329,6 +331,7 @@ def _resource_quota(row: dict[str, Any]) -> ResourceQuotaRecord:
         max_concurrent_pipelines=int(row["max_concurrent_pipelines"]),
         max_concurrent_deployments=int(row["max_concurrent_deployments"]),
         max_production_requests_per_day=int(row["max_production_requests_per_day"]),
+        max_queued_pipelines=int(row["max_queued_pipelines"]),
         created_at=row["created_at"],
         updated_at=row["updated_at"],
     )
@@ -454,6 +457,9 @@ def _run(row: dict[str, Any]) -> PipelineRun:
         publish_artifact=bool(row.get("publish_artifact", True)),
         release_tag=row.get("release_tag"),
         trigger=dict(row.get("trigger") or {}),
+        admitted_at=row.get("admitted_at"),
+        concurrency_group=row.get("concurrency_group"),
+        superseded_by=row.get("superseded_by"),
         version=int(row["version"] or 1),
         created_at=row["created_at"],
         updated_at=row["updated_at"],
@@ -1155,9 +1161,10 @@ class PostgresSession:
                                            artifact_digest, correlation_id, started_by,
                                            console_url, retry_of, config_revision_id,
                                            deploy_after_build, publish_artifact, release_tag, trigger,
+                                           admitted_at, concurrency_group, superseded_by,
                                            version, created_at, updated_at)
                 VALUES (%s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                        %s, %s, %s, %s::jsonb, %s, %s, %s)
+                        %s, %s, %s, %s::jsonb, %s, %s, %s, %s, %s, %s)
                 """,
                 (
                     run.id,
@@ -1179,6 +1186,9 @@ class PostgresSession:
                     run.publish_artifact,
                     run.release_tag,
                     json.dumps(run.trigger, default=str),
+                    run.admitted_at,
+                    run.concurrency_group,
+                    run.superseded_by,
                     run.version,
                     run.created_at,
                     run.updated_at,
@@ -1189,7 +1199,8 @@ class PostgresSession:
             """
             UPDATE pipeline_runs
                SET status = %s, parameters = %s::jsonb, jenkins_run_id = %s, workflow_id = %s,
-                   artifact_digest = %s, console_url = %s, version = %s, updated_at = %s
+                   artifact_digest = %s, console_url = %s, admitted_at = %s, superseded_by = %s,
+                   version = %s, updated_at = %s
              WHERE id = %s AND version = %s
             """,
             (
@@ -1199,6 +1210,8 @@ class PostgresSession:
                 run.workflow_id,
                 run.artifact_digest,
                 run.console_url,
+                run.admitted_at,
+                run.superseded_by,
                 run.version,
                 run.updated_at,
                 run.id,
@@ -2647,6 +2660,46 @@ class PostgresSession:
             raise
         self._cursor.execute(f"RELEASE SAVEPOINT {name}")
 
+    def count_admitted_pipeline_runs(self, application_ids) -> int:
+        # Holding CI capacity: dispatched and not finished. A run waiting for approval has
+        # left Jenkins; counting it would let approvals nobody gives stop every build.
+        return self._count_runs("admitted_at IS NOT NULL AND status = ANY(%s)",
+                                [PipelineStatus.QUEUED.value, PipelineStatus.RUNNING.value], application_ids)
+
+    def count_waiting_pipeline_runs(self, application_ids) -> int:
+        return self._count_runs("admitted_at IS NULL AND status = ANY(%s)",
+                                [PipelineStatus.QUEUED.value], application_ids)
+
+    def _count_runs(self, condition: str, statuses: list[str], application_ids) -> int:
+        if application_ids is None:
+            self._cursor.execute(f"SELECT count(*) AS n FROM pipeline_runs WHERE {condition}", (statuses,))
+        else:
+            self._cursor.execute(
+                f"SELECT count(*) AS n FROM pipeline_runs WHERE {condition} AND application_id = ANY(%s)",
+                (statuses, list(application_ids)),
+            )
+        return int(self._cursor.fetchone()["n"])
+
+    def pipeline_runs_awaiting_admission(self, limit: int) -> tuple[PipelineRun, ...]:
+        self._cursor.execute(
+            # SKIP LOCKED: a run that a supersession has locked is about to be cancelled;
+            # waiting for it would only make admission wait on a push.
+            f"SELECT {RUN_COLUMNS} FROM pipeline_runs WHERE admitted_at IS NULL AND status = %s"
+            " ORDER BY created_at, id LIMIT %s FOR UPDATE SKIP LOCKED",
+            (PipelineStatus.QUEUED.value, limit),
+        )
+        return tuple(_run(row) for row in self._cursor.fetchall())
+
+    def lock_active_runs_in_group(self, concurrency_group: str) -> tuple[PipelineRun, ...]:
+        # FOR UPDATE: a CI callback for one of these waits until the supersession commits
+        # and then finds the run cancelled, instead of both writers passing a version check.
+        self._cursor.execute(
+            f"SELECT {RUN_COLUMNS} FROM pipeline_runs WHERE concurrency_group = %s AND status = ANY(%s)"
+            " ORDER BY created_at, id FOR UPDATE",
+            (concurrency_group, [PipelineStatus.QUEUED.value, PipelineStatus.RUNNING.value]),
+        )
+        return tuple(_run(row) for row in self._cursor.fetchall())
+
     def count_active_pipeline_runs(self, application_ids) -> int:
         statuses = [PipelineStatus.QUEUED.value, PipelineStatus.RUNNING.value, PipelineStatus.WAITING_APPROVAL.value]
         if application_ids is None:
@@ -2747,12 +2800,13 @@ class PostgresSession:
             """
             INSERT INTO resource_quotas (
                 id, scope, scope_id, max_concurrent_pipelines, max_concurrent_deployments,
-                max_production_requests_per_day, created_at, updated_at
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                max_production_requests_per_day, max_queued_pipelines, created_at, updated_at
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (scope, scope_id) DO UPDATE SET
                 max_concurrent_pipelines = EXCLUDED.max_concurrent_pipelines,
                 max_concurrent_deployments = EXCLUDED.max_concurrent_deployments,
                 max_production_requests_per_day = EXCLUDED.max_production_requests_per_day,
+                max_queued_pipelines = EXCLUDED.max_queued_pipelines,
                 updated_at = EXCLUDED.updated_at
             """,
             (
@@ -2762,6 +2816,7 @@ class PostgresSession:
                 record.max_concurrent_pipelines,
                 record.max_concurrent_deployments,
                 record.max_production_requests_per_day,
+                record.max_queued_pipelines,
                 record.created_at,
                 record.updated_at,
             ),

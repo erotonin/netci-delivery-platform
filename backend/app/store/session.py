@@ -465,6 +465,23 @@ class PlatformSession(Protocol):
         """Wait for, then hold until commit, a transaction-scoped advisory lock."""
         ...
 
+    def count_admitted_pipeline_runs(self, application_ids) -> int:
+        """Runs holding CI capacity -- admitted, queued or running -- in these applications
+        (all of them for None). ADR-050."""
+        ...
+
+    def count_waiting_pipeline_runs(self, application_ids) -> int:
+        """Queued runs not yet admitted, in these applications (all of them for None)."""
+        ...
+
+    def pipeline_runs_awaiting_admission(self, limit: int) -> tuple[PipelineRun, ...]:
+        """Queued, unadmitted runs, oldest first."""
+        ...
+
+    def lock_active_runs_in_group(self, concurrency_group: str) -> tuple[PipelineRun, ...]:
+        """Queued or running runs of one concurrency group, locked until commit."""
+        ...
+
     def savepoint(self) -> ContextManager[None]:
         """Undo only this block's writes if it raises; the enclosing transaction goes on.
 
