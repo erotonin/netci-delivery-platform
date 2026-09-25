@@ -120,3 +120,16 @@ Rekor, publishing each internal image digest and the signing identity. So:
   verifier checks against the same URL.
 - A private Rekor's public key must also be trusted by cosign on the agents and in the
   netCI images. That is deployment configuration and is not automated or verified here.
+
+## Live evidence (2026-09-25, Kubernetes install 0.2.0-rc20, library netci-0.3, lab Jenkins A/B)
+
+- A same-repository push built, signed and published through the new pipeline on both
+  controllers (Jenkins A #13, B #9). Build #13 received `REGISTRY_TLS_VERIFY=false` (the lab
+  sets `registry.allowHttp`), `COSIGN_TLOG_UPLOAD=false` and an empty `COSIGN_REKOR_URL`; its
+  callbacks arrived, so the form-body parameters, the masked token among them, reached it.
+- With the module switched to `forkPullRequests: verify` for the check (and switched back
+  after), a pull request from another repository ran checkout, unit test, build, SBOM and
+  scan, succeeded with no digest, and **added no tag to the registry**: the tag list of
+  `payments-api` was the same before and after.
+- Not exercised live: git or registry credentials (the lab's are anonymous), a TLS registry,
+  a cosign key with a password, and a Rekor upload.
