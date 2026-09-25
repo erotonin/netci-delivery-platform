@@ -3288,6 +3288,30 @@ paths:
                 $ref: '#/components/schemas/ScorecardsResponse'
         '401':
           $ref: '#/components/responses/Unauthorized'
+  /finops/ci:
+    get:
+      operationId: getCiCost
+      summary: CI capacity consumed (measured) and avoided by supersession (estimated)
+      description: >-
+        Over the applications the caller may see. runnerSeconds is the sum of recorded stage
+        durations; estimatedAvoidedRunnerSeconds is superseded-before-admission runs times the
+        median runner seconds of the application's succeeded runs, and null when there is none
+        to estimate from. cost is null unless NETCI_CI_PRICE_PER_RUNNER_HOUR is configured --
+        never 0 for "not configured".
+      parameters:
+        - name: days
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 365, default: 30 }
+      responses:
+        '200':
+          description: CI cost projection
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CiCost'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
   /modules/{moduleId}/insights:
     get:
       operationId: getModuleInsights
@@ -4885,6 +4909,56 @@ components:
         commitSha: { type: string }
         failedRunId: { type: string, format: uuid }
         passedRunId: { type: string, format: uuid }
+    CiCostCounters:
+      type: object
+      properties:
+        runs: { type: integer }
+        succeeded: { type: integer }
+        failed: { type: integer }
+        cancelled: { type: integer }
+        superseded: { type: integer }
+        supersededBeforeAdmission: { type: integer, description: Never reached CI. }
+        supersededWhileBuilding: { type: integer }
+        runnerSeconds: { type: number, description: Measured -- sum of recorded stage durations. }
+        stagesWithoutDuration: { type: integer }
+        queueSeconds: { type: number, description: Measured -- admittedAt minus createdAt, summed over admitted runs. }
+        p50QueueSeconds: { type: number, nullable: true }
+        p95QueueSeconds: { type: number, nullable: true }
+        estimatedAvoidedRunnerSeconds: { type: number, nullable: true, description: An estimate; see method. }
+        cost:
+          type: object
+          nullable: true
+          properties:
+            currency: { type: string }
+            measured: { type: string }
+            estimatedAvoided: { type: string, nullable: true }
+    CiCost:
+      type: object
+      properties:
+        window:
+          type: object
+          properties:
+            days: { type: integer }
+            from: { type: string, format: date-time }
+            to: { type: string, format: date-time }
+        method: { type: object, additionalProperties: { type: string } }
+        applications:
+          type: array
+          items:
+            allOf:
+              - $ref: '#/components/schemas/CiCostCounters'
+              - type: object
+                properties:
+                  applicationId: { type: string, format: uuid }
+                  name: { type: string }
+        total:
+          allOf:
+            - $ref: '#/components/schemas/CiCostCounters'
+            - type: object
+              properties:
+                estimatedAvoidedIncomplete:
+                  type: boolean
+                  description: True when an application with superseded runs had no succeeded run to estimate from, so the total estimate leaves it out.
     ModuleInsights:
       type: object
       required: [failures, flaky, queueTime, leadTime]

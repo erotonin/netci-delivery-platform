@@ -15,6 +15,7 @@ import time
 import urllib.request
 
 logger = logging.getLogger("netci.main")
+from decimal import Decimal, InvalidOperation
 from datetime import datetime, timedelta, timezone
 from contextlib import asynccontextmanager
 from typing import Annotated, Any, Literal
@@ -99,6 +100,7 @@ from .adapters.log_summary import LogSummaryError, build_log_summarizer
 from .domain.verification import VerificationConfigError, VerificationResult, render_query, verdict_for_canary
 from .exposure import SEVERITY_ORDER, exposure as vulnerability_exposure, rescan_in_service
 from .projections.scorecard import all_scorecards, module_scorecard
+from .projections.finops import ci_cost
 from .projections.insights import delivery_insights
 from .store import build_database
 from .store.records import (
@@ -4482,6 +4484,29 @@ def get_scorecards(principal: Principal = ReadAccess) -> dict[str, object]:
         modules = tx.portal_modules()
     module_ids = [module.id for module in modules if module.application_id in visible]
     return all_scorecards(platform, portal, module_ids, now=datetime.now(timezone.utc))
+
+
+def _ci_price_per_runner_hour() -> Decimal | None:
+    raw = os.getenv("NETCI_CI_PRICE_PER_RUNNER_HOUR", "").strip()
+    if not raw:
+        return None
+    try:
+        price = Decimal(raw)
+    except InvalidOperation:
+        logger.warning("NETCI_CI_PRICE_PER_RUNNER_HOUR is not a decimal; CI cost is not shown")
+        return None
+    return price if price.is_finite() and price >= 0 else None
+
+
+@app.get("/finops/ci")
+def get_ci_cost(days: int = Query(default=30, ge=1, le=365), principal: Principal = ReadAccess) -> dict[str, object]:
+    """CI capacity measured from recorded stage durations, and what supersession avoided
+    (an estimate, named so). Money only when a price per runner hour is configured."""
+
+    price = _ci_price_per_runner_hour()
+    currency = (os.getenv("NETCI_CI_PRICE_CURRENCY", "").strip() or "USD") if price is not None else None
+    return ci_cost(platform, _visible_application_ids(principal), now=datetime.now(timezone.utc), days=days,
+                   price_per_runner_hour=price, currency=currency)
 
 
 @app.get("/modules/{moduleId}/insights")
