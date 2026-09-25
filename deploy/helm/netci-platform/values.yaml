@@ -48,6 +48,9 @@ secrets:
 
 # ---------------------------------------------------------------- CI: Jenkins
 jenkins:
+  # Admission (ADR-050) hands a controller more builds only while its own queue holds
+  # fewer than this many; the rest wait in netCI, oldest and people first.
+  admissionMaxQueue: 2
   # One or more controllers; netCI routes builds across them. It creates and updates its
   # own jobs (netci-<application-id>) through the API, so the service account needs
   # Job/Create, Job/Configure, Job/Build, Job/Read and Overall/Read.

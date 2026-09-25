@@ -52,6 +52,7 @@ data:
   {{- $ids := list }}
   {{- range .Values.jenkins.controllers }}{{ $ids = append $ids (required "every jenkins.controllers entry needs an id" .id) }}{{ end }}
   NETCI_JENKINS_CONTROLLERS: {{ join "," $ids | quote }}
+  NETCI_ADMISSION_MAX_JENKINS_QUEUE: {{ .Values.jenkins.admissionMaxQueue | default 2 | quote }}
   {{- range .Values.jenkins.controllers }}
   {{- $prefix := include "netci.jenkinsPrefix" .id }}
   {{ $prefix }}_URL: {{ required (printf "jenkins.controllers[id=%s].url is required" .id) .url | trimSuffix "/" | quote }}

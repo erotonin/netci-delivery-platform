@@ -110,11 +110,36 @@ class JenkinsCiLauncher:
         *,
         required_capability: str | None = None,
         isolation: BuildIsolationProvisioner | None = None,
+        max_queued_per_controller: int = 2,
     ) -> None:
         self.router = router
         self.adapters = adapters
         self.required_capability = required_capability
         self.isolation = isolation or SharedNamespaceIsolation()
+        self.max_queued_per_controller = max(0, max_queued_per_controller)
+
+    def admission_budget(self) -> int:
+        """How many more builds netCI may hand Jenkins right now (ADR-050).
+
+        Read from Jenkins' own queue, not from a configured executor count: with agents
+        started as pods the executor count is not the limit, and a build Jenkins cannot
+        start yet sits in its queue. Each healthy controller takes up to
+        `max_queued_per_controller` minus what is already queued there. A controller
+        that is down, or whose queue cannot be read, takes nothing -- the run keeps
+        waiting in netCI, visible and admissible later, instead of failing at launch.
+        """
+
+        self.refresh_health()
+        budget = 0
+        for controller in self.router.controllers:
+            if controller.state != ControllerState.HEALTHY:
+                continue
+            probe = getattr(self.adapters.get(controller.controller_id), "queued_builds", None)
+            queued = probe() if probe is not None else None
+            if queued is None:
+                continue
+            budget += max(0, self.max_queued_per_controller - queued)
+        return budget
 
     def controller_drift(self) -> dict[str, object]:
         """Compare what every controller is running (ADR-030).
@@ -288,4 +313,7 @@ def build_ci_launcher() -> CiLauncher:
         adapters[name] = JenkinsHttpAdapter(config)
     if not controllers:
         raise ValueError("NETCI_CI_MODE=jenkins requires at least one controller in NETCI_JENKINS_CONTROLLERS")
-    return JenkinsCiLauncher(JenkinsRouter(controllers), adapters, isolation=build_isolation_provisioner())
+    return JenkinsCiLauncher(
+        JenkinsRouter(controllers), adapters, isolation=build_isolation_provisioner(),
+        max_queued_per_controller=int(os.getenv("NETCI_ADMISSION_MAX_JENKINS_QUEUE", "2")),
+    )

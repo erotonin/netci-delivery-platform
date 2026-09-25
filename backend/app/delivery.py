@@ -2085,6 +2085,8 @@ class DeliveryPlatform:
         """
 
         admitted: list[tuple[Application, PipelineRun]] = []
+        # Asked before the transaction: it is a network call to every controller.
+        ci_budget = self._ci_admission_budget()
         with self._transaction() as transaction:
             transaction.advisory_xact_lock(LOCK_ADMISSION)
             waiting = transaction.pipeline_runs_awaiting_admission(limit)
@@ -2095,6 +2097,9 @@ class DeliveryPlatform:
             unit = UnitOfWork()
             now = _now()
             for run in waiting:
+                if ci_budget is not None and len(admitted) >= ci_budget:
+                    # Jenkins is saturated or unreachable: the rest wait, in order.
+                    break
                 if run.application_id not in applications:
                     applications[run.application_id] = transaction.application(run.application_id)
                 application = applications[run.application_id]
@@ -2127,6 +2132,18 @@ class DeliveryPlatform:
             except DeliveryError as exc:
                 outcome[run.id] = exc
         return outcome
+
+    def _ci_admission_budget(self) -> int | None:
+        """What the CI engine can take now; None when it does not say (no limit but quota)."""
+
+        probe = getattr(self.ci_launcher, "admission_budget", None)
+        if probe is None:
+            return None
+        try:
+            return max(0, int(probe()))
+        except Exception as exc:  # noqa: BLE001 - not knowing is "take nothing now"
+            logger.warning("could not read CI capacity; admitting nothing this pass: %s", exc)
+            return 0
 
     def admit_waiting_runs_quietly(self) -> None:
         """Admission after something freed capacity, from a path that must not fail

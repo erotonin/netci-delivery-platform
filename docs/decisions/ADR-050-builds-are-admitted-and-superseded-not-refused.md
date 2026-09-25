@@ -51,8 +51,12 @@ mattered, the last one, could be the one refused.
   admission (`admittedAt` null) so a queued run is not mistaken for a stuck one.
 - An API caller that exceeded the concurrency quota used to get 429; it now gets 202 and
   a waiting run. Only a full queue is refused.
-- Capacity is the configured quota, not Jenkins' free executors. Reading executor
-  availability from the controllers is the next step and is not done here.
+- Admission also asks Jenkins. Each healthy controller takes builds only while its own
+  queue holds fewer than `NETCI_ADMISSION_MAX_JENKINS_QUEUE` (default 2). With agents
+  started as pods, a configured executor count is not the limit, and a build Jenkins
+  cannot start yet sits in that queue. A controller that is down, or whose queue cannot
+  be read, takes nothing: runs keep waiting in netCI instead of failing at launch, as
+  they did before admission when no controller answered.
 
 ## Live evidence (2026-09-25, Kubernetes install 0.2.0-rc15, the lab's Jenkins A)
 

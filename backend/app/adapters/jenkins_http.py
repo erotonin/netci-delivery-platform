@@ -330,6 +330,23 @@ class JenkinsHttpAdapter:
         if not 200 <= status < 300:
             raise JenkinsHttpError(f"JCasC reload returned {status}: {body.decode(errors='replace')[:200]}")
 
+    def queued_builds(self) -> int | None:
+        """Builds waiting in this controller's own queue, or None when it cannot say.
+
+        None, not 0: admission reads this as "is Jenkins already saturated" (ADR-050), and
+        an unreachable queue taken for an empty one would pile builds onto a controller
+        that is not keeping up.
+        """
+
+        try:
+            status, _, body = self._request("GET", "/queue/api/json?tree=items[id]", use_crumb=False)
+            if not 200 <= status < 300:
+                return None
+            items = json.loads(body or b"{}").get("items")
+            return len(items) if isinstance(items, list) else None
+        except (JenkinsHttpError, OSError, ValueError):
+            return None
+
     def queue_depth(self) -> int:
         try:
             _, _, body = self._request("GET", "/queue/api/json?tree=items[id]", use_crumb=False)
