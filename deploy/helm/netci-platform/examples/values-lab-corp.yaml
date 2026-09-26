@@ -16,7 +16,7 @@ global:
 
 image:
   registry: 172.17.0.1:8930/netci
-  tag: 0.3.0-corp1               # built from a clean worktree of HEAD, pushed to Harbor
+  tag: 0.3.0-corp2               # built from a clean worktree of HEAD, pushed to Harbor
 
 existingSecret: netci-app
 
@@ -32,7 +32,7 @@ jenkins:
   gitCredentialsId: netci-git
   registryCredentialsId: netci-harbor
   # 0.4 reports toolVersions; older libraries are refused by the toolchain gate (ADR-056).
-  sharedLibrary: netci-shared-library@netci-0.4.0
+  sharedLibrary: netci-shared-library@netci-0.4.1
   callbackUrl: http://netci-netci-platform-api.netci-system.svc:8000
 
 temporal:
@@ -53,6 +53,7 @@ auth:
 registry:
   pushHost: 172.17.0.1:8930
   pullHost: 172.17.0.1:8930
+  namespace: apps                # the build robot may push to Harbor project `apps` only
   allowHttp: true                # Harbor has no TLS in the lab yet (infra/corp/README.md)
   buildBaseImage: 172.17.0.1:8930/mirror/netci/python-base:3.12-alpine
   trivyDbRepository: 172.17.0.1:8930/mirror/aquasec/trivy-db:2

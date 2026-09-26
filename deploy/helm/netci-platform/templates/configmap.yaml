@@ -76,6 +76,7 @@ data:
   NETCI_REGISTRY_CREDENTIALS_ID: {{ .Values.jenkins.registryCredentialsId | default "" | quote }}
   NETCI_REGISTRY_PUSH_HOST: {{ required "registry.pushHost is required: where builds push images" .Values.registry.pushHost | quote }}
   NETCI_REGISTRY_PULL_HOST: {{ default .Values.registry.pushHost .Values.registry.pullHost | quote }}
+  NETCI_REGISTRY_NAMESPACE: {{ .Values.registry.namespace | default "" | quote }}
   NETCI_REGISTRY_ALLOW_HTTP: {{ .Values.registry.allowHttp | quote }}
   {{- with .Values.registry.buildBaseImage }}
   NETCI_BUILD_BASE_IMAGE: {{ . | quote }}

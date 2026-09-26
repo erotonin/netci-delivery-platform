@@ -244,3 +244,45 @@ def test_netci_verifies_against_the_same_rekor_the_build_uploaded_to():
         CosignSignatureVerifier(key="k", require_tlog=True)
     verifier = CosignSignatureVerifier(key="k", require_tlog=True, rekor_url="https://rekor.corp.example")
     assert verifier.rekor_url == "https://rekor.corp.example"
+
+
+def _sent_with_namespace(namespace: str) -> dict[str, str]:
+    adapter = JenkinsHttpAdapter(JenkinsHttpConfig(base_url="http://jenkins", username="u", api_token="t",
+                                                   registry_namespace=namespace))
+    sent: dict[str, str] = {}
+
+    def fake(method, path, *args, body=None, **kwargs):
+        if "buildWithParameters" in path:
+            sent.update(dict(urllib.parse.parse_qsl(body.decode(), keep_blank_values=True)))
+            return 201, {"Location": "http://jenkins/queue/item/7/"}, b""
+        raise RuntimeError("stop after the trigger")
+
+    adapter._request = fake  # type: ignore[method-assign]
+    with pytest.raises(Exception):
+        adapter.trigger_ci_run("netci-x", _request(), callback_token="tok")
+    return sent
+
+
+def test_the_registry_namespace_is_the_server_s_and_reaches_the_build():
+    # Harbor keeps repositories in projects; the build's robot may push to one only.
+    assert "NETCI_IMAGE_NAMESPACE" in JOB_PARAMETERS
+    assert _sent_with_namespace("apps")["NETCI_IMAGE_NAMESPACE"] == "apps"
+    assert _sent_with_namespace("")["NETCI_IMAGE_NAMESPACE"] == ""
+
+
+@pytest.mark.parametrize("value", ["Apps", "apps/../netci", "apps//x", "-apps", " a b "])
+def test_an_invalid_registry_namespace_stops_startup(value):
+    from app.adapters.jenkins_http import registry_namespace_setting
+    with pytest.raises(ValueError):
+        registry_namespace_setting(value)
+
+
+def test_a_surrounding_slash_is_normalised_not_refused():
+    from app.adapters.jenkins_http import registry_namespace_setting
+    assert registry_namespace_setting("/org/apps/") == "org/apps"
+
+
+def test_a_caller_cannot_choose_the_registry_namespace():
+    with pytest.raises(BuildInputError) as refused:
+        validate_build_inputs({"NETCI_IMAGE_NAMESPACE": "netci"})
+    assert refused.value.code == "BUILD_INPUT_NOT_ALLOWED"

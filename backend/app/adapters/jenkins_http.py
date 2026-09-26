@@ -53,6 +53,10 @@ class JenkinsHttpConfig:
     # internet, so the base image comes from the same registry as everything else.
     registry_push_host: str = ""
     registry_pull_host: str = ""
+    # The registry path every artifact is published under ("apps" -> <host>/apps/<image>):
+    # a registry like Harbor keeps repositories in projects with their own permissions, and
+    # the build's credential may push to one project only. Server-owned, like the image name.
+    registry_namespace: str = ""
     base_image: str = ""
     # Where Trivy fetches its vulnerability database. A build farm without internet
     # access needs a mirror; a stale or missing database would silently weaken the scan.
@@ -95,6 +99,7 @@ class JenkinsHttpConfig:
             shared_library=os.getenv("NETCI_SHARED_LIBRARY", "netci-shared-library"),
             registry_push_host=os.getenv("NETCI_REGISTRY_PUSH_HOST", ""),
             registry_pull_host=os.getenv("NETCI_REGISTRY_PULL_HOST", ""),
+            registry_namespace=registry_namespace_setting(os.getenv("NETCI_REGISTRY_NAMESPACE", "")),
             base_image=os.getenv("NETCI_BUILD_BASE_IMAGE", ""),
             trivy_db_repository=os.getenv("NETCI_TRIVY_DB_REPOSITORY", ""),
             cosign_credentials_id=_credentials_id(
@@ -113,6 +118,23 @@ class JenkinsHttpConfig:
             rekor_url=rekor_url_setting(),
             folder=jenkins_folder(os.getenv("NETCI_JENKINS_FOLDER", "")),
         )
+
+
+#: OCI repository path components (distribution spec), joined by "/".
+_REGISTRY_NAMESPACE = re.compile(r"[a-z0-9]+(?:[._-][a-z0-9]+)*(?:/[a-z0-9]+(?:[._-][a-z0-9]+)*)*")
+
+
+def registry_namespace_setting(value: str) -> str:
+    """NETCI_REGISTRY_NAMESPACE, refused at startup unless it is a valid repository path.
+
+    A bad value would otherwise surface only when the first build tries to push -- after
+    it has spent its time -- or, worse, publish somewhere nobody meant.
+    """
+
+    value = value.strip().strip("/")
+    if value and not _REGISTRY_NAMESPACE.fullmatch(value):
+        raise ValueError(f"NETCI_REGISTRY_NAMESPACE {value!r} is not a registry path (e.g. 'apps' or 'org/apps')")
+    return value
 
 
 #: What Jenkins accepts as a credential id (BaseStandardCredentials' id check).
@@ -180,6 +202,7 @@ JOB_PARAMETERS: tuple[str, ...] = (
     # that one name, whatever its own repository held.
     "NETCI_APP_DIR",
     "NETCI_IMAGE_NAME",
+    "NETCI_IMAGE_NAMESPACE",
     # "false" for a verify-only build: no Sign, no Publish, no evidence (ADR-043).
     "NETCI_PUBLISH",
     # The pull request head ref to fetch when the commit is on no branch (a fork's).
@@ -637,6 +660,7 @@ class JenkinsHttpAdapter:
                 # Decided here, not by the caller: the image repository is where the
                 # artifact lands, and one module must not be able to publish as another.
                 "NETCI_IMAGE_NAME": image_name_for(request.application_name),
+                "NETCI_IMAGE_NAMESPACE": self.config.registry_namespace,
                 "NETCI_PUBLISH": "true" if request.publish_artifact else "false",
                 "NETCI_GIT_REF": request.source_ref,
                 "NETCI_AGENT_LABEL": str(request.parameters.get("agentLabel", "")),
