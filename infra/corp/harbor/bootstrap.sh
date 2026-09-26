@@ -66,6 +66,29 @@ ensure_robot("netci", "netCI builds: pull netci/mirror, push apps",
 ensure_robot("ops", "operators: publish netci and mirror images",
              {"netci": push_pull, "mirror": push_pull}, "harbor_ops_robot_name", "harbor_ops_robot_secret")
 
+# A published tag keeps meaning the same bytes: netCI's own images and every mirrored upstream
+# are immutable in Harbor -- except the Trivy DB, whose one tag is refreshed every 6 hours.
+# `apps` stays mutable: netCI identifies artifacts by digest, and a re-run of the same commit
+# may push its tag again.
+def ensure_immutable(project, exclude=None):
+    status, rules = call("GET", f"/projects/{project}/immutabletagrules")
+    if rules:
+        print(f"immutability {project}: rule exists")
+        return
+    repo = {"kind": "doublestar", "decoration": "repoExcludes" if exclude else "repoMatches",
+            "pattern": exclude or "**"}
+    status, _ = call("POST", f"/projects/{project}/immutabletagrules", {
+        "disabled": False, "action": "immutable", "template": "immutable_template",
+        "tag_selectors": [{"kind": "doublestar", "decoration": "matches", "pattern": "**"}],
+        "scope_selectors": {"repository": [repo]},
+    })
+    print(f"immutability {project}: {'created' if status == 201 else status}")
+    if status != 201:
+        sys.exit(f"immutability rule for {project} failed")
+
+ensure_immutable("netci")
+ensure_immutable("mirror", exclude="aquasec/trivy-db")
+
 # The Trivy DB is pulled from its source on a schedule, into the mirror everything scans
 # with: a stale DB makes the toolchain gate refuse builds (ADR-056), so freshness is
 # Harbor's job, not someone's memory. Anonymous pull from ghcr.io.

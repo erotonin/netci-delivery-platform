@@ -23,8 +23,9 @@ K=(kubectl --context "${CONTEXT}")
 HARBOR=172.17.0.1:8930               # TLS from the lab CA; pushes go through push_image.sh
 CHART_VERSION=5.9.64
 AGENT_IMAGE=jenkins/inbound-agent:3386.v353e57a_1b_ea_0-1-jdk21
-CONTROLLER_IMAGE=netci/jenkins-controller:2.541.1-netci1
-TOOLBOX_IMAGE=netci/ci-toolbox:0.4.0
+# Read from where they are decided, so this script cannot drift from what runs.
+CONTROLLER_IMAGE="$(python3 -c 'import sys,yaml;i=yaml.safe_load(open(sys.argv[1]))["controller"]["image"];print(i["repository"]+":"+i["tag"])' "${ROOT}/infra/corp/jenkins/values.yaml")"
+TOOLBOX_IMAGE="$(python3 -c 'import sys,yaml;t=yaml.safe_load(open(sys.argv[1]))["toolbox"];print(t["image"]+":"+t["tag"])' "${ROOT}/toolchain/versions.yaml")"
 log() { printf '[%s] %s\n' "$(date +%H:%M:%S)" "$*"; }
 secret() {  # generate once, never overwrite: services were initialised with the first value
   [[ -s "${C}/$1" ]] || ( umask 077; python3 -c 'import secrets;print(secrets.token_urlsafe(24))' > "${C}/$1" )
@@ -117,11 +118,19 @@ log "images into Harbor (nodes have no route to Docker Hub)"
 # The operators' robot: the builds' robot can push only to `apps` (infra/corp/harbor/bootstrap.sh).
 # Images reach Harbor through scripts/corp/push_image.sh (buildah with the lab CA as its only
 # extra trust): Docker 29 fetches registry tokens without /etc/docker/certs.d.
-# The toolbox first: scripts/corp/push_image.sh runs buildah from it.
-docker build -q --network host -t "${TOOLBOX_IMAGE}" "${ROOT}/jenkins/agent-toolbox" >/dev/null
+harbor_has() {  # repo tag -> true when Harbor already serves that tag
+  curl -s -o /dev/null -w '%{http_code}' --cacert "${C}/pki/ca.crt" -u "$(<"${C}/harbor_ops_robot_name"):$(<"${C}/harbor_ops_robot_secret")" \
+    -H 'Accept: application/vnd.oci.image.index.v1+json,application/vnd.oci.image.manifest.v1+json,application/vnd.docker.distribution.manifest.v2+json,application/vnd.docker.distribution.manifest.list.v2+json' \
+    "https://${HARBOR}/v2/$1/manifests/$2" | grep -q 200
+}
+# A published tag is never rebuilt over: the same name must keep meaning the same bytes (and
+# Harbor's immutability rule on `netci` refuses it anyway). The toolbox is also what
+# scripts/corp/push_image.sh runs, so it is built locally whenever it is missing here.
+[[ -n "$(docker images -q "${TOOLBOX_IMAGE}")" ]] || docker build -q --network host -t "${TOOLBOX_IMAGE}" "${ROOT}/jenkins/agent-toolbox" >/dev/null
 push() { "${ROOT}/scripts/corp/push_image.sh" "$1" "$2" >/dev/null; }
-mirror() {  # $1 = upstream image; pushed under mirror/<same path>
+mirror() {  # $1 = upstream image; pushed under mirror/<same path> unless already there
   local short="${1#docker.io/}"; short="${short#quay.io/}"
+  harbor_has "mirror/${short%:*}" "${short##*:}" && return 0
   docker pull -q "$1" >/dev/null && push "$1" "${HARBOR}/mirror/${short}"
 }
 helm repo add jenkins https://charts.jenkins.io >/dev/null 2>&1 || true
@@ -131,9 +140,11 @@ import sys, yaml
 s = yaml.safe_load(sys.stdin)["controller"]["sidecars"]["configAutoReload"]["image"]
 print("{}/{}:{}".format(s.get("registry", "docker.io"), s["repository"], s["tag"]))')
 for img in velero/velero:v1.18.3 velero/velero-plugin-for-aws:v1.14.3 "${sidecar}" "${AGENT_IMAGE}"; do mirror "${img}"; done
-docker build -q --network host -t "${CONTROLLER_IMAGE}" -f "${ROOT}/jenkins/Dockerfile.controller" "${ROOT}/jenkins" >/dev/null
-push "${CONTROLLER_IMAGE}" "${HARBOR}/${CONTROLLER_IMAGE}"
-push "${TOOLBOX_IMAGE}" "${HARBOR}/${TOOLBOX_IMAGE}"
+if ! harbor_has "${CONTROLLER_IMAGE%:*}" "${CONTROLLER_IMAGE##*:}"; then
+  docker build -q --network host -t "${CONTROLLER_IMAGE}" -f "${ROOT}/jenkins/Dockerfile.controller" "${ROOT}/jenkins" >/dev/null
+  push "${CONTROLLER_IMAGE}" "${HARBOR}/${CONTROLLER_IMAGE}"
+fi
+harbor_has "${TOOLBOX_IMAGE%:*}" "${TOOLBOX_IMAGE##*:}" || push "${TOOLBOX_IMAGE}" "${HARBOR}/${TOOLBOX_IMAGE}"
 
 log "Trivy DB mirror, refreshed every 6 hours by a user timer"
 "${ROOT}/scripts/corp/mirror_trivy_db.sh"
@@ -167,4 +178,75 @@ log "Jenkins"
 helm --kube-context "${CONTEXT}" upgrade --install jenkins jenkins/jenkins --version "${CHART_VERSION}" \
   -n jenkins -f "${ROOT}/infra/corp/jenkins/values.yaml" --wait --timeout 10m >/dev/null
 
-log "up. scripts/corp/status.sh shows the state; scripts/corp/jenkins_failover.sh runs the drill."
+log "the lab CA for build pods and netCI"
+for ns in netci-build netci-system; do
+  "${K[@]}" create namespace "${ns}" --dry-run=client -o yaml | "${K[@]}" apply -f - >/dev/null
+  "${K[@]}" -n "${ns}" create configmap lab-ca --from-file=ca.crt="${C}/pki/ca.crt" --dry-run=client -o yaml | "${K[@]}" apply -f - >/dev/null
+done
+
+log "netCI's Jenkins service account token"
+if [[ ! -s "${C}/jenkins_netci_sa_token" ]]; then
+  "${K[@]}" -n jenkins port-forward svc/jenkins 18089:8080 --address 127.0.0.1 >/dev/null 2>&1 & pf=$!
+  for _ in $(seq 60); do [[ "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:18089/login)" == 200 ]] && break; sleep 2; done
+  sa_cfg="$(mktemp)"; ( umask 077; printf 'user = "netci-sa:%s"\n' "$(<"${C}/jenkins_netci_sa_password")" > "${sa_cfg}" )
+  crumb=$(curl -K "${sa_cfg}" -s -c "${sa_cfg}.jar" http://127.0.0.1:18089/crumbIssuer/api/json \
+    | python3 -c 'import json,sys;d=json.load(sys.stdin);print(d["crumbRequestField"]+":"+d["crumb"])')
+  # Minted by the account itself, written straight to a 600 file, never printed.
+  ( umask 077; curl -K "${sa_cfg}" -s -b "${sa_cfg}.jar" -H "${crumb}" -X POST --data 'newTokenName=netci-corp' \
+      http://127.0.0.1:18089/user/netci-sa/descriptorByName/jenkins.security.ApiTokenProperty/generateNewToken \
+    | python3 -c 'import json,sys;print(json.load(sys.stdin)["data"]["tokenValue"],end="")' > "${C}/jenkins_netci_sa_token" )
+  rm -f "${sa_cfg}" "${sa_cfg}.jar"; kill "${pf}" 2>/dev/null || true
+fi
+
+log "the deploy target netci-corp-app-01"
+"${ROOT}/scripts/corp/app_host.sh" up >/dev/null
+
+log "netCI's database (its own role, not a superuser) on the lab PostgreSQL"
+secret netci_db_password
+python3 - "${C}" <<'EOF2' | docker exec -i netci-p0-pg psql -U netci -d postgres -v ON_ERROR_STOP=1 -q
+import sys
+pw = open(f"{sys.argv[1]}/netci_db_password").read().strip()
+print(f"""DO $$ BEGIN
+  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'netci_corp') THEN
+    CREATE ROLE netci_corp LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE PASSWORD '{pw}';
+  END IF;
+END $$;
+SELECT 'CREATE DATABASE netci_corp OWNER netci_corp' WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'netci_corp') \\gexec
+REVOKE ALL ON DATABASE netci_corp FROM PUBLIC;""")
+EOF2
+[[ -s "${C}/netci_workload_token_keys" ]] || ( umask 077; printf 'k1:%s' "$(python3 -c 'import secrets;print(secrets.token_urlsafe(48))')" > "${C}/netci_workload_token_keys" )
+
+log "netCI images (from a clean worktree of HEAD, only when Harbor lacks the tag)"
+NETCI_TAG="$(python3 -c 'import sys,yaml;print(yaml.safe_load(open(sys.argv[1]))["image"]["tag"])' "${ROOT}/deploy/helm/netci-platform/examples/values-lab-corp.yaml")"
+if ! harbor_has netci/backend "${NETCI_TAG}" || ! harbor_has netci/worker "${NETCI_TAG}" || ! harbor_has netci/frontend "${NETCI_TAG}"; then
+  # The build script ships the working tree; uncommitted edits must not reach an image.
+  wt="$(mktemp -d)"; git -C "${ROOT}" worktree add -q --detach "${wt}/src" HEAD
+  ( cd "${wt}/src"
+    docker build -q --network host -t "netci/backend:${NETCI_TAG}" -f backend/Dockerfile . >/dev/null
+    docker build -q --network host -t "netci/worker:${NETCI_TAG}" -f backend/Dockerfile.worker . >/dev/null
+    docker build -q --network host -t "netci/frontend:${NETCI_TAG}" -f frontend/Dockerfile frontend >/dev/null )
+  for i in backend worker frontend; do push "netci/${i}:${NETCI_TAG}" "${HARBOR}/netci/${i}:${NETCI_TAG}"; done
+  git -C "${ROOT}" worktree remove --force "${wt}/src"; rm -rf "${wt}"
+fi
+
+log "netCI"
+"${K[@]}" label namespace netci-system pod-security.kubernetes.io/enforce=restricted --overwrite >/dev/null
+"${K[@]}" -n netci-system create secret generic netci-app \
+  --from-file=database-url=<(printf 'postgresql://netci_corp:%s@172.17.0.1:55432/netci_corp' "$(<"${C}/netci_db_password")") \
+  --from-file=workload-token-keys="${C}/netci_workload_token_keys" \
+  --from-file=cosign.pub="${ROOT}/.netci-gate/keys/cosign.pub" \
+  --from-file=jenkins-corp-api-token="${C}/jenkins_netci_sa_token" \
+  --from-file=scm-gitlab-token="${C}/gitlab_netci_token" \
+  --dry-run=client -o yaml | "${K[@]}" apply -f - >/dev/null
+"${K[@]}" -n netci-system create secret generic netci-deploy-targets \
+  --from-file=id_ed25519="${C}/ssh/id_ed25519" --from-file=known_hosts="${C}/ssh/known_hosts" \
+  --dry-run=client -o yaml | "${K[@]}" apply -f - >/dev/null
+"${K[@]}" -n netci-system create secret tls netci-tls --cert="${C}/pki/netci-chain.crt" --key="${C}/pki/netci.key" \
+  --dry-run=client -o yaml | "${K[@]}" apply -f - >/dev/null
+helm --kube-context "${CONTEXT}" upgrade --install netci "${ROOT}/deploy/helm/netci-platform" -n netci-system \
+  -f "${ROOT}/deploy/helm/netci-platform/examples/values-lab-corp.yaml" --wait --timeout 10m >/dev/null
+ingress_ip="$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' netci-corp-worker)"
+ready="$(curl -s -o /dev/null -m 10 -w '%{http_code}' --cacert "${C}/pki/ca.crt" --resolve "netci.corp.local:443:${ingress_ip}" https://netci.corp.local/api/readyz)"
+[[ "${ready}" == 200 ]] || { echo "netCI /readyz answered ${ready} through the ingress" >&2; exit 1; }
+
+log "up: https://netci.corp.local (map netci.corp.local to ${ingress_ip}). status.sh shows the state; jenkins_failover.sh runs the drill; e2e_build.py proves a release."
