@@ -188,7 +188,7 @@ Vì Velero chỉ có **một** khóa repository chung cho toàn bộ cụm, vi�
 6. **Huỷ dữ liệu cũ ngay khi bước 4 PASS**, không giữ thêm: mọi object trong bucket cũ giải mã được bằng một hằng số công khai, giữ lại là giữ nguyên rủi ro. Xoá BSL cũ và bucket cũ.
 7. **Least privilege sau cùng:** Giới hạn identity của Velero trong `s3.json` vào bucket mới (`Read/Write/List/Tagging:netci-jenkins-backups`, bỏ `Admin`), restart SeaweedFS, kiểm tra `velero backup-location get` còn `Available`.
 
-*(Hiện trạng lab ngày 2026-09-26: bước 1–5 đã xong. `rekey-verify-1605` Completed vào `jenkins-s3`; diễn tập failover restore từ repository mới PASS (build đánh dấu #4, RTO 63 s). Bước 6 — xoá BSL `default` và bucket `velero` — và bước 7 đang chờ người vận hành cho phép, vì đây là thao tác xoá dữ liệu.)*
+*(Hiện trạng lab ngày 2026-09-26: bước 1–5 đã xong. `rekey-verify-1605` Completed vào `jenkins-s3`; diễn tập failover restore từ repository mới PASS (build đánh dấu #4, RTO 63 s). Bước 7 cũng đã xong: identity S3 của Velero chỉ còn `Read/Write/List/Tagging:netci-jenkins-backups`, và `scoped-verify-1656` Completed. Riêng bước 6 (xoá BSL `default` và bucket `velero`) đang chờ người vận hành cho phép, vì đây là thao tác xoá dữ liệu. Hiện Velero đã không còn đọc được bucket cũ.)*
 
 ---
 

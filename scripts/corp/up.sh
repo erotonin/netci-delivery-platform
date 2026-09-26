@@ -55,8 +55,10 @@ if [[ ! -s "${C}/s3.json" ]]; then
 import json, os, sys
 c = sys.argv[1]
 ak, sk = (open(f"{c}/{n}").read().strip() for n in ("s3-access-key", "s3-secret-key"))
+# Least privilege: Velero's identity can use its one bucket and nothing else (no Admin).
+bucket = "netci-jenkins-backups"
 cfg = {"identities": [{"name": "velero", "credentials": [{"accessKey": ak, "secretKey": sk}],
-                       "actions": ["Admin", "Read", "Write", "List", "Tagging"]}]}
+                       "actions": [f"{a}:{bucket}" for a in ("Read", "Write", "List", "Tagging")]}]}
 with open(f"{c}/s3.json", "w") as fh:
     json.dump(cfg, fh)
 EOF

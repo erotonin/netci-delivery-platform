@@ -106,7 +106,7 @@ bằng `sudo -n`, vì installer của nó tạo thư mục dữ liệu thuộc r
 - **Đã đổi khoá repository Kopia** sang khoá ngẫu nhiên lưu ngoài cụm. Backup ghi vào BSL
   `jenkins-s3` (bucket `netci-jenkins-backups`); diễn tập restore từ repository mới đã PASS (RTO 63 s,
   xem ADR-055). BSL `default` và bucket `velero` cũ (khoá mặc định công khai) đang ở chế độ
-  chỉ-đọc và chờ được huỷ, vì huỷ là thao tác xoá dữ liệu nên do người vận hành quyết định.
+  chỉ-đọc và chờ được huỷ, vì huỷ là thao tác xoá dữ liệu nên do người vận hành quyết định. Identity S3 của Velero đã bị giới hạn vào bucket mới, nên Velero không còn đọc được bucket cũ.
 - **Least privilege:** netCI gọi Jenkins bằng `netci-sa` (matrix-auth, không có Administer);
   Jenkins clone bằng group token `read_repository`; designer dùng group token `api`/Developer.
 - **netCI đã chạy trên `netci-corp`** (namespace `netci-system`, Pod Security `restricted`,
