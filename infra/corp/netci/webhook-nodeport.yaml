@@ -1,0 +1,21 @@
+# Lab only: lets the lab GitLab deliver SCM webhooks to netCI's API (ADR-057 merge events).
+# A company exposes the webhook path through its ingress/WAF with a path allow-list; this
+# cluster has no ingress controller, and the node network is reachable only from the lab's
+# own containers (GitLab, Harbor), not from outside the machine. Webhooks are still verified
+# with each integration's secret token.
+apiVersion: v1
+kind: Service
+metadata:
+  name: netci-webhooks
+  namespace: netci-system
+spec:
+  type: NodePort
+  selector:
+    app.kubernetes.io/component: api
+    app.kubernetes.io/instance: netci
+    app.kubernetes.io/name: netci-platform
+  ports:
+    - name: http
+      port: 8000
+      targetPort: 8000
+      nodePort: 30800

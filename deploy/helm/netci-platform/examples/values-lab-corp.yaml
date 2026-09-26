@@ -72,10 +72,20 @@ dcim:
 buildIsolation:
   mode: none
 
-# Build and publish only at first. The lab's deploy host is also the live stack's, and two
-# installs with separate databases would not see each other's leases on it.
+# The corp lab's own deploy target (scripts/corp/app_host.sh), not the live stack's host:
+# deployment leases live in each install's database, so two installs sharing a host would
+# not see each other's.
 deployTargets:
-  existingSecret: ""
+  existingSecret: netci-deploy-targets
+  sshPrivateKeyFile: id_ed25519
+  knownHostsFile: known_hosts
+  inventory: |
+    [docker_targets]
+    netci-corp-app-01 ansible_host=172.17.0.61 ansible_user=netci netci_become=true
+
+    [all:vars]
+    ansible_python_interpreter=/usr/bin/python3
+    netci_become=false
 
 api: {replicas: 2}
 worker: {replicas: 1}

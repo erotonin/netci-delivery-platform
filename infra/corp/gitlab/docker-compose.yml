@@ -26,7 +26,6 @@ services:
         gitlab_pages['enable'] = false
         gitlab_rails['usage_ping_enabled'] = false
         # Webhooks to netCI on the docker bridge are "local network" requests to GitLab.
-        gitlab_rails['allow_local_requests_from_web_hooks_and_services'] = true
     ports:
       - '172.17.0.1:8929:8929'
     volumes:
@@ -34,6 +33,14 @@ services:
       - gitlab_logs:/var/log/gitlab
       - gitlab_data:/var/opt/gitlab
       - ../../../.netci-gate/corp/gitlab_root_password:/run/secrets/gitlab_root_password:ro
+    # Also on the kind network, as a company GitLab shares a network with its clusters: it
+    # delivers merge webhooks to netCI (infra/corp/netci/webhook-nodeport.yaml). This host
+    # runs Docker with IP forwarding off, so a container on its own network cannot reach the
+    # cluster nodes at all.
+    networks: [default, kind]
+networks:
+  kind:
+    external: true
 volumes:
   gitlab_config:
   gitlab_logs:

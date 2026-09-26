@@ -151,7 +151,8 @@ biến `*_FILE` tới từng file này.
 | `database-url` | có | `postgresql://netci:<mật-khẩu>@host:5432/netci?sslmode=require` |
 | `workload-token-keys` | có | `k1:<chuỗi ngẫu nhiên ≥32 ký tự>` — khoá ký token cho build và deployment |
 | `cosign.pub` | có | **public** key tương ứng với `netci-cosign-key` trên Jenkins. netCI không bao giờ cần private key. |
-| `jenkins-<id>-api-token` | có, mỗi controller một key | ví dụ `jenkins-a-api-token` cho controller `id: A` |
+| `jenkins-<id>-api-token` | có, mỗi controller một key | ví dụ `jenkins-a-api-token` cho controller `id: A`. Token của một **service account** chỉ có quyền Job (Build/Cancel/Configure/Create/Discover/Read) và Overall/Read, không phải admin. |
+| `scm-gitlab-token` / `scm-github-token` | khi dùng designer hoặc SCM status | token nhóm/bot tối thiểu (GitLab: `api`, vai trò Developer). Cần kèm `scm.gitlabTokenInSecret: true`. |
 | `dcim-api-token` | khi `dcim.provider` được đặt | token NetBox/DCIM |
 | `build-cluster-kubeconfig` | khi `buildIsolation.mode: kubernetes` | kubeconfig của cụm build |
 | `traffic-kubeconfig` | khi `traffic.router` được đặt | kubeconfig để điều phối ingress cho canary/blue-green |
@@ -216,6 +217,16 @@ auth:
 
 registry:
   pushHost: harbor.example.com
+  # Project mà mọi artifact được đẩy vào: <pushHost>/apps/<image>. Harbor giữ repository
+  # theo project có quyền riêng; tài khoản build chỉ nên được push vào đúng một project.
+  # Do server quyết định (NETCI_REGISTRY_NAMESPACE); đường dẫn sai làm netCI dừng khởi động.
+  namespace: apps
+
+scm:
+  gitlabUrl: https://gitlab.example.com
+  # Khi dùng existingSecret: đặt true nếu Secret có key scm-gitlab-token (tương tự
+  # githubTokenInSecret cho scm-github-token). Thiếu key thì netCI coi là "chưa cấu hình".
+  gitlabTokenInSecret: true
 
 dcim:                               # bắt buộc chọn một trong hai
   provider: netbox

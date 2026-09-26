@@ -27,6 +27,10 @@ ensure_project() {
 }
 ensure_project netci-shared-library
 ensure_project payments-api
+# Webhooks to the local network stay refused (SSRF), except to netCI's webhook endpoint on
+# the kind network (infra/corp/netci/webhook-nodeport.yaml).
+api -X PUT "${URL}/api/v4/application/settings" \
+  -d '{"allow_local_requests_from_web_hooks_and_services":false,"outbound_local_requests_whitelist":["netci-corp-worker"]}' >/dev/null
 # Least-privilege group tokens, 90 days, instead of the admin token: Jenkins clones with a
 # read_repository/Reporter token, netCI's pipeline designer pushes branches and opens merge
 # requests with an api/Developer one (it cannot protect branches or merge past approvals).

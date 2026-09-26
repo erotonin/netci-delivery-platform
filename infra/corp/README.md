@@ -109,5 +109,11 @@ bằng `sudo -n`, vì installer của nó tạo thư mục dữ liệu thuộc r
   chỉ-đọc và chờ được huỷ, vì huỷ là thao tác xoá dữ liệu nên do người vận hành quyết định.
 - **Least privilege:** netCI gọi Jenkins bằng `netci-sa` (matrix-auth, không có Administer);
   Jenkins clone bằng group token `read_repository`; designer dùng group token `api`/Developer.
-- Chưa có TLS (Harbor, S3), chưa nối netCI vào lab này, chưa có build nào chạy trên Jenkins
-  của lab.
+- **netCI đã chạy trên `netci-corp`** (namespace `netci-system`, Pod Security `restricted`,
+  database `netci_corp` với role riêng, `/readyz` 200). `scripts/corp/e2e_build.py` đã PASS
+  đầu-cuối: payments-api build từ GitLab bởi Jenkins, push `apps/payments-api@sha256:a7b8…`
+  lên Harbor, chữ ký cosign verify được, toolchain không drift, rồi deploy **healthy** lên
+  máy đích `netci-corp-app-01` (`scripts/corp/app_host.sh`) qua SSH có pin host key.
+- Designer: MR !1 đã được netCI mở thật trên GitLab; chờ người review merge rồi chạy
+  `scripts/corp/e2e_designer.py verify`.
+- Chưa có TLS (Harbor, S3) và chưa có ingress (webhook đi qua NodePort 30800 chỉ trong mạng kind).

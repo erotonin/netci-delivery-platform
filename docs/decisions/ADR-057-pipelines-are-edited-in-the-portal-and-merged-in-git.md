@@ -61,5 +61,11 @@ code that runs in a build must be reviewed where the code lives, in git.
 - **GitLab failing is 502/503, never GitLab's own status.** Its 401 is about netCI's token,
   not the caller. A script that cannot be read is an error, not an empty editor: saving the
   empty editor would commit an empty script over the real one.
-- Not verified live: no merge request has been opened or merged against a real GitLab yet.
-  The lab GitLab (infra/corp/gitlab) exists, but netCI is not yet installed on `netci-corp`.
+- **The proposer never merges.** A proof script that opened the merge request and then
+  merged it itself was refused by this session's own guard as self-approval -- which is the
+  control this ADR relies on. `scripts/corp/e2e_designer.py` proposes and verifies; a person
+  merges in between.
+- Live so far (2026-09-26, corp lab): a proposal from netCI opened merge request !1 on
+  `platform/payments-api` in the lab GitLab, branch `netci/pipeline-fe0b9835`, changing exactly
+  `.netci/pipeline.yaml` and `.netci/stages/lint-dockerfile.sh`. Not yet verified: the merge
+  webhook applying it (awaits a reviewer's merge).

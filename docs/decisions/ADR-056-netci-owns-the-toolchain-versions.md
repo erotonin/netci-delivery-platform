@@ -1,6 +1,6 @@
 # ADR-056: netCI owns the toolchain versions builds run with
 
-Status: Proposed.
+Status: Accepted -- verified live on the corp lab 2026-09-26 (Evidence below).
 
 ## Context
 
@@ -40,3 +40,17 @@ agent image changes what a signature or SBOM means. Today the versions are pinne
 - Test fixtures that stand for a good build take their tool report from
   `backend/tests/toolchain_report.py`, which reads the declaration, so bumping a version does
   not turn unrelated tests red.
+
+## Evidence
+
+2026-09-26, corp lab (`scripts/corp/e2e_build.py`): payments-api built by the one Jenkins
+controller with library `netci-0.4.1`; the evidence carried `toolVersions` and netCI allowed it.
+`GET /toolchain` then reported, for controller `jenkins-corp`:
+
+```
+{'syft': '1.51.0', 'trivy': '0.73.0', 'cosign': '3.1.2', 'buildah': '1.39.3',
+ 'trivyDbUpdatedAt': '2026-09-26T06:33:51Z', ...}; drift none; trivyDb stale: False
+```
+
+Before the Harbor mirror was refreshed its Trivy DB was 15 days old, which this gate would
+have refused; `scripts/corp/mirror_trivy_db.sh` now keeps it fresh every 6 hours.
