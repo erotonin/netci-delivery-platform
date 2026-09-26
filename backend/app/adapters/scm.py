@@ -92,6 +92,8 @@ class ScmParsedEvent:
     #: The pull/merge request was closed (merged or not) -- a signal to tear down its
     #: preview, never to start a build (ADR-049).
     closed: bool = False
+    source_branch: str | None = None
+    merge_commit_sha: str | None = None
 
     @property
     def kind(self) -> str:
@@ -379,6 +381,8 @@ class GitLabScmProvider:
                 from_fork=source_project is None or source_project != target_project,
                 pull_request_number=int(attrs.get("iid") or 0),
                 closed=action in ("close", "merge"),
+                source_branch=attrs.get("source_branch"),
+                merge_commit_sha=attrs.get("merge_commit_sha"),
             )
 
         return None

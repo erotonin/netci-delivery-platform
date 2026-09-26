@@ -4,6 +4,7 @@ from fastapi.testclient import TestClient
 
 import app.main as main
 from app.main import app
+from toolchain_report import declared_tool_report
 
 
 client = TestClient(app)
@@ -422,7 +423,7 @@ def test_production_approval_enforces_the_requested_automation_gate():
             'artifactRef': f'localhost:5000/hello-container@{digest}',
             'sbom': {'generatedBy': 'syft', 'location': 's3://evidence/sbom.json', 'format': 'cyclonedx-json'},
             'vulnerabilityScan': {'scanner': 'trivy', 'status': 'passed', 'critical': 0, 'high': 0, 'medium': 0},
-            'signature': {'provider': 'cosign', 'verified': True, 'certificateIdentity': 'netci-local'},
+            'signature': {'provider': 'cosign', 'verified': True, 'certificateIdentity': 'netci-local'}, "toolVersions": declared_tool_report(),
         },
     ).status_code == 202
     completed = client.post(

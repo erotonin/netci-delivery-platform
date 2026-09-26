@@ -24,6 +24,7 @@ from app.domain.models import (
     can_transition_deployment,
     can_transition_pipeline,
 )
+from toolchain_report import declared_tool_report
 
 DIGEST = "sha256:" + "b" * 64
 
@@ -110,7 +111,7 @@ def test_the_normal_path_is_unaffected():
         "artifactDigest": DIGEST,
         "sbom": {"generatedBy": "syft", "location": "s3://evidence/sbom.json"},
         "vulnerabilityScan": {"scanner": "trivy", "status": "passed", "critical": 0, "high": 0},
-        "signature": {"provider": "cosign", "verified": True},
+        "signature": {"provider": "cosign", "verified": True}, "toolVersions": declared_tool_report(),
     })
     result = engine.record_ci_result(run.id, PipelineStatus.SUCCEEDED.value, DIGEST, [])
 
@@ -126,7 +127,7 @@ def test_deployment_transitions_are_enforced_from_the_same_table():
         "artifactDigest": DIGEST,
         "sbom": {"generatedBy": "syft", "location": "s3://evidence/sbom.json"},
         "vulnerabilityScan": {"scanner": "trivy", "status": "passed", "critical": 0, "high": 0},
-        "signature": {"provider": "cosign", "verified": True},
+        "signature": {"provider": "cosign", "verified": True}, "toolVersions": declared_tool_report(),
     })
     deployment = engine.record_ci_result(run.id, PipelineStatus.SUCCEEDED.value, DIGEST, []).deployment
     assert deployment is not None
@@ -193,7 +194,7 @@ def test_repairing_a_lost_callback_records_the_transition_it_missed():
         "artifactDigest": DIGEST,
         "sbom": {"generatedBy": "syft", "location": "s3://evidence/sbom.json"},
         "vulnerabilityScan": {"scanner": "trivy", "status": "passed", "critical": 0, "high": 0},
-        "signature": {"provider": "cosign", "verified": True},
+        "signature": {"provider": "cosign", "verified": True}, "toolVersions": declared_tool_report(),
     })
     engine.record_ci_result(run.id, PipelineStatus.SUCCEEDED.value, DIGEST, [])
     current = engine.get_pipeline(run.id)

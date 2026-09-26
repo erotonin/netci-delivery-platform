@@ -44,6 +44,7 @@ from .persistence import (
 )
 from .store import DeploymentLease, PlatformDatabase, PlatformSession, build_database, join
 from . import workload_identity
+from .pipeline_designer import custom_stage_definitions, module_custom_stages
 from .stage_catalog import (
     BUILTIN_STAGES,
     StageCatalogError,
@@ -754,6 +755,7 @@ class DeliveryPlatform:
                 raise DeliveryError("APPLICATION_NOT_FOUND", "application not found", 404)
             template = TEMPLATES[application.pipeline_template]
             catalog = {item.id: item for item in transaction.stage_catalog()}
+            self._add_module_custom_stages(transaction, application_id, catalog)
             resolved = self._validate_stages(template, stages, catalog)
             try:
                 values = validate_stage_parameters(resolved, stage_parameters, catalog)
@@ -1117,7 +1119,28 @@ class DeliveryPlatform:
     def _custom_stages_for(self, application: Application) -> list[dict[str, object]]:
         with self._transaction() as transaction:
             catalog = {item.id: item for item in transaction.stage_catalog()}
+            self._add_module_custom_stages(transaction, application.id, catalog)
         return custom_stage_parameters(application.stages, catalog, application.stage_parameters)
+
+    @staticmethod
+    def _add_module_custom_stages(
+        transaction: PlatformSession, application_id: UUID, catalog: dict[str, StageDefinition]
+    ) -> None:
+        """Add the module's own custom stages (its active config's `customStages`,
+        ADR-057) to the catalog view. A catalog id wins: the module cannot redefine a
+        stage an administrator owns."""
+
+        module = transaction.portal_module_for_application(application_id)
+        if module is None:
+            return
+        try:
+            customs = module_custom_stages(dict(module.pipeline_config or {}))
+        except ValueError as exc:
+            # Validated when the revision was written; reaching here means the stored
+            # config predates the check or was written around it. Refuse the run.
+            raise DeliveryError("INVALID_CUSTOM_STAGES", str(exc), 409) from exc
+        for definition in custom_stage_definitions(customs):
+            catalog.setdefault(definition.id, definition)
 
     def _launch_ci(self, application: Application, run: PipelineRun) -> PipelineRun:
         """Hand the queued run to the configured CI engine and record its identity."""
@@ -1701,6 +1724,7 @@ class DeliveryPlatform:
                 # Bound here, where the run is known: the verdict stored below binds every
                 # later evaluation, so a mismatch recorded now cannot be re-read as allow.
                 expected_source=(application.repository_url if application else "", run.commit_sha),
+                check_tools=True,
             )
             stored["decision"] = "allow" if decision.allowed else "deny"
             stored["reason"] = decision.reason

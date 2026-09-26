@@ -16,6 +16,7 @@ from app.delivery import DeliveryError
 from app.domain.models import DeploymentStatus
 from app.main import app
 from app.policy.rules import evaluate_artifact_evidence
+from toolchain_report import declared_tool_report
 
 client = TestClient(app)
 MACHINE_HEADERS = {"Authorization": "Bearer netci-local-pipeline-key"}
@@ -35,7 +36,7 @@ def clean_evidence(digest: str = DIGEST) -> dict[str, object]:
         "artifactRef": f"localhost:5000/hello-container@{digest}",
         "sbom": {"generatedBy": "syft", "location": "s3://netci-evidence/sbom.json", "format": "cyclonedx-json"},
         "vulnerabilityScan": {"scanner": "trivy", "status": "passed", "critical": 0, "high": 0, "medium": 2},
-        "signature": {"provider": "cosign", "verified": True, "certificateIdentity": "netci-local"},
+        "signature": {"provider": "cosign", "verified": True, "certificateIdentity": "netci-local"}, "toolVersions": declared_tool_report(),
     }
 
 
@@ -78,7 +79,7 @@ def start_run(application_id: str, environment: str = "staging") -> str:
         ({"vulnerabilityScan": {"scanner": "trivy", "status": "passed", "critical": 1, "high": 0}}, "critical"),
         ({"vulnerabilityScan": {"scanner": "trivy", "status": "passed", "critical": 0, "high": 4}}, "high"),
         ({"vulnerabilityScan": {"scanner": "trivy", "status": "failed", "critical": 0, "high": 0}}, "did not pass"),
-        ({"signature": {"provider": "cosign", "verified": False}}, "signature"),
+        ({"signature": {"provider": "cosign", "verified": False}, "toolVersions": declared_tool_report()}, "signature"),
         ({"signature": {"provider": "notary", "verified": True}}, "signature"),
         ({"artifactDigest": OTHER_DIGEST}, "does not describe the artifact"),
     ],

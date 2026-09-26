@@ -248,6 +248,18 @@ class InMemorySession:
             return tuple(self._state.events)
         return tuple(item for item in self._state.events if item.application_id == application_id)
 
+    def recent_security_evidence(self, limit: int = 50) -> tuple[dict[str, Any], ...]:
+        # The memory store keeps no evidence timestamp; the run's is the nearest stand-in.
+        rows = []
+        for run_id, evidence in self._state.evidence.items():
+            run = self._state.runs.get(run_id)
+            if run is None:
+                continue
+            rows.append({"pipelineRunId": run_id, "jenkinsRunId": run.jenkins_run_id,
+                         "updatedAt": run.updated_at, "evidence": copy.deepcopy(evidence)})
+        rows.sort(key=lambda row: (row["updatedAt"], str(row["pipelineRunId"])), reverse=True)
+        return tuple(rows[:limit])
+
     def security_evidence(self, pipeline_run_id: UUID) -> dict[str, Any] | None:
         found = self._state.evidence.get(pipeline_run_id)
         return dict(found) if found is not None else None

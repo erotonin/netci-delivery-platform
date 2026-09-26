@@ -18,6 +18,7 @@ import app.main as main
 from app import workload_identity
 from app.main import app
 from app.workload_identity import Scope, Workload
+from toolchain_report import declared_tool_report
 
 client = TestClient(app)
 KEYS = "k1:" + "z" * 48
@@ -105,7 +106,7 @@ def test_a_jenkins_token_cannot_report_a_deployment_result():
         "artifactDigest": DIGEST,
         "sbom": {"generatedBy": "syft", "location": "s3://evidence/sbom.json"},
         "vulnerabilityScan": {"scanner": "trivy", "status": "passed", "critical": 0, "high": 0},
-        "signature": {"provider": "cosign", "verified": True},
+        "signature": {"provider": "cosign", "verified": True}, "toolVersions": declared_tool_report(),
     })
     result = client.post(
         f"/pipeline-runs/{run_id}/ci-result",
@@ -137,7 +138,7 @@ def deploy_and_report(name: str = "cb-app"):
         "artifactDigest": DIGEST,
         "sbom": {"generatedBy": "syft", "location": "s3://evidence/sbom.json"},
         "vulnerabilityScan": {"scanner": "trivy", "status": "passed", "critical": 0, "high": 0},
-        "signature": {"provider": "cosign", "verified": True},
+        "signature": {"provider": "cosign", "verified": True}, "toolVersions": declared_tool_report(),
     })
     deployment_id = client.post(
         f"/pipeline-runs/{run_id}/ci-result",
@@ -207,7 +208,7 @@ def test_a_terminal_token_is_single_use_before_the_deployment_is_terminal():
         "artifactDigest": DIGEST,
         "sbom": {"generatedBy": "syft", "location": "s3://evidence/sbom.json"},
         "vulnerabilityScan": {"scanner": "trivy", "status": "passed", "critical": 0, "high": 0},
-        "signature": {"provider": "cosign", "verified": True},
+        "signature": {"provider": "cosign", "verified": True}, "toolVersions": declared_tool_report(),
     })
     deployment_id = client.post(
         f"/pipeline-runs/{run_id}/ci-result",
@@ -353,7 +354,7 @@ def test_a_deployment_token_may_read_the_evidence_of_the_run_that_built_it():
         "artifactDigest": DIGEST,
         "sbom": {"generatedBy": "syft", "location": "s3://evidence/sbom.json"},
         "vulnerabilityScan": {"scanner": "trivy", "status": "passed", "critical": 0, "high": 0},
-        "signature": {"provider": "cosign", "verified": True},
+        "signature": {"provider": "cosign", "verified": True}, "toolVersions": declared_tool_report(),
     })
     deployment_id = client.post(
         f"/pipeline-runs/{run_id}/ci-result",
@@ -383,7 +384,7 @@ def _released(application_id: UUID, run_id: UUID, digest: str) -> str:
         "artifactDigest": digest, "artifactRef": f"registry.local/app@{digest}",
         "sbom": {"generatedBy": "syft", "location": "s3://evidence/sbom.json"},
         "vulnerabilityScan": {"scanner": "trivy", "status": "passed", "critical": 0, "high": 0},
-        "signature": {"provider": "cosign", "verified": True},
+        "signature": {"provider": "cosign", "verified": True}, "toolVersions": declared_tool_report(),
     })
     deployment = client.post(
         f"/pipeline-runs/{run_id}/ci-result",

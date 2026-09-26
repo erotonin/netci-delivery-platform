@@ -8,6 +8,7 @@ import pytest
 from fastapi.testclient import TestClient
 from app.main import app
 from app.store.memory import InMemoryDatabase
+from toolchain_report import declared_tool_report
 
 
 @pytest.fixture()
@@ -188,7 +189,7 @@ def test_preview_environments_api(client: TestClient):
         "artifactRef": f"registry.local/cart-api@{digest}",
         "sbom": {"generatedBy": "syft", "location": "s3://evidence/sbom.json", "format": "cyclonedx-json"},
         "vulnerabilityScan": {"scanner": "trivy", "status": "passed", "critical": 0, "high": 0, "medium": 0},
-        "signature": {"provider": "cosign", "verified": True, "certificateIdentity": "netci"},
+        "signature": {"provider": "cosign", "verified": True, "certificateIdentity": "netci"}, "toolVersions": declared_tool_report(),
     })
     assert evidence.status_code == 202, evidence.text
     succeeded = client.post(f"/pipeline-runs/{run_id}/ci-result", headers=machine, json={

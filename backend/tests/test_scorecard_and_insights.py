@@ -20,6 +20,7 @@ from app.auth import Principal, Role
 from app.domain.models import Environment, PipelineRun, PipelineStage, PipelineStatus
 from app.projections.insights import _flaky, _nearest_rank, classify_failure
 from app.store.records import ArtifactRescanRecord
+from toolchain_report import declared_tool_report
 
 client = TestClient(main_mod.app)
 MACHINE = {"Authorization": "Bearer netci-local-pipeline-key"}
@@ -295,7 +296,7 @@ def _build_deploy_and_scan(module: dict, *, digest: str) -> None:
         "artifactRef": f"registry.local/{module['name']}@{digest}",
         "sbom": {"generatedBy": "syft", "location": "s3://evidence/sbom.json", "format": "cyclonedx-json"},
         "vulnerabilityScan": {"scanner": "trivy", "status": "passed", "critical": 0, "high": 0, "findings": []},
-        "signature": {"provider": "cosign", "verified": True, "certificateIdentity": "netci"},
+        "signature": {"provider": "cosign", "verified": True, "certificateIdentity": "netci"}, "toolVersions": declared_tool_report(),
         "provenance": {
             "predicateType": "https://slsa.dev/provenance/v1",
             "verified": True,

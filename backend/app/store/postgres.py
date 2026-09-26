@@ -777,6 +777,19 @@ class PostgresSession:
             )
         return tuple(_event(row) for row in self._cursor.fetchall())
 
+    def recent_security_evidence(self, limit: int = 50) -> tuple[dict[str, Any], ...]:
+        self._cursor.execute(
+            "SELECT se.pipeline_run_id, se.evidence, se.updated_at, pr.jenkins_run_id"
+            " FROM security_evidence se JOIN pipeline_runs pr ON pr.id = se.pipeline_run_id"
+            " ORDER BY se.updated_at DESC, se.pipeline_run_id LIMIT %s",
+            (limit,),
+        )
+        return tuple(
+            {"pipelineRunId": row["pipeline_run_id"], "jenkinsRunId": row["jenkins_run_id"],
+             "updatedAt": row["updated_at"], "evidence": dict(row["evidence"] or {})}
+            for row in self._cursor.fetchall()
+        )
+
     def security_evidence(self, pipeline_run_id: UUID) -> dict[str, Any] | None:
         self._cursor.execute(
             "SELECT evidence FROM security_evidence WHERE pipeline_run_id = %s", (pipeline_run_id,)

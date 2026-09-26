@@ -21,6 +21,7 @@ import pytest
 from app.delivery import DeliveryError, DeliveryPlatform
 from app.domain.models import DeploymentStatus, Environment, PipelineStatus, Runtime
 from app.store import PostgresDatabase
+from toolchain_report import declared_tool_report
 
 DATABASE_URL = os.getenv("NETCI_TEST_DATABASE_URL", "").strip()
 
@@ -63,6 +64,7 @@ def evidence(item) -> dict:
         "sbom": {"generatedBy": "syft", "location": "s3://evidence/sbom.json"},
         "vulnerabilityScan": {"scanner": "trivy", "status": "passed", "critical": 0, "high": 0},
         "signature": {"provider": "cosign", "verified": True},
+        "toolVersions": declared_tool_report(),
     }
 
 

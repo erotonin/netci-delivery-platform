@@ -462,7 +462,7 @@ def test_multi_worker_cas_and_stale_fencing_token():
         "artifactDigest": digest,
         "sbom": {"generatedBy": "syft", "location": "s3://e/sbom.json"},
         "vulnerabilityScan": {"scanner": "trivy", "status": "passed", "critical": 0, "high": 0},
-        "signature": {"provider": "cosign", "verified": True},
+        "signature": {"provider": "cosign", "verified": True}, "toolVersions": declared_tool_report(),
     })
     built = main.platform.record_ci_result(run.id, _PS.SUCCEEDED.value, digest, [])
     assert built.deployment is not None
@@ -487,6 +487,7 @@ def test_multi_worker_cas_and_stale_fencing_token():
 # -----------------------------------------------------------------------------
 
 from app.adapters.agent_daemon import parse_and_validate_command
+from toolchain_report import declared_tool_report
 
 
 def test_sod_admin_and_service_account_restrictions(client: TestClient):

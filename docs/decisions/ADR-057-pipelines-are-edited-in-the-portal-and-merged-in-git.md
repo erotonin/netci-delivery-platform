@@ -1,6 +1,6 @@
 # ADR-057: Pipelines are edited in the portal and merged in git
 
-Status: Proposed.
+Status: Accepted (implemented; not yet run against a real GitLab -- see Consequences).
 
 ## Context
 
@@ -34,3 +34,25 @@ code that runs in a build must be reviewed where the code lives, in git.
 
 - GitLab only at first (the company's SCM); GitHub is refused with 422 until implemented.
 - netCI needs a GitLab token that can push branches and open MRs on module repositories.
+- **The merge is re-checked, not trusted.** The branch can be edited after netCI opened it,
+  so on merge netCI reads `.netci/pipeline.yaml` from GitLab *at the merge commit* (never
+  from the webhook body) and applies the designer's rules again: a required stage removed,
+  an unknown key, a custom stage without an anchor. A refusal is answered `200
+  pipeline_rejected` with the reason and audited as `pipeline.merge_rejected`. It is not
+  answered 4xx/5xx, because GitLab would retry a delivery that is already recorded, and the
+  retry would be dropped as a duplicate. A merge into anything other than the default branch
+  changes nothing.
+- **The revision carries the module's own deployment targets unchanged.** The first version
+  passed a key the module JSON does not have and would have written a revision with no
+  targets (backend/tests/test_pipeline_designer.py pins this).
+- **`customStages` is validated wherever a revision is written** (the Portal's delivery
+  rules), not only by the designer: a script path other than `.netci/stages/<id>.sh` is
+  refused (422 `INVALID_CUSTOM_STAGES`), not rewritten.
+- **Module custom stages skip the catalog's second-administrator approval.** The merge
+  request's review in the module repository is that approval, and the catalog's own stages
+  still need it. A catalog id always wins over a module stage with the same id.
+- **GitLab failing is 502/503, never GitLab's own status.** Its 401 is about netCI's token,
+  not the caller. A script that cannot be read is an error, not an empty editor: saving the
+  empty editor would commit an empty script over the real one.
+- Not verified live: no merge request has been opened or merged against a real GitLab yet.
+  The lab GitLab (infra/corp/gitlab) exists, but netCI is not yet installed on `netci-corp`.

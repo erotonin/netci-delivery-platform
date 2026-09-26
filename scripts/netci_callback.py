@@ -20,6 +20,8 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
+import subprocess
 import sys
 import urllib.error
 import urllib.parse
@@ -205,6 +207,102 @@ def command_stage(arguments: argparse.Namespace) -> int:
     return 0
 
 
+def run_version_command(cmd: list[str], timeout: float = 3.0) -> str | None:
+    """Run a tool version command with a strict timeout, returning trimmed stdout on success."""
+    try:
+        proc = subprocess.run(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=timeout,
+            check=False,
+        )
+        if proc.returncode == 0:
+            return proc.stdout.strip()
+        return None
+    except Exception:
+        return None
+
+
+def collect_tool_versions() -> dict[str, str | None]:
+    """Collect installed tool versions from the build agent (ADR-056).
+
+    Executes version inspection commands for syft, trivy, cosign, and buildah.
+    Each command is best effort with a short timeout. If any tool is missing or fails,
+    its value is recorded as None, ensuring build operations are never blocked.
+    """
+    versions: dict[str, str | None] = {
+        "syft": None,
+        "trivy": None,
+        "cosign": None,
+        "buildah": None,
+        "trivyDbUpdatedAt": None,
+        # When the build looked: netCI judges the Trivy DB's age against this, not "now".
+        "reportedAt": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+    }
+
+    try:
+        # syft version -o json
+        syft_out = run_version_command(["syft", "version", "-o", "json"])
+        if syft_out:
+            try:
+                data = json.loads(syft_out)
+                if isinstance(data, dict):
+                    v = data.get("version")
+                    if v and isinstance(v, str):
+                        versions["syft"] = v.strip().lstrip("v")
+            except Exception:
+                pass
+
+        # trivy --version --format json
+        trivy_out = run_version_command(["trivy", "--version", "--format", "json"])
+        if trivy_out:
+            try:
+                data = json.loads(trivy_out)
+                if isinstance(data, dict):
+                    v = data.get("Version") or data.get("version")
+                    if v and isinstance(v, str):
+                        versions["trivy"] = v.strip().lstrip("v")
+                    vuln_db = data.get("VulnerabilityDB")
+                    if isinstance(vuln_db, dict):
+                        updated_at = vuln_db.get("UpdatedAt") or vuln_db.get("updatedAt")
+                        if updated_at and isinstance(updated_at, str):
+                            versions["trivyDbUpdatedAt"] = updated_at.strip()
+            except Exception:
+                pass
+
+        # cosign version --json
+        cosign_out = run_version_command(["cosign", "version", "--json"])
+        if cosign_out:
+            try:
+                data = json.loads(cosign_out)
+                if isinstance(data, dict):
+                    v = data.get("GitVersion") or data.get("gitVersion") or data.get("version")
+                    if v and isinstance(v, str):
+                        versions["cosign"] = v.strip().lstrip("v")
+            except Exception:
+                pass
+
+        # buildah --version
+        buildah_out = run_version_command(["buildah", "--version"])
+        if buildah_out:
+            try:
+                m = re.search(r"version\s+([0-9]+(?:\.[0-9]+)+)", buildah_out, re.IGNORECASE)
+                if m:
+                    versions["buildah"] = m.group(1)
+                else:
+                    m_fallback = re.search(r"([0-9]+\.[0-9]+(?:\.[0-9]+)?)", buildah_out)
+                    if m_fallback:
+                        versions["buildah"] = m_fallback.group(1)
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+    return versions
+
+
 def command_evidence(arguments: argparse.Namespace) -> int:
     digest = arguments.digest or read_text_file("artifact-digest.txt")
     if not digest.startswith(DIGEST_PREFIX):
@@ -266,6 +364,7 @@ def command_evidence(arguments: argparse.Namespace) -> int:
             "certificateIdentity": setting("COSIGN_IDENTITY") or None,
             "bundleLocation": str(signature_path) if signature_verified else None,
         },
+        "toolVersions": collect_tool_versions(),
     }
     provenance = provenance_evidence()
     if provenance is not None:

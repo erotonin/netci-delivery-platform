@@ -30,7 +30,8 @@ from .adapters.dcim import DcimCatalog, build_dcim_catalog
 from .demo_data import seed_demo_data
 from .runtime_environment import is_local_runtime
 from .errors import ApiError
-from .delivery import DeliveryPlatform
+from .delivery import TEMPLATES, DeliveryPlatform
+from .pipeline_designer import module_custom_stages
 from .persistence import (
     AuditRecord,
     ConcurrentModification,
@@ -730,6 +731,11 @@ class PortalService:
     ) -> DeliveryRules:
         application = transaction.application(application_id) if application_id else None
         _module_build_inputs(pipeline_config)
+        template = TEMPLATES.get(application.pipeline_template) if application else None
+        try:
+            module_custom_stages(pipeline_config, template.stages if template else None)
+        except ValueError as exc:
+            raise PortalError("INVALID_CUSTOM_STAGES", f"pipelineConfig.{exc}", 422) from exc
         _module_verification(pipeline_config)
         previews = _module_previews(pipeline_config)
         if previews["enabled"]:

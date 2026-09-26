@@ -26,6 +26,7 @@ from app.adapters.jenkins_router import ControllerState, JenkinsController, Jenk
 from app.delivery import DeliveryError, DeliveryPlatform
 from app.persistence import UnitOfWork
 from app.domain.models import DeliveryEventType, DeploymentStatus, Environment, PipelineStatus, Runtime
+from toolchain_report import declared_tool_report
 
 DIGEST = "sha256:" + "a" * 64
 OTHER_DIGEST = "sha256:" + "b" * 64
@@ -114,7 +115,7 @@ def record_allowed_evidence(platform: DeliveryPlatform, run) -> None:
             "artifactDigest": DIGEST,
             "sbom": {"generatedBy": "syft", "location": "s3://evidence/sbom.json"},
             "vulnerabilityScan": {"scanner": "trivy", "status": "passed", "critical": 0, "high": 0},
-            "signature": {"provider": "cosign", "verified": True},
+            "signature": {"provider": "cosign", "verified": True}, "toolVersions": declared_tool_report(),
         },
     )
 
@@ -128,7 +129,7 @@ def previously_released(platform: DeliveryPlatform, application, digest: str = O
         "artifactDigest": digest, "artifactRef": f"registry.local/hello@{digest}",
         "sbom": {"generatedBy": "syft", "location": "s3://e/prev"},
         "vulnerabilityScan": {"scanner": "trivy", "status": "passed", "critical": 0, "high": 0},
-        "signature": {"provider": "cosign", "verified": True},
+        "signature": {"provider": "cosign", "verified": True}, "toolVersions": declared_tool_report(),
     })
     previous = platform.record_ci_result(run.id, PipelineStatus.SUCCEEDED.value, digest, ["built"]).deployment
     platform.record_deployment_result(previous.id, DeploymentStatus.HEALTHY.value, "ok", fencing_token=platform.get_deployment(previous.id).fencing_token)
@@ -699,7 +700,7 @@ def _two_dev_releases(platform: DeliveryPlatform, application):
         "artifactDigest": OLDER, "artifactRef": f"registry.local/hello@{OLDER}",
         "sbom": {"generatedBy": "syft", "location": "s3://e/1"},
         "vulnerabilityScan": {"scanner": "trivy", "status": "passed", "critical": 0, "high": 0},
-        "signature": {"provider": "cosign", "verified": True},
+        "signature": {"provider": "cosign", "verified": True}, "toolVersions": declared_tool_report(),
     })
     d1 = platform.record_ci_result(first.id, PipelineStatus.SUCCEEDED.value, OLDER, ["built"]).deployment
     platform.record_deployment_result(d1.id, DeploymentStatus.HEALTHY.value, "ok", fencing_token=platform.get_deployment(d1.id).fencing_token)

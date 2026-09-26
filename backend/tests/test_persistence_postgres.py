@@ -22,6 +22,7 @@ import pytest
 
 from app.delivery import DeliveryError, DeliveryPlatform
 from app.domain.models import DeliveryEventType, DeploymentStatus, Environment, PipelineStatus, Runtime
+from toolchain_report import declared_tool_report
 
 DATABASE_URL = os.getenv("NETCI_TEST_DATABASE_URL", "").strip()
 
@@ -278,6 +279,7 @@ def test_security_evidence_decisions_are_written_to_the_audit_trail(database):
             "sbom": {"generatedBy": "syft", "location": "s3://netci-evidence/sbom.json"},
             "vulnerabilityScan": {"scanner": "trivy", "status": "passed", "critical": 0, "high": 0},
             "signature": {"provider": "cosign", "verified": True},
+            "toolVersions": declared_tool_report(),
         },
     )
 
@@ -1891,3 +1893,20 @@ def test_when_a_run_left_ci_is_written_once_even_by_a_stale_copy(database):
         session.apply(UnitOfWork(runs=[(replace(left, ci_finished_at=None, version=left.version + 1), left.version)]))
     with db.transaction() as session:
         assert session.pipeline_run(run.id).ci_finished_at == left.ci_finished_at
+
+
+def test_recent_security_evidence_reads_newest_first_with_the_run_s_controller(database):
+    from app.persistence import UnitOfWork
+    from app.store.postgres import PostgresDatabase
+
+    platform = DeliveryPlatform()
+    application, run = seed(platform, unique_name())
+    evidence = {"artifactDigest": DIGEST, "decision": "allow", "reason": "ok",
+                "toolVersions": {"trivy": "0.73.0"}}
+    db = PostgresDatabase(database)
+    with db.transaction() as session:
+        session.apply(UnitOfWork(security_evidence=[(run.id, application.id, DIGEST, evidence)]))
+    with db.transaction() as session:
+        rows = session.recent_security_evidence(limit=5)
+    assert [row["pipelineRunId"] for row in rows] == [run.id]
+    assert rows[0]["evidence"]["toolVersions"] == {"trivy": "0.73.0"}

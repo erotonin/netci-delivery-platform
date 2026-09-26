@@ -70,8 +70,20 @@ from .domain.models import (
     ServerMaintenanceState,
     WaiverStatus,
 )
-from .adapters.scm import MAX_WEBHOOK_PAYLOAD_BYTES, get_scm_provider
-from .delivery import CiResult, DeliveryError, DeliveryPlatform
+from .adapters.scm import MAX_WEBHOOK_PAYLOAD_BYTES, ScmParsedEvent, get_scm_provider
+from .adapters import gitlab_repo
+from .adapters.gitlab_repo import GitLabRepoError
+from .delivery import TEMPLATES, CiResult, DeliveryError, DeliveryPlatform
+from .pipeline_designer import (
+    PipelineProposalError,
+    builtin_stage_code,
+    builtin_stage_path,
+    current_pipeline,
+    parse_pipeline_yaml,
+    render_pipeline_yaml,
+    validate_proposal,
+    stage_script_path,
+)
 from .logging import current_correlation_id
 from .metrics import PrometheusMetricsMiddleware, metrics
 from .admission import AdmissionController
@@ -103,6 +115,7 @@ from .projections.scorecard import all_scorecards, module_scorecard
 from .projections.finops import ci_cost
 from .projections.insights import delivery_insights
 from .store import build_database
+from .toolchain import compare as compare_toolchain, declared as get_declared_toolchain, trivy_db_age
 from .store.records import (
     ArtifactFindingRecord,
     ArtifactSbomRecord,
@@ -1570,6 +1583,15 @@ class RunCiReport(StrictBody):
     runner: str | None = Field(default=None, max_length=64)
 
 
+class ToolVersionsEvidence(StrictBody):
+    syft: str | None = Field(default=None, max_length=64)
+    trivy: str | None = Field(default=None, max_length=64)
+    cosign: str | None = Field(default=None, max_length=64)
+    buildah: str | None = Field(default=None, max_length=64)
+    trivyDbUpdatedAt: str | None = Field(default=None, max_length=64)
+    reportedAt: str | None = Field(default=None, max_length=64)
+
+
 class SecurityEvidenceRequest(StrictBody):
     """Supply-chain evidence a CI run publishes for one immutable artifact."""
 
@@ -1582,6 +1604,8 @@ class SecurityEvidenceRequest(StrictBody):
     buildRunId: str | None = Field(default=None, max_length=255)
     # What the test stage recorded; copied onto a version registered from this run.
     ciReport: RunCiReport | None = None
+    # Agent toolchain versions observed during this run (ADR-056).
+    toolVersions: ToolVersionsEvidence | None = None
 
 
 class VulnerabilityCounts(StrictBody):
@@ -1986,6 +2010,264 @@ def set_module_stages(moduleId: str, payload: ModuleStagesUpdate, principal: Pri
     )
     return {"moduleId": moduleId, "applicationId": str(application.id), "stages": list(application.stages),
             "stageParameters": dict(application.stage_parameters)}
+
+
+class PipelineProposalStageSubmission(StrictBody):
+    id: str = Field(min_length=1, max_length=64)
+    name: str | None = Field(default=None, max_length=120)
+    after: str | None = Field(default=None, max_length=64)
+    code: str | None = None
+
+
+class PipelineProposalRequest(StrictBody):
+    title: str | None = Field(default=None, min_length=1, max_length=200)
+    stages: list[PipelineProposalStageSubmission] = Field(min_length=1)
+
+
+def _gitlab_http_error(exc: GitLabRepoError) -> HTTPException:
+    """GitLab failing is never the caller's fault: its 401/403/404 are about netCI's token
+    and repository mapping, so passing them through would tell the browser it is
+    unauthorised when it is not."""
+
+    if exc.status == 503:
+        return HTTPException(status_code=503, detail={"code": "GITLAB_NOT_CONFIGURED", "message": exc.message})
+    return HTTPException(status_code=502, detail={"code": "GITLAB_ERROR", "message": exc.message})
+
+
+@app.get("/modules/{moduleId}/pipeline")
+def get_module_pipeline(moduleId: str, principal: Principal = ReadAccess) -> dict[str, object]:
+    try:
+        module = _require_module_access(moduleId, principal)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail={"code": "MODULE_NOT_FOUND", "message": str(exc)}) from exc
+    application_id = module.get("applicationId")
+    if not application_id:
+        raise HTTPException(status_code=409, detail={"code": "MODULE_NOT_PROVISIONED", "message": "module has no delivery application"})
+
+    app_uuid = UUID(str(application_id))
+    application = platform.get_application(app_uuid)
+
+    with database.transaction() as session:
+        catalog_defs = session.stage_catalog()
+        catalog_map = {item.id: item for item in catalog_defs}
+        scm = session.scm_integration_for_application(app_uuid)
+
+    pipeline_config = module.get("pipelineConfig") or {}
+    custom_stages = pipeline_config.get("customStages", [])
+
+    ordered_stages = current_pipeline(application.stages, catalog_map, custom_stages)
+
+    catalog_entries = [
+        {
+            "id": item.id,
+            "name": item.name,
+            "category": item.category,
+            "kind": item.kind,
+            "required": item.required,
+            "description": item.description,
+        }
+        for item in catalog_defs
+    ]
+
+    provider_name = scm.provider.value if (scm and scm.enabled) else None
+    repo_identity = scm.repository_identity if (scm and scm.enabled) else None
+    supports_proposals = (scm is not None and scm.enabled and scm.provider == ScmProviderType.GITLAB and bool(repo_identity))
+
+    return {
+        "moduleId": moduleId,
+        "template": application.pipeline_template,
+        "stages": ordered_stages,
+        "catalog": catalog_entries,
+        "repository": {
+            "provider": provider_name,
+            "identity": repo_identity,
+            "supportsProposals": supports_proposals,
+        },
+    }
+
+
+@app.get("/modules/{moduleId}/pipeline/stages/{stageId}/code")
+def get_stage_code(moduleId: str, stageId: str, principal: Principal = ReadAccess) -> dict[str, object]:
+    try:
+        module = _require_module_access(moduleId, principal)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail={"code": "MODULE_NOT_FOUND", "message": str(exc)}) from exc
+    application_id = module.get("applicationId")
+    if not application_id:
+        raise HTTPException(status_code=409, detail={"code": "MODULE_NOT_PROVISIONED", "message": "module has no delivery application"})
+
+    app_uuid = UUID(str(application_id))
+    application = platform.get_application(app_uuid)
+    template = application.pipeline_template
+    template_def = TEMPLATES.get(template)
+
+    with database.transaction() as session:
+        catalog_defs = {s.id: s for s in session.stage_catalog()}
+        scm = session.scm_integration_for_application(app_uuid)
+
+    # 1. Built-in stage in this template
+    if template_def and stageId in template_def.stages:
+        content = builtin_stage_code(template, stageId)
+        path = builtin_stage_path(template, stageId)
+        return {
+            "stageId": stageId,
+            "language": "bash",
+            "editable": False,
+            "path": path,
+            "content": content,
+        }
+
+    # 2. Custom stage (in module customStages or catalog custom stages)
+    pipeline_config = module.get("pipelineConfig") or {}
+    custom_stages = pipeline_config.get("customStages", [])
+    is_module_custom = any(c.get("id") == stageId for c in custom_stages)
+    is_catalog_custom = (stageId in catalog_defs and catalog_defs[stageId].kind == "custom")
+
+    if is_module_custom or is_catalog_custom:
+        path = f".netci/stages/{stageId}.sh"
+        content = ""
+        if scm and scm.enabled and scm.provider == ScmProviderType.GITLAB and scm.repository_identity:
+            try:
+                ref = gitlab_repo.default_branch(scm.repository_identity)
+                fetched = gitlab_repo.get_file(scm.repository_identity, path, ref)
+            except GitLabRepoError as exc:
+                # Not "": an empty editor for a script that exists but could not be read
+                # invites saving the empty version over it.
+                raise _gitlab_http_error(exc) from exc
+            content = fetched if fetched is not None else ""
+        return {
+            "stageId": stageId,
+            "language": "bash",
+            "editable": True,
+            "path": path,
+            "content": content,
+        }
+
+    raise HTTPException(status_code=404, detail={"code": "STAGE_NOT_FOUND", "message": f"Stage '{stageId}' not found"})
+
+
+@app.post("/modules/{moduleId}/pipeline/proposals", status_code=status.HTTP_201_CREATED)
+def propose_module_pipeline(
+    moduleId: str,
+    payload: PipelineProposalRequest,
+    principal: Principal = DeveloperAccess,
+) -> JSONResponse:
+    try:
+        module = _require_module_access(moduleId, principal)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail={"code": "MODULE_NOT_FOUND", "message": str(exc)}) from exc
+    application_id = module.get("applicationId")
+    if not application_id:
+        raise HTTPException(status_code=409, detail={"code": "MODULE_NOT_PROVISIONED", "message": "module has no delivery application"})
+
+    app_uuid = UUID(str(application_id))
+    application = platform.get_application(app_uuid)
+
+    with database.transaction() as session:
+        scm = session.scm_integration_for_application(app_uuid)
+        catalog_defs = {s.id: s for s in session.stage_catalog()}
+
+    if not scm or not scm.enabled or scm.provider != ScmProviderType.GITLAB or not scm.repository_identity:
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "PIPELINE_PROPOSALS_UNSUPPORTED", "message": "Pipeline proposals are only supported for GitLab repositories"},
+        )
+
+    template_def = TEMPLATES.get(application.pipeline_template)
+    template_stages = template_def.stages if template_def else ()
+
+    try:
+        validated_stages = validate_proposal(
+            catalog_defs,
+            template_stages,
+            [s.model_dump() for s in payload.stages],
+        )
+    except PipelineProposalError as exc:
+        raise HTTPException(
+            status_code=exc.status_code,
+            detail={"code": exc.code, "message": exc.message},
+        ) from exc
+
+    # Outside any DB transaction: network calls to GitLab
+    repo_identity = scm.repository_identity
+    branch = f"netci/pipeline-{uuid4().hex[:8]}"
+
+    try:
+        start_branch = gitlab_repo.default_branch(repo_identity)
+
+        # Build actions for commit
+        pipeline_yaml_content = render_pipeline_yaml(validated_stages)
+        existing_yaml = gitlab_repo.get_file(repo_identity, ".netci/pipeline.yaml", start_branch)
+        actions = [
+            {
+                "action": "update" if existing_yaml is not None else "create",
+                "file_path": ".netci/pipeline.yaml",
+                "content": pipeline_yaml_content,
+            }
+        ]
+
+        for s in validated_stages:
+            if s.get("after") and s.get("code") is not None:
+                stage_file_path = f".netci/stages/{s['id']}.sh"
+                existing_code = gitlab_repo.get_file(repo_identity, stage_file_path, start_branch)
+                actions.append({
+                    "action": "update" if existing_code is not None else "create",
+                    "file_path": stage_file_path,
+                    "content": s["code"],
+                })
+
+        commit_title = payload.title if payload.title else "update pipeline"
+        commit_message = f"netCI pipeline proposal: {commit_title}"
+        gitlab_repo.commit_files(
+            repo_identity,
+            branch=branch,
+            start_branch=start_branch,
+            message=commit_message,
+            actions=actions,
+        )
+
+        mr_title = f"netCI pipeline: {commit_title}"
+        stage_lines = "\n".join(
+            f"- {s['id']}" + (f" (after {s['after']})" if s.get('after') else "")
+            for s in validated_stages
+        )
+        mr_description = f"Proposed by: {principal.subject}\n\nStages:\n{stage_lines}"
+        mr_result = gitlab_repo.open_merge_request(
+            repo_identity,
+            source_branch=branch,
+            target_branch=start_branch,
+            title=mr_title,
+            description=mr_description,
+        )
+    except GitLabRepoError as exc:
+        raise _gitlab_http_error(exc) from exc
+
+    # Record audit trail
+    with database.transaction() as session:
+        session.apply(UnitOfWork(audit=[
+            AuditRecord(
+                "pipeline.proposal_opened",
+                application_id=app_uuid,
+                actor=principal.subject,
+                payload={
+                    "moduleId": moduleId,
+                    "branch": branch,
+                    "iid": mr_result["iid"],
+                    "mergeRequestUrl": mr_result["web_url"],
+                    "stages": [s["id"] for s in validated_stages],
+                },
+            )
+        ]))
+
+    return JSONResponse(
+        status_code=status.HTTP_201_CREATED,
+        content={
+            "mergeRequestUrl": mr_result["web_url"],
+            "branch": branch,
+            "iid": mr_result["iid"],
+            "stages": validated_stages,
+        },
+    )
 
 
 @app.get("/portal/dashboard")
@@ -2453,6 +2735,166 @@ def get_git_info(principal: Principal = ReadAccess) -> dict[str, object]:
         "currentBranch": branch,
         "source": source,
     }
+
+
+@app.get("/toolchain")
+def get_toolchain(principal: Principal = ReadAccess) -> dict[str, Any]:
+    """Central toolchain declaration, observed agent versions, and drift (ADR-056)."""
+
+    declared_spec = get_declared_toolchain()
+    max_age_hours = int(declared_spec.get("trivyDb", {}).get("maxAgeHours", 72))
+
+    with database.transaction() as session:
+        raw_records = [
+            {"evidence": row["evidence"], "pipeline_run_id": row["pipelineRunId"],
+             "updated_at": row["updatedAt"], "jenkins_run_id": row["jenkinsRunId"]}
+            for row in session.recent_security_evidence(limit=50)
+        ]
+
+    observed_controllers: dict[str, dict[str, Any]] = {}
+    latest_trivy_db_updated_at: str | None = None
+
+    for record in raw_records:
+        ev = record["evidence"]
+        if not isinstance(ev, dict):
+            continue
+        tool_versions = ev.get("toolVersions")
+        if not isinstance(tool_versions, dict):
+            continue
+
+        jenkins_run_id = record.get("jenkins_run_id")
+        if jenkins_run_id and ":" in jenkins_run_id:
+            controller_id = jenkins_run_id.split(":", 1)[0].strip()
+        elif jenkins_run_id:
+            controller_id = jenkins_run_id.strip()
+        else:
+            controller_id = "default"
+
+        updated_at_val = record.get("updated_at")
+        if isinstance(updated_at_val, datetime):
+            when_str = updated_at_val.isoformat()
+        elif updated_at_val:
+            when_str = str(updated_at_val)
+        else:
+            when_str = datetime.now(timezone.utc).isoformat()
+
+        if controller_id not in observed_controllers:
+            observed_controllers[controller_id] = {
+                "controllerId": controller_id,
+                "toolVersions": tool_versions,
+                "when": when_str,
+                "observedAt": when_str,
+            }
+
+        trivy_db_ts = tool_versions.get("trivyDbUpdatedAt")
+        if trivy_db_ts and latest_trivy_db_updated_at is None:
+            latest_trivy_db_updated_at = str(trivy_db_ts)
+
+    observed_list = list(observed_controllers.values())
+
+    drift_items: list[dict[str, Any]] = []
+    for obs in observed_list:
+        cid = obs["controllerId"]
+        drifts = compare_toolchain(obs["toolVersions"], declared_map=declared_spec)
+        for d in drifts:
+            drift_items.append({
+                "tool": d["tool"],
+                "declared": d["declared"],
+                "observed": d["observed"],
+                "controllerId": cid,
+            })
+
+    db_age = trivy_db_age(latest_trivy_db_updated_at, max_age_hours=max_age_hours)
+    trivy_db_status = {
+        "maxAgeHours": max_age_hours,
+        "observedUpdatedAt": latest_trivy_db_updated_at,
+        "stale": db_age.stale,
+    }
+
+    return {
+        "declared": declared_spec,
+        "observed": observed_list,
+        "drift": drift_items,
+        "trivyDb": trivy_db_status,
+    }
+
+
+def _apply_merged_pipeline(application: Application, parsed: ScmParsedEvent) -> dict[str, object]:
+    """Apply `.netci/pipeline.yaml` as merged: a config revision for the module's custom
+    stages, then the application's stage list.
+
+    Everything is read from GitLab at the merge commit, not from the webhook body, and
+    checked by the same rules the designer applies -- the branch may have been edited
+    after netCI opened it. A refusal is answered and audited as `pipeline_rejected`
+    rather than raised: GitLab would retry a 4xx/5xx delivery that has already been
+    recorded as received, and the retry would be ignored as a duplicate.
+    """
+
+    actor = f"gitlab:{parsed.sender or 'unknown'}"
+
+    def rejected(reason: str) -> dict[str, object]:
+        with database.transaction() as session:
+            session.apply(UnitOfWork(audit=[AuditRecord(
+                "pipeline.merge_rejected", application_id=application.id, actor=actor,
+                payload={"branch": parsed.source_branch, "mergeCommit": parsed.merge_commit_sha, "reason": reason},
+            )]))
+        return {"status": "pipeline_rejected", "reason": reason}
+
+    module = portal.module_for_application(application.id)
+    if module is None:
+        return rejected("no Portal module is bound to this application")
+    if not parsed.merge_commit_sha:
+        return rejected("the merge event carries no merge commit")
+    try:
+        default_branch = gitlab_repo.default_branch(parsed.repository_identity)
+        if parsed.base_branch != default_branch:
+            # Merged into some other branch, the pipeline on the default branch is unchanged.
+            return rejected(f"merged into {parsed.base_branch}, not the default branch {default_branch}")
+        text = gitlab_repo.get_file(parsed.repository_identity, ".netci/pipeline.yaml", parsed.merge_commit_sha)
+    except GitLabRepoError as exc:
+        return rejected(f"could not read .netci/pipeline.yaml from GitLab: {exc.message}")
+    if text is None:
+        return rejected(".netci/pipeline.yaml is not in the merge commit")
+    try:
+        declared = parse_pipeline_yaml(text)["stages"]
+    except ValueError as exc:
+        return rejected(f".netci/pipeline.yaml: {exc}")
+
+    template = TEMPLATES.get(application.pipeline_template)
+    with database.transaction() as session:
+        catalog = {item.id: item for item in session.stage_catalog()}
+    try:
+        validate_proposal(catalog, template.stages if template else (), declared, require_code=False)
+    except PipelineProposalError as exc:
+        return rejected(exc.message)
+
+    custom_stages = [
+        {"id": s["id"], "name": s.get("name") or s["id"], "after": s["after"], "script": stage_script_path(s["id"])}
+        for s in declared if s.get("after")
+    ]
+    stage_ids = [s["id"] for s in declared]
+    pipeline_config = dict(module.get("pipelineConfig") or {})
+    try:
+        if pipeline_config.get("customStages", []) != custom_stages:
+            pipeline_config["customStages"] = custom_stages
+            revision = portal.propose_config_revision(
+                str(module["id"]),
+                pipeline_config=pipeline_config,
+                # The module's own targets, unchanged: this revision is about stages only.
+                deployment_config=list(module.get("deploymentEnvironments") or []),
+                change_summary=f"merged pipeline proposal {parsed.source_branch}",
+                expected_version=int(module["configVersion"]),
+                actor=actor,
+            )
+            if revision["requiresApproval"]:
+                # The stage list follows only an active config: a pending one would run
+                # custom stages whose definitions are not yet in force.
+                return {"status": "pipeline_pending_approval", "revisionId": revision["id"]}
+        if list(application.stages) != stage_ids:
+            platform.set_application_stages(application.id, stage_ids, actor=actor)
+    except (PortalError, DeliveryError) as exc:
+        return rejected(exc.message)
+    return {"status": "pipeline_applied", "stages": stage_ids}
 
 
 def _discover_sample_apps() -> list[dict[str, object]]:
@@ -3598,6 +4040,16 @@ async def receive_scm_webhook(
             )
         if preview_request is not None:
             platform.start_preview(preview_request)
+
+        # A merged pipeline proposal becomes the module's pipeline (ADR-057).
+        if provider_type == ScmProviderType.GITLAB and parsed.action == "merge" and (
+            parsed.source_branch or ""
+        ).startswith("netci/pipeline-"):
+            outcome = _apply_merged_pipeline(app, parsed)
+            return JSONResponse(status_code=status.HTTP_200_OK, content={
+                **outcome, "deliveryId": parsed.delivery_id,
+            })
+
         return JSONResponse(status_code=status.HTTP_200_OK, content={
             "status": "preview_teardown" if preview_request is not None else "ignored",
             "deliveryId": parsed.delivery_id,

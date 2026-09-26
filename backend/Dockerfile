@@ -49,6 +49,10 @@ COPY --from=trivy /trivy /usr/local/bin/trivy
 COPY backend/migrations ./backend/migrations
 COPY backend/schema.sql ./backend/schema.sql
 COPY scripts/migrate.py ./scripts/migrate.py
+# Declared toolchain versions file for drift detection and central management (ADR-056).
+COPY toolchain ./toolchain
+# The built-in stage scripts the pipeline designer shows read-only (ADR-057).
+COPY jenkins/shared-library/resources/netci/tooling/templates ./jenkins/shared-library/resources/netci/tooling/templates
 
 ENV NETCI_COSIGN_EXECUTABLE=/usr/local/bin/cosign
 

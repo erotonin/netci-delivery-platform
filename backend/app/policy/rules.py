@@ -321,6 +321,54 @@ def _is_blob_reference(reference: object) -> bool:
     return text.startswith(("file://", "http://", "https://"))
 
 
+def toolchain_enforced() -> bool:
+    """`enforce` (default) refuses; `warn` records the finding and allows (ADR-056)."""
+
+    return os.getenv("NETCI_TOOLCHAIN_ENFORCE", "enforce").strip().lower() != "warn"
+
+
+# The tools whose output is the evidence: the SBOM, the scan, the signature. Others in the
+# declaration (go builds the toolbox itself) are not reported by a build.
+EVIDENCE_TOOLS = ("syft", "trivy", "cosign")
+
+
+def check_toolchain(tool_versions: object) -> tuple[bool, str, str]:
+    """(allowed, check value, reason) for the tools a build reports it ran (ADR-056).
+
+    Judged from the build's own report alone: the tool versions against the declaration,
+    and the Trivy DB's age *when the build scanned* (`reportedAt - trivyDbUpdatedAt`), so a
+    verdict does not change as time passes after the build.
+    """
+
+    from ..toolchain import compare, declared, trivy_db_age
+
+    if not isinstance(tool_versions, dict):
+        return (not toolchain_enforced(), "unreported",
+                "the build reported no tool versions; its shared library predates toolchain reporting (0.4)")
+    # compare() skips a tool the report leaves out, which suits a dashboard; for a verdict
+    # an omitted tool must not read as a matching one.
+    missing = [name for name in EVIDENCE_TOOLS if not tool_versions.get(name)]
+    if missing:
+        return (not toolchain_enforced(), "unreported",
+                f"the build did not report the version of: {', '.join(missing)}")
+    drift = compare(tool_versions)
+    if drift:
+        detail = ", ".join(f"{d['tool']} {d['observed']} (declared {d['declared']})" for d in drift)
+        return (not toolchain_enforced(), "drift", f"the build ran undeclared tool versions: {detail}")
+    reported_at = tool_versions.get("reportedAt")
+    max_age = float(declared().get("trivyDb", {}).get("maxAgeHours", 72))
+    try:
+        at = datetime.fromisoformat(str(reported_at).replace("Z", "+00:00")) if reported_at else None
+    except ValueError:
+        at = None
+    age = trivy_db_age(tool_versions.get("trivyDbUpdatedAt"), now=at, max_age_hours=max_age) if at else None
+    if age is None or age.stale:
+        shown = f"{age.age_hours:.0f} h old" if age is not None and age.age_hours is not None else "of unknown age"
+        return (not toolchain_enforced(), "trivy-db-stale",
+                f"the vulnerability scan used a Trivy DB {shown} at build time; the maximum is {max_age:.0f} h")
+    return True, "pass", ""
+
+
 def evaluate_artifact_evidence(
     evidence: dict[str, object] | None,
     *,
@@ -330,6 +378,7 @@ def evaluate_artifact_evidence(
     today: date | None = None,
     expected_source: tuple[str, str] | None = None,
     require_provenance: bool | None = None,
+    check_tools: bool = False,
 ) -> PolicyDecision:
     """Decide whether an artifact may be deployed, from its CI evidence alone.
 
@@ -470,5 +519,16 @@ def evaluate_artifact_evidence(
         checks["provenance"] = "not_applicable"
     else:
         checks["provenance"] = "not_required"
+
+    # Only where the evidence is received (check_tools): the verdict stored there binds every
+    # later evaluation, and a deploy next month must not re-judge an artifact built with the
+    # tools that were declared when it was built.
+    if check_tools:
+        allowed, value, reason = check_toolchain(evidence.get("toolVersions"))
+        checks["toolchain"] = value
+        if not allowed:
+            return PolicyDecision(False, reason, checks)
+        if value != "pass":
+            waived_reason = waived_reason or f"allowed with NETCI_TOOLCHAIN_ENFORCE=warn: {reason}"
 
     return PolicyDecision(True, waived_reason or "artifact satisfies the netCI supply-chain policy", checks)

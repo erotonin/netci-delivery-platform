@@ -19,6 +19,7 @@ from fastapi.testclient import TestClient
 import app.main as main_mod
 from app.adapters.scm import MockScmProvider, get_scm_provider, set_scm_provider
 from app.domain.models import ScmProviderType
+from toolchain_report import declared_tool_report
 
 client = TestClient(main_mod.app)
 MACHINE = {"Authorization": "Bearer netci-local-pipeline-key"}
@@ -103,7 +104,7 @@ def _succeed(run_id, digest=None, *, evidence=True):
                 "artifactRef": f"registry.local/orders@{body['artifactDigest']}",
                 "sbom": {"generatedBy": "syft", "location": "s3://evidence/sbom.json", "format": "cyclonedx-json"},
                 "vulnerabilityScan": {"scanner": "trivy", "status": "passed", "critical": 0, "high": 0, "medium": 0},
-                "signature": {"provider": "cosign", "verified": True, "certificateIdentity": "netci"},
+                "signature": {"provider": "cosign", "verified": True, "certificateIdentity": "netci"}, "toolVersions": declared_tool_report(),
             })
             assert published.status_code == 202, published.text
     return client.post(f"/pipeline-runs/{run_id}/ci-result", headers=MACHINE, json=body)
