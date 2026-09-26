@@ -1,0 +1,13 @@
+# Volumes Velero can back up (ADR-055). kind's default StorageClass provisions hostPath
+# PersistentVolumes, and Velero's file-system backup skips hostPath volumes with only a
+# warning -- the first failover drill restored an empty JENKINS_HOME because of it. The same
+# provisioner creates a `local` volume, which Velero does back up, when the *PVC* carries the
+# annotation `volumeType: local`; this kind build ignores the StorageClass parameter (probed:
+# parameter -> hostPath, PVC annotation -> local). The chart sets that annotation.
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: local-backup
+provisioner: rancher.io/local-path
+volumeBindingMode: WaitForFirstConsumer
+reclaimPolicy: Delete

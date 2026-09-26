@@ -1,0 +1,27 @@
+apiVersion: velero.io/v1
+kind: Schedule
+metadata:
+  name: jenkins-backup
+  namespace: velero
+spec:
+  schedule: "*/15 * * * *"
+  template:
+    ttl: "24h"
+    includedNamespaces:
+      - jenkins
+    defaultVolumesToFsBackup: true
+    hooks:
+      resources:
+        - name: jenkins-quiesce
+          includedNamespaces:
+            - jenkins
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: jenkins
+          pre:
+            - exec:
+                container: jenkins
+                command:
+                  - /bin/sh
+                  - -c
+                  - "sync"

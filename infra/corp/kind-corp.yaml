@@ -1,0 +1,30 @@
+# A company-shaped cluster on one machine: three control-plane nodes (HA etcd and API
+# server behind kind's load balancer) and three workers. Everything the lab can run
+# small, it runs small; the shape is what matters for failover and scheduling.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: netci-corp
+networking:
+  podSubnet: 10.246.0.0/16
+  serviceSubnet: 10.98.0.0/16
+containerdConfigPatches:
+  # Harbor (infra/corp/harbor) over plain HTTP in the lab, reached through the docker bridge.
+  - |-
+    [plugins."io.containerd.grpc.v1.cri".registry.mirrors."172.17.0.1:8930"]
+      endpoint = ["http://172.17.0.1:8930"]
+    [plugins."io.containerd.grpc.v1.cri".registry.configs."172.17.0.1:8930".tls]
+      insecure_skip_verify = true
+    [plugins."io.containerd.grpc.v1.cri".registry.mirrors."172.17.0.1:55000"]
+      endpoint = ["http://172.17.0.1:55000"]
+nodes:
+  - role: control-plane
+  - role: control-plane
+  - role: control-plane
+  # Build pods run on the ci pool (two nodes). The Jenkins controller may run on either of
+  # two eligible nodes: failover (ADR-055) needs somewhere else to restore to.
+  - role: worker
+    labels: {netci.io/pool: ci}
+  - role: worker
+    labels: {netci.io/pool: ci, netci.io/jenkins-controller: eligible}
+  - role: worker
+    labels: {netci.io/pool: platform, netci.io/jenkins-controller: eligible}

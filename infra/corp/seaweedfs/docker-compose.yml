@@ -1,0 +1,24 @@
+# S3-compatible object storage for Velero backups (ADR-055). SeaweedFS, not MinIO: MinIO
+# stopped publishing community images (docker pull of minio/minio and quay.io/minio/minio
+# both fail as of 2026-09), and Velero needs only the S3 API.
+name: netci-corp-s3
+services:
+  seaweedfs:
+    image: chrislusf/seaweedfs:4.47
+    container_name: netci-corp-s3
+    command: ["server", "-dir=/data", "-ip=netci-corp-s3", "-ip.bind=0.0.0.0", "-s3", "-s3.port=8333",
+              "-s3.config=/run/secrets/s3.json", "-master.volumeSizeLimitMB=512"]
+    ports: ["172.17.0.1:8333:8333"]       # the docker bridge only: kind pods and the host
+    volumes:
+      - seaweedfs-data:/data
+      - ../../../.netci-gate/corp/s3.json:/run/secrets/s3.json:ro
+    # 512m was OOM-killed mid-backup (2026-09-26): Kopia uploads several packs at once and
+    # the all-in-one master+volume+filer+s3 process buffers each. GOMEMLIMIT makes Go's GC
+    # work hard before the cgroup limit instead of the kernel killing it, which Kopia sees as
+    # "connection reset" and Velero turns into a canceled volume backup.
+    environment:
+      GOMEMLIMIT: 800MiB
+    mem_limit: 1g
+    restart: unless-stopped
+volumes:
+  seaweedfs-data:

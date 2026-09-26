@@ -1,0 +1,158 @@
+# The company-shaped Jenkins (ADR-055): one controller, a StatefulSet of one, JENKINS_HOME on
+# a PersistentVolume that Velero backs up every 15 minutes. Everything else is code: plugins
+# are baked into the image (jenkins/Dockerfile.controller, plugins.txt), configuration and
+# credentials come from JCasC below and from the jenkins-casc-secrets Secret.
+# Chart: jenkins/jenkins 5.9.64.
+controller:
+  image:
+    registry: 172.17.0.1:8930
+    repository: netci/jenkins-controller
+    tag: 2.541.1-netci1
+  installPlugins: false          # baked into the image: a restart must not depend on the update site
+  numExecutors: 0
+  javaOpts: "-Xms256m -Xmx768m -Djenkins.install.runSetupWizard=false"
+  resources:
+    requests: {cpu: 100m, memory: 512Mi}
+    limits: {cpu: "1", memory: 1536Mi}
+  # Two nodes carry this label: one must remain when the other is lost (ADR-055).
+  nodeSelector: {netci.io/jenkins-controller: eligible}
+  sidecars:
+    configAutoReload:
+      image:
+        registry: 172.17.0.1:8930
+        repository: mirror/kiwigrid/k8s-sidecar
+        tag: 2.11.2
+  # Mounted where JCasC resolves ${<secret>-<key>}: nothing secret is written in these values.
+  additionalExistingSecrets:
+    - {name: jenkins-casc-secrets, keyName: admin-password}
+    - {name: jenkins-casc-secrets, keyName: cosign-key}
+    - {name: jenkins-casc-secrets, keyName: gitlab-token}
+    - {name: jenkins-casc-secrets, keyName: harbor-robot-name}
+    - {name: jenkins-casc-secrets, keyName: harbor-robot-secret}
+  admin:
+    createSecret: false
+  JCasC:
+    defaultConfig: false
+    configScripts:
+      base: |
+        jenkins:
+          systemMessage: "netCI corp lab controller (single active, restored from backup on failover)"
+          numExecutors: 0
+          mode: EXCLUSIVE
+          quietPeriod: 0
+          remotingSecurity:
+            enabled: true
+          securityRealm:
+            local:
+              allowsSignup: false
+              users:
+                - id: admin
+                  password: "${jenkins-casc-secrets-admin-password}"
+          authorizationStrategy:
+            loggedInUsersCanDoAnything:
+              allowAnonymousRead: false
+        credentials:
+          system:
+            domainCredentials:
+              - credentials:
+                  - string:
+                      id: netci-cosign-key
+                      scope: GLOBAL
+                      description: "cosign private key, bound in Sign only"
+                      secret: "${jenkins-casc-secrets-cosign-key}"
+                  - usernamePassword:
+                      id: netci-git
+                      scope: GLOBAL
+                      description: "GitLab token: library, checkout, cache mirror"
+                      username: root
+                      password: "${jenkins-casc-secrets-gitlab-token}"
+                  - usernamePassword:
+                      id: netci-harbor
+                      scope: GLOBAL
+                      description: "Harbor robot account: push and pull"
+                      username: "${jenkins-casc-secrets-harbor-robot-name}"
+                      password: "${jenkins-casc-secrets-harbor-robot-secret}"
+        unclassified:
+          globalLibraries:
+            libraries:
+              - name: netci-shared-library
+                defaultVersion: netci-0.3.0
+                implicit: false
+                allowVersionOverride: true
+                retriever:
+                  modernSCM:
+                    scm:
+                      git:
+                        remote: "http://172.17.0.1:8929/platform/netci-shared-library.git"
+                        credentialsId: netci-git
+      cloud: |
+        jenkins:
+          clouds:
+            - kubernetes:
+                name: netci-corp
+                # Empty serverUrl: the in-cluster API with the pod's service account and CA --
+                # TLS verified, no token to store.
+                namespace: netci-build
+                jenkinsUrl: "http://jenkins.jenkins.svc.cluster.local:8080"
+                webSocket: true
+                containerCapStr: "6"
+                podRetention: never
+                templates:
+                  - name: netci-ephemeral
+                    label: netci-ephemeral
+                    namespace: netci-build
+                    serviceAccount: jenkins-agent
+                    nodeUsageMode: EXCLUSIVE
+                    nodeSelector: "netci.io/pool=ci"
+                    workspaceVolume:
+                      emptyDirWorkspaceVolume:
+                        memory: false
+                    podRetention: never
+                    idleMinutes: 0
+                    yaml: |
+                      apiVersion: v1
+                      kind: Pod
+                      metadata:
+                        labels:
+                          netci.io/agent: ephemeral
+                      spec:
+                        automountServiceAccountToken: false
+                        serviceAccountName: jenkins-agent
+                        restartPolicy: Never
+                        securityContext: {runAsNonRoot: true, runAsUser: 1000, runAsGroup: 1000, fsGroup: 1000}
+                        containers:
+                          - name: jnlp
+                            image: 172.17.0.1:8930/mirror/jenkins/inbound-agent:3386.v353e57a_1b_ea_0-1-jdk21
+                            env:
+                              - {name: NETCI_BUILD_CONTAINER, value: builder}
+                              - {name: NETCI_AGENT_DISPOSABLE, value: "true"}
+                            securityContext: {allowPrivilegeEscalation: false, capabilities: {drop: ["ALL"]}}
+                            resources: {requests: {cpu: 100m, memory: 256Mi}, limits: {cpu: 500m, memory: 1Gi}}
+                          - name: builder
+                            image: 172.17.0.1:8930/netci/ci-toolbox:0.4.0
+                            command: ["sleep"]
+                            args: ["99d"]
+                            tty: true
+                            env:
+                              - {name: BUILDAH_ISOLATION, value: chroot}
+                              - {name: STORAGE_DRIVER, value: vfs}
+                            securityContext: {allowPrivilegeEscalation: true}
+                            resources: {requests: {cpu: 500m, memory: 1Gi}, limits: {cpu: "2", memory: 3Gi}}
+
+agent:
+  enabled: false                 # the cloud above is the only agent definition
+
+persistence:
+  enabled: true
+  size: 5Gi
+  # A `local` PersistentVolume, not hostPath: Velero's file-system backup skips hostPath
+  # volumes (infra/corp/storage-local-backup.yaml).
+  storageClass: local-backup
+  annotations:
+    volumeType: local
+
+rbac:
+  create: true
+serviceAccount:
+  create: true
+  name: jenkins

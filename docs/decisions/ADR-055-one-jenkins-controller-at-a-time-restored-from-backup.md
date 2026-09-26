@@ -1,6 +1,7 @@
 # ADR-055: One Jenkins controller at a time; the standby is restored, not running
 
-Status: Proposed (research in docs/research/jenkins-ha-dr.md; lab in infra/corp/).
+Status: Accepted -- failover drill passed in the lab on 2026-09-26 (Evidence below). Research in
+docs/research/jenkins-ha-dr.md; lab in infra/corp/.
 
 ## Context
 
@@ -21,23 +22,58 @@ configuration and the same history.
    built from git is therefore correct without any backup; the backup carries build
    history, job state and `secrets/` that decrypt stored values.
 3. **`JENKINS_HOME` is backed up by Velero with its Kopia file-system uploader** to
-   S3-compatible object storage (MinIO in the lab). Velero, not Kopia alone: it backs up
+   S3-compatible object storage (SeaweedFS in the lab: MinIO no longer publishes community
+   images). Velero, not Kopia alone: it backs up
    the namespace's Kubernetes objects and the volume together and restores them as one,
    and it uses Kopia underneath for the volume data (incremental, deduplicated,
    encrypted). A schedule runs every 15 minutes (RPO ≤ 15 min); a backup is also taken
    before any planned switch.
 4. **Failover restores, then starts.** The standby is not a running second controller: on
-   failure the active StatefulSet is scaled to 0 (or its node is gone), the latest Velero
-   backup of `JENKINS_HOME` is restored into a fresh volume on a healthy node, and the
-   controller starts from the same image and JCasC. `scripts/corp/jenkins_failover.sh`
-   does this and measures RTO; a drill runs it on a schedule.
+   failure the controller's node is cordoned (or gone) and the `jenkins` namespace is
+   deleted -- StatefulSet and PVC included, because Velero's file-system restore writes
+   volume data only into a pod *it* recreates; a pod the StatefulSet recreated would start
+   on an empty volume. The latest Velero backup is then restored, and the controller
+   starts on the other node labelled `netci.io/jenkins-controller=eligible` from the same
+   image and JCasC. `scripts/corp/jenkins_failover.sh` does this and measures RTO and RPO.
 5. **Builds in flight at failure are lost, and netCI says so.** Their pods die with the
    controller; netCI's reconciler finds runs Jenkins no longer knows and fails them after
    the timeout (it does not report them as succeeded). They can be retried.
+6. **`JENKINS_HOME` is a `local` PersistentVolume, not hostPath.** Velero's file-system
+   backup skips hostPath volumes; kind's local-path provisioner makes one unless the PVC
+   carries `volumeType: local` (infra/corp/storage-local-backup.yaml).
+7. **The Kopia repository has its own random key.** Velero's default repository password
+   is a published constant, and `JENKINS_HOME` holds both `credentials.xml` and the
+   `secrets/master.key` that decrypts it. infra/corp/velero/install.sh sets the key before
+   the first backup, because a repository keeps the key it was initialised with.
 
 ## Consequences
 
 - netCI's multi-controller routing (ADR-009) stays for organisations that do run several
   controllers, but the company-like lab uses one.
 - RPO is the backup interval; history newer than the last backup is lost on failover.
-- Not verified until the failover drill has run in infra/corp.
+- The object store must have headroom: SeaweedFS at 512 MiB was OOM-killed while Kopia
+  uploaded in parallel, which Velero reports only as a `Canceled` pod volume backup. It
+  runs at 1 GiB with `GOMEMLIMIT`.
+- Not verified: TLS to the object store (the lab uses HTTP on the docker bridge), an
+  unplanned node loss (the drill cordons a live node), and a restore after the repository
+  key was rotated -- the lab repository predates decision 7 and still has the default key.
+
+## Evidence
+
+2026-09-26, cluster `netci-corp` (3 control-plane + 3 workers), Velero v1.18.3 with Kopia,
+Jenkins chart 5.9.64, `scripts/corp/jenkins_failover.sh`:
+
+```
+[10:15:07] marker: dr-marker build #2 is in JENKINS_HOME
+[10:15:33] failure: controller node netci-corp-worker3 is cordoned (gone); deleting namespace jenkins
+[10:15:49] restore: namespace jenkins from drill-20260926-101507
+[10:16:17] restore restore-drill-20260926-101507-101549: Completed
+[10:16:58] controller moved netci-corp-worker3 -> netci-corp-worker2
+[10:16:58] RTO 84 s (failure to Jenkins answering), RPO 1 s (age of the backup restored)
+[10:16:58] PASS: marker build #2 survived the failover
+```
+
+RPO is 1 s only because a drill backs up immediately before the failure; for an unplanned
+loss it is up to the 15-minute schedule interval. The run before this one refused to
+restore (`backup ... is PartiallyFailed, not Completed`) when the object store was
+OOM-killed mid-backup -- the script restores only from a Completed backup.
