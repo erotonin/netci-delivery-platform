@@ -10,3 +10,4 @@ credentials-binding:719.v80e905ef14eb_
 pipeline-stage-view:2.38
 pipeline-utility-steps:2.19.0
 timestamper:1.30
+matrix-auth:3.3

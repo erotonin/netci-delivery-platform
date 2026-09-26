@@ -64,6 +64,10 @@ EOF
   chmod 644 "${C}/s3.json"
 fi
 docker compose -f "${ROOT}/infra/corp/seaweedfs/docker-compose.yml" up -d >/dev/null
+for _ in $(seq 30); do [[ "$(curl -s -o /dev/null -w '%{http_code}' http://172.17.0.1:8333/)" != 000 ]] && break; sleep 2; done
+# Velero does not create its bucket. The name is the one every backup location points at.
+docker exec netci-corp-s3 sh -c 'echo "s3.bucket.list" | weed shell 2>/dev/null' | grep -q "netci-jenkins-backups" \
+  || docker exec netci-corp-s3 sh -c 'echo "s3.bucket.create -name netci-jenkins-backups" | weed shell >/dev/null 2>&1'
 
 log "GitLab (first start takes several minutes)"
 docker compose -f "${ROOT}/infra/corp/gitlab/docker-compose.yml" up -d >/dev/null

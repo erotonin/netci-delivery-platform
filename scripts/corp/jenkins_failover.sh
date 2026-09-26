@@ -41,11 +41,17 @@ if ${MARKER}; then
   job="dr-marker"
   jenkins -b /tmp/.jf-cookies -H "${crumb}" -H 'Content-Type: application/xml' -X POST "${jenkins_url}/createItem?name=${job}" \
     --data-binary '<flow-definition plugin="workflow-job"><definition class="org.jenkinsci.plugins.workflow.cps.CpsFlowDefinition" plugin="workflow-cps"><script>echo "failover marker"</script><sandbox>true</sandbox></definition></flow-definition>' >/dev/null 2>&1 || true
+  # The number this trigger will get, read first: on a job that already has builds,
+  # lastSuccessfulBuild answers with the *previous* one until the new one finishes, and a
+  # drill that marks an old build proves only that old history survives.
+  expected=$(jenkins "${jenkins_url}/job/${job}/api/json" | python3 -c 'import json,sys;print(json.load(sys.stdin)["nextBuildNumber"])')
   jenkins -b /tmp/.jf-cookies -H "${crumb}" -X POST "${jenkins_url}/job/${job}/build" >/dev/null
-  for _ in $(seq 60); do
-    marker_build=$(jenkins "${jenkins_url}/job/${job}/lastSuccessfulBuild/api/json" 2>/dev/null | python3 -c 'import json,sys;print(json.load(sys.stdin)["number"])' 2>/dev/null || true)
-    [[ -n "${marker_build}" ]] && break; sleep 2
+  for _ in $(seq 90); do
+    last=$(jenkins "${jenkins_url}/job/${job}/lastSuccessfulBuild/api/json" 2>/dev/null | python3 -c 'import json,sys;print(json.load(sys.stdin)["number"])' 2>/dev/null || true)
+    if [[ -n "${last}" ]] && (( last >= expected )); then marker_build="${last}"; break; fi
+    sleep 2
   done
+  [[ -n "${marker_build}" ]] || { echo "marker build #${expected} did not finish" >&2; exit 1; }
   kill "${FORWARD}" 2>/dev/null || true
   log "marker: ${job} build #${marker_build} is in JENKINS_HOME"
 fi

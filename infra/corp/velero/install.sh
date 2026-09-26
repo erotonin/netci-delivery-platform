@@ -20,7 +20,7 @@ fi
     "$(cat "${SECRETS}/s3-access-key")" "$(cat "${SECRETS}/s3-secret-key")" > "${SECRETS}/velero-credentials" )
 "${BIN}/velero" install --kubecontext "${CONTEXT}" \
   --provider aws --plugins "${PLUGIN}" --image "${MIRROR}/velero/velero:${VERSION}" \
-  --bucket velero --secret-file "${SECRETS}/velero-credentials" \
+  --bucket netci-jenkins-backups --secret-file "${SECRETS}/velero-credentials" \
   --use-node-agent --uploader-type kopia --default-volumes-to-fs-backup \
   --backup-location-config region=us-east-1,s3ForcePathStyle=true,s3Url=http://172.17.0.1:8333 \
   --use-volume-snapshots=false --wait
