@@ -87,7 +87,8 @@ curl -fsS -o /dev/null http://172.17.0.1:8930/api/v2.0/ping 2>/dev/null || bash 
 bash "${ROOT}/infra/corp/harbor/bootstrap.sh"
 
 log "images into Harbor (nodes have no route to Docker Hub)"
-docker login "${HARBOR_PUSH}" -u "$(cat "${C}/harbor_robot_name")" --password-stdin < "${C}/harbor_robot_secret" >/dev/null
+# The operators' robot: the builds' robot can push only to `apps` (infra/corp/harbor/bootstrap.sh).
+docker login "${HARBOR_PUSH}" -u "$(<"${C}/harbor_ops_robot_name")" --password-stdin < "${C}/harbor_ops_robot_secret" >/dev/null
 mirror() {  # $1 = upstream image; pushed under mirror/<same path>
   local short="${1#docker.io/}"; short="${short#quay.io/}"
   docker pull -q "$1" >/dev/null && docker tag "$1" "${HARBOR_PUSH}/mirror/${short}" && docker push -q "${HARBOR_PUSH}/mirror/${short}" >/dev/null
@@ -103,6 +104,12 @@ docker build -q --network host -t "${HARBOR_PUSH}/${CONTROLLER_IMAGE}" -f "${ROO
 docker build -q --network host -t "${HARBOR_PUSH}/${TOOLBOX_IMAGE}" "${ROOT}/jenkins/agent-toolbox" >/dev/null
 docker push -q "${HARBOR_PUSH}/${CONTROLLER_IMAGE}" >/dev/null
 docker push -q "${HARBOR_PUSH}/${TOOLBOX_IMAGE}" >/dev/null
+
+log "Trivy DB mirror, refreshed every 6 hours by a user timer"
+"${ROOT}/scripts/corp/mirror_trivy_db.sh"
+mkdir -p "${HOME}/.config/systemd/user"
+cp "${ROOT}"/infra/corp/systemd/netci-trivy-db-mirror.{service,timer} "${HOME}/.config/systemd/user/"
+systemctl --user daemon-reload && systemctl --user enable --now netci-trivy-db-mirror.timer >/dev/null
 
 log "StorageClass local-backup and Velero"
 "${K[@]}" apply -f "${ROOT}/infra/corp/storage-local-backup.yaml" >/dev/null

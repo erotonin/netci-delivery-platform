@@ -121,10 +121,13 @@ data:
   NETCI_COSIGN_PUBLIC_KEY_FILE: /run/secrets/netci-app/cosign.pub
 
   # inventory
-  {{- if .Values.secrets.githubToken }}
+  {{- /* The token is in the Secret either because the chart rendered it from secrets.*,
+         or because the operator put it in existingSecret and says so -- without the second
+         form an install with existingSecret could never turn the token on. */}}
+  {{- if or .Values.secrets.githubToken (and .Values.existingSecret .Values.scm.githubTokenInSecret) }}
   NETCI_GITHUB_TOKEN_FILE: /run/secrets/netci-app/scm-github-token
   {{- end }}
-  {{- if .Values.secrets.gitlabToken }}
+  {{- if or .Values.secrets.gitlabToken (and .Values.existingSecret .Values.scm.gitlabTokenInSecret) }}
   NETCI_GITLAB_TOKEN_FILE: /run/secrets/netci-app/scm-gitlab-token
   {{- end }}
   {{- with .Values.scm.githubApiUrl }}

@@ -252,6 +252,10 @@ extraEnv: []                   # [{name: NETCI_RATE_LIMIT, value: "240"}]
 scm:
   githubApiUrl: ""             # default https://api.github.com; GitHub Enterprise: https://ghe.example.com/api/v3
   gitlabUrl: ""                # default https://gitlab.com
+  # With existingSecret: set true when that Secret holds scm-github-token / scm-gitlab-token.
+  # A key named here but missing from the Secret reads as "not configured" (fail closed).
+  githubTokenInSecret: false
+  gitlabTokenInSecret: false
   # SCM logins whose pushes are an agent's (ADR-052): their builds wait behind people's.
   # The sender of a signed webhook is who the SCM says pushed; this orders the queue, it
   # grants nothing.

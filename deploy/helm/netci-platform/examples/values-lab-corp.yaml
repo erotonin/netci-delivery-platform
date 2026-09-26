@@ -25,7 +25,12 @@ jenkins:
   # One controller (ADR-055). The URL is the Service, so a failover that restores the
   # controller on another node changes nothing here.
   controllers:
-    - {id: corp, url: "http://jenkins.jenkins.svc.cluster.local:8080", username: admin, executors: 6}
+    # netci-sa: matrix-auth service account, job permissions only, never admin.
+    - {id: corp, url: "http://jenkins.jenkins.svc.cluster.local:8080", username: netci-sa, executors: 6}
+  # Credentials defined by the controller's JCasC (infra/corp/jenkins/values.yaml): the
+  # read-only GitLab group token and the Harbor robot account.
+  gitCredentialsId: netci-git
+  registryCredentialsId: netci-harbor
   # 0.4 reports toolVersions; older libraries are refused by the toolchain gate (ADR-056).
   sharedLibrary: netci-shared-library@netci-0.4.0
   callbackUrl: http://netci-netci-platform-api.netci-system.svc:8000
@@ -54,6 +59,7 @@ registry:
 
 scm:
   gitlabUrl: http://172.17.0.1:8929
+  gitlabTokenInSecret: true      # scm-gitlab-token: group token api/Developer, 90 days
 
 supplyChain:
   signatureRequireTlog: false    # the lab signing key has no transparency log
