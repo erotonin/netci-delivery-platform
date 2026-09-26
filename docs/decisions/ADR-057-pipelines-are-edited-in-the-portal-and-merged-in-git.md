@@ -69,3 +69,7 @@ code that runs in a build must be reviewed where the code lives, in git.
   `platform/payments-api` in the lab GitLab, branch `netci/pipeline-fe0b9835`, changing exactly
   `.netci/pipeline.yaml` and `.netci/stages/lint-dockerfile.sh`. Not yet verified: the merge
   webhook applying it (awaits a reviewer's merge).
+- Webhooks reach netCI the way a company's would: `https://netci.corp.local/api/webhooks/scm/gitlab`
+  through the ingress, TLS verified by GitLab against the lab CA, and GitLab's SSRF guard left on
+  with only that name allowed. A test push delivered that way was answered `201 triggered`
+  (2026-09-26).

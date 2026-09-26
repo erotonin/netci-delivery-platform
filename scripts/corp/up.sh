@@ -20,7 +20,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 C="${ROOT}/.netci-gate/corp"
 CONTEXT=kind-netci-corp
 K=(kubectl --context "${CONTEXT}")
-HARBOR_PUSH=localhost:8930           # the host pushes here; nodes pull 172.17.0.1:8930
+HARBOR=172.17.0.1:8930               # TLS from the lab CA; pushes go through push_image.sh
 CHART_VERSION=5.9.64
 AGENT_IMAGE=jenkins/inbound-agent:3386.v353e57a_1b_ea_0-1-jdk21
 CONTROLLER_IMAGE=netci/jenkins-controller:2.541.1-netci1
@@ -93,6 +93,10 @@ docker exec netci-corp-s3 sh -c 'echo "s3.bucket.list" | weed shell 2>/dev/null'
   || docker exec netci-corp-s3 sh -c 'echo "s3.bucket.create -name netci-jenkins-backups" | weed shell >/dev/null 2>&1'
 
 log "GitLab (first start takes several minutes)"
+# netCI's ingress node, for the name GitLab sends webhooks to (infra/corp/gitlab compose).
+NETCI_INGRESS_IP="$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' netci-corp-worker)"
+export NETCI_INGRESS_IP
+mkdir -p "${C}/gitlab-trusted-certs" && cp "${C}/pki/ca.crt" "${C}/gitlab-trusted-certs/netci-lab-ca.crt"
 docker compose -f "${ROOT}/infra/corp/gitlab/docker-compose.yml" up -d >/dev/null
 for _ in $(seq 120); do
   [[ "$(curl -s -o /dev/null -w '%{http_code}' http://172.17.0.1:8929/users/sign_in)" == 200 ]] && break; sleep 5
@@ -111,10 +115,14 @@ bash "${ROOT}/infra/corp/harbor/bootstrap.sh"
 
 log "images into Harbor (nodes have no route to Docker Hub)"
 # The operators' robot: the builds' robot can push only to `apps` (infra/corp/harbor/bootstrap.sh).
-docker login "${HARBOR_PUSH}" -u "$(<"${C}/harbor_ops_robot_name")" --password-stdin < "${C}/harbor_ops_robot_secret" >/dev/null
+# Images reach Harbor through scripts/corp/push_image.sh (buildah with the lab CA as its only
+# extra trust): Docker 29 fetches registry tokens without /etc/docker/certs.d.
+# The toolbox first: scripts/corp/push_image.sh runs buildah from it.
+docker build -q --network host -t "${TOOLBOX_IMAGE}" "${ROOT}/jenkins/agent-toolbox" >/dev/null
+push() { "${ROOT}/scripts/corp/push_image.sh" "$1" "$2" >/dev/null; }
 mirror() {  # $1 = upstream image; pushed under mirror/<same path>
   local short="${1#docker.io/}"; short="${short#quay.io/}"
-  docker pull -q "$1" >/dev/null && docker tag "$1" "${HARBOR_PUSH}/mirror/${short}" && docker push -q "${HARBOR_PUSH}/mirror/${short}" >/dev/null
+  docker pull -q "$1" >/dev/null && push "$1" "${HARBOR}/mirror/${short}"
 }
 helm repo add jenkins https://charts.jenkins.io >/dev/null 2>&1 || true
 helm repo update jenkins >/dev/null
@@ -123,16 +131,19 @@ import sys, yaml
 s = yaml.safe_load(sys.stdin)["controller"]["sidecars"]["configAutoReload"]["image"]
 print("{}/{}:{}".format(s.get("registry", "docker.io"), s["repository"], s["tag"]))')
 for img in velero/velero:v1.18.3 velero/velero-plugin-for-aws:v1.14.3 "${sidecar}" "${AGENT_IMAGE}"; do mirror "${img}"; done
-docker build -q --network host -t "${HARBOR_PUSH}/${CONTROLLER_IMAGE}" -f "${ROOT}/jenkins/Dockerfile.controller" "${ROOT}/jenkins" >/dev/null
-docker build -q --network host -t "${HARBOR_PUSH}/${TOOLBOX_IMAGE}" "${ROOT}/jenkins/agent-toolbox" >/dev/null
-docker push -q "${HARBOR_PUSH}/${CONTROLLER_IMAGE}" >/dev/null
-docker push -q "${HARBOR_PUSH}/${TOOLBOX_IMAGE}" >/dev/null
+docker build -q --network host -t "${CONTROLLER_IMAGE}" -f "${ROOT}/jenkins/Dockerfile.controller" "${ROOT}/jenkins" >/dev/null
+push "${CONTROLLER_IMAGE}" "${HARBOR}/${CONTROLLER_IMAGE}"
+push "${TOOLBOX_IMAGE}" "${HARBOR}/${TOOLBOX_IMAGE}"
 
 log "Trivy DB mirror, refreshed every 6 hours by a user timer"
 "${ROOT}/scripts/corp/mirror_trivy_db.sh"
 mkdir -p "${HOME}/.config/systemd/user"
 cp "${ROOT}"/infra/corp/systemd/netci-trivy-db-mirror.{service,timer} "${HOME}/.config/systemd/user/"
 systemctl --user daemon-reload && systemctl --user enable --now netci-trivy-db-mirror.timer >/dev/null
+
+log "ingress-nginx and netCI's TLS certificate"
+"${ROOT}/scripts/corp/ingress.sh"
+[[ -s "${C}/pki/netci.crt" ]] || "${ROOT}/scripts/corp/lab_ca.sh" issue netci DNS:netci.corp.local >/dev/null
 
 log "StorageClass local-backup and Velero"
 "${K[@]}" apply -f "${ROOT}/infra/corp/storage-local-backup.yaml" >/dev/null

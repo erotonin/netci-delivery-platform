@@ -33,8 +33,15 @@ services:
       - gitlab_logs:/var/log/gitlab
       - gitlab_data:/var/opt/gitlab
       - ../../../.netci-gate/corp/gitlab_root_password:/run/secrets/gitlab_root_password:ro
+      # The lab CA: webhooks to netCI's ingress are sent with TLS verification on. A directory
+      # holding only a copy of the CA, writable because GitLab rehashes it on reconfigure.
+      - ../../../.netci-gate/corp/gitlab-trusted-certs:/etc/gitlab/trusted-certs
+    # netCI's ingress by name, as a company DNS would answer it; the ingress node's address is
+    # read at start (scripts/corp/up.sh exports NETCI_INGRESS_IP), not written down here.
+    extra_hosts:
+      - "netci.corp.local:${NETCI_INGRESS_IP:?set NETCI_INGRESS_IP to the ingress node address}"
     # Also on the kind network, as a company GitLab shares a network with its clusters: it
-    # delivers merge webhooks to netCI (infra/corp/netci/webhook-nodeport.yaml). This host
+    # delivers merge webhooks to netCI's ingress (https://netci.corp.local). This host
     # runs Docker with IP forwarding off, so a container on its own network cannot reach the
     # cluster nodes at all.
     networks: [default, kind]

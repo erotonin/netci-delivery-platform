@@ -43,6 +43,7 @@ restore sang node kia.
 | GitLab | `http://172.17.0.1:8929` | user `root`, mật khẩu ở `.netci-gate/corp/gitlab_root_password` |
 | Harbor | `https://172.17.0.1:8930` | TLS bằng CA của lab; node (containerd `hosts.toml`), pod build (buildah `certs.d`, cosign/trivy qua `SSL_CERT_DIR`), netCI và máy đích đều xác thực chứng chỉ |
 | S3 | `https://172.17.0.1:8333` | TLS bằng CA của lab (`.netci-gate/corp/pki/ca.crt`, `scripts/corp/lab_ca.sh`), qua gateway nginx; trả 403 cho request không ký là bình thường |
+| netCI (portal + API) | `https://netci.corp.local` → ingress-nginx trên `netci-corp-worker` | TLS bằng CA của lab; máy host cần `netci.corp.local` trỏ về IP node đó |
 | Jenkins | `kubectl -n jenkins port-forward svc/jenkins 18089:8080` | không expose ra ngoài cụm |
 
 Tất cả chỉ bind vào docker bridge, không mở trên các interface khác của máy.
@@ -116,4 +117,4 @@ bằng `sudo -n`, vì installer của nó tạo thư mục dữ liệu thuộc r
   máy đích `netci-corp-app-01` (`scripts/corp/app_host.sh`) qua SSH có pin host key.
 - Designer: MR !1 đã được netCI mở thật trên GitLab; chờ người review merge rồi chạy
   `scripts/corp/e2e_designer.py verify`.
-- S3 và Harbor đều chạy TLS có xác thực bằng CA của lab (`scripts/corp/lab_ca.sh`); chưa có ingress (webhook đi qua NodePort 30800 chỉ trong mạng kind).
+- S3, Harbor và ingress của netCI đều chạy TLS có xác thực bằng CA của lab (`scripts/corp/lab_ca.sh`). Webhook của GitLab đi `https://netci.corp.local/api/webhooks/scm/gitlab`, có xác thực SSL; GitLab chỉ được gọi nội bộ tới đúng tên đó. (webhook đi qua NodePort 30800 chỉ trong mạng kind).

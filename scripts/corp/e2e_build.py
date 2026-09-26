@@ -154,7 +154,7 @@ def main():
     ok("Registered GitLab SCM integration")
 
     # GitLab -> netCI: the project's webhook, signed with the same secret (idempotent by URL).
-    hook_url = "http://netci-corp-worker:30800/webhooks/scm/gitlab"
+    hook_url = "https://netci.corp.local/api/webhooks/scm/gitlab"  # the ingress, TLS verified
     admin_gitlab = Path(".netci-gate/corp/gitlab_admin_token").read_text().strip()
     def gitlab(method, path, body=None):
         request = urllib.request.Request("http://172.17.0.1:8929/api/v4" + path, method=method,
@@ -164,7 +164,7 @@ def main():
             return json.loads(response.read() or b"null")
     hooks = gitlab("GET", "/projects/platform%2Fpayments-api/hooks")
     hook = {"url": hook_url, "token": webhook_secret, "push_events": True, "merge_requests_events": True,
-            "enable_ssl_verification": False}
+            "enable_ssl_verification": True}
     existing = [h for h in hooks if h["url"] == hook_url]
     gitlab("PUT" if existing else "POST",
            f"/projects/platform%2Fpayments-api/hooks/{existing[0]['id']}" if existing else "/projects/platform%2Fpayments-api/hooks",

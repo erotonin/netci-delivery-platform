@@ -12,7 +12,7 @@
 
 global:
   environment: production
-  externalUrl: http://netci.corp.local
+  externalUrl: https://netci.corp.local
 
 image:
   registry: 172.17.0.1:8930/netci
@@ -108,8 +108,12 @@ portal:
           labelSelector:
             matchLabels: {app.kubernetes.io/component: portal, app.kubernetes.io/instance: netci}
 
+# ingress-nginx on netci-corp-worker (scripts/corp/ingress.sh), TLS from the lab CA
+# (scripts/corp/lab_ca.sh issue netci DNS:netci.corp.local -> Secret netci-tls).
 ingress:
-  enabled: false                 # no ingress controller in netci-corp; port-forward the portal
+  enabled: true
+  className: nginx
+  tlsSecretName: netci-tls
 
 verification:
   prometheusUrl: http://172.17.0.1:19090
