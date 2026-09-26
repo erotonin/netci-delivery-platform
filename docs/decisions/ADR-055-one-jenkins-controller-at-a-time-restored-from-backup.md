@@ -59,8 +59,10 @@ configuration and the same history.
   already exposed (docs/research/velero-backup-hardening.md). Velero has one repository key
   per install, so the switch is: rollback backup, new bucket and backup location, new key,
   a verification backup and a restore drill, then the old data destroyed.
-- Not verified: TLS to the object store (the lab uses HTTP on the docker bridge) and an
-  unplanned node loss (the drill cordons a live node).
+- An unplanned node loss needs fencing, not just a restore: Kubernetes keeps the
+  StatefulSet pod on a node it cannot reach (it may only be partitioned), so the operator
+  force-deletes it once the node is known to be off. `--unplanned` does that explicitly.
+- Not verified: TLS to the object store (the lab uses HTTP on the docker bridge).
 
 ## Evidence
 
@@ -98,3 +100,22 @@ The run before it printed FAIL (`marker build #2 not found after restore (got '3
 the restore worked: the script read `lastSuccessfulBuild` before the build it had just
 triggered finished, so it marked an old build. It now waits for the build number it
 triggered; the PASS above is from the corrected script.
+
+2026-09-26 18:11, unplanned: the controller's node powered off (`docker kill`), detected
+NotReady after 49 s, fenced, restored on another node (`jenkins_failover.sh --unplanned`):
+
+```
+[18:11:21] failure: controller node netci-corp-worker2 loses power (docker kill)
+[18:12:10] detected: netci-corp-worker2 NotReady after 49 s
+[18:12:21] fenced: netci-corp-worker2 stopped, jenkins-0 force-deleted, namespace removed
+[18:12:48] restore restore-drill-20260926-181055-181221: Completed
+[18:13:10] RTO 107 s (failure to Jenkins answering), RPO 0 s (age of the backup restored)
+[18:13:10] PASS: marker build #8 survived the failover
+```
+
+netCI's API, probed every second through a surviving node: 12 of 114 requests failed, all
+inside the 49 s detection window (requests the Service still sent to the dead node's replica;
+an ingress that retries hides those), none after. An earlier run had lost the API entirely for
+58 s: the other replica's migrate init container had timed out reaching the database after its
+own node restarted, and the kubelet's back-off kept it down 2.5 minutes. migrate.py now retries
+connectivity; the replica was Ready 12 s after its node came back.

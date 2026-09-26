@@ -38,6 +38,11 @@ if (( $(sysctl -n fs.inotify.max_user_instances) < 1024 )); then
   echo "fs.inotify.max_user_instances is below 1024; see /etc/sysctl.d/99-netci-kind.conf" >&2; exit 1
 fi
 
+# SeaweedFS marks its volumes read-only on a nearly full disk and every backup then fails
+# with a 500 (seen 2026-09-26 at 100%); refuse to start rather than run into it.
+free_gb=$(( $(df --output=avail -k / | tail -1) / 1024 / 1024 ))
+(( free_gb >= 10 )) || { echo "only ${free_gb} GB free on /: free space first (docker builder prune)" >&2; exit 1; }
+
 log "kind cluster netci-corp"
 kind get clusters 2>/dev/null | grep -qx netci-corp || kind create cluster --config "${ROOT}/infra/corp/kind-corp.yaml"
 # An HA kind cluster's API goes through this haproxy container, and kind creates it without a

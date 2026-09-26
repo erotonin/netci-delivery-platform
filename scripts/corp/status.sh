@@ -6,6 +6,10 @@ CONTEXT=kind-netci-corp
 K=(kubectl --context "${CONTEXT}")
 probe() { printf '  %-10s %s  %s\n' "$1" "$(curl -s -o /dev/null --max-time 5 -w '%{http_code}' "$2")" "$2"; }
 
+echo "== disk (the object store turns its volumes read-only when the disk fills: backups then fail)"
+used=$(df --output=pcent / | tail -1 | tr -dc 0-9)
+printf '  / %s%% used, %s free%s\n' "${used}" "$(df -h --output=avail / | tail -1 | tr -d ' ')" \
+  "$( (( used >= 90 )) && echo '  WARNING: free space before the next backup (docker builder prune)')"
 echo "== services (HTTP status)"
 probe GitLab http://172.17.0.1:8929/users/sign_in
 probe Harbor http://172.17.0.1:8930/api/v2.0/ping
