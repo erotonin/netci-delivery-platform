@@ -123,3 +123,9 @@ an ingress that retries hides those), none after. An earlier run had lost the AP
 58 s: the other replica's migrate init container had timed out reaching the database after its
 own node restarted, and the kubelet's back-off kept it down 2.5 minutes. migrate.py now retries
 connectivity; the replica was Ready 12 s after its node came back.
+
+The entry point in front of it (2026-09-26 22:45): netCI's ingress runs two replicas on two
+nodes behind a MetalLB L2 virtual address. Powering off the node that announced the address:
+the address moved to the other node and requests succeeded again after 30 s, steadily after
+~40 s (endpoints on the dead node are dropped with node-loss detection), one isolated failure
+later; both replicas were back once the node returned.

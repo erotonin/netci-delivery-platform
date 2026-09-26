@@ -94,9 +94,9 @@ docker exec netci-corp-s3 sh -c 'echo "s3.bucket.list" | weed shell 2>/dev/null'
   || docker exec netci-corp-s3 sh -c 'echo "s3.bucket.create -name netci-jenkins-backups" | weed shell >/dev/null 2>&1'
 
 log "GitLab (first start takes several minutes)"
-# netCI's ingress node, for the name GitLab sends webhooks to (infra/corp/gitlab compose).
-NETCI_INGRESS_IP="$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' netci-corp-worker)"
-export NETCI_INGRESS_IP
+# netCI's ingress virtual address (MetalLB, infra/corp/metallb/pool.yaml): the name GitLab
+# sends webhooks to resolves to it (infra/corp/gitlab compose).
+export NETCI_INGRESS_IP=172.17.255.200
 mkdir -p "${C}/gitlab-trusted-certs" && cp "${C}/pki/ca.crt" "${C}/gitlab-trusted-certs/netci-lab-ca.crt"
 docker compose -f "${ROOT}/infra/corp/gitlab/docker-compose.yml" up -d >/dev/null
 for _ in $(seq 120); do
@@ -152,7 +152,8 @@ mkdir -p "${HOME}/.config/systemd/user"
 cp "${ROOT}"/infra/corp/systemd/netci-trivy-db-mirror.{service,timer} "${HOME}/.config/systemd/user/"
 systemctl --user daemon-reload && systemctl --user enable --now netci-trivy-db-mirror.timer >/dev/null
 
-log "ingress-nginx and netCI's TLS certificate"
+log "MetalLB, ingress-nginx and netCI's TLS certificate"
+"${ROOT}/scripts/corp/metallb.sh"
 "${ROOT}/scripts/corp/ingress.sh"
 [[ -s "${C}/pki/netci.crt" ]] || "${ROOT}/scripts/corp/lab_ca.sh" issue netci DNS:netci.corp.local >/dev/null
 
@@ -245,7 +246,7 @@ log "netCI"
   --dry-run=client -o yaml | "${K[@]}" apply -f - >/dev/null
 helm --kube-context "${CONTEXT}" upgrade --install netci "${ROOT}/deploy/helm/netci-platform" -n netci-system \
   -f "${ROOT}/deploy/helm/netci-platform/examples/values-lab-corp.yaml" --wait --timeout 10m >/dev/null
-ingress_ip="$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' netci-corp-worker)"
+ingress_ip="${NETCI_INGRESS_IP}"
 ready="$(curl -s -o /dev/null -m 10 -w '%{http_code}' --cacert "${C}/pki/ca.crt" --resolve "netci.corp.local:443:${ingress_ip}" https://netci.corp.local/api/readyz)"
 [[ "${ready}" == 200 ]] || { echo "netCI /readyz answered ${ready} through the ingress" >&2; exit 1; }
 

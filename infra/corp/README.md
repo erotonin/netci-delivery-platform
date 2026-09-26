@@ -43,7 +43,7 @@ restore sang node kia.
 | GitLab | `http://172.17.0.1:8929` | user `root`, mật khẩu ở `.netci-gate/corp/gitlab_root_password` |
 | Harbor | `https://172.17.0.1:8930` | TLS bằng CA của lab; node (containerd `hosts.toml`), pod build (buildah `certs.d`, cosign/trivy qua `SSL_CERT_DIR`), netCI và máy đích đều xác thực chứng chỉ |
 | S3 | `https://172.17.0.1:8333` | TLS bằng CA của lab (`.netci-gate/corp/pki/ca.crt`, `scripts/corp/lab_ca.sh`), qua gateway nginx; trả 403 cho request không ký là bình thường |
-| netCI (portal + API) | `https://netci.corp.local` → ingress-nginx trên `netci-corp-worker` | TLS bằng CA của lab; máy host cần `netci.corp.local` trỏ về IP node đó |
+| netCI (portal + API) | `https://netci.corp.local` → VIP `172.17.255.200` (MetalLB) → 2 replica ingress-nginx trên 2 node | TLS bằng CA của lab; máy host cần `netci.corp.local` trỏ về VIP |
 | Jenkins | `kubectl -n jenkins port-forward svc/jenkins 18089:8080` | không expose ra ngoài cụm |
 
 Tất cả chỉ bind vào docker bridge, không mở trên các interface khác của máy.
