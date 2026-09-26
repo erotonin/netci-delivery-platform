@@ -54,9 +54,13 @@ configuration and the same history.
 - The object store must have headroom: SeaweedFS at 512 MiB was OOM-killed while Kopia
   uploaded in parallel, which Velero reports only as a `Canceled` pod volume backup. It
   runs at 1 GiB with `GOMEMLIMIT`.
-- Not verified: TLS to the object store (the lab uses HTTP on the docker bridge), an
-  unplanned node loss (the drill cordons a live node), and a restore after the repository
-  key was rotated -- the lab repository predates decision 7 and still has the default key.
+- Rotating the key means a new repository, not `kopia repository change-password`: that
+  re-wraps the format blob and keeps the master key, which the public default password
+  already exposed (docs/research/velero-backup-hardening.md). Velero has one repository key
+  per install, so the switch is: rollback backup, new bucket and backup location, new key,
+  a verification backup and a restore drill, then the old data destroyed.
+- Not verified: TLS to the object store (the lab uses HTTP on the docker bridge) and an
+  unplanned node loss (the drill cordons a live node).
 
 ## Evidence
 
@@ -77,3 +81,20 @@ RPO is 1 s only because a drill backs up immediately before the failure; for an 
 loss it is up to the 15-minute schedule interval. The run before this one refused to
 restore (`backup ... is PartiallyFailed, not Completed`) when the object store was
 OOM-killed mid-backup -- the script restores only from a Completed backup.
+
+2026-09-26 16:07, after the key rotation, restoring from the new repository (backup location
+`jenkins-s3`, bucket `netci-jenkins-backups`, random key held outside the cluster):
+
+```
+[16:07:52] marker: dr-marker build #4 is in JENKINS_HOME
+[16:08:33] restore: namespace jenkins from drill-20260926-160752
+[16:09:01] restore restore-drill-20260926-160752-160833: Completed
+[16:09:21] controller moved netci-corp-worker3 -> netci-corp-worker2
+[16:09:21] RTO 63 s (failure to Jenkins answering), RPO 0 s (age of the backup restored)
+[16:09:21] PASS: marker build #4 survived the failover
+```
+
+The run before it printed FAIL (`marker build #2 not found after restore (got '3')`) although
+the restore worked: the script read `lastSuccessfulBuild` before the build it had just
+triggered finished, so it marked an old build. It now waits for the build number it
+triggered; the PASS above is from the corrected script.

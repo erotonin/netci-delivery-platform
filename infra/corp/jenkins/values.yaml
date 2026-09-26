@@ -7,7 +7,7 @@ controller:
   image:
     registry: 172.17.0.1:8930
     repository: netci/jenkins-controller
-    tag: 2.541.1-netci1
+    tag: 2.541.1-netci2          # netci2 adds matrix-auth
   installPlugins: false          # baked into the image: a restart must not depend on the update site
   numExecutors: 0
   javaOpts: "-Xms256m -Xmx768m -Djenkins.install.runSetupWizard=false"
@@ -29,6 +29,7 @@ controller:
     - {name: jenkins-casc-secrets, keyName: gitlab-token}
     - {name: jenkins-casc-secrets, keyName: harbor-robot-name}
     - {name: jenkins-casc-secrets, keyName: harbor-robot-secret}
+    - {name: jenkins-casc-secrets, keyName: netci-sa-password}
   admin:
     createSecret: false
   JCasC:
@@ -48,9 +49,32 @@ controller:
               users:
                 - id: admin
                   password: "${jenkins-casc-secrets-admin-password}"
+                # netCI's service account. It signs in with an API token generated for it
+                # (kept in JENKINS_HOME, so it survives a restore), never as admin.
+                - id: netci-sa
+                  name: "netCI service account"
+                  password: "${jenkins-casc-secrets-netci-sa-password}"
+          # Least privilege: people administer, netCI gets exactly what its adapter calls --
+          # create/configure/read/build/cancel jobs and read the queue. No Administer, so
+          # JCasC export/reload and the plugin list (multi-controller drift, ADR-030) answer
+          # 403 to netCI: with one controller there is nothing to compare it with.
           authorizationStrategy:
-            loggedInUsersCanDoAnything:
-              allowAnonymousRead: false
+            globalMatrix:
+              entries:
+                - user:
+                    name: admin
+                    permissions:
+                      - "Overall/Administer"
+                - user:
+                    name: netci-sa
+                    permissions:
+                      - "Overall/Read"
+                      - "Job/Build"
+                      - "Job/Cancel"
+                      - "Job/Configure"
+                      - "Job/Create"
+                      - "Job/Discover"
+                      - "Job/Read"
         credentials:
           system:
             domainCredentials:
@@ -63,8 +87,8 @@ controller:
                   - usernamePassword:
                       id: netci-git
                       scope: GLOBAL
-                      description: "GitLab token: library, checkout, cache mirror"
-                      username: root
+                      description: "GitLab group token, read_repository (Reporter): library and checkout"
+                      username: oauth2
                       password: "${jenkins-casc-secrets-gitlab-token}"
                   - usernamePassword:
                       id: netci-harbor

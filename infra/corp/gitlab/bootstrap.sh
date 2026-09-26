@@ -27,6 +27,17 @@ ensure_project() {
 }
 ensure_project netci-shared-library
 ensure_project payments-api
+# Least-privilege group tokens, 90 days, instead of the admin token: Jenkins clones with a
+# read_repository/Reporter token, netCI's pipeline designer pushes branches and opens merge
+# requests with an api/Developer one (it cannot protect branches or merge past approvals).
+group_token() {  # $1 file  $2 name  $3 scopes-json  $4 access level
+  [[ -s "${SECRETS}/$1" ]] && return 0
+  ( umask 077; api -X POST "${URL}/api/v4/groups/${group_id}/access_tokens" \
+      -d "{\"name\":\"$2\",\"scopes\":$3,\"access_level\":$4,\"expires_at\":\"$(date -d '+90 days' +%F)\"}" \
+      | python3 -c 'import json,sys;print(json.load(sys.stdin)["token"],end="")' > "${SECRETS}/$1" )
+}
+group_token gitlab_jenkins_token jenkins-clone '["read_repository"]' 20
+group_token gitlab_netci_token netci-designer '["api"]' 30
 # Push over HTTP with the token as an ASKPASS answer, never in the remote URL.
 askpass="$(mktemp)"; trap 'rm -f "${askpass}"' EXIT
 printf '#!/bin/sh\ncase "$1" in Username*) echo root;; *) cat "%s";; esac\n' "${SECRETS}/gitlab_admin_token" > "${askpass}"; chmod 700 "${askpass}"

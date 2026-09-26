@@ -61,6 +61,8 @@ GitLab chạy ở cấu hình nhẹ: puma worker 0, sidekiq 5, tắt monitoring/
 
 ## Cách dùng
 
+Runbook vận hành đầy đủ (khởi động sau reboot, backup, failover, xoay khoá, phát hành thư viện): `docs/RUNBOOK-CORP-LAB.md`.
+
 ```bash
 scripts/corp/up.sh                 # dựng từ đầu hoặc bổ sung phần còn thiếu (idempotent)
 scripts/corp/status.sh             # chỉ đọc: HTTP của dịch vụ, node, pod Jenkins, backup
@@ -101,11 +103,11 @@ bằng `sudo -n`, vì installer của nó tạo thư mục dữ liệu thuộc r
   trong ADR-055).
 - **`up.sh` chưa được chạy trọn một lượt trên máy trống.** Lab hiện tại được dựng bằng chính
   các bước này nhưng chạy tay từng bước; script gom chúng lại, mới kiểm tra cú pháp.
-- **Repository Kopia trên lab vẫn dùng khoá mặc định của Velero.** Nó được tạo trước khi
-  `velero/install.sh` bắt đầu đặt khoá riêng. Muốn thay khoá thì phải xoá các backup hiện có và
-  tạo lại repository. Quy trình đã kiểm chứng nguồn nằm ở `docs/research/velero-backup-hardening.md`
-  (mục 7). Các bước 1–2 đã làm xong: đã có điểm rollback `pre-rekey-20260926-1252` (Completed),
-  bucket `netci-jenkins-backups` và khoá mới ngoài cụm. Bước 3 phải ghi Secret trong cụm, và bước này
-  đang chờ người vận hành cho phép.
+- **Đã đổi khoá repository Kopia** sang khoá ngẫu nhiên lưu ngoài cụm. Backup ghi vào BSL
+  `jenkins-s3` (bucket `netci-jenkins-backups`); diễn tập restore từ repository mới đã PASS (RTO 63 s,
+  xem ADR-055). BSL `default` và bucket `velero` cũ (khoá mặc định công khai) đang ở chế độ
+  chỉ-đọc và chờ được huỷ, vì huỷ là thao tác xoá dữ liệu nên do người vận hành quyết định.
+- **Least privilege:** netCI gọi Jenkins bằng `netci-sa` (matrix-auth, không có Administer);
+  Jenkins clone bằng group token `read_repository`; designer dùng group token `api`/Developer.
 - Chưa có TLS (Harbor, S3), chưa nối netCI vào lab này, chưa có build nào chạy trên Jenkins
   của lab.

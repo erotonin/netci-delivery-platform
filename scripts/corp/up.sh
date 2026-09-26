@@ -31,7 +31,7 @@ secret() {  # generate once, never overwrite: services were initialised with the
 }
 
 mkdir -p "${C}" && chmod 700 "${C}"
-for name in gitlab_root_password harbor_admin_password harbor_db_password jenkins_admin_password; do secret "${name}"; done
+for name in gitlab_root_password harbor_admin_password harbor_db_password jenkins_admin_password jenkins_netci_sa_password; do secret "${name}"; done
 
 # kind nodes run many inotify watchers; the kernel default (128 instances) crash-loops pods.
 if (( $(sysctl -n fs.inotify.max_user_instances) < 1024 )); then
@@ -118,9 +118,10 @@ log "Jenkins"
 "${K[@]}" -n jenkins create secret generic jenkins-casc-secrets \
   --from-file=admin-password="${C}/jenkins_admin_password" \
   --from-file=cosign-key="${ROOT}/.netci-gate/jenkins/secrets/NETCI_COSIGN_PRIVATE_KEY" \
-  --from-file=gitlab-token="${C}/gitlab_admin_token" \
+  --from-file=gitlab-token="${C}/gitlab_jenkins_token" \
   --from-file=harbor-robot-name="${C}/harbor_robot_name" \
   --from-file=harbor-robot-secret="${C}/harbor_robot_secret" \
+  --from-file=netci-sa-password="${C}/jenkins_netci_sa_password" \
   --dry-run=client -o yaml | "${K[@]}" apply -f - >/dev/null
 helm --kube-context "${CONTEXT}" upgrade --install jenkins jenkins/jenkins --version "${CHART_VERSION}" \
   -n jenkins -f "${ROOT}/infra/corp/jenkins/values.yaml" --wait --timeout 10m >/dev/null
