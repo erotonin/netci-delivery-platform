@@ -221,6 +221,9 @@ registry:
   # theo project có quyền riêng; tài khoản build chỉ nên được push vào đúng một project.
   # Do server quyết định (NETCI_REGISTRY_NAMESPACE); đường dẫn sai làm netCI dừng khởi động.
   namespace: apps
+  # Registry dùng CA riêng của công ty: ConfigMap (key ca.crt) trong namespace của netCI.
+  # API và worker tin CA đó bên cạnh CA hệ thống (SSL_CERT_DIR); allowHttp để false.
+  caConfigMap: corp-ca
 
 scm:
   gitlabUrl: https://gitlab.example.com

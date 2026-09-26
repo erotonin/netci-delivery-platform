@@ -99,7 +99,17 @@ spec:
           volumeMounts:
             - {name: app-secret, mountPath: /run/secrets/netci-app, readOnly: true}
             - {name: tmp, mountPath: /tmp}
+            {{- if .Values.registry.caConfigMap }}
+            - {name: registry-ca, mountPath: /etc/netci/registry-ca, readOnly: true}
+            {{- end }}
       volumes:
+        {{- if .Values.registry.caConfigMap }}
+        - name: registry-ca
+          configMap:
+            name: {{ .Values.registry.caConfigMap }}
+            items:
+              - {key: ca.crt, path: registry-ca.crt}
+        {{- end }}
         - name: app-secret
           secret:
             secretName: {{ include "netci.secretName" . }}

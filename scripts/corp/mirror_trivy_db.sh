@@ -19,14 +19,18 @@ log() { printf '[%s] %s\n' "$(date -Is)" "$*"; }
 # The operators' robot (push to mirror); builds' robot cannot write here. Its login lives in a
 # throwaway DOCKER_CONFIG so the credential is not left in ~/.docker.
 DOCKER_CONFIG="$(mktemp -d)"; export DOCKER_CONFIG
-trap 'rm -rf "${DOCKER_CONFIG}"' EXIT
+# Harbor's TLS chains to the lab CA: trusted beside the system roots (ghcr.io needs those),
+# from a directory holding only that certificate -- never the PKI directory with its keys.
+TRUST="$(mktemp -d)"; cp "${C}/pki/ca.crt" "${TRUST}/lab-ca.crt"
+export SSL_CERT_DIR="/etc/ssl/certs:${TRUST}"
+trap 'rm -rf "${DOCKER_CONFIG}" "${TRUST}"' EXIT
 docker login localhost:8930 -u "$(<"${C}/harbor_ops_robot_name")" --password-stdin \
   < "${C}/harbor_ops_robot_secret" >/dev/null 2>&1
 
-"${COSIGN}" copy --allow-http-registry --allow-insecure-registry -f "${SOURCE}" "${TARGET}" >/dev/null
+"${COSIGN}" copy -f "${SOURCE}" "${TARGET}" >/dev/null
 
 upstream=$("${COSIGN}" triangulate --type digest "${SOURCE}" 2>/dev/null | sed 's/.*@//' || true)
-mirrored=$("${COSIGN}" triangulate --allow-http-registry --allow-insecure-registry --type digest "${TARGET}" 2>/dev/null | sed 's/.*@//' || true)
+mirrored=$("${COSIGN}" triangulate --type digest "${TARGET}" 2>/dev/null | sed 's/.*@//' || true)
 if [[ -z "${upstream}" || "${upstream}" != "${mirrored}" ]]; then
   log "FAIL: mirror serves '${mirrored}', upstream is '${upstream}'"; exit 1
 fi

@@ -78,6 +78,11 @@ data:
   NETCI_REGISTRY_PULL_HOST: {{ default .Values.registry.pushHost .Values.registry.pullHost | quote }}
   NETCI_REGISTRY_NAMESPACE: {{ .Values.registry.namespace | default "" | quote }}
   NETCI_REGISTRY_ALLOW_HTTP: {{ .Values.registry.allowHttp | quote }}
+  {{- if .Values.registry.caConfigMap }}
+  # A private CA for the registry, added to -- not replacing -- the system trust: Go tools
+  # (cosign, trivy) read every directory in SSL_CERT_DIR.
+  SSL_CERT_DIR: "/etc/ssl/certs:/etc/netci/registry-ca"
+  {{- end }}
   {{- with .Values.registry.buildBaseImage }}
   NETCI_BUILD_BASE_IMAGE: {{ . | quote }}
   {{- end }}

@@ -8,23 +8,28 @@ networking:
   podSubnet: 10.246.0.0/16
   serviceSubnet: 10.98.0.0/16
 containerdConfigPatches:
-  # Harbor (infra/corp/harbor) over plain HTTP in the lab, reached through the docker bridge.
+  # Registries are configured per host in /etc/containerd/certs.d (containerd 2.x): Harbor
+  # (infra/corp/harbor) over TLS verified against the lab CA, the old lab registry over HTTP.
+  # scripts/corp/up.sh renders that directory into .netci-gate/corp/containerd-certs.d and
+  # mounts it into every node (__CERTS_D__ is replaced with its absolute path).
   - |-
-    [plugins."io.containerd.grpc.v1.cri".registry.mirrors."172.17.0.1:8930"]
-      endpoint = ["http://172.17.0.1:8930"]
-    [plugins."io.containerd.grpc.v1.cri".registry.configs."172.17.0.1:8930".tls]
-      insecure_skip_verify = true
-    [plugins."io.containerd.grpc.v1.cri".registry.mirrors."172.17.0.1:55000"]
-      endpoint = ["http://172.17.0.1:55000"]
+    [plugins."io.containerd.grpc.v1.cri".registry]
+      config_path = "/etc/containerd/certs.d"
 nodes:
   - role: control-plane
+    extraMounts: [{hostPath: __CERTS_D__, containerPath: /etc/containerd/certs.d, readOnly: true}]
   - role: control-plane
+    extraMounts: [{hostPath: __CERTS_D__, containerPath: /etc/containerd/certs.d, readOnly: true}]
   - role: control-plane
+    extraMounts: [{hostPath: __CERTS_D__, containerPath: /etc/containerd/certs.d, readOnly: true}]
   # Build pods run on the ci pool (two nodes). The Jenkins controller may run on either of
   # two eligible nodes: failover (ADR-055) needs somewhere else to restore to.
   - role: worker
     labels: {netci.io/pool: ci}
+    extraMounts: [{hostPath: __CERTS_D__, containerPath: /etc/containerd/certs.d, readOnly: true}]
   - role: worker
     labels: {netci.io/pool: ci, netci.io/jenkins-controller: eligible}
+    extraMounts: [{hostPath: __CERTS_D__, containerPath: /etc/containerd/certs.d, readOnly: true}]
   - role: worker
     labels: {netci.io/pool: platform, netci.io/jenkins-controller: eligible}
+    extraMounts: [{hostPath: __CERTS_D__, containerPath: /etc/containerd/certs.d, readOnly: true}]

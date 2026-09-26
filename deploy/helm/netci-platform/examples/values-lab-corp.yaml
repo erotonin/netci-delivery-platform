@@ -54,7 +54,8 @@ registry:
   pushHost: 172.17.0.1:8930
   pullHost: 172.17.0.1:8930
   namespace: apps                # the build robot may push to Harbor project `apps` only
-  allowHttp: true                # Harbor has no TLS in the lab yet (infra/corp/README.md)
+  allowHttp: false               # Harbor serves TLS from the lab CA; builds verify it
+  caConfigMap: lab-ca            # ca.crt of the lab CA (scripts/corp/lab_ca.sh), in netci-system
   buildBaseImage: 172.17.0.1:8930/mirror/netci/python-base:3.12-alpine
   trivyDbRepository: 172.17.0.1:8930/mirror/aquasec/trivy-db:2
 

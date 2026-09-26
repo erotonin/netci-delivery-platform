@@ -127,6 +127,7 @@ registry:
   pushHost: ""                 # where builds push, e.g. harbor.example.com
   pullHost: ""                 # where clusters and hosts pull from (often the same)
   namespace: ""                # registry project artifacts go under, e.g. "apps" -> <host>/apps/<image>
+  caConfigMap: ""              # ConfigMap (key ca.crt) with a private CA the registry's TLS chains to
   allowHttp: false             # plain-HTTP registry; lab only. Builds verify TLS unless set
   buildBaseImage: ""           # base image mirrored into the registry
   trivyDbRepository: ""        # Trivy DB mirror for build farms without internet

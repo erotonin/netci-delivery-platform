@@ -24,8 +24,13 @@ import os, sys, yaml
 template, target, secrets, data = sys.argv[1:]
 config = yaml.safe_load(open(template))
 config["hostname"] = "172.17.0.1"
-config["http"] = {"port": 8930}
-config.pop("https", None)                       # plain HTTP inside the lab; TLS is a company install
+# TLS on the port every image reference already names, with a lab-CA certificate
+# (scripts/corp/lab_ca.sh issue harbor ...): references and digests do not change. Plain
+# HTTP on 8932 only redirects to it.
+config["http"] = {"port": 8932}
+config["https"] = {"port": 8930,
+                   "certificate": f"{secrets}/pki/harbor-chain.crt",
+                   "private_key": f"{secrets}/pki/harbor.key"}
 config["harbor_admin_password"] = open(f"{secrets}/harbor_admin_password").read().strip()
 config["database"]["password"] = open(f"{secrets}/harbor_db_password").read().strip()
 config["database"]["max_idle_conns"] = 20
@@ -40,4 +45,4 @@ PY
 cd "${WORK}/harbor"
 # prepare writes secret-bearing config as root; Harbor documents running the installer as root.
 sudo -n ./install.sh   # no --with-trivy: netCI owns scanning (ADR-056)
-echo "harbor ${VERSION} at http://172.17.0.1:8930"
+echo "harbor ${VERSION} at https://172.17.0.1:8930 (lab CA)"

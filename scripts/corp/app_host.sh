@@ -32,8 +32,11 @@ up() {
   docker start "${NAME}" >/dev/null
   docker cp "${SSH_DIR}/id_ed25519.pub" "${NAME}:/home/netci/.ssh/authorized_keys"
   docker exec "${NAME}" bash -c 'chown -R netci:netci /home/netci/.ssh && chmod 600 /home/netci/.ssh/authorized_keys'
-  # The only registry it trusts over plain HTTP is the lab Harbor, where netCI publishes.
-  docker exec "${NAME}" bash -c "printf '%s' '{\"insecure-registries\": [\"${REGISTRY}\"], \"features\": {\"containerd-snapshotter\": false}}' > /etc/docker/daemon.json && systemctl restart docker"
+  # Harbor is trusted through the lab CA, not as an "insecure registry": a certificate that
+  # does not chain to it is refused.
+  docker exec -i "${NAME}" bash -c "mkdir -p '/etc/docker/certs.d/${REGISTRY}' && cat > '/etc/docker/certs.d/${REGISTRY}/ca.crt'" \
+    < "${ROOT}/.netci-gate/corp/pki/ca.crt"
+  docker exec "${NAME}" bash -c "printf '%s' '{\"features\": {\"containerd-snapshotter\": false}}' > /etc/docker/daemon.json && systemctl restart docker"
   # Pin the host key: netCI connects with StrictHostKeyChecking=yes.
   for _ in $(seq 1 20); do
     ssh-keyscan -t ed25519 "${IP}" 2>/dev/null > "${SSH_DIR}/known_hosts.tmp" && [[ -s "${SSH_DIR}/known_hosts.tmp" ]] && break; sleep 1

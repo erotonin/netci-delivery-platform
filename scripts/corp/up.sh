@@ -43,17 +43,29 @@ fi
 free_gb=$(( $(df --output=avail -k / | tail -1) / 1024 / 1024 ))
 (( free_gb >= 10 )) || { echo "only ${free_gb} GB free on /: free space first (docker builder prune)" >&2; exit 1; }
 
+log "lab CA and certificates"
+"${ROOT}/scripts/corp/lab_ca.sh" ca >/dev/null
+[[ -s "${C}/pki/s3.crt" ]] || "${ROOT}/scripts/corp/lab_ca.sh" issue s3 IP:172.17.0.1 DNS:netci-corp-s3 DNS:localhost IP:127.0.0.1 >/dev/null
+[[ -s "${C}/pki/harbor.crt" ]] || "${ROOT}/scripts/corp/lab_ca.sh" issue harbor IP:172.17.0.1 DNS:localhost IP:127.0.0.1 >/dev/null
+# Node registry configuration (containerd hosts.toml), mounted into every kind node.
+certs_d="${C}/containerd-certs.d"
+mkdir -p "${certs_d}/172.17.0.1:8930" "${certs_d}/172.17.0.1:55000"
+cp "${C}/pki/ca.crt" "${certs_d}/172.17.0.1:8930/ca.crt"
+printf 'server = "https://172.17.0.1:8930"\n\n[host."https://172.17.0.1:8930"]\n  capabilities = ["pull", "resolve"]\n  ca = "/etc/containerd/certs.d/172.17.0.1:8930/ca.crt"\n' > "${certs_d}/172.17.0.1:8930/hosts.toml"
+printf 'server = "http://172.17.0.1:55000"\n\n[host."http://172.17.0.1:55000"]\n  capabilities = ["pull", "resolve"]\n' > "${certs_d}/172.17.0.1:55000/hosts.toml"
+# Docker on this host pushes to Harbor and must trust the same CA.
+for h in 172.17.0.1:8930 localhost:8930; do sudo -n install -D -m 644 "${C}/pki/ca.crt" "/etc/docker/certs.d/${h}/ca.crt"; done
+
 log "kind cluster netci-corp"
-kind get clusters 2>/dev/null | grep -qx netci-corp || kind create cluster --config "${ROOT}/infra/corp/kind-corp.yaml"
+if ! kind get clusters 2>/dev/null | grep -qx netci-corp; then
+  sed "s#__CERTS_D__#${certs_d}#g" "${ROOT}/infra/corp/kind-corp.yaml" > "${C}/kind-corp.rendered.yaml"
+  kind create cluster --config "${C}/kind-corp.rendered.yaml"
+fi
 # An HA kind cluster's API goes through this haproxy container, and kind creates it without a
 # restart policy that survives a host reboot: after one, every kubectl call is refused and the
 # workers go NotReady (seen 2026-09-26).
 docker update --restart unless-stopped netci-corp-external-load-balancer >/dev/null
 docker start netci-corp-external-load-balancer >/dev/null
-
-log "lab CA and the S3 certificate"
-"${ROOT}/scripts/corp/lab_ca.sh" ca >/dev/null
-[[ -s "${C}/pki/s3.crt" ]] || "${ROOT}/scripts/corp/lab_ca.sh" issue s3 IP:172.17.0.1 DNS:netci-corp-s3 DNS:localhost IP:127.0.0.1 >/dev/null
 
 log "SeaweedFS (S3, behind a TLS gateway)"
 for f in s3-access-key s3-secret-key; do

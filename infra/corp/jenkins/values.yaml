@@ -144,6 +144,9 @@ controller:
                         serviceAccountName: jenkins-agent
                         restartPolicy: Never
                         securityContext: {runAsNonRoot: true, runAsUser: 1000, runAsGroup: 1000, fsGroup: 1000}
+                        volumes:
+                          - name: lab-ca
+                            configMap: {name: lab-ca}
                         containers:
                           - name: jnlp
                             image: 172.17.0.1:8930/mirror/jenkins/inbound-agent:3386.v353e57a_1b_ea_0-1-jdk21
@@ -160,6 +163,12 @@ controller:
                             env:
                               - {name: BUILDAH_ISOLATION, value: chroot}
                               - {name: STORAGE_DRIVER, value: vfs}
+                              # The lab CA beside, not instead of, the system trust (Go tools).
+                              - {name: SSL_CERT_DIR, value: "/etc/ssl/certs:/etc/netci/registry-ca"}
+                            volumeMounts:
+                              # buildah verifies the registry against certs.d/<host:port>/ca.crt
+                              - {name: lab-ca, mountPath: "/etc/containers/certs.d/172.17.0.1:8930/ca.crt", subPath: ca.crt, readOnly: true}
+                              - {name: lab-ca, mountPath: /etc/netci/registry-ca, readOnly: true}
                             securityContext: {allowPrivilegeEscalation: true}
                             resources: {requests: {cpu: 500m, memory: 1Gi}, limits: {cpu: "2", memory: 3Gi}}
 
