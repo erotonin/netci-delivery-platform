@@ -103,6 +103,9 @@ bằng `sudo -n`, vì installer của nó tạo thư mục dữ liệu thuộc r
   các bước này nhưng chạy tay từng bước; script gom chúng lại, mới kiểm tra cú pháp.
 - **Repository Kopia trên lab vẫn dùng khoá mặc định của Velero.** Nó được tạo trước khi
   `velero/install.sh` bắt đầu đặt khoá riêng. Muốn thay khoá thì phải xoá các backup hiện có và
-  tạo lại repository; việc này để người vận hành quyết định.
+  tạo lại repository. Quy trình đã kiểm chứng nguồn nằm ở `docs/research/velero-backup-hardening.md`
+  (mục 7). Các bước 1–2 đã làm xong: đã có điểm rollback `pre-rekey-20260926-1252` (Completed),
+  bucket `netci-jenkins-backups` và khoá mới ngoài cụm. Bước 3 phải ghi Secret trong cụm, và bước này
+  đang chờ người vận hành cho phép.
 - Chưa có TLS (Harbor, S3), chưa nối netCI vào lab này, chưa có build nào chạy trên Jenkins
   của lab.
