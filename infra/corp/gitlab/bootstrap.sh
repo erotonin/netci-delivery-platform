@@ -6,7 +6,8 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 SECRETS="${ROOT}/.netci-gate/corp"
 URL="http://172.17.0.1:8929"
-LIB_TAG="${LIB_TAG:-netci-0.3.0}"
+# The library version the lab Jenkins loads (infra/corp/jenkins/values.yaml defaultVersion).
+LIB_TAG="${LIB_TAG:-$(python3 -c 'import sys,yaml,re;c=yaml.safe_load(open(sys.argv[1]))["controller"]["JCasC"]["configScripts"]["base"];print(re.search(r"defaultVersion: (\S+)",c).group(1))' "${ROOT}/infra/corp/jenkins/values.yaml")}"
 if [[ ! -s "${SECRETS}/gitlab_admin_token" ]]; then
   token="glpat-$(python3 -c 'import secrets;print(secrets.token_urlsafe(20))')"
   # The token reaches the container on stdin only, never on a command line or in a log.
