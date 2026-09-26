@@ -349,7 +349,8 @@ describe('PipelinesPage', () => {
     })
     const builtinTextarea = screen.getByLabelText('Mã nguồn stage') as HTMLTextAreaElement
     expect(builtinTextarea.readOnly).toBe(true)
-    expect(builtinTextarea.value).toBe('#!/usr/bin/env bash\necho "Running checkout..."')
+    // The code is fetched after the stage is selected: wait for it, not for the note.
+    await waitFor(() => expect(builtinTextarea.value).toBe('#!/usr/bin/env bash\necho "Running checkout..."'))
 
     // 2. Click on the custom stage card to select it
     const stageCardsPanel = screen
@@ -368,7 +369,7 @@ describe('PipelinesPage', () => {
     // Custom stage textarea is editable
     const customTextarea = screen.getByLabelText('Mã nguồn stage') as HTMLTextAreaElement
     expect(customTextarea.readOnly).toBe(false)
-    expect(customTextarea.value).toBe('#!/usr/bin/env bash\n./lint.sh')
+    await waitFor(() => expect(customTextarea.value).toBe('#!/usr/bin/env bash\n./lint.sh'))
 
     // Edit code in custom stage
     fireEvent.change(customTextarea, {
