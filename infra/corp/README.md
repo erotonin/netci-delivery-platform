@@ -73,6 +73,11 @@ scripts/corp/down.sh --delete      # xoá luôn cluster kind và volume của co
 `down.sh` không bao giờ xoá `.netci-gate/corp`. GitLab, Harbor và S3 được khởi tạo bằng các
 secret trong thư mục đó, và khoá repository Kopia ở đó là cách duy nhất để đọc lại backup cũ.
 
+**Sau khi khởi động lại máy, chạy lại `scripts/corp/up.sh`.** Hai thứ không tự hồi phục: container
+haproxy của cụm HA kind (không có nó thì API từ chối kết nối và worker báo NotReady), và các
+container của Harbor (thoát với mã 128 vì khởi động trước `harbor-log`). `up.sh` bật lại cả hai
+và bỏ qua những gì đang chạy.
+
 Yêu cầu trên máy: `fs.inotify.max_user_instances >= 1024`
 (`/etc/sysctl.d/99-netci-kind.conf`), vì mặc định 128 làm pod bị crash-loop. Harbor được cài
 bằng `sudo -n`, vì installer của nó tạo thư mục dữ liệu thuộc root.

@@ -1,0 +1,81 @@
+# netCI in the company-shaped lab `netci-corp` (infra/corp, ADR-055/056/057): one Jenkins
+# controller reached through its Service, Harbor as the registry, GitLab as the SCM.
+#
+#   helm upgrade --install netci deploy/helm/netci-platform -n netci-system \
+#     -f deploy/helm/netci-platform/examples/values-lab-corp.yaml
+#
+# Holds no credential: those are in the `netci-app` Secret (docs/DEPLOY-KUBERNETES.md,
+# "Secrets"), with `scm-gitlab-token` added for the pipeline designer. Shares Keycloak,
+# Temporal and the PostgreSQL server with the other lab installs, but not their state: its own
+# database (netci_corp) and task queue (netci-corp-delivery), so no install can take another's
+# builds or deployments -- and deployment leases, which live in the database, never meet.
+
+global:
+  environment: production
+  externalUrl: http://netci.corp.local
+
+image:
+  registry: 172.17.0.1:8930/netci
+  tag: 0.3.0-corp1               # built from a clean worktree of HEAD, pushed to Harbor
+
+existingSecret: netci-app
+
+jenkins:
+  allowedAgentLabels: "netci-ephemeral"
+  # One controller (ADR-055). The URL is the Service, so a failover that restores the
+  # controller on another node changes nothing here.
+  controllers:
+    - {id: corp, url: "http://jenkins.jenkins.svc.cluster.local:8080", username: admin, executors: 6}
+  # 0.4 reports toolVersions; older libraries are refused by the toolchain gate (ADR-056).
+  sharedLibrary: netci-shared-library@netci-0.4.0
+  callbackUrl: http://netci-netci-platform-api.netci-system.svc:8000
+
+temporal:
+  address: 172.17.0.1:7233
+  namespace: default
+  taskQueue: netci-corp-delivery
+
+auth:
+  mode: oidc
+  oidc:
+    issuer: http://127.0.0.1:8180/realms/netci
+    audience: netci
+    jwksUrl: http://172.17.0.1:8180/realms/netci/protocol/openid-connect/certs
+    discoveryUrl: http://172.17.0.1:8180/realms/netci/.well-known/openid-configuration
+    browserClientId: netci-portal
+    roleMap: netci-admins=platform-admin,release-managers=reviewer,engineers=developer
+
+registry:
+  pushHost: 172.17.0.1:8930
+  pullHost: 172.17.0.1:8930
+  allowHttp: true                # Harbor has no TLS in the lab yet (infra/corp/README.md)
+  buildBaseImage: 172.17.0.1:8930/mirror/netci/python-base:3.12-alpine
+  trivyDbRepository: 172.17.0.1:8930/mirror/aquasec/trivy-db:2
+
+scm:
+  gitlabUrl: http://172.17.0.1:8929
+
+supplyChain:
+  signatureRequireTlog: false    # the lab signing key has no transparency log
+
+dcim:
+  provider: ""
+  requireRevalidation: false
+
+buildIsolation:
+  mode: none
+
+# Build and publish only at first. The lab's deploy host is also the live stack's, and two
+# installs with separate databases would not see each other's leases on it.
+deployTargets:
+  existingSecret: ""
+
+api: {replicas: 2}
+worker: {replicas: 1}
+portal: {replicas: 1}
+
+ingress:
+  enabled: false                 # no ingress controller in netci-corp; port-forward the portal
+
+verification:
+  prometheusUrl: http://172.17.0.1:19090

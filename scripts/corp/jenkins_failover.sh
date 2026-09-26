@@ -29,8 +29,9 @@ forward() {
   for _ in $(seq 60); do curl -s -o /dev/null "${jenkins_url}/login" && return 0; sleep 2; done
   return 1
 }
-jenkins() {  # admin API call; the password is read from the file on every call, never echoed
-  curl -fsS -u "admin:$(cat "${SECRETS}/jenkins_admin_password")" "$@"
+jenkins() {  # admin API call. The credential reaches curl as config on stdin (-K -), written
+  # by the printf builtin: on a command line it would be readable in `ps` by any local user.
+  printf 'user = "admin:%s"\n' "$(<"${SECRETS}/jenkins_admin_password")" | curl -K - -fsS "$@"
 }
 
 marker_build=""

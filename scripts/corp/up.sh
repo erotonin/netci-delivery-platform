@@ -40,6 +40,11 @@ fi
 
 log "kind cluster netci-corp"
 kind get clusters 2>/dev/null | grep -qx netci-corp || kind create cluster --config "${ROOT}/infra/corp/kind-corp.yaml"
+# An HA kind cluster's API goes through this haproxy container, and kind creates it without a
+# restart policy that survives a host reboot: after one, every kubectl call is refused and the
+# workers go NotReady (seen 2026-09-26).
+docker update --restart unless-stopped netci-corp-external-load-balancer >/dev/null
+docker start netci-corp-external-load-balancer >/dev/null
 
 log "SeaweedFS (S3)"
 for f in s3-access-key s3-secret-key; do
@@ -68,6 +73,12 @@ done
 bash "${ROOT}/infra/corp/gitlab/bootstrap.sh"
 
 log "Harbor"
+if [[ -d "${C}/harbor-installer/harbor" ]] && ! curl -fsS -o /dev/null http://172.17.0.1:8930/api/v2.0/ping 2>/dev/null; then
+  # Installed but down: after a reboot its containers start before harbor-log, whose syslog
+  # they log to, exit 128 and are not retried. Starting the project again fixes that.
+  ( cd "${C}/harbor-installer/harbor" && sudo -n docker compose up -d >/dev/null )
+  for _ in $(seq 30); do curl -fsS -o /dev/null http://172.17.0.1:8930/api/v2.0/ping 2>/dev/null && break; sleep 3; done
+fi
 curl -fsS -o /dev/null http://172.17.0.1:8930/api/v2.0/ping 2>/dev/null || bash "${ROOT}/infra/corp/harbor/install.sh"
 bash "${ROOT}/infra/corp/harbor/bootstrap.sh"
 

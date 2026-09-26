@@ -17,7 +17,8 @@ if [[ ! -s "${SECRETS}/gitlab_admin_token" ]]; then
     t.set_token(value); t.save!' >/dev/null
   ( umask 077; printf '%s' "${token}" > "${SECRETS}/gitlab_admin_token" )
 fi
-api() { curl -fsS -H "PRIVATE-TOKEN: $(cat "${SECRETS}/gitlab_admin_token")" -H 'Content-Type: application/json' "$@"; }
+# The token reaches curl as config on stdin: as an argument it would show in `ps`.
+api() { printf 'header = "PRIVATE-TOKEN: %s"\n' "$(<"${SECRETS}/gitlab_admin_token")" | curl -K - -fsS -H 'Content-Type: application/json' "$@"; }
 group_id=$(api "${URL}/api/v4/groups?search=platform" | python3 -c 'import json,sys;g=[x for x in json.load(sys.stdin) if x["path"]=="platform"];print(g[0]["id"] if g else "")')
 [[ -n "${group_id}" ]] || group_id=$(api -X POST "${URL}/api/v4/groups" -d '{"name":"platform","path":"platform","visibility":"internal"}' | python3 -c 'import json,sys;print(json.load(sys.stdin)["id"])')
 ensure_project() {
@@ -30,10 +31,27 @@ ensure_project payments-api
 askpass="$(mktemp)"; trap 'rm -f "${askpass}"' EXIT
 printf '#!/bin/sh\ncase "$1" in Username*) echo root;; *) cat "%s";; esac\n' "${SECRETS}/gitlab_admin_token" > "${askpass}"; chmod 700 "${askpass}"
 work="$(mktemp -d)"; trap 'rm -rf "${work}" "${askpass}"' EXIT
-mkdir -p "${work}/lib" && cp -r "${ROOT}/jenkins/shared-library/vars" "${ROOT}/jenkins/shared-library/resources" "${work}/lib/"
-( cd "${work}/lib" && git init -q -b main && git add -A && git -c user.name=netci -c user.email=netci@corp.local commit -q -m "netCI shared library ${LIB_TAG}" \
-  && git tag -f "${LIB_TAG}" \
-  && GIT_ASKPASS="${askpass}" git push -q -f "${URL}/platform/netci-shared-library.git" main "refs/tags/${LIB_TAG}" )
+# A new library version is a commit on top of main and a new tag -- never a force push:
+# main is protected, and a released tag that moved would change what every job pinned to it
+# runs without anyone changing the job.
+lib_url="${URL}/platform/netci-shared-library.git"
+if GIT_ASKPASS="${askpass}" git ls-remote --exit-code --tags "${lib_url}" "refs/tags/${LIB_TAG}" >/dev/null 2>&1; then
+  echo "gitlab: ${LIB_TAG} already exists; a released tag is not moved (bump LIB_TAG)"
+else
+  if GIT_ASKPASS="${askpass}" git ls-remote --exit-code --heads "${lib_url}" main >/dev/null 2>&1; then
+    GIT_ASKPASS="${askpass}" git clone -q "${lib_url}" "${work}/lib"
+  else
+    git init -q -b main "${work}/lib"
+  fi
+  ( cd "${work}/lib" && find . -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} + \
+    && cp -r "${ROOT}/jenkins/shared-library/vars" "${ROOT}/jenkins/shared-library/resources" . \
+    && git add -A \
+    && { git diff --cached --quiet || git -c user.name=netci -c user.email=netci@corp.local commit -q -m "netCI shared library ${LIB_TAG}"; } \
+    && git -c user.name=netci -c user.email=netci@corp.local tag -a "${LIB_TAG}" -m "netCI shared library ${LIB_TAG}" \
+    && GIT_ASKPASS="${askpass}" git push -q "${lib_url}" main "refs/tags/${LIB_TAG}" )
+fi
 git clone -q --bare "${ROOT}/.netci-gate/git/payments-api.git" "${work}/app.git"
-( cd "${work}/app.git" && GIT_ASKPASS="${askpass}" git push -q -f "${URL}/platform/payments-api.git" main )
+# The application's history is its own: pushed once, then changed only through merge requests.
+GIT_ASKPASS="${askpass}" git ls-remote --exit-code --heads "${URL}/platform/payments-api.git" main >/dev/null 2>&1 \
+  || ( cd "${work}/app.git" && GIT_ASKPASS="${askpass}" git push -q "${URL}/platform/payments-api.git" main )
 echo "gitlab: group platform, netci-shared-library@${LIB_TAG}, payments-api"
