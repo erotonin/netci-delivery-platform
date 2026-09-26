@@ -234,14 +234,14 @@ describe('PipelinesPage', () => {
     // Initially, pipeline has [Checkout source, Build image]
     const stageCardsPanel = screen
       .getByText('Checkout source', { selector: '.stage-card strong' })
-      .closest('.stage-cards-panel')!
+      .closest<HTMLElement>('.stage-cards-panel')!
     const initialCards = Array.from(stageCardsPanel.querySelectorAll('.stage-card strong')).map(
       (el) => el.textContent
     )
     expect(initialCards).toEqual(['Checkout source', 'Build image'])
 
     // Click "Unit tests" in the catalog
-    const catalogPanel = screen.getByText('Catalog Stages').closest('.catalog-panel')!
+    const catalogPanel = screen.getByText('Catalog Stages').closest<HTMLElement>('.catalog-panel')!
     const unitTestBtn = within(catalogPanel).getByRole('button', { name: /Unit tests/i })
     fireEvent.click(unitTestBtn)
 
@@ -293,7 +293,7 @@ describe('PipelinesPage', () => {
 
     const stageCardsPanel = screen
       .getByText('Checkout source', { selector: '.stage-card strong' })
-      .closest('.stage-cards-panel')!
+      .closest<HTMLElement>('.stage-cards-panel')!
 
     // Required stage (Checkout source) has no remove button
     expect(within(stageCardsPanel).queryByRole('button', { name: 'Xóa stage Checkout source' })).toBeNull()
@@ -354,8 +354,8 @@ describe('PipelinesPage', () => {
     // 2. Click on the custom stage card to select it
     const stageCardsPanel = screen
       .getByText('Checkout source', { selector: '.stage-card strong' })
-      .closest('.stage-cards-panel')!
-    const customCard = within(stageCardsPanel).getByText('Custom Lint').closest('.stage-card')!
+      .closest<HTMLElement>('.stage-cards-panel')!
+    const customCard = within(stageCardsPanel).getByText('Custom Lint').closest<HTMLElement>('.stage-card')!
     fireEvent.click(customCard)
 
     // Wait for custom stage code to load
@@ -377,7 +377,7 @@ describe('PipelinesPage', () => {
     expect(customTextarea.value).toBe('#!/usr/bin/env bash\necho "Custom linting active"')
 
     // Switch back to checkout: shared library note reappears and code is read-only
-    const checkoutCard = within(stageCardsPanel).getByText('Checkout source').closest('.stage-card')!
+    const checkoutCard = within(stageCardsPanel).getByText('Checkout source').closest<HTMLElement>('.stage-card')!
     fireEvent.click(checkoutCard)
     await waitFor(() => {
       expect(screen.getByText('Stage có sẵn: code do shared library quản lý')).toBeTruthy()
@@ -439,8 +439,8 @@ describe('PipelinesPage', () => {
     // Select custom stage and modify its code
     const stageCardsPanel = screen
       .getByText('Checkout source', { selector: '.stage-card strong' })
-      .closest('.stage-cards-panel')!
-    const customCard = within(stageCardsPanel).getByText('Custom Lint').closest('.stage-card')!
+      .closest<HTMLElement>('.stage-cards-panel')!
+    const customCard = within(stageCardsPanel).getByText('Custom Lint').closest<HTMLElement>('.stage-card')!
     fireEvent.click(customCard)
 
     await waitFor(() => {
@@ -530,7 +530,7 @@ describe('PipelinesPage', () => {
     await screen.findByText('Thiết kế Pipeline: payments-api')
 
     const proposeBtn = screen.getByRole('button', { name: 'Tạo merge request' })
-    expect(proposeBtn).toBeDisabled()
+    expect((proposeBtn as HTMLButtonElement).disabled).toBe(true)
     expect(
       screen.getByText('Kho lưu trữ không hỗ trợ tạo merge request (chỉ hỗ trợ GitLab).')
     ).toBeTruthy()
@@ -573,7 +573,7 @@ describe('PipelinesPage', () => {
 
     const stageCardsPanel = screen
       .getByText('Checkout source', { selector: '.stage-card strong' })
-      .closest('.stage-cards-panel')!
+      .closest<HTMLElement>('.stage-cards-panel')!
     expect(within(stageCardsPanel).getByText('My Custom Lint')).toBeTruthy()
   })
 
@@ -589,8 +589,61 @@ describe('PipelinesPage', () => {
     const searchInput = screen.getByLabelText('Tìm kiếm stage trong catalog')
     fireEvent.change(searchInput, { target: { value: 'unit' } })
 
-    const catalogPanel = screen.getByText('Catalog Stages').closest('.catalog-panel')!
+    const catalogPanel = screen.getByText('Catalog Stages').closest<HTMLElement>('.catalog-panel')!
     expect(within(catalogPanel).getByText('Unit tests')).toBeTruthy()
     expect(within(catalogPanel).queryByText('Publish image')).toBeNull()
+  })
+  // Regressions found in review
+  const pipelineWithExistingCustom: ModulePipeline = {
+    ...mockPipelinePayments,
+    stages: [
+      { id: 'checkout', name: 'Checkout source', category: 'source', kind: 'builtin', required: true, after: null, script: null },
+      { id: 'custom-lint', name: 'Custom Lint', category: 'custom', kind: 'custom', required: false, after: 'checkout', script: '.netci/stages/custom-lint.sh' },
+    ],
+  }
+
+  it('an existing custom stage the user never opened is proposed with its real script, not an empty one', async () => {
+    vi.mocked(getModulePipeline).mockResolvedValue(pipelineWithExistingCustom)
+    vi.mocked(getModulePipelineStageCode).mockImplementation(async (_modId, stageId) =>
+      stageId === 'custom-lint' ? mockCustomLintCode : mockCheckoutCode)
+    vi.mocked(createModulePipelineProposal).mockResolvedValue({
+      mergeRequestUrl: 'https://gitlab.example.test/mr/1', branch: 'netci/pipeline-00000001', iid: 1, stages: [],
+    })
+
+    render(<PipelinesPage moduleId="payments-api" navigate={vi.fn()} />)
+    await screen.findByText('Thiết kế Pipeline: payments-api')
+    fireEvent.click(screen.getByRole('button', { name: 'Tạo merge request' }))
+
+    await waitFor(() => expect(createModulePipelineProposal).toHaveBeenCalled())
+    const body = vi.mocked(createModulePipelineProposal).mock.calls[0][1]
+    expect(body.stages[1]).toEqual({ id: 'custom-lint', name: 'Custom Lint', after: 'checkout', code: mockCustomLintCode.content })
+  })
+
+  it('does not propose when an unopened custom stage script cannot be read', async () => {
+    vi.mocked(getModulePipeline).mockResolvedValue(pipelineWithExistingCustom)
+    vi.mocked(getModulePipelineStageCode).mockImplementation(async (_modId, stageId) => {
+      if (stageId === 'custom-lint') throw new Error('GitLab API returned 401')
+      return mockCheckoutCode
+    })
+
+    render(<PipelinesPage moduleId="payments-api" navigate={vi.fn()} />)
+    await screen.findByText('Thiết kế Pipeline: payments-api')
+    fireEvent.click(screen.getByRole('button', { name: 'Tạo merge request' }))
+
+    await screen.findByText('GitLab API returned 401')
+    expect(createModulePipelineProposal).not.toHaveBeenCalled()
+  })
+
+  it('a module whose pipeline failed to load says so instead of loading forever', async () => {
+    vi.mocked(listModules).mockResolvedValue(mockModules)
+    vi.mocked(getModulePipeline).mockImplementation(async (modId) => {
+      if (modId === 'payments-api') return mockPipelinePayments
+      throw new Error('upstream 502')
+    })
+
+    render(<PipelinesPage navigate={vi.fn()} />)
+
+    await screen.findByText('Không tải được pipeline: upstream 502')
+    expect(screen.getAllByText('Checkout source').length).toBe(1)
   })
 })

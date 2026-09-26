@@ -376,13 +376,22 @@ export function PipelineDesigner({ moduleId, navigate }: { moduleId: string; nav
     setProposalResult(null)
 
     try {
+      // A custom stage the user never opened has no code loaded yet. Sending '' for it
+      // would commit an empty script over the real one, so read it first and refuse to
+      // submit if it cannot be read.
+      const fetched: Record<string, string> = {}
+      for (const stage of currentStages) {
+        if (stage.kind !== 'custom' || codeEdits[stage.id] !== undefined || codeCache[stage.id]) continue
+        const res = await getModulePipelineStageCode(moduleId, stage.id)
+        fetched[stage.id] = res.content
+      }
       const payload: ModulePipelineProposalCreate = {
         stages: currentStages.map((stage) => {
           if (stage.kind === 'custom') {
             const code =
               codeEdits[stage.id] !== undefined
                 ? codeEdits[stage.id]
-                : codeCache[stage.id]?.content ?? ''
+                : codeCache[stage.id]?.content ?? fetched[stage.id]
             return {
               id: stage.id,
               name: stage.name,
@@ -910,6 +919,7 @@ export function PipelineDesigner({ moduleId, navigate }: { moduleId: string; nav
 export function PipelinesListPage({ navigate }: { navigate: Navigate }) {
   const [modules, setModules] = useState<PortalModule[]>([])
   const [pipelinesMap, setPipelinesMap] = useState<Record<string, ModulePipelineStage[]>>({})
+  const [pipelineErrors, setPipelineErrors] = useState<Record<string, string>>({})
   const [state, setState] = useState<LoadState>('loading')
   const [error, setError] = useState('')
 
@@ -931,8 +941,10 @@ export function PipelinesListPage({ navigate }: { navigate: Navigate }) {
               if (!active) return
               setPipelinesMap((prev) => ({ ...prev, [mod.id]: pipe.stages }))
             })
-            .catch(() => {
-              // Ignore individual module pipeline failures in list overview
+            .catch((cause) => {
+              if (!active) return
+              // Shown on the row: "loading" for a request that failed would never end.
+              setPipelineErrors((prev) => ({ ...prev, [mod.id]: cause instanceof Error ? cause.message : String(cause) }))
             })
         }
       })
@@ -1006,7 +1018,11 @@ export function PipelinesListPage({ navigate }: { navigate: Navigate }) {
                       </td>
                       <td style={{ padding: '12px 14px' }}>
                         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', alignItems: 'center' }}>
-                          {stages.length === 0 ? (
+                          {pipelineErrors[mod.id] ? (
+                            <span className="inline-error" role="alert" style={{ fontSize: '11px' }}>
+                              Không tải được pipeline: {pipelineErrors[mod.id]}
+                            </span>
+                          ) : stages.length === 0 ? (
                             <span style={{ color: 'var(--muted)', fontSize: '11px' }}>
                               Đang tải chuỗi stage…
                             </span>

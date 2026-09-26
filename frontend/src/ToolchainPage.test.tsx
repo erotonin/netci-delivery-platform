@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
-import { fireEvent, render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, within } from '@testing-library/react'
 import type { ToolchainStatus } from './api/netciClient'
 
 const mockToolchainData: ToolchainStatus = {
@@ -60,7 +60,7 @@ vi.mock('./api/netciClient', async (importOriginal) => {
   const original = await importOriginal<typeof import('./api/netciClient')>()
   return {
     ...original,
-    getToolchain: vi.fn().mockResolvedValue(mockToolchainData),
+    getToolchain: vi.fn(),  // resolved in beforeEach: a vi.mock factory is hoisted above the data
   }
 })
 
@@ -80,15 +80,16 @@ describe('ToolchainPage', () => {
     expect(screen.getByText('Quản lý Toolchain')).toBeTruthy()
     expect(screen.getByText(/netci\/ci-toolbox:0.4.0/)).toBeTruthy()
 
-    // Declared tools
-    expect(screen.getByText('syft')).toBeTruthy()
-    expect(screen.getByText('1.51.0')).toBeTruthy()
-    expect(screen.getByText('trivy')).toBeTruthy()
-    expect(screen.getByText('0.73.0')).toBeTruthy()
-    expect(screen.getByText('cosign')).toBeTruthy()
-    expect(screen.getByText('3.1.2')).toBeTruthy()
-    expect(screen.getByText('buildah')).toBeTruthy()
-    expect(screen.getByText('apt: buildah')).toBeTruthy()
+    // Declared tools, read from the declared table: the observed table repeats versions
+    const declared = within(screen.getByTestId('declared-table'))
+    expect(declared.getByText('syft')).toBeTruthy()
+    expect(declared.getByText('1.51.0')).toBeTruthy()
+    expect(declared.getByText('trivy')).toBeTruthy()
+    expect(declared.getByText('0.73.0')).toBeTruthy()
+    expect(declared.getByText('cosign')).toBeTruthy()
+    expect(declared.getByText('3.1.2')).toBeTruthy()
+    expect(declared.getByText('buildah')).toBeTruthy()
+    expect(declared.getByText('apt: buildah')).toBeTruthy()
   })
 
   it('renders observed controllers and tools', async () => {
@@ -140,8 +141,9 @@ describe('ToolchainPage', () => {
     expect(await screen.findByTestId('drift-panel')).toBeTruthy()
     expect(screen.getByTestId('drift-table')).toBeTruthy()
     expect(screen.getByText(/Phát hiện sai lệch phiên bản \(1 cảnh báo drift\)/)).toBeTruthy()
-    expect(screen.getByText('jenkins-staging-02')).toBeTruthy()
-    expect(screen.getByText('1.50.0')).toBeTruthy()
+    const drift = within(screen.getByTestId('drift-table'))
+    expect(drift.getByText('jenkins-staging-02')).toBeTruthy()
+    expect(drift.getByText('1.50.0')).toBeTruthy()
     expect(screen.queryByTestId('no-drift-banner')).toBeNull()
   })
 

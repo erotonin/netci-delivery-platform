@@ -18,6 +18,8 @@ import { ReleaseCalendarPage } from './ReleaseCalendarPage'
 import { ScorecardsPage } from './ScorecardsPage'
 import { ReleasePlanPage } from './ReleasePlanPage'
 import { StageCatalogPage } from './StageCatalogPage'
+import { ToolchainPage } from './ToolchainPage'
+import { PipelinesPage } from './PipelinesPage'
 import { VulnerabilitiesPage } from './VulnerabilitiesPage'
 import type { PageId } from './portalTypes'
 import './styles.css'
@@ -66,7 +68,10 @@ function readRoute(): RouteState {
   if (parts[0] === 'stage-catalog') return { page: 'stage-catalog', systemId: '', moduleId: '', settingsOpen: false }
   if (parts[0] === 'ci-cost') return { page: 'ci-cost', systemId: '', moduleId: '', settingsOpen: false }
   if (parts[0] === 'servers') return { page: 'servers', systemId: '', moduleId: '', settingsOpen: false }
+  if (parts[0] === 'toolchain') return { page: 'toolchain', systemId: '', moduleId: '', settingsOpen: false }
   if (parts[0] === 'architecture') return { page: 'architecture', systemId: '', moduleId: '', settingsOpen: false }
+  if (parts[0] === 'pipelines' && parts[1]) return { page: 'pipelines', systemId: '', moduleId: parts[1], settingsOpen: false }
+  if (parts[0] === 'pipelines') return { page: 'pipelines', systemId: '', moduleId: '', settingsOpen: false }
   return { page: 'dashboard', systemId: '', moduleId: '', settingsOpen: false }
 }
 
@@ -80,7 +85,9 @@ function routePath(route: RouteState): string {
   if (route.page === 'stage-catalog') return '/stage-catalog'
   if (route.page === 'ci-cost') return '/ci-cost'
   if (route.page === 'servers') return '/servers'
+  if (route.page === 'toolchain') return '/toolchain'
   if (route.page === 'architecture') return '/architecture'
+  if (route.page === 'pipelines') return route.moduleId ? `/pipelines/${route.moduleId}` : '/pipelines'
   if (route.page === 'system') return route.systemId ? `/systems/${route.systemId}` : '/systems'
   if (route.page === 'requests') return route.systemId ? `/systems/${route.systemId}/requests` : '/requests'
   if (route.page === 'new-module') return route.systemId ? `/systems/${route.systemId}/new-module` : '/systems'
@@ -179,7 +186,9 @@ function PortalApp({ session, onLogout }: { session: AuthSession; onLogout: () =
       {page === 'scorecards' && <ScorecardsPage navigate={navigate} />}
       {page === 'release-plan' && <ReleasePlanPage />}
       {page === 'stage-catalog' && <StageCatalogPage session={session} />}
+      {page === 'pipelines' && <PipelinesPage moduleId={moduleId} navigate={navigate} />}
       {page === 'ci-cost' && <CiCostPage />}
+      {page === 'toolchain' && <ToolchainPage />}
       {page === 'architecture' && <ArchitectureRoadmapPage />}
       {page === 'system' && <SystemPage systemId={systemId} navigate={navigate} />}
       {page === 'requests' && <ProductionRequestsPage systemId={systemId} />}

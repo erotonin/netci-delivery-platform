@@ -1929,3 +1929,151 @@ export function simulateReleasePlan(modules: ReleasePlanModuleInput[]): Promise<
     body: JSON.stringify({ modules }),
   })
 }
+
+export type ToolchainToolPin = {
+  version: string
+  url?: string
+  sha256?: string
+  package?: string
+  source?: string
+}
+
+export type ToolchainDeclared = {
+  toolbox: {
+    image: string
+    tag: string
+  }
+  tools: Record<string, ToolchainToolPin>
+  trivyDb: {
+    repository: string
+    maxAgeHours: number
+  }
+}
+
+export type ToolchainObservedToolVersions = {
+  syft: string | null
+  trivy: string | null
+  cosign: string | null
+  buildah: string | null
+  trivyDbUpdatedAt: string | null
+}
+
+export type ToolchainObservedItem = {
+  controllerId: string
+  toolVersions: ToolchainObservedToolVersions
+  when: string
+  observedAt?: string
+}
+
+export type ToolchainDriftItem = {
+  tool: string
+  declared: string
+  observed: string | null
+  controllerId?: string
+}
+
+export type ToolchainTrivyDbStatus = {
+  maxAgeHours: number
+  observedUpdatedAt: string | null
+  stale: boolean
+  ageHours?: number | null
+}
+
+export type ToolchainStatus = {
+  declared: ToolchainDeclared
+  observed: ToolchainObservedItem[]
+  drift: ToolchainDriftItem[]
+  trivyDb: ToolchainTrivyDbStatus
+}
+
+export function getToolchain(): Promise<ToolchainStatus> {
+  return request<ToolchainStatus>('/toolchain')
+}
+
+/** Lists every module across all systems. */
+export async function listModules(): Promise<PortalModule[]> {
+  const systems = await listSystems()
+  return systems.flatMap((s) => s.modules)
+}
+
+// ----------------------------------------------------------- Pipeline Designer (ADR-057)
+
+export type ModulePipelineStage = {
+  id: string
+  name: string
+  category: 'source' | 'test' | 'build' | 'security' | 'publish' | 'deploy' | 'verify' | 'custom' | string
+  kind: 'builtin' | 'custom'
+  required: boolean
+  after?: string | null
+  script?: string | null
+}
+
+export type ModulePipelineCatalogStage = {
+  id: string
+  name: string
+  category: 'source' | 'test' | 'build' | 'security' | 'publish' | 'deploy' | 'verify' | 'custom' | string
+  kind: 'builtin' | 'custom'
+  required: boolean
+  description?: string
+}
+
+export type ModulePipelineRepository = {
+  provider: 'gitlab' | 'github' | null
+  identity: string | null
+  supportsProposals: boolean
+}
+
+export type ModulePipeline = {
+  moduleId: string
+  template: string
+  stages: ModulePipelineStage[]
+  catalog: ModulePipelineCatalogStage[]
+  repository: ModulePipelineRepository
+}
+
+export type ModulePipelineStageCode = {
+  stageId: string
+  language: string
+  editable: boolean
+  path: string
+  content: string
+}
+
+export type ModulePipelineProposalStage = {
+  id: string
+  name?: string | null
+  after?: string | null
+  code?: string | null
+}
+
+export type ModulePipelineProposalCreate = {
+  title?: string
+  stages: ModulePipelineProposalStage[]
+}
+
+export type ModulePipelineProposalResult = {
+  mergeRequestUrl: string
+  branch: string
+  iid: number | string
+  stages: unknown[]
+}
+
+/** What a module's pipeline currently runs and what catalog stages could be added (ADR-057). */
+export function getModulePipeline(moduleId: string): Promise<ModulePipeline> {
+  return request<ModulePipeline>(`/modules/${encodeURIComponent(moduleId)}/pipeline`)
+}
+
+/** Script code for one stage: shared-library resource for built-ins, repository file for custom ones (ADR-057). */
+export function getModulePipelineStageCode(moduleId: string, stageId: string): Promise<ModulePipelineStageCode> {
+  return request<ModulePipelineStageCode>(`/modules/${encodeURIComponent(moduleId)}/pipeline/stages/${encodeURIComponent(stageId)}/code`)
+}
+
+/** Open a merge request proposing a new pipeline stage order or custom scripts (ADR-057). */
+export function createModulePipelineProposal(moduleId: string, payload: ModulePipelineProposalCreate): Promise<ModulePipelineProposalResult> {
+  return request<ModulePipelineProposalResult>(`/modules/${encodeURIComponent(moduleId)}/pipeline/proposals`, {
+    method: 'POST',
+    headers: { 'X-Correlation-Id': requestId() },
+    body: JSON.stringify(payload),
+  })
+}
+

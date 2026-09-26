@@ -3,7 +3,7 @@ import {
   CalendarDays,
   Activity, Bell, BookOpen, Box, CheckCircle2, ChevronDown, ChevronRight, ClipboardCheck, Clock3,
   Compass, Gauge, GitBranch, Grid2X2, Layers3, ListChecks, LogOut, Menu, Search, Server, Settings,
-  ShieldAlert, X,
+  ShieldAlert, Wrench, X,
 } from 'lucide-react'
 import { listSystems } from './api/netciClient'
 import type { AuthSession } from './LoginPage'
@@ -103,6 +103,7 @@ function Sidebar({ page, systemId, moduleId, moduleLinks, navigationSystems, ses
         <span className="nav-label">Core Delivery</span>
         <button aria-current={page === 'dashboard' ? 'page' : undefined} className={page === 'dashboard' ? 'nav-item active' : 'nav-item'} onClick={() => navigate('dashboard')}><Grid2X2 size={17} />Dashboard</button>
         <button aria-current={page === 'systems' ? 'page' : undefined} className={page === 'systems' ? 'nav-item active' : 'nav-item'} onClick={() => navigate('systems')}><Layers3 size={17} />Systems & Pipelines</button>
+        <button aria-current={page === 'pipelines' ? 'page' : undefined} className={page === 'pipelines' ? 'nav-item active' : 'nav-item'} onClick={() => navigate('pipelines')}><GitBranch size={17} />Pipelines</button>
         <button aria-current={page === 'requests' ? 'page' : undefined} className={page === 'requests' ? 'nav-item active' : 'nav-item'} onClick={() => navigate('requests')}><ShieldAlert size={17} />Production Requests</button>
         <button aria-current={page === 'catalog' ? 'page' : undefined} className={page === 'catalog' ? 'nav-item active' : 'nav-item'} onClick={() => navigate('catalog')}><Compass size={17} />Service Catalog</button>
 
@@ -110,6 +111,7 @@ function Sidebar({ page, systemId, moduleId, moduleLinks, navigationSystems, ses
         <button aria-current={page === 'vulnerabilities' ? 'page' : undefined} className={page === 'vulnerabilities' ? 'nav-item active' : 'nav-item'} onClick={() => navigate('vulnerabilities')}><ShieldAlert size={17} />Vulnerabilities</button>
         <button aria-current={page === 'calendar' ? 'page' : undefined} className={page === 'calendar' ? 'nav-item active' : 'nav-item'} onClick={() => navigate('calendar')}><CalendarDays size={17} />Release Calendar</button>
         <button aria-current={page === 'servers' ? 'page' : undefined} className={page === 'servers' ? 'nav-item active' : 'nav-item'} onClick={() => navigate('servers')}><Server size={17} />Servers</button>
+        <button aria-current={page === 'toolchain' ? 'page' : undefined} className={page === 'toolchain' ? 'nav-item active' : 'nav-item'} onClick={() => navigate('toolchain')}><Wrench size={17} />Toolchain</button>
         <span className="nav-label nav-label-spaced">Systems</span>
         {navigationSystems.map((system) => <button key={system.id} className="nav-item system-link" onClick={() => navigate('system', { systemId: system.id })}><i className={`system-health health-${systemTone[system.status] ?? 'gray'}`} />{system.id}</button>)}
       </>}
@@ -163,18 +165,21 @@ function TopBar({ page, systemId, moduleId, moduleLinks, navigationSystems, sess
   const [query, setQuery] = useState('')
   const [searchOpen, setSearchOpen] = useState(false)
   const moduleName = moduleLinks.find((item) => item.id === moduleId)?.name ?? navigationSystems.flatMap((system) => system.modules).find((item) => item.id === moduleId)?.name
-  const labels: Partial<Record<PageId, string>> = { dashboard: 'Dashboard', systems: 'All Systems', servers: 'Servers', catalog: 'Service Catalog', calendar: 'Release Calendar', vulnerabilities: 'Vulnerabilities', scorecards: 'Scorecards', 'release-plan': 'Release Plan', 'stage-catalog': 'Stage Catalog', 'ci-cost': 'CI Cost', architecture: 'Architecture & IDP 2026 Roadmap', system: 'Overview', requests: 'Production Requests', module: moduleName, 'new-module': 'New Module' }
-  const crumbs = ['system', 'requests', 'module', 'new-module'].includes(page) ? ['Systems', systemId, labels[page]] : [labels[page]]
+  const labels: Partial<Record<PageId, string>> = { dashboard: 'Dashboard', systems: 'All Systems', servers: 'Servers', catalog: 'Service Catalog', calendar: 'Release Calendar', vulnerabilities: 'Vulnerabilities', scorecards: 'Scorecards', 'release-plan': 'Release Plan', 'stage-catalog': 'Stage Catalog', 'ci-cost': 'CI Cost', architecture: 'Architecture & IDP 2026 Roadmap', system: 'Overview', requests: 'Production Requests', module: moduleName, 'new-module': 'New Module', toolchain: 'Toolchain', pipelines: 'Pipelines' }
+  const crumbs = ['system', 'requests', 'module', 'new-module'].includes(page) ? ['Systems', systemId, labels[page]] : (page === 'pipelines' && moduleId ? ['Pipelines', moduleId] : [labels[page]])
   const searchItems = [
     { key: 'dashboard', label: 'Dashboard', detail: 'General', action: () => navigate('dashboard') },
     { key: 'systems', label: 'Systems', detail: 'General', action: () => navigate('systems') },
+    { key: 'pipelines', label: 'Pipelines', detail: 'Pipelines & Designer', action: () => navigate('pipelines') },
     { key: 'catalog', label: 'Service Catalog', detail: 'Catalog & Golden Paths', action: () => navigate('catalog') },
     { key: 'servers', label: 'Servers', detail: 'Infrastructure', action: () => navigate('servers') },
+    { key: 'toolchain', label: 'Toolchain', detail: 'Platform & Governance', action: () => navigate('toolchain') },
     { key: 'calendar', label: 'Release Calendar', detail: 'Planning', action: () => navigate('calendar') },
     { key: 'vulnerabilities', label: 'Vulnerabilities', detail: 'Security', action: () => navigate('vulnerabilities') },
     { key: 'scorecards', label: 'Scorecards', detail: 'Quality', action: () => navigate('scorecards') },
     { key: 'release-plan', label: 'Release Plan', detail: 'Planning', action: () => navigate('release-plan') },
     { key: 'stage-catalog', label: 'Stage Catalog', detail: 'Pipeline stages', action: () => navigate('stage-catalog') },
+    { key: 'ci-cost', label: 'CI Cost', detail: 'FinOps', action: () => navigate('ci-cost') },
     ...navigationSystems.flatMap((system) => [
       { key: `system-${system.id}`, label: system.id, detail: 'System', action: () => navigate('system', { systemId: system.id }) },
       ...system.modules.map((module) => ({ key: `module-${system.id}-${module.id}`, label: module.name, detail: `${system.id} · Module`, action: () => navigate('module', { systemId: system.id, moduleId: module.id }) })),
