@@ -1216,10 +1216,11 @@ paths:
           description: >-
             Duplicate delivery, or an event no rule acts on (`status: ignored` with the
             reason). Answered 200 so the SCM does not mark the hook failing and retry it.
-            A merged `netci/pipeline-*` merge request (ADR-057) answers `pipeline_applied`,
-            `pipeline_pending_approval`, or `pipeline_rejected` with `reason` -- read from
-            `.netci/pipeline.yaml` at the merge commit and audited as
-            `pipeline.merge_rejected` when refused.
+            A merged `netci/pipeline-*` merge request (ADR-057) answers `pipeline_applied`
+            (with `stages` and `headCommit`), `pipeline_superseded` (a concurrent delivery
+            applied the head instead), `pipeline_pending_approval`, or `pipeline_rejected`
+            with `reason`. `.netci/pipeline.yaml` is read at the default branch's head, not
+            at the merge commit; a refusal is audited as `pipeline.merge_rejected`.
           content:
             application/json:
               schema:

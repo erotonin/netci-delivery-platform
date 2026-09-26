@@ -35,7 +35,12 @@ class GitLabRepoClient:
             req.data = json.dumps(data).encode("utf-8")
         try:
             with urllib.request.urlopen(req, timeout=self._timeout) as response:
-                return json.loads(response.read().decode("utf-8"))
+                body = response.read()
+            # A proxy in front of GitLab can answer 200 with an HTML page: that is GitLab
+            # failing, not netCI, and it must reach the caller as a GitLab error.
+            return json.loads(body.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise GitLabRepoError(502, "GitLab API returned a body that is not JSON") from exc
         except urllib.error.HTTPError as exc:
             body = exc.read().decode("utf-8", errors="replace")[:300]
             raise GitLabRepoError(exc.code, f"GitLab API returned {exc.code}: {body}") from exc
@@ -55,6 +60,8 @@ class GitLabRepoClient:
         try:
             with urllib.request.urlopen(req, timeout=self._timeout) as response:
                 return response.read().decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise GitLabRepoError(502, f"{path} is not UTF-8 text") from exc
         except urllib.error.HTTPError as exc:
             if exc.code == 404:
                 return None
@@ -70,6 +77,15 @@ class GitLabRepoClient:
         url = f"{self._gitlab_url}/api/v4/projects/{quoted_project}"
         resp = self._request("GET", url)
         return str(resp.get("default_branch", "main"))
+
+    def head_commit(self, project: str, branch: str) -> str:
+        quoted_project = urllib.parse.quote(project, safe="")
+        quoted_branch = urllib.parse.quote(branch, safe="")
+        resp = self._request("GET", f"{self._gitlab_url}/api/v4/projects/{quoted_project}/repository/branches/{quoted_branch}")
+        commit = (resp or {}).get("commit") or {}
+        if not commit.get("id"):
+            raise GitLabRepoError(502, f"GitLab returned no commit for branch {branch}")
+        return str(commit["id"])
 
     def commit_files(self, project: str, branch: str, start_branch: str, message: str, actions: list[dict[str, str]]) -> dict[str, Any]:
         quoted_project = urllib.parse.quote(project, safe="")
@@ -102,6 +118,9 @@ def get_file(project: str, path: str, ref: str) -> str | None:
 
 def default_branch(project: str) -> str:
     return GitLabRepoClient().default_branch(project)
+
+def head_commit(project: str, branch: str) -> str:
+    return GitLabRepoClient().head_commit(project, branch)
 
 def commit_files(project: str, branch: str, start_branch: str, message: str, actions: list[dict[str, str]]) -> dict[str, Any]:
     return GitLabRepoClient().commit_files(project, branch, start_branch, message, actions)

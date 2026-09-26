@@ -2820,81 +2820,115 @@ def get_toolchain(principal: Principal = ReadAccess) -> dict[str, Any]:
 
 
 def _apply_merged_pipeline(application: Application, parsed: ScmParsedEvent) -> dict[str, object]:
-    """Apply `.netci/pipeline.yaml` as merged: a config revision for the module's custom
-    stages, then the application's stage list.
+    """Make the module's pipeline what `.netci/pipeline.yaml` says on the default branch.
 
-    Everything is read from GitLab at the merge commit, not from the webhook body, and
-    checked by the same rules the designer applies -- the branch may have been edited
-    after netCI opened it. A refusal is answered and audited as `pipeline_rejected`
-    rather than raised: GitLab would retry a 4xx/5xx delivery that has already been
-    recorded as received, and the retry would be ignored as a duplicate.
+    The merge event is only the trigger. What is applied is read from GitLab at the
+    default branch's head -- not the webhook body, and not this merge's commit: two merges
+    close together can be delivered, or finish processing, in either order, and applying
+    each one's own commit would let the older land last. Reading the head, and reading it
+    again after writing, makes every order converge on what the branch says now. The file
+    is checked by the same rules the designer applies, since the branch may have been
+    edited after netCI opened it.
+
+    A refusal is answered 200 `pipeline_rejected` and audited rather than raised: GitLab
+    would retry a 4xx/5xx delivery that is already recorded as received, and the retry
+    would be dropped as a duplicate.
     """
 
     actor = f"gitlab:{parsed.sender or 'unknown'}"
+    repository = parsed.repository_identity
 
-    def rejected(reason: str) -> dict[str, object]:
+    def rejected(reason: str, head: str | None = None) -> dict[str, object]:
         with database.transaction() as session:
             session.apply(UnitOfWork(audit=[AuditRecord(
                 "pipeline.merge_rejected", application_id=application.id, actor=actor,
-                payload={"branch": parsed.source_branch, "mergeCommit": parsed.merge_commit_sha, "reason": reason},
+                payload={"branch": parsed.source_branch, "mergeCommit": parsed.merge_commit_sha,
+                         "headCommit": head, "reason": reason},
             )]))
         return {"status": "pipeline_rejected", "reason": reason}
 
-    module = portal.module_for_application(application.id)
-    if module is None:
-        return rejected("no Portal module is bound to this application")
-    if not parsed.merge_commit_sha:
-        return rejected("the merge event carries no merge commit")
     try:
-        default_branch = gitlab_repo.default_branch(parsed.repository_identity)
-        if parsed.base_branch != default_branch:
-            # Merged into some other branch, the pipeline on the default branch is unchanged.
-            return rejected(f"merged into {parsed.base_branch}, not the default branch {default_branch}")
-        text = gitlab_repo.get_file(parsed.repository_identity, ".netci/pipeline.yaml", parsed.merge_commit_sha)
+        default_branch = gitlab_repo.default_branch(repository)
     except GitLabRepoError as exc:
-        return rejected(f"could not read .netci/pipeline.yaml from GitLab: {exc.message}")
-    if text is None:
-        return rejected(".netci/pipeline.yaml is not in the merge commit")
-    try:
-        declared = parse_pipeline_yaml(text)["stages"]
-    except ValueError as exc:
-        return rejected(f".netci/pipeline.yaml: {exc}")
+        return rejected(f"could not read the repository from GitLab: {exc.message}")
+    if parsed.base_branch != default_branch:
+        # Merged into some other branch: the pipeline on the default branch is unchanged.
+        return rejected(f"merged into {parsed.base_branch}, not the default branch {default_branch}")
 
     template = TEMPLATES.get(application.pipeline_template)
-    with database.transaction() as session:
-        catalog = {item.id: item for item in session.stage_catalog()}
-    try:
-        validate_proposal(catalog, template.stages if template else (), declared, require_code=False)
-    except PipelineProposalError as exc:
-        return rejected(exc.message)
+    head: str | None = None
+    applied = False
+    stage_ids: list[str] = []
+    for _attempt in range(3):
+        try:
+            head = gitlab_repo.head_commit(repository, default_branch)
+            text = gitlab_repo.get_file(repository, ".netci/pipeline.yaml", head)
+        except GitLabRepoError as exc:
+            return rejected(f"could not read .netci/pipeline.yaml from GitLab: {exc.message}", head)
+        if text is None:
+            return rejected(f".netci/pipeline.yaml is not on {default_branch}", head)
+        try:
+            declared = parse_pipeline_yaml(text)["stages"]
+        except ValueError as exc:
+            return rejected(f".netci/pipeline.yaml: {exc}", head)
+        with database.transaction() as session:
+            catalog = {item.id: item for item in session.stage_catalog()}
+        try:
+            validate_proposal(catalog, template.stages if template else (), declared, require_code=False)
+        except PipelineProposalError as exc:
+            return rejected(exc.message, head)
 
-    custom_stages = [
-        {"id": s["id"], "name": s.get("name") or s["id"], "after": s["after"], "script": stage_script_path(s["id"])}
-        for s in declared if s.get("after")
-    ]
-    stage_ids = [s["id"] for s in declared]
-    pipeline_config = dict(module.get("pipelineConfig") or {})
-    try:
-        if pipeline_config.get("customStages", []) != custom_stages:
-            pipeline_config["customStages"] = custom_stages
-            revision = portal.propose_config_revision(
-                str(module["id"]),
-                pipeline_config=pipeline_config,
-                # The module's own targets, unchanged: this revision is about stages only.
-                deployment_config=list(module.get("deploymentEnvironments") or []),
-                change_summary=f"merged pipeline proposal {parsed.source_branch}",
-                expected_version=int(module["configVersion"]),
-                actor=actor,
-            )
-            if revision["requiresApproval"]:
-                # The stage list follows only an active config: a pending one would run
-                # custom stages whose definitions are not yet in force.
-                return {"status": "pipeline_pending_approval", "revisionId": revision["id"]}
-        if list(application.stages) != stage_ids:
-            platform.set_application_stages(application.id, stage_ids, actor=actor)
-    except (PortalError, DeliveryError) as exc:
-        return rejected(exc.message)
-    return {"status": "pipeline_applied", "stages": stage_ids}
+        custom_stages = [
+            {"id": s["id"], "name": s.get("name") or s["id"], "after": s["after"], "script": stage_script_path(s["id"])}
+            for s in declared if s.get("after")
+        ]
+        stage_ids = [s["id"] for s in declared]
+        # Re-read on every attempt: another merge may have written a revision since.
+        module = portal.module_for_application(application.id)
+        if module is None:
+            return rejected("no Portal module is bound to this application", head)
+        pipeline_config = dict(module.get("pipelineConfig") or {})
+        try:
+            if pipeline_config.get("customStages", []) != custom_stages:
+                pipeline_config["customStages"] = custom_stages
+                revision = portal.propose_config_revision(
+                    str(module["id"]),
+                    pipeline_config=pipeline_config,
+                    # The module's own targets and promotion rules, unchanged: this revision
+                    # is about stages only, which is why it never needs a second approver
+                    # (backend/tests/test_pipeline_designer.py pins that).
+                    deployment_config=list(module.get("deploymentEnvironments") or []),
+                    change_summary=f"pipeline from {default_branch}@{head[:12]} (merged {parsed.source_branch})",
+                    expected_version=int(module["configVersion"]),
+                    actor=actor,
+                )
+                if revision["requiresApproval"]:
+                    # Not reachable while the revision keeps targets and promotion; if it
+                    # ever is, the stage list waits: it follows only an active config.
+                    return {"status": "pipeline_pending_approval", "revisionId": revision["id"]}
+            if list(platform.get_application(application.id).stages) != stage_ids:
+                platform.set_application_stages(application.id, stage_ids, actor=actor)
+        except PortalError as exc:
+            if exc.code == "CONCURRENT_MODIFICATION":
+                applied = False
+                continue  # another merge wrote first: read the head again
+            return rejected(exc.message, head)
+        except DeliveryError as exc:
+            return rejected(exc.message, head)
+        applied = True
+        try:
+            if gitlab_repo.head_commit(repository, default_branch) == head:
+                return {"status": "pipeline_applied", "stages": stage_ids, "headCommit": head}
+        except GitLabRepoError:
+            # Applied what the head was; the next merge's delivery will catch up.
+            return {"status": "pipeline_applied", "stages": stage_ids, "headCommit": head}
+    if not applied:
+        # Every attempt lost to another writer. That writer read the head and re-checks it
+        # after writing, so the pipeline converges without this delivery -- but this one
+        # applied nothing and must not say it did.
+        return {"status": "pipeline_superseded", "headCommit": head}
+    # The branch kept moving; each of those merges has its own delivery that converges.
+    return {"status": "pipeline_applied", "stages": stage_ids, "headCommit": head}
 
 
 def _discover_sample_apps() -> list[dict[str, object]]:

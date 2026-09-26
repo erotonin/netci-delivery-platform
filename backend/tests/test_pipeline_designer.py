@@ -362,6 +362,15 @@ class FakeGitLab:
         self.commits: list[dict[str, Any]] = []
         self.merge_requests: list[dict[str, Any]] = []
         self._next_iid = 1
+        # project -> head commit of its default branch; a list is consumed one call at a
+        # time (the last entry repeats), to model the branch moving mid-apply.
+        self.heads: dict[str, Any] = {}
+
+    def head_commit(self, project: str, branch: str) -> str:
+        head = self.heads.get(project, "no-head")
+        if isinstance(head, list):
+            return head.pop(0) if len(head) > 1 else head[0]
+        return head
 
     def get_file(self, project: str, path: str, ref: str) -> str | None:
         return self.files.get((project, path, ref))
@@ -416,6 +425,7 @@ def fake_gitlab(monkeypatch):
     fake = FakeGitLab()
     monkeypatch.setattr(gitlab_repo, "get_file", fake.get_file)
     monkeypatch.setattr(gitlab_repo, "default_branch", fake.default_branch)
+    monkeypatch.setattr(gitlab_repo, "head_commit", fake.head_commit)
     monkeypatch.setattr(gitlab_repo, "commit_files", fake.commit_files)
     monkeypatch.setattr(gitlab_repo, "open_merge_request", fake.open_merge_request)
     return fake
@@ -664,6 +674,7 @@ def test_api_webhook_merge_applies_pipeline_and_is_idempotent(fake_gitlab):
         {"id": "publish"},
     ])
     fake_gitlab.files[(repo_identity, ".netci/pipeline.yaml", merge_sha)] = proposal_yaml
+    fake_gitlab.heads[repo_identity] = merge_sha
 
     webhook_payload = {
         "object_kind": "merge_request",
@@ -756,6 +767,7 @@ def test_api_custom_stage_reaches_ci_launcher(fake_gitlab, monkeypatch):
         {"id": "publish"},
     ])
     fake_gitlab.files[(repo_identity, ".netci/pipeline.yaml", merge_sha)] = proposal_yaml
+    fake_gitlab.heads[repo_identity] = merge_sha
 
     webhook_payload = {
         "object_kind": "merge_request",
@@ -847,6 +859,7 @@ def test_merge_keeps_the_module_deployment_targets(fake_gitlab):
     configure_gitlab_scm("hello-container", token="t0ken")
     before = main.portal.module("hello-container")["deploymentEnvironments"]
     assert before, "fixture module must have deployment targets for this test to mean anything"
+    fake_gitlab.heads["acme/hello-container"] = "d" * 40
     fake_gitlab.files[("acme/hello-container", ".netci/pipeline.yaml", "d" * 40)] = render_pipeline_yaml(MERGED_STAGES)
 
     resp = _merge_hook(client, "t0ken", "keep-targets", merge_sha="d" * 40)
@@ -869,6 +882,7 @@ def test_merge_of_a_bad_pipeline_is_rejected_and_audited(fake_gitlab, yaml_text,
     configure_gitlab_scm("hello-container", token="t0ken")
     stages_before = main.platform.get_application(
         UUID(str(main.portal.module("hello-container")["applicationId"]))).stages
+    fake_gitlab.heads["acme/hello-container"] = "e" * 40
     fake_gitlab.files[("acme/hello-container", ".netci/pipeline.yaml", "e" * 40)] = yaml_text
 
     resp = _merge_hook(client, "t0ken", f"bad-{reason}", merge_sha="e" * 40)
@@ -885,6 +899,7 @@ def test_merge_of_a_bad_pipeline_is_rejected_and_audited(fake_gitlab, yaml_text,
 def test_merge_into_another_branch_changes_nothing(fake_gitlab):
     client = TestClient(main.app)
     configure_gitlab_scm("hello-container", token="t0ken")
+    fake_gitlab.heads["acme/hello-container"] = "f" * 40
     fake_gitlab.files[("acme/hello-container", ".netci/pipeline.yaml", "f" * 40)] = render_pipeline_yaml(MERGED_STAGES)
 
     resp = _merge_hook(client, "t0ken", "other-branch", merge_sha="f" * 40, target="release-1")
@@ -941,3 +956,95 @@ def test_config_revision_cannot_carry_a_custom_stage_the_designer_would_refuse(c
         )
     assert exc.value.code == "INVALID_CUSTOM_STAGES"
     assert error in exc.value.message
+
+
+# -----------------------------------------------------------------------------
+# Second review (cross-model): ordering, races, approval, non-JSON
+# -----------------------------------------------------------------------------
+
+OLDER = [s for s in MERGED_STAGES if s["id"] != "post-test"]
+
+
+def test_a_late_delivery_of_an_older_merge_does_not_revert_the_pipeline(fake_gitlab):
+    # Merge A (no custom stage) then merge B (adds post-test); A's webhook arrives last.
+    client = TestClient(main.app)
+    configure_gitlab_scm("hello-container", token="t0ken")
+    repo = "acme/hello-container"
+    fake_gitlab.files[(repo, ".netci/pipeline.yaml", "a" * 40)] = render_pipeline_yaml(OLDER)
+    fake_gitlab.files[(repo, ".netci/pipeline.yaml", "b" * 40)] = render_pipeline_yaml(MERGED_STAGES)
+    fake_gitlab.heads[repo] = "b" * 40
+
+    assert _merge_hook(client, "t0ken", "merge-b", merge_sha="b" * 40).json()["status"] == "pipeline_applied"
+    late = _merge_hook(client, "t0ken", "merge-a", merge_sha="a" * 40).json()
+
+    assert late["headCommit"] == "b" * 40
+    app_uuid = UUID(str(main.portal.module("hello-container")["applicationId"]))
+    assert "post-test" in main.platform.get_application(app_uuid).stages
+
+
+def test_a_head_that_moves_while_applying_is_applied_again(fake_gitlab):
+    client = TestClient(main.app)
+    configure_gitlab_scm("hello-container", token="t0ken")
+    repo = "acme/hello-container"
+    fake_gitlab.files[(repo, ".netci/pipeline.yaml", "a" * 40)] = render_pipeline_yaml(OLDER)
+    fake_gitlab.files[(repo, ".netci/pipeline.yaml", "b" * 40)] = render_pipeline_yaml(MERGED_STAGES)
+    # read A, then the re-check sees B, then B is read and confirmed
+    fake_gitlab.heads[repo] = ["a" * 40, "b" * 40]
+
+    body = _merge_hook(client, "t0ken", "moving", merge_sha="a" * 40).json()
+
+    assert body == {"status": "pipeline_applied", "stages": [s["id"] for s in MERGED_STAGES],
+                    "headCommit": "b" * 40, "deliveryId": "moving"}
+
+
+def test_losing_every_race_reports_superseded_not_applied(fake_gitlab, monkeypatch):
+    client = TestClient(main.app)
+    configure_gitlab_scm("hello-container", token="t0ken")
+    repo = "acme/hello-container"
+    fake_gitlab.files[(repo, ".netci/pipeline.yaml", "c" * 40)] = render_pipeline_yaml(MERGED_STAGES)
+    fake_gitlab.heads[repo] = "c" * 40
+
+    def always_conflict(*_args, **_kwargs):
+        raise main.PortalError("CONCURRENT_MODIFICATION", "config_version moved", 409)
+
+    monkeypatch.setattr(main.portal, "propose_config_revision", always_conflict)
+    body = _merge_hook(client, "t0ken", "lost", merge_sha="c" * 40).json()
+
+    assert body["status"] == "pipeline_superseded"
+    app_uuid = UUID(str(main.portal.module("hello-container")["applicationId"]))
+    assert "post-test" not in main.platform.get_application(app_uuid).stages
+
+
+def test_the_merge_revision_never_needs_a_second_approver(fake_gitlab, monkeypatch):
+    # A pending revision would leave the stage list behind; it must not be reachable.
+    monkeypatch.setenv("NETCI_REQUIRE_CONFIG_APPROVAL", "true")
+    client = TestClient(main.app)
+    configure_gitlab_scm("hello-container", token="t0ken")
+    envs = [str(e.get("environment")) for e in main.portal.module("hello-container")["deploymentEnvironments"]]
+    assert "prod" in envs, "the fixture must have a production target for this to mean anything"
+    fake_gitlab.files[("acme/hello-container", ".netci/pipeline.yaml", "9" * 40)] = render_pipeline_yaml(MERGED_STAGES)
+    fake_gitlab.heads["acme/hello-container"] = "9" * 40
+
+    body = _merge_hook(client, "t0ken", "approval", merge_sha="9" * 40).json()
+
+    assert body["status"] == "pipeline_applied"
+
+
+def test_a_200_that_is_not_json_is_a_gitlab_error(monkeypatch):
+    class Html:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_exc):
+            return False
+
+        def read(self):
+            return b"<html>proxy error</html>"
+
+    monkeypatch.setenv("NETCI_GITLAB_TOKEN", "x")
+    monkeypatch.setattr(gitlab_repo.urllib.request, "urlopen", lambda *_a, **_k: Html())
+    client = gitlab_repo.GitLabRepoClient()
+    client._gitlab_token = "x"
+    with pytest.raises(GitLabRepoError) as exc:
+        client.default_branch("acme/app")
+    assert exc.value.status == 502

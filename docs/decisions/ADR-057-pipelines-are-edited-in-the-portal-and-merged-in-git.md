@@ -34,9 +34,16 @@ code that runs in a build must be reviewed where the code lives, in git.
 
 - GitLab only at first (the company's SCM); GitHub is refused with 422 until implemented.
 - netCI needs a GitLab token that can push branches and open MRs on module repositories.
+- **The merge is a trigger; the default branch is the state.** On a merge netCI reads
+  `.netci/pipeline.yaml` at the default branch's *head* -- not the webhook body, and not
+  that merge's own commit -- and reads the head again after writing, applying again if it
+  moved. Two merges close together are delivered and processed in any order; reading each
+  merge's own commit let the older one land last (found by the cross-model review). A
+  delivery that loses every retry to a concurrent writer answers `pipeline_superseded`,
+  not `pipeline_applied`: the writer that won converges the state, this one changed
+  nothing.
 - **The merge is re-checked, not trusted.** The branch can be edited after netCI opened it,
-  so on merge netCI reads `.netci/pipeline.yaml` from GitLab *at the merge commit* (never
-  from the webhook body) and applies the designer's rules again: a required stage removed,
+  so the designer's rules are applied again to what was read: a required stage removed,
   an unknown key, a custom stage without an anchor. A refusal is answered `200
   pipeline_rejected` with the reason and audited as `pipeline.merge_rejected`. It is not
   answered 4xx/5xx, because GitLab would retry a delivery that is already recorded, and the
