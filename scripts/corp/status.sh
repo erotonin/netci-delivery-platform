@@ -12,7 +12,8 @@ printf '  / %s%% used, %s free%s\n' "${used}" "$(df -h --output=avail / | tail -
   "$( (( used >= 90 )) && echo '  WARNING: free space before the next backup (docker builder prune)')"
 echo "== services (HTTP status)"
 probe GitLab http://172.17.0.1:8929/users/sign_in
-probe Harbor http://172.17.0.1:8930/api/v2.0/ping
+printf '  %-10s %s  %s\n' Harbor "$(curl -s -o /dev/null --max-time 5 --cacert "${ROOT}/.netci-gate/corp/pki/ca.crt" -w '%{http_code}' https://172.17.0.1:8930/api/v2.0/ping)" \
+  "https://172.17.0.1:8930/api/v2.0/ping (TLS, lab CA)"
 printf '  %-10s %s  %s\n' S3 "$(curl -s -o /dev/null --max-time 5 --cacert "${ROOT}/.netci-gate/corp/pki/ca.crt" -w '%{http_code}' https://172.17.0.1:8333/)" \
   "https://172.17.0.1:8333/ (TLS, lab CA; 403 is healthy: unsigned request refused)"
 echo "== containers"

@@ -4,11 +4,13 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 SECRETS="${ROOT}/.netci-gate/corp"
-URL="${HARBOR_URL:-http://172.17.0.1:8930}"
+URL="${HARBOR_URL:-https://172.17.0.1:8930}"  # TLS from the lab CA
 exec 3<"${SECRETS}/harbor_admin_password"
 python3 - "${URL}" "${SECRETS}" <<'PY'
-import base64, json, os, sys, urllib.error, urllib.request
+import base64, json, os, ssl, sys, urllib.error, urllib.request
 url, secrets = sys.argv[1:]
+# Harbor's certificate chains to the lab CA; verified, never skipped.
+tls = ssl.create_default_context(cafile=f"{secrets}/pki/ca.crt")
 password = os.fdopen(3).read().strip()
 auth = "Basic " + base64.b64encode(f"admin:{password}".encode()).decode()
 
@@ -17,7 +19,7 @@ def call(method, path, body=None):
                                      data=json.dumps(body).encode() if body is not None else None,
                                      headers={"Authorization": auth, "Content-Type": "application/json"})
     try:
-        with urllib.request.urlopen(request, timeout=120) as response:  # registry create pings upstream
+        with urllib.request.urlopen(request, timeout=120, context=tls) as response:  # registry create pings upstream
             raw = response.read()
             return response.status, json.loads(raw) if raw else None
     except urllib.error.HTTPError as error:

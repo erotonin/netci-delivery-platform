@@ -104,13 +104,13 @@ done
 bash "${ROOT}/infra/corp/gitlab/bootstrap.sh"
 
 log "Harbor"
-if [[ -d "${C}/harbor-installer/harbor" ]] && ! curl -fsS -o /dev/null http://172.17.0.1:8930/api/v2.0/ping 2>/dev/null; then
+if [[ -d "${C}/harbor-installer/harbor" ]] && ! curl -fsS -o /dev/null --cacert "${C}/pki/ca.crt" https://172.17.0.1:8930/api/v2.0/ping 2>/dev/null; then
   # Installed but down: after a reboot its containers start before harbor-log, whose syslog
   # they log to, exit 128 and are not retried. Starting the project again fixes that.
   ( cd "${C}/harbor-installer/harbor" && sudo -n docker compose up -d >/dev/null )
-  for _ in $(seq 30); do curl -fsS -o /dev/null http://172.17.0.1:8930/api/v2.0/ping 2>/dev/null && break; sleep 3; done
+  for _ in $(seq 30); do curl -fsS -o /dev/null --cacert "${C}/pki/ca.crt" https://172.17.0.1:8930/api/v2.0/ping 2>/dev/null && break; sleep 3; done
 fi
-curl -fsS -o /dev/null http://172.17.0.1:8930/api/v2.0/ping 2>/dev/null || bash "${ROOT}/infra/corp/harbor/install.sh"
+curl -fsS -o /dev/null --cacert "${C}/pki/ca.crt" https://172.17.0.1:8930/api/v2.0/ping 2>/dev/null || bash "${ROOT}/infra/corp/harbor/install.sh"
 bash "${ROOT}/infra/corp/harbor/bootstrap.sh"
 
 log "images into Harbor (nodes have no route to Docker Hub)"
