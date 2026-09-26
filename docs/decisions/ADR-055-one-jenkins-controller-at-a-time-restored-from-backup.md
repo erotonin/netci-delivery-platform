@@ -62,7 +62,11 @@ configuration and the same history.
 - An unplanned node loss needs fencing, not just a restore: Kubernetes keeps the
   StatefulSet pod on a node it cannot reach (it may only be partitioned), so the operator
   force-deletes it once the node is known to be off. `--unplanned` does that explicitly.
-- Not verified: TLS to the object store (the lab uses HTTP on the docker bridge).
+- The object store is reached over TLS with a lab-CA certificate that Velero verifies
+  (`caCertRef`). SeaweedFS 4.47's own TLS listener stalled every handshake after a
+  HelloRetryRequest, so an nginx gateway terminates TLS in front of it and SeaweedFS is no
+  longer published. A drill after the switch (backup and Kopia restore through TLS) passed:
+  RTO 63 s, marker build #9.
 
 ## Evidence
 

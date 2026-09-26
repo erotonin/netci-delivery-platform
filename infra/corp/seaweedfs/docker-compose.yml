@@ -8,7 +8,7 @@ services:
     container_name: netci-corp-s3
     command: ["server", "-dir=/data", "-ip=netci-corp-s3", "-ip.bind=0.0.0.0", "-s3", "-s3.port=8333",
               "-s3.config=/run/secrets/s3.json", "-master.volumeSizeLimitMB=512"]
-    ports: ["172.17.0.1:8333:8333"]       # the docker bridge only: kind pods and the host
+    # Not published: reached only through the TLS gateway below.
     volumes:
       - seaweedfs-data:/data
       - ../../../.netci-gate/corp/s3.json:/run/secrets/s3.json:ro
@@ -19,6 +19,19 @@ services:
     environment:
       GOMEMLIMIT: 800MiB
     mem_limit: 1g
+    restart: unless-stopped
+  tls:
+    # S3 over TLS with a lab-CA certificate (scripts/corp/lab_ca.sh issue s3 ...): S3
+    # credentials and Jenkins backups no longer cross the docker bridge in the clear.
+    image: nginx:1.29.8-alpine3.23
+    container_name: netci-corp-s3-tls
+    depends_on: [seaweedfs]
+    ports: ["172.17.0.1:8333:8333"]       # the docker bridge only: kind pods and the host
+    volumes:
+      - ./nginx-tls.conf:/etc/nginx/nginx.conf:ro
+      - ../../../.netci-gate/corp/pki/s3-chain.crt:/run/secrets/s3.crt:ro
+      - ../../../.netci-gate/corp/pki/s3.key:/run/secrets/s3.key:ro
+    mem_limit: 128m
     restart: unless-stopped
 volumes:
   seaweedfs-data:

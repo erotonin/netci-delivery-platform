@@ -22,7 +22,8 @@ fi
   --provider aws --plugins "${PLUGIN}" --image "${MIRROR}/velero/velero:${VERSION}" \
   --bucket netci-jenkins-backups --secret-file "${SECRETS}/velero-credentials" \
   --use-node-agent --uploader-type kopia --default-volumes-to-fs-backup \
-  --backup-location-config region=us-east-1,s3ForcePathStyle=true,s3Url=http://172.17.0.1:8333 \
+  --backup-location-config region=us-east-1,s3ForcePathStyle=true,s3Url=https://172.17.0.1:8333 \
+  --cacert "${SECRETS}/pki/ca.crt" \
   --use-volume-snapshots=false --wait
 # The Kopia repository key. Velero's own default is a published constant, and JENKINS_HOME
 # holds credentials.xml *and* secrets/master.key that decrypts it: with the default, anyone

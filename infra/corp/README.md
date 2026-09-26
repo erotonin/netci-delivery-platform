@@ -42,7 +42,7 @@ restore sang node kia.
 |---|---|---|
 | GitLab | `http://172.17.0.1:8929` | user `root`, mật khẩu ở `.netci-gate/corp/gitlab_root_password` |
 | Harbor | `http://172.17.0.1:8930` | HTTP, chưa có TLS; node kéo image qua containerd mirror |
-| S3 | `http://172.17.0.1:8333` | HTTP, chưa có TLS; trả 403 cho request không ký là bình thường |
+| S3 | `https://172.17.0.1:8333` | TLS bằng CA của lab (`.netci-gate/corp/pki/ca.crt`, `scripts/corp/lab_ca.sh`), qua gateway nginx; trả 403 cho request không ký là bình thường |
 | Jenkins | `kubectl -n jenkins port-forward svc/jenkins 18089:8080` | không expose ra ngoài cụm |
 
 Tất cả chỉ bind vào docker bridge, không mở trên các interface khác của máy.
@@ -116,4 +116,4 @@ bằng `sudo -n`, vì installer của nó tạo thư mục dữ liệu thuộc r
   máy đích `netci-corp-app-01` (`scripts/corp/app_host.sh`) qua SSH có pin host key.
 - Designer: MR !1 đã được netCI mở thật trên GitLab; chờ người review merge rồi chạy
   `scripts/corp/e2e_designer.py verify`.
-- Chưa có TLS (Harbor, S3) và chưa có ingress (webhook đi qua NodePort 30800 chỉ trong mạng kind).
+- S3 đã chạy TLS (Velero xác thực bằng CA của lab); Harbor chưa có TLS; chưa có ingress (webhook đi qua NodePort 30800 chỉ trong mạng kind).

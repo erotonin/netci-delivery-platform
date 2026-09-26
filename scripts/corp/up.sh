@@ -51,7 +51,11 @@ kind get clusters 2>/dev/null | grep -qx netci-corp || kind create cluster --con
 docker update --restart unless-stopped netci-corp-external-load-balancer >/dev/null
 docker start netci-corp-external-load-balancer >/dev/null
 
-log "SeaweedFS (S3)"
+log "lab CA and the S3 certificate"
+"${ROOT}/scripts/corp/lab_ca.sh" ca >/dev/null
+[[ -s "${C}/pki/s3.crt" ]] || "${ROOT}/scripts/corp/lab_ca.sh" issue s3 IP:172.17.0.1 DNS:netci-corp-s3 DNS:localhost IP:127.0.0.1 >/dev/null
+
+log "SeaweedFS (S3, behind a TLS gateway)"
 for f in s3-access-key s3-secret-key; do
   [[ -s "${C}/${f}" ]] || ( umask 077; python3 -c 'import secrets;print(secrets.token_hex(20))' > "${C}/${f}" )
 done
@@ -71,7 +75,7 @@ EOF
   chmod 644 "${C}/s3.json"
 fi
 docker compose -f "${ROOT}/infra/corp/seaweedfs/docker-compose.yml" up -d >/dev/null
-for _ in $(seq 30); do [[ "$(curl -s -o /dev/null -w '%{http_code}' http://172.17.0.1:8333/)" != 000 ]] && break; sleep 2; done
+for _ in $(seq 30); do [[ "$(curl -s -o /dev/null -m 5 -w '%{http_code}' --cacert "${C}/pki/ca.crt" https://172.17.0.1:8333/)" == 403 ]] && break; sleep 2; done
 # Velero does not create its bucket. The name is the one every backup location points at.
 docker exec netci-corp-s3 sh -c 'echo "s3.bucket.list" | weed shell 2>/dev/null' | grep -q "netci-jenkins-backups" \
   || docker exec netci-corp-s3 sh -c 'echo "s3.bucket.create -name netci-jenkins-backups" | weed shell >/dev/null 2>&1'
