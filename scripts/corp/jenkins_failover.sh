@@ -1,7 +1,14 @@
 #!/usr/bin/env bash
 # Fail the single Jenkins controller over (ADR-055) and measure it.
 #
-#   scripts/corp/jenkins_failover.sh [--planned] [--no-marker]
+#   scripts/corp/jenkins_failover.sh [--planned] [--no-marker] [--unplanned]
+#
+# --unplanned powers the controller's node off (docker kill of the kind node) instead of
+# cordoning a live one: the loss a real outage is. Kubernetes then deliberately leaves the
+# StatefulSet pod on the dead node -- it cannot know the node is not just partitioned, and a
+# second controller on the same JENKINS_HOME history is what at-most-one forbids. The pod is
+# force-deleted only after the node is confirmed NotReady *and* fenced (its container is
+# stopped), which is the operator's decision this script makes explicit.
 #
 # What it does, in the order a real node loss would force:
 #   1. (drill) leaves a marker in JENKINS_HOME: a job with one finished build;
@@ -18,8 +25,8 @@ SECRETS="${ROOT}/.netci-gate/corp"
 CONTEXT="${KUBE_CONTEXT:-kind-netci-corp}"
 VELERO=("${SECRETS}/bin/velero" --kubecontext "${CONTEXT}")
 K=(kubectl --context "${CONTEXT}")
-PLANNED=false; MARKER=true
-for arg in "$@"; do case "$arg" in --planned) PLANNED=true ;; --no-marker) MARKER=false ;; *) echo "unknown $arg" >&2; exit 2 ;; esac; done
+PLANNED=false; MARKER=true; UNPLANNED=false
+for arg in "$@"; do case "$arg" in --planned) PLANNED=true ;; --no-marker) MARKER=false ;; --unplanned) UNPLANNED=true ;; *) echo "unknown $arg" >&2; exit 2 ;; esac; done
 log() { printf '[%s] %s\n' "$(date +%H:%M:%S)" "$*"; }
 
 jenkins_url=http://127.0.0.1:18089
@@ -83,9 +90,30 @@ backup_at=$("${VELERO[@]}" backup get "${backup}" -o json | python3 -c 'import j
 
 start=$(date +%s)
 node=$("${K[@]}" -n jenkins get pod jenkins-0 -o jsonpath='{.spec.nodeName}')
-log "failure: controller node ${node} is cordoned (gone); deleting namespace jenkins"
-"${K[@]}" cordon "${node}" >/dev/null
-"${K[@]}" delete namespace jenkins --wait=true --timeout=180s >/dev/null
+if ${UNPLANNED}; then
+  log "failure: controller node ${node} loses power (docker kill)"
+  docker kill "${node}" >/dev/null
+  for _ in $(seq 120); do
+    [[ "$("${K[@]}" get node "${node}" -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}')" != True ]] && break
+    sleep 2
+  done
+  log "detected: ${node} NotReady after $(( $(date +%s) - start )) s"
+  # Fencing: the node's container is stopped, so its kubelet cannot run jenkins-0 any more.
+  [[ "$(docker inspect -f '{{.State.Running}}' "${node}")" == false ]] || { echo "node ${node} is not fenced" >&2; exit 1; }
+  "${K[@]}" cordon "${node}" >/dev/null
+  "${K[@]}" -n jenkins delete pod --all --grace-period=0 --force >/dev/null 2>&1 || true
+  "${K[@]}" delete namespace jenkins --wait=false >/dev/null
+  # The dead kubelet never confirms volume detach; drop the PVC finalizers it would release.
+  for pvc in $("${K[@]}" -n jenkins get pvc -o name 2>/dev/null); do
+    "${K[@]}" -n jenkins patch "${pvc}" --type merge -p '{"metadata":{"finalizers":null}}' >/dev/null 2>&1 || true
+  done
+  "${K[@]}" wait --for=delete namespace/jenkins --timeout=180s >/dev/null
+  log "fenced: ${node} stopped, jenkins-0 force-deleted, namespace removed"
+else
+  log "failure: controller node ${node} is cordoned (gone); deleting namespace jenkins"
+  "${K[@]}" cordon "${node}" >/dev/null
+  "${K[@]}" delete namespace jenkins --wait=true --timeout=180s >/dev/null
+fi
 
 log "restore: namespace jenkins from ${backup}"
 restore="restore-${backup}-$(date +%H%M%S)"
@@ -102,6 +130,13 @@ if ${MARKER}; then
   restored=$(jenkins "${jenkins_url}/job/dr-marker/lastSuccessfulBuild/api/json" 2>/dev/null | python3 -c 'import json,sys;print(json.load(sys.stdin)["number"])' 2>/dev/null || true)
 fi
 kill "${FORWARD}" 2>/dev/null || true
+if ${UNPLANNED}; then
+  # The node comes back after the controller runs elsewhere; its kubelet finds no pod to
+  # run (the API has none for it), so it cannot start a second controller.
+  docker start "${node}" >/dev/null
+  "${K[@]}" wait --for=condition=Ready "node/${node}" --timeout=300s >/dev/null
+  log "recovered: ${node} Ready again"
+fi
 "${K[@]}" uncordon "${node}" >/dev/null
 
 rpo=$(( start - $(date -d "${backup_at}" +%s) ))

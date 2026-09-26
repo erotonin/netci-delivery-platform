@@ -18,6 +18,7 @@ import argparse
 import hashlib
 import os
 import sys
+import time
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -82,13 +83,34 @@ def check_schema_is_current() -> int:
     return 0
 
 
-def connect(url: str):
+def connect(url: str, *, deadline_seconds: float | None = None, sleep=time.sleep, clock=time.monotonic):
+    """A connection, retried until `deadline_seconds` (NETCI_MIGRATE_CONNECT_DEADLINE_SECONDS,
+    default 90) for a database that is only briefly unreachable.
+
+    This runs as the API pod's init container. Right after a node restarts its pod network can
+    take a moment to reach the database; one failed attempt used to exit, and the kubelet's
+    growing back-off then kept the replica out of service for minutes (measured 2.5 min on the
+    corp lab). A database that stays unreachable past the deadline still fails the pod.
+    """
     try:
         import psycopg
         from psycopg.rows import dict_row
     except ImportError:  # pragma: no cover - explicit, actionable failure
         raise SystemExit("psycopg is required: pip install -r backend/requirements.txt")
-    return psycopg.connect(url, row_factory=dict_row)
+    if deadline_seconds is None:
+        deadline_seconds = float(os.getenv("NETCI_MIGRATE_CONNECT_DEADLINE_SECONDS", "90"))
+    give_up = clock() + deadline_seconds
+    attempt = 0
+    while True:
+        attempt += 1
+        try:
+            return psycopg.connect(url, row_factory=dict_row, connect_timeout=5)
+        except psycopg.OperationalError as exc:
+            if clock() >= give_up:
+                raise
+            # The class only: psycopg's message can carry the host and user, never the URL.
+            print(f"database not reachable yet (attempt {attempt}: {type(exc).__name__}); retrying", file=sys.stderr)
+            sleep(2)
 
 
 def applied_versions(connection) -> dict[str, str]:
