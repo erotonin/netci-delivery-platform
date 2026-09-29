@@ -67,6 +67,10 @@ fi
 # workers go NotReady (seen 2026-09-26).
 docker update --restart unless-stopped netci-corp-external-load-balancer >/dev/null
 docker start netci-corp-external-load-balancer >/dev/null
+# After a reboot Docker may hand the nodes other addresses, and etcd's peer certificates name
+# the old ones: quorum is lost and the API never answers (seen 2026-09-29). Pinning puts each
+# control plane back where its certificate says, and keeps every node there from then on.
+"${ROOT}/scripts/corp/pin_node_ips.sh"
 
 log "SeaweedFS (S3, behind a TLS gateway)"
 for f in s3-access-key s3-secret-key; do

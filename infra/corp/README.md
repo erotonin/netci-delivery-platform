@@ -81,6 +81,13 @@ haproxy của cụm HA kind (không có nó thì API từ chối kết nối và
 container của Harbor (thoát với mã 128 vì khởi động trước `harbor-log`). `up.sh` bật lại cả hai
 và bỏ qua những gì đang chạy.
 
+Thứ ba (gặp ngày 2026-09-29): Docker có thể cấp lại **địa chỉ IP khác** cho các node sau khi khởi
+động lại. Chứng chỉ peer của etcd ghi IP cũ, nên ba control plane từ chối nhau ("tls: bad
+certificate"), etcd mất quorum và API không bao giờ lên. `up.sh` gọi `scripts/corp/pin_node_ips.sh`:
+script đọc IP gốc của từng control plane từ chứng chỉ etcd của nó, đưa node về đúng IP đó và ghim
+IP tĩnh cho mọi node (ghi ở `.netci-gate/corp/node-ips`) để lần khởi động sau không bị xáo lại.
+Khi phải sửa, script dừng rồi bật lại cả cụm. `--check` chỉ kiểm tra.
+
 Yêu cầu trên máy: `fs.inotify.max_user_instances >= 1024`
 (`/etc/sysctl.d/99-netci-kind.conf`), vì mặc định 128 làm pod bị crash-loop. Harbor được cài
 bằng `sudo -n`, vì installer của nó tạo thư mục dữ liệu thuộc root.
