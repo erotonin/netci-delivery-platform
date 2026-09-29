@@ -256,4 +256,54 @@ describe('PipelinesPage', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Approve' }))
     await waitFor(() => expect(notify).toHaveBeenCalledWith('a pipeline version must be approved by someone other than its author', 'error'))
   })
+
+  it('designer: allows inserting stages in between and deleting non-required stages', async () => {
+    const blocksWithPublish: PipelineBuildingBlocks = {
+      builtins: [
+        { id: 'unit-test', name: 'Unit Tests', required: false, block: '# @stage unit-test "Unit Tests" builtin\nnetci-builtin unit-test' },
+        { id: 'build', name: 'Build', required: true, block: '# @stage build "Build" builtin\nnetci-builtin build' },
+        { id: 'sbom', name: 'SBOM', required: false, block: '# @stage sbom "SBOM" builtin\nnetci-builtin sbom' },
+        { id: 'publish', name: 'Publish Artifact', required: true, block: '# @stage publish "Publish Artifact" builtin\nnetci-builtin publish' },
+      ],
+      templates: [
+        { id: 'lint-tpl', name: 'Linter', description: 'Run linter', body: 'run-lint', block: '# @stage lint "Linter"\nrun-lint' },
+      ],
+      order: ['unit-test', 'build', 'sbom', 'publish'],
+      required: ['build', 'publish'],
+    }
+    vi.mocked(listSharedPipelines).mockResolvedValue(mockPipelines)
+    vi.mocked(getPipelineBuildingBlocks).mockResolvedValue(blocksWithPublish)
+
+    render(<PipelinesPage navigate={vi.fn()} />)
+    fireEvent.click(await screen.findByRole('button', { name: 'New pipeline' }))
+    await screen.findByText('Create New Pipeline')
+
+    const textarea = screen.getByLabelText('Pipeline script') as HTMLTextAreaElement
+    // Initial prefill contains only build and publish
+    expect(textarea.value).toContain('# @stage build "Build" builtin')
+    expect(textarea.value).toContain('# @stage publish "Publish Artifact" builtin')
+    expect(textarea.value).not.toContain('unit-test')
+    expect(textarea.value).not.toContain('sbom')
+
+    // Insert Unit Tests (should be inserted BEFORE build)
+    const unitTestBtn = screen.getByRole('button', { name: /Unit Tests/ })
+    fireEvent.click(unitTestBtn)
+    expect(textarea.value.indexOf('# @stage unit-test')).toBeLessThan(textarea.value.indexOf('# @stage build'))
+
+    // Insert SBOM (should be inserted in between build and publish)
+    const sbomBtn = screen.getByRole('button', { name: /SBOM/ })
+    fireEvent.click(sbomBtn)
+    expect(textarea.value.indexOf('# @stage build')).toBeLessThan(textarea.value.indexOf('# @stage sbom'))
+    expect(textarea.value.indexOf('# @stage sbom')).toBeLessThan(textarea.value.indexOf('# @stage publish'))
+
+    // Delete SBOM stage specifically
+    const removeSbomBtn = screen.getByRole('button', { name: /Remove stage SBOM/i })
+    fireEvent.click(removeSbomBtn)
+
+    // Verify SBOM removed while unit-test, build and publish remain
+    expect(textarea.value).not.toContain('# @stage sbom')
+    expect(textarea.value).toContain('# @stage unit-test')
+    expect(textarea.value).toContain('# @stage build')
+    expect(textarea.value).toContain('# @stage publish')
+  })
 })

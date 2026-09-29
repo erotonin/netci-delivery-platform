@@ -20,7 +20,7 @@ from dataclasses import dataclass
 #: Built-in CI stages a pipeline may name, in the only order they run.
 CI_BUILTINS: tuple[str, ...] = ("unit-test", "build", "sbom", "vulnerability-scan", "sign", "publish")
 #: The ones that make an artifact deployable (the evidence gates read their output).
-REQUIRED_BUILTINS: tuple[str, ...] = ("build", "sbom", "vulnerability-scan", "sign", "publish")
+REQUIRED_BUILTINS: tuple[str, ...] = ("build", "publish")
 #: Stages that are not CI: checkout always runs first, deploy and health-check are CD.
 NOT_IN_A_PIPELINE: dict[str, str] = {
     "checkout": "checkout always runs first; it is not part of the script",

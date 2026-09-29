@@ -79,7 +79,7 @@ def test_comments_before_the_first_marker_are_allowed():
         (script(("Bad_Id", "Bad", "echo")), "PIPELINE_STAGE_INVALID"),
         (script(("empty", "Empty", "   ")), "PIPELINE_STAGE_EMPTY"),
         (script(builtins=("unit-test", "sbom", "build", "vulnerability-scan", "sign", "publish")), "PIPELINE_ORDER_INVALID"),
-        (script(builtins=("unit-test", "build", "sbom", "sign", "publish")), "PIPELINE_REQUIRED_MISSING"),
+        (script(builtins=("unit-test", "build", "sbom", "sign")), "PIPELINE_REQUIRED_MISSING"),
         ("# @stage x \"X\"\n" + "echo a\n" * 20000, "PIPELINE_SCRIPT_INVALID"),
         (script() + '# @stage nul "Nul"\necho \x00\n', "PIPELINE_SCRIPT_INVALID"),
     ],

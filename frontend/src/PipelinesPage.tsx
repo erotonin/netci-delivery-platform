@@ -34,6 +34,8 @@ import {
   ShieldCheck,
   Sliders,
   Terminal,
+  Trash2,
+  X,
 } from 'lucide-react'
 import './pipelines.css'
 
@@ -337,6 +339,87 @@ export function PipelinesPage({ moduleId, navigate }: { moduleId?: string; navig
     }
   }
 
+  const removeStage = (stageId: string) => {
+    if (stageId === 'build' || stageId === 'publish') {
+      feedback.notify('Build and Publish stages are required by policy and cannot be removed.', 'error')
+      return
+    }
+    const lines = designerScript.split('\n')
+    const filteredLines: string[] = []
+    let skipping = false
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i]
+      const match = line.match(/^# @stage (\S+)/)
+      if (match) {
+        if (match[1] === stageId) {
+          skipping = true
+          continue
+        } else {
+          skipping = false
+        }
+      }
+      if (!skipping) {
+        filteredLines.push(line)
+      }
+    }
+    const newScript = filteredLines.join('\n').replace(/\n{3,}/g, '\n\n').trim() + '\n'
+    setDesignerScript(newScript)
+    feedback.notify(`Removed stage ${stageId}`)
+  }
+
+  const insertStage = (blockText: string, stageId: string, isBuiltin: boolean) => {
+    const trimmedBlock = blockText.trim()
+    if (!designerScript.trim()) {
+      setDesignerScript(trimmedBlock + '\n')
+      feedback.notify(`Added stage ${stageId}`)
+      return
+    }
+
+    const lines = designerScript.split('\n')
+    const builtinOrder = blocks?.order || ['unit-test', 'build', 'sbom', 'vulnerability-scan', 'sign', 'publish']
+
+    if (isBuiltin) {
+      const targetIdx = builtinOrder.indexOf(stageId)
+      let insertIdx = -1
+      for (let i = 0; i < lines.length; i++) {
+        const m = lines[i].match(/^# @stage (\S+)/)
+        if (m) {
+          const exIdx = builtinOrder.indexOf(m[1])
+          if (exIdx !== -1 && exIdx > targetIdx) {
+            insertIdx = i
+            break
+          }
+        }
+      }
+      if (insertIdx !== -1) {
+        lines.splice(insertIdx, 0, trimmedBlock, '')
+        setDesignerScript(lines.join('\n').replace(/\n{3,}/g, '\n\n').trim() + '\n')
+        feedback.notify(`Inserted stage ${stageId}`)
+        return
+      }
+    } else {
+      // Custom stage: insert before 'publish' if publish exists, otherwise append
+      let publishIdx = -1
+      for (let i = 0; i < lines.length; i++) {
+        if (lines[i].startsWith('# @stage publish')) {
+          publishIdx = i
+          break
+        }
+      }
+      if (publishIdx !== -1) {
+        lines.splice(publishIdx, 0, trimmedBlock, '')
+        setDesignerScript(lines.join('\n').replace(/\n{3,}/g, '\n\n').trim() + '\n')
+        feedback.notify(`Inserted custom stage ${stageId}`)
+        return
+      }
+    }
+
+    // Default append
+    const updated = (designerScript.trimEnd() + '\n\n' + trimmedBlock).trim() + '\n'
+    setDesignerScript(updated)
+    feedback.notify(`Added stage ${stageId}`)
+  }
+
   const parsedStages = useMemo(() => {
     if (!designerScript) return []
     const lines = designerScript.split('\n')
@@ -551,24 +634,54 @@ export function PipelinesPage({ moduleId, navigate }: { moduleId?: string; navig
 
             <ArrowRight size={14} className="pl-flow-arrow" />
 
-            {parsedStages.map((s, idx) => (
-              <div key={idx} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                <div className={`pl-flow-node ${s.builtin ? 'required' : 'custom'}`}>
-                  {s.id === 'unit-test' && <CheckCircle2 size={14} />}
-                  {s.id === 'build' && <Box size={14} />}
-                  {s.id === 'sbom' && <Layers size={14} />}
-                  {s.id === 'vulnerability-scan' && <Shield size={14} />}
-                  {s.id === 'sign' && <ShieldCheck size={14} />}
-                  {s.id === 'publish' && <Box size={14} />}
-                  {!['unit-test', 'build', 'sbom', 'vulnerability-scan', 'sign', 'publish'].includes(s.id) && <Terminal size={14} />}
-                  <span>{s.name}</span>
-                  <small style={{ fontSize: '10px', opacity: 0.8, textTransform: 'uppercase' }}>
-                    {s.builtin ? 'CI Gate' : 'Custom'}
-                  </small>
+            {parsedStages.map((s, idx) => {
+              const isRequired = s.id === 'build' || s.id === 'publish'
+              return (
+                <div key={idx} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <div className={`pl-flow-node ${isRequired ? 'required' : s.builtin ? 'builtin' : 'custom'}`} style={{ position: 'relative' }}>
+                    {s.id === 'unit-test' && <CheckCircle2 size={14} />}
+                    {s.id === 'build' && <Box size={14} />}
+                    {s.id === 'sbom' && <Layers size={14} />}
+                    {s.id === 'vulnerability-scan' && <Shield size={14} />}
+                    {s.id === 'sign' && <ShieldCheck size={14} />}
+                    {s.id === 'publish' && <Box size={14} />}
+                    {!['unit-test', 'build', 'sbom', 'vulnerability-scan', 'sign', 'publish'].includes(s.id) && <Terminal size={14} />}
+                    <span>{s.name}</span>
+                    <small style={{ fontSize: '10px', opacity: 0.8, textTransform: 'uppercase' }}>
+                      {isRequired ? 'Required' : s.builtin ? 'CI Gate' : 'Custom'}
+                    </small>
+                    {!isRequired && (
+                      <button
+                        type="button"
+                        aria-label={`Remove stage ${s.name}`}
+                        title={`Remove ${s.name} from pipeline`}
+                        onClick={() => removeStage(s.id)}
+                        style={{
+                          marginLeft: '6px',
+                          background: 'rgba(239, 68, 68, 0.15)',
+                          border: 'none',
+                          borderRadius: '50%',
+                          width: '18px',
+                          height: '18px',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          cursor: 'pointer',
+                          color: '#ef4444',
+                          fontWeight: 'bold',
+                          fontSize: '13px',
+                          lineHeight: '1',
+                          padding: 0,
+                        }}
+                      >
+                        ×
+                      </button>
+                    )}
+                  </div>
+                  <ArrowRight size={14} className="pl-flow-arrow" />
                 </div>
-                <ArrowRight size={14} className="pl-flow-arrow" />
-              </div>
-            ))}
+              )
+            })}
 
             <div className="pl-flow-node cd" title="CD Deployment coordinated by netCI Temporal Worker">
               <Check size={14} />
@@ -607,16 +720,75 @@ export function PipelinesPage({ moduleId, navigate }: { moduleId?: string; navig
                 <div className="pl-blocks-list">
                   {blocks.builtins.map(b => {
                     const added = parsedStages.some(s => s.id === b.id)
+                    const isRequired = b.required || b.id === 'build' || b.id === 'publish'
+                    if (added && isRequired) {
+                      return (
+                        <button
+                          key={b.id}
+                          type="button"
+                          className="pl-block-item"
+                          disabled={true}
+                          style={{ cursor: 'not-allowed', background: '#f8fafc' }}
+                        >
+                          <div className="pl-block-title">
+                            <span>{b.name}</span>
+                            <span style={{ color: '#ef4444', fontSize: '10.5px' }}>(Required)</span>
+                          </div>
+                          <div className="pl-block-desc">
+                            {b.id === 'unit-test' && 'Run unit tests & code coverage analysis'}
+                            {b.id === 'build' && 'Compile source code & package Docker container'}
+                            {b.id === 'sbom' && 'Export CycloneDX SBOM dependency inventory'}
+                            {b.id === 'vulnerability-scan' && 'Scan for vulnerabilities offline using air-gapped Trivy DB'}
+                            {b.id === 'sign' && 'Cryptographically sign provenance attestations (SLSA v1) via Cosign'}
+                            {b.id === 'publish' && 'Publish container image & signatures to Harbor Registry'}
+                          </div>
+                          <div style={{ fontSize: '11px', color: '#10b981', marginTop: '4px', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '4px' }}>
+                            <Check size={12} /> added
+                          </div>
+                        </button>
+                      )
+                    }
+                    if (added) {
+                      return (
+                        <div key={b.id} className="pl-block-item" style={{ cursor: 'default', background: '#f8fafc' }}>
+                          <div className="pl-block-title">
+                            <span>{b.name}</span>
+                          </div>
+                          <div className="pl-block-desc">
+                            {b.id === 'unit-test' && 'Run unit tests & code coverage analysis'}
+                            {b.id === 'build' && 'Compile source code & package Docker container'}
+                            {b.id === 'sbom' && 'Export CycloneDX SBOM dependency inventory'}
+                            {b.id === 'vulnerability-scan' && 'Scan for vulnerabilities offline using air-gapped Trivy DB'}
+                            {b.id === 'sign' && 'Cryptographically sign provenance attestations (SLSA v1) via Cosign'}
+                            {b.id === 'publish' && 'Publish container image & signatures to Harbor Registry'}
+                          </div>
+                          <div style={{ marginTop: '8px', display: 'flex', gap: '8px', alignItems: 'center' }}>
+                            <div style={{ fontSize: '11px', color: '#10b981', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '4px' }}>
+                              <Check size={12} /> added
+                            </div>
+                            <button
+                              type="button"
+                              className="secondary-button"
+                              style={{ fontSize: '11px', padding: '2px 8px', color: '#ef4444', borderColor: '#fca5a5', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
+                              onClick={() => removeStage(b.id)}
+                            >
+                              <Trash2 size={11} /> Remove
+                            </button>
+                          </div>
+                        </div>
+                      )
+                    }
                     return (
-                      <button 
-                        key={b.id} 
-                        className="pl-block-item" 
-                        disabled={added}
-                        onClick={() => setDesignerScript(prev => prev + (prev.endsWith('\n') || !prev ? '' : '\n') + b.block + '\n')}
+                      <button
+                        key={b.id}
+                        type="button"
+                        className="pl-block-item"
+                        disabled={false}
+                        onClick={() => insertStage(b.block, b.id, true)}
                       >
                         <div className="pl-block-title">
                           <span>{b.name}</span>
-                          {b.required && <span style={{ color: '#ef4444', fontSize: '10.5px' }}>(Required)</span>}
+                          {isRequired && <span style={{ color: '#ef4444', fontSize: '10.5px' }}>(Required)</span>}
                         </div>
                         <div className="pl-block-desc">
                           {b.id === 'unit-test' && 'Run unit tests & code coverage analysis'}
@@ -626,15 +798,9 @@ export function PipelinesPage({ moduleId, navigate }: { moduleId?: string; navig
                           {b.id === 'sign' && 'Cryptographically sign provenance attestations (SLSA v1) via Cosign'}
                           {b.id === 'publish' && 'Publish container image & signatures to Harbor Registry'}
                         </div>
-                        {added ? (
-                          <div style={{ fontSize: '11px', color: '#10b981', marginTop: '4px', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '4px' }}>
-                            <Check size={12} /> added
-                          </div>
-                        ) : (
-                          <div style={{ fontSize: '11px', color: '#2563eb', marginTop: '4px', fontWeight: 500, display: 'flex', alignItems: 'center', gap: '4px' }}>
-                            <Plus size={12} /> Add to pipeline
-                          </div>
-                        )}
+                        <div style={{ fontSize: '11px', color: '#2563eb', marginTop: '6px', fontWeight: 500, display: 'flex', alignItems: 'center', gap: '4px' }}>
+                          <Plus size={12} /> Add to pipeline
+                        </div>
                       </button>
                     )
                   })}
@@ -649,19 +815,46 @@ export function PipelinesPage({ moduleId, navigate }: { moduleId?: string; navig
                 </p>
 
                 <div className="pl-blocks-list">
-                  {blocks.templates.map(t => (
-                    <button 
-                      key={t.id} 
-                      className="pl-block-item" 
-                      onClick={() => setDesignerScript(prev => prev + (prev.endsWith('\n') || !prev ? '' : '\n') + t.block + '\n')}
-                    >
-                      <div className="pl-block-title">
-                        <span>{t.name}</span>
-                        <Plus size={13} color="#7c3aed" />
-                      </div>
-                      <div className="pl-block-desc">{t.description}</div>
-                    </button>
-                  ))}
+                  {blocks.templates.map(t => {
+                    const added = parsedStages.some(s => s.id === t.id)
+                    if (added) {
+                      return (
+                        <div key={t.id} className="pl-block-item" style={{ cursor: 'default', background: '#f8fafc' }}>
+                          <div className="pl-block-title">
+                            <span>{t.name}</span>
+                          </div>
+                          <div className="pl-block-desc">{t.description}</div>
+                          <div style={{ marginTop: '8px', display: 'flex', gap: '8px', alignItems: 'center' }}>
+                            <div style={{ fontSize: '11px', color: '#10b981', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '4px' }}>
+                              <Check size={12} /> added
+                            </div>
+                            <button
+                              type="button"
+                              className="secondary-button"
+                              style={{ fontSize: '11px', padding: '2px 8px', color: '#ef4444', borderColor: '#fca5a5', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
+                              onClick={() => removeStage(t.id)}
+                            >
+                              <Trash2 size={11} /> Remove
+                            </button>
+                          </div>
+                        </div>
+                      )
+                    }
+                    return (
+                      <button
+                        key={t.id}
+                        type="button"
+                        className="pl-block-item"
+                        onClick={() => insertStage(t.block, t.id, false)}
+                      >
+                        <div className="pl-block-title">
+                          <span>{t.name}</span>
+                          <Plus size={13} color="#7c3aed" />
+                        </div>
+                        <div className="pl-block-desc">{t.description}</div>
+                      </button>
+                    )
+                  })}
                 </div>
               </div>
             </div>
@@ -794,41 +987,41 @@ export function PipelinesPage({ moduleId, navigate }: { moduleId?: string; navig
                       <div className="pl-compliance-card" style={{ borderColor: hasBuild ? '#10b981' : '#f87171' }}>
                         <strong style={{ color: hasBuild ? '#059669' : '#dc2626' }}>
                           {hasBuild ? <CheckCircle2 size={15} /> : <AlertTriangle size={15} />}
-                          Compile & Build Container
+                          Compile & Build (Required)
                         </strong>
-                        <small>{hasBuild ? 'Attaches immutable SHA-256 digest' : 'Build stage missing'}</small>
+                        <small>{hasBuild ? 'Attaches immutable SHA-256 digest' : 'Required build stage missing'}</small>
                       </div>
 
-                      <div className="pl-compliance-card" style={{ borderColor: hasSbom ? '#10b981' : '#f87171' }}>
-                        <strong style={{ color: hasSbom ? '#059669' : '#dc2626' }}>
-                          {hasSbom ? <CheckCircle2 size={15} /> : <AlertTriangle size={15} />}
-                          Export CycloneDX SBOM
+                      <div className="pl-compliance-card" style={{ borderColor: hasSbom ? '#10b981' : '#cbd5e1' }}>
+                        <strong style={{ color: hasSbom ? '#059669' : '#64748b' }}>
+                          {hasSbom ? <CheckCircle2 size={15} /> : <Layers size={15} />}
+                          CycloneDX SBOM (Optional)
                         </strong>
-                        <small>{hasSbom ? 'Inventories software dependencies' : 'SBOM stage missing'}</small>
+                        <small>{hasSbom ? 'Inventories software dependencies' : 'SBOM stage not configured'}</small>
                       </div>
 
-                      <div className="pl-compliance-card" style={{ borderColor: hasScan ? '#10b981' : '#f87171' }}>
-                        <strong style={{ color: hasScan ? '#059669' : '#dc2626' }}>
-                          {hasScan ? <CheckCircle2 size={15} /> : <AlertTriangle size={15} />}
-                          Trivy CVE Vulnerability Scan
+                      <div className="pl-compliance-card" style={{ borderColor: hasScan ? '#10b981' : '#cbd5e1' }}>
+                        <strong style={{ color: hasScan ? '#059669' : '#64748b' }}>
+                          {hasScan ? <CheckCircle2 size={15} /> : <Shield size={15} />}
+                          Trivy CVE Scan (Optional)
                         </strong>
-                        <small>{hasScan ? 'Verified against air-gapped CVE database' : 'Vulnerability scan missing'}</small>
+                        <small>{hasScan ? 'Verified against air-gapped CVE database' : 'Vulnerability scan not configured'}</small>
                       </div>
 
-                      <div className="pl-compliance-card" style={{ borderColor: hasSign ? '#10b981' : '#f87171' }}>
-                        <strong style={{ color: hasSign ? '#059669' : '#dc2626' }}>
-                          {hasSign ? <CheckCircle2 size={15} /> : <AlertTriangle size={15} />}
-                          Sign SLSA v1 Provenance (Cosign)
+                      <div className="pl-compliance-card" style={{ borderColor: hasSign ? '#10b981' : '#cbd5e1' }}>
+                        <strong style={{ color: hasSign ? '#059669' : '#64748b' }}>
+                          {hasSign ? <CheckCircle2 size={15} /> : <ShieldCheck size={15} />}
+                          SLSA v1 Provenance (Optional)
                         </strong>
-                        <small>{hasSign ? 'Attests cryptographic provenance signature' : 'SLSA signature stage missing'}</small>
+                        <small>{hasSign ? 'Attests cryptographic provenance signature' : 'Cosign signing not configured'}</small>
                       </div>
 
                       <div className="pl-compliance-card" style={{ borderColor: hasPublish ? '#10b981' : '#f87171' }}>
                         <strong style={{ color: hasPublish ? '#059669' : '#dc2626' }}>
                           {hasPublish ? <CheckCircle2 size={15} /> : <AlertTriangle size={15} />}
-                          Publish to Harbor Registry
+                          Publish Artifact (Required)
                         </strong>
-                        <small>{hasPublish ? 'Stores secure OCI image in registry' : 'Publish stage missing'}</small>
+                        <small>{hasPublish ? 'Stores secure OCI image in registry' : 'Required publish stage missing'}</small>
                       </div>
                     </div>
                   </div>
@@ -842,11 +1035,34 @@ export function PipelinesPage({ moduleId, navigate }: { moduleId?: string; navig
                   <span style={{ fontSize: '11px', color: 'var(--muted, #64748b)' }}>Sequential execution in build toolbox</span>
                 </div>
                 <ol className="pl-preview-list">
-                  {parsedStages.map((s, idx) => (
-                    <li key={idx}>
-                      <strong>{s.name}</strong> <code>{s.id}</code> {s.builtin && <span style={{ color: '#1d4ed8', fontSize: '0.75rem', fontWeight: 600 }}>(builtin)</span>}
-                    </li>
-                  ))}
+                  {parsedStages.map((s, idx) => {
+                    const isRequired = s.id === 'build' || s.id === 'publish'
+                    return (
+                      <li key={idx} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <div>
+                          <strong>{s.name}</strong> <code>{s.id}</code>{' '}
+                          {isRequired ? (
+                            <span style={{ color: '#ef4444', fontSize: '0.75rem', fontWeight: 600 }}>(required)</span>
+                          ) : s.builtin ? (
+                            <span style={{ color: '#1d4ed8', fontSize: '0.75rem', fontWeight: 600 }}>(builtin)</span>
+                          ) : (
+                            <span style={{ color: '#7c3aed', fontSize: '0.75rem', fontWeight: 600 }}>(custom)</span>
+                          )}
+                        </div>
+                        {!isRequired && (
+                          <button
+                            type="button"
+                            className="secondary-button"
+                            style={{ fontSize: '10.5px', padding: '1px 6px', color: '#ef4444', borderColor: '#fca5a5', display: 'inline-flex', alignItems: 'center', gap: '3px' }}
+                            onClick={() => removeStage(s.id)}
+                            title={`Remove stage ${s.name}`}
+                          >
+                            <Trash2 size={10} /> Remove
+                          </button>
+                        )}
+                      </li>
+                    )
+                  })}
                 </ol>
                 {designerHints.length > 0 && (
                   <div className="pl-hints">

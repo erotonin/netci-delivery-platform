@@ -59,17 +59,21 @@ test.describe.serial('Demo Kahn Algorithm Multi-Module CI/CD & Streamlined UX', 
     await page.click('button:has-text("New Request")')
     await expect(page.locator('h2:has-text("New Production Request")')).toBeVisible()
 
-    // 1-Click Multi-Module DAG Waves (Kahn Preset)
-    const presetBtn = page.locator('button:has-text("1-Click Multi-Module DAG Waves")')
-    await expect(presetBtn).toBeVisible()
-    await presetBtn.click()
+    // Select modules and configure DAG dependency
+    const selectAllBtn = page.locator('button:has-text("Select all modules with versions")')
+    await expect(selectAllBtn).toBeVisible()
+    await selectAllBtn.click()
+
+    // Configure dependency to create 2 waves
+    const depCheck = page.locator('.dependency-checkboxes input[type="checkbox"]').last()
+    await depCheck.check()
 
     // Verify Kahn algorithm preview shows Wave 1 and Wave 2
     await expect(page.locator('text=Kahn\'s algorithm identified 2 Waves')).toBeVisible()
     await page.screenshot({ path: path.join(ARTIFACT_DIR, 'kahn_demo_02_kahn_preset_waves.png'), fullPage: true })
 
     // Test Cycle Detection by checking circular dependency
-    const circularCheck = page.locator('input[type="checkbox"]').first()
+    const circularCheck = page.locator('.dependency-checkboxes input[type="checkbox"]').first()
     await circularCheck.check()
     await expect(page.locator('text=Circular dependency detected')).toBeVisible()
     await expect(page.locator('button:has-text("Review Request")')).toBeDisabled()

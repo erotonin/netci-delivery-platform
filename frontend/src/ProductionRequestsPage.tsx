@@ -558,76 +558,6 @@ function NewRequest({
     setSelected(versionedModules.map((m) => m.id))
   }
 
-  const applyDagWavePreset = () => {
-    const payment = versionedModules.find((m) => m.id === 'payment-gateway')
-    const ledger = versionedModules.find((m) => m.id === 'ledger-service')
-    const portal = versionedModules.find((m) => m.id === 'banking-portal' || m.id === 'banking-web')
-    if (ledger && payment && portal) {
-      setSelected([ledger.id, payment.id, portal.id])
-      setDrafts((prev) => ({
-        ...prev,
-        [ledger.id]: {
-          moduleId: ledger.id,
-          version: ledger.versions[0] ?? '',
-          deploymentOrder: 1,
-          dependencies: [],
-        },
-        [payment.id]: {
-          moduleId: payment.id,
-          version: payment.versions[0] ?? '',
-          deploymentOrder: 2,
-          dependencies: [ledger.id],
-        },
-        [portal.id]: {
-          moduleId: portal.id,
-          version: portal.versions[0] ?? '',
-          deploymentOrder: 3,
-          dependencies: [payment.id],
-        },
-      }))
-      return
-    }
-    if (ledger && payment) {
-      setSelected([ledger.id, payment.id])
-      setDrafts((prev) => ({
-        ...prev,
-        [ledger.id]: {
-          moduleId: ledger.id,
-          version: ledger.versions[0] ?? '',
-          deploymentOrder: 1,
-          dependencies: [],
-        },
-        [payment.id]: {
-          moduleId: payment.id,
-          version: payment.versions[0] ?? '',
-          deploymentOrder: 2,
-          dependencies: [ledger.id],
-        },
-      }))
-      return
-    }
-    if (versionedModules.length >= 2) {
-      const first = versionedModules[0].id
-      const second = versionedModules[1].id
-      setSelected([first, second])
-      setDrafts((prev) => ({
-        ...prev,
-        [first]: {
-          moduleId: first,
-          version: versionedModules[0].versions[0] ?? '',
-          deploymentOrder: 1,
-          dependencies: [],
-        },
-        [second]: {
-          moduleId: second,
-          version: versionedModules[1].versions[0] ?? '',
-          deploymentOrder: 2,
-          dependencies: [first],
-        },
-      }))
-    }
-  }
-
   const dagAnalysis = useMemo(() => {
     if (selected.length <= 1) return { waves: [selected], cycle: null, isMultiWave: false }
     const inDegree: Record<string, number> = {}
@@ -769,16 +699,6 @@ function NewRequest({
               >
                 ⚡ Select all modules with versions
               </button>
-              {versionedModules.length >= 2 && (
-                <button
-                  type="button"
-                  className="secondary-button"
-                  style={{ fontSize: '11px', padding: '4px 10px', borderColor: '#38bdf8', color: '#0284c7' }}
-                  onClick={applyDagWavePreset}
-                >
-                  🔗 1-Click Multi-Module DAG Waves (Kahn Preset)
-                </button>
-              )}
             </div>
             <div className="selectable-modules">
               {availableModules.map((module) => (
