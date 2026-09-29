@@ -41,6 +41,8 @@ from ..domain.models import (
     ServerHealthRecord,
     ServerMaintenanceState,
     ServerTelemetry,
+    SharedPipeline,
+    SharedPipelineVersion,
     StageDefinition,
     WaiverStatus,
 )
@@ -88,7 +90,11 @@ logger = logging.getLogger(__name__)
 
 APPLICATION_COLUMNS = (
     "id, name, repository_url, pipeline_template, runtime, default_environment,"
-    " stages, owner_team, created_at, stage_parameters"
+    " stages, owner_team, created_at, stage_parameters, shared_pipeline"
+)
+SHARED_PIPELINE_VERSION_COLUMNS = (
+    "pipeline_name, version, script, script_sha256, stages, status, created_by, created_at,"
+    " decided_by, decided_at, rejection_reason"
 )
 RUN_COLUMNS = (
     "id, application_id, status, commit_sha, branch, environment, parameters, correlation_id,"
@@ -431,8 +437,24 @@ def _application(row: dict[str, Any]) -> Application:
         stages=tuple(row["stages"] or []),
         owner_team=row["owner_team"],
         stage_parameters=dict(row.get("stage_parameters") or {}),
+        shared_pipeline=row.get("shared_pipeline"),
         id=row["id"],
         created_at=row["created_at"],
+    )
+
+
+def _shared_pipeline(row: dict[str, Any]) -> SharedPipeline:
+    return SharedPipeline(name=row["name"], created_by=row["created_by"],
+                          description=row["description"], created_at=row["created_at"])
+
+
+def _shared_pipeline_version(row: dict[str, Any]) -> SharedPipelineVersion:
+    return SharedPipelineVersion(
+        pipeline_name=row["pipeline_name"], version=int(row["version"]), script=row["script"],
+        script_sha256=row["script_sha256"].strip(), stages=tuple(row["stages"] or []),
+        status=row["status"], created_by=row["created_by"], created_at=row["created_at"],
+        decided_by=row.get("decided_by"), decided_at=row.get("decided_at"),
+        rejection_reason=row.get("rejection_reason"),
     )
 
 
@@ -1033,11 +1055,13 @@ class PostgresSession:
             cursor.execute(
                 """
                 INSERT INTO applications (id, name, repository_url, pipeline_template, runtime,
-                                          default_environment, stages, owner_team, created_at, stage_parameters)
-                VALUES (%s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s::jsonb)
+                                          default_environment, stages, owner_team, created_at, stage_parameters,
+                                          shared_pipeline)
+                VALUES (%s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s::jsonb, %s)
                 ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, stages = EXCLUDED.stages,
                                                owner_team = EXCLUDED.owner_team,
-                                               stage_parameters = EXCLUDED.stage_parameters
+                                               stage_parameters = EXCLUDED.stage_parameters,
+                                               shared_pipeline = EXCLUDED.shared_pipeline
                 """,
                 (
                     application.id,
@@ -1050,6 +1074,7 @@ class PostgresSession:
                     application.owner_team,
                     application.created_at,
                     json.dumps(application.stage_parameters),
+                    application.shared_pipeline,
                 ),
             )
         for run, expected_version in unit.runs:
@@ -2542,6 +2567,51 @@ class PostgresSession:
         self._cursor.execute(f"SELECT {STAGE_CATALOG_COLUMNS} FROM stage_catalog WHERE id = %s", (stage_id,))
         row = self._cursor.fetchone()
         return _stage_definition(row) if row else None
+
+    # ------------------------------------------------------------- shared pipelines (ADR-058)
+
+    def shared_pipelines(self) -> tuple[SharedPipeline, ...]:
+        self._cursor.execute("SELECT name, description, created_by, created_at FROM shared_pipelines ORDER BY name")
+        return tuple(_shared_pipeline(row) for row in self._cursor.fetchall())
+
+    def shared_pipeline(self, name: str, *, for_update: bool = False) -> SharedPipeline | None:
+        # FOR UPDATE serialises every decision on one pipeline: two approvals racing would
+        # otherwise both supersede the same active version.
+        self._cursor.execute(
+            "SELECT name, description, created_by, created_at FROM shared_pipelines WHERE name = %s"
+            + (" FOR UPDATE" if for_update else ""), (name,),
+        )
+        row = self._cursor.fetchone()
+        return _shared_pipeline(row) if row else None
+
+    def insert_shared_pipeline(self, pipeline: SharedPipeline) -> bool:
+        self._cursor.execute(
+            "INSERT INTO shared_pipelines (name, description, created_by, created_at) VALUES (%s, %s, %s, %s)"
+            " ON CONFLICT (name) DO NOTHING",
+            (pipeline.name, pipeline.description, pipeline.created_by, pipeline.created_at),
+        )
+        return self._cursor.rowcount == 1
+
+    def shared_pipeline_versions(self, name: str) -> tuple[SharedPipelineVersion, ...]:
+        self._cursor.execute(
+            f"SELECT {SHARED_PIPELINE_VERSION_COLUMNS} FROM shared_pipeline_versions"
+            " WHERE pipeline_name = %s ORDER BY version", (name,),
+        )
+        return tuple(_shared_pipeline_version(row) for row in self._cursor.fetchall())
+
+    def save_shared_pipeline_version(self, version: SharedPipelineVersion) -> None:
+        self._cursor.execute(
+            f"""
+            INSERT INTO shared_pipeline_versions ({SHARED_PIPELINE_VERSION_COLUMNS})
+            VALUES (%s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (pipeline_name, version) DO UPDATE SET
+                status = EXCLUDED.status, decided_by = EXCLUDED.decided_by,
+                decided_at = EXCLUDED.decided_at, rejection_reason = EXCLUDED.rejection_reason
+            """,
+            (version.pipeline_name, version.version, version.script, version.script_sha256,
+             json.dumps(list(version.stages)), version.status, version.created_by, version.created_at,
+             version.decided_by, version.decided_at, version.rejection_reason),
+        )
 
     def upsert_stage_definition(self, stage: StageDefinition) -> None:
         self._cursor.execute(

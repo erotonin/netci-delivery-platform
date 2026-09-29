@@ -55,7 +55,8 @@ def truncate() -> None:
                 " deployments, pipeline_runs, applications, policy_decisions, security_exceptions,"
                 " break_glass_requests, resource_quotas, catalog_services, catalog_service_dependencies,"
                 " catalog_templates, preview_environments, resource_requests,"
-                " artifact_sboms, artifact_findings, artifact_rescans, change_freezes RESTART IDENTITY CASCADE"
+                " artifact_sboms, artifact_findings, artifact_rescans, change_freezes,"
+                " shared_pipeline_versions, shared_pipelines RESTART IDENTITY CASCADE"
             )
 
 

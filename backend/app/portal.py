@@ -1492,6 +1492,8 @@ class PortalService:
             "ownerTeam": application.owner_team if application else None,
             "repositoryUrl": application.repository_url if application else None,
             "pipelineTemplate": application.pipeline_template if application else None,
+            # The shared pipeline (ADR-058) its builds run, by name; None = catalog stages.
+            "pipeline": application.shared_pipeline if application else None,
             "versions": [row.version for row in transaction.portal_versions(module_id)],
             "activeConfigRevisionId": (
                 str(item.active_config_revision_id) if item.active_config_revision_id else None

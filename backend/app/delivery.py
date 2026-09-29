@@ -45,6 +45,7 @@ from .persistence import (
 from .store import DeploymentLease, PlatformDatabase, PlatformSession, build_database, join
 from . import workload_identity
 from .pipeline_designer import custom_stage_definitions, module_custom_stages
+from .shared_pipelines import PIPELINE_NAME, PipelineScriptError, parse, run_parameters, script_sha256, stages_summary
 from .stage_catalog import (
     BUILTIN_STAGES,
     StageCatalogError,
@@ -62,6 +63,8 @@ from .policy.quota import QuotaEnforcer, QuotaViolation
 from .agent_fleet import LOCK_ADMISSION
 from .domain.models import (
     Application,
+    SharedPipeline,
+    SharedPipelineVersion,
     StageDefinition,
     can_transition_deployment,
     can_transition_pipeline,
@@ -803,6 +806,7 @@ class DeliveryPlatform:
         stages: list[str],
         idempotency_key: str | None,
         owner_team: str | None = None,
+        shared_pipeline: str | None = None,
         session: PlatformSession | None = None,
     ) -> Application:
         """Register an application.
@@ -827,6 +831,8 @@ class DeliveryPlatform:
         # application created before ownership existed sent.
         if owner_team is not None:
             request_payload["ownerTeam"] = owner_team
+        if shared_pipeline is not None:  # same reason: only when set
+            request_payload["sharedPipeline"] = shared_pipeline
         with self._transaction(session) as transaction:
             replay = self._idempotent_replay(
                 transaction, "application.create", idempotency_key, request_payload
@@ -855,9 +861,16 @@ class DeliveryPlatform:
             )
             if transaction.application_by_name(name) is not None:
                 raise DeliveryError("APPLICATION_EXISTS", "application name already exists", 409)
+            if shared_pipeline is not None:
+                # A module is never created pointing at a pipeline that could not run.
+                if transaction.shared_pipeline(shared_pipeline) is None:
+                    raise DeliveryError("PIPELINE_NOT_FOUND", f"no pipeline {shared_pipeline!r}", 422)
+                if self._active_version(transaction, shared_pipeline) is None:
+                    raise DeliveryError("PIPELINE_NOT_ACTIVE", f"pipeline {shared_pipeline!r} has no approved version yet", 422)
 
             application = self._write_application(
                 transaction,
+                shared_pipeline=shared_pipeline,
                 name=name,
                 repository_url=repository_url,
                 pipeline_template=pipeline_template,
@@ -883,6 +896,7 @@ class DeliveryPlatform:
         owner_team: str | None,
         idempotency_key: str | None,
         request_payload: dict[str, object],
+        shared_pipeline: str | None = None,
     ) -> Application:
         application = Application(
             name=name,
@@ -892,6 +906,7 @@ class DeliveryPlatform:
             default_environment=default_environment,
             stages=stages,
             owner_team=owner_team,
+            shared_pipeline=shared_pipeline,
         )
         unit = UnitOfWork(applications=[application])
         unit.audit.append(AuditRecord("application.created", application_id=application.id))
@@ -1032,7 +1047,7 @@ class DeliveryPlatform:
             commit_sha=commit_sha,
             branch=branch,
             environment=environment,
-            parameters=dict(parameters),
+            parameters=self._with_shared_pipeline(transaction, application_id, dict(parameters)),
             correlation_id=correlation_id,
             started_by=started_by,
             # The run is pinned to the configuration revision that was active when it was
@@ -1116,6 +1131,188 @@ class DeliveryPlatform:
         self._apply(transaction, unit)
         return run
 
+    # ----------------------------------------------------------- shared pipelines (ADR-058)
+
+    @staticmethod
+    def _active_version(transaction: PlatformSession, name: str) -> SharedPipelineVersion | None:
+        return next((v for v in transaction.shared_pipeline_versions(name) if v.status == "active"), None)
+
+    def _with_shared_pipeline(
+        self, transaction: PlatformSession, application_id: UUID, parameters: dict[str, object]
+    ) -> dict[str, object]:
+        """Pin the run to its pipeline's active version now, not when CI takes it: a run
+        waiting for admission must run what was approved when it was queued."""
+
+        application = transaction.application(application_id)
+        if application is None or not application.shared_pipeline or "sharedPipeline" in parameters:
+            return parameters
+        active = self._active_version(transaction, application.shared_pipeline)
+        if active is None:
+            raise DeliveryError(
+                "PIPELINE_NOT_ACTIVE",
+                f"pipeline {application.shared_pipeline!r} has no approved version; nothing to run",
+                409,
+            )
+        return {**parameters, "sharedPipeline": {
+            "name": active.pipeline_name, "version": active.version, "sha256": active.script_sha256,
+        }}
+
+    def _ci_stages_for(self, application: Application, run: PipelineRun) -> tuple[tuple[str, ...], list[dict[str, object]]]:
+        """The stages and custom stages a run hands to CI: its pinned shared-pipeline version
+        cut into blocks, or the application's catalog stages."""
+
+        pin = run.parameters.get("sharedPipeline")
+        if not isinstance(pin, dict):
+            return application.stages, self._custom_stages_for(application)
+        with self._transaction() as transaction:
+            version = next((v for v in transaction.shared_pipeline_versions(str(pin.get("name")))
+                            if v.version == pin.get("version")), None)
+        # The pin names a version by number and hash: a script that no longer hashes the
+        # same is not what was approved, and is not run. Hashed here, not read from the
+        # stored column: an edit to the row changes the script, not the hash beside it.
+        if version is None or script_sha256(version.script) != pin.get("sha256"):
+            raise DeliveryError("PIPELINE_VERSION_MISMATCH", f"pipeline version {pin} is not the one approved", 409)
+        return run_parameters(parse(version.script))
+
+    def _pipeline_json(self, transaction: PlatformSession, pipeline: SharedPipeline, *, scripts: bool) -> dict[str, object]:
+        versions = transaction.shared_pipeline_versions(pipeline.name)
+        active = next((v for v in versions if v.status == "active"), None)
+        return {
+            "name": pipeline.name,
+            "description": pipeline.description,
+            "createdBy": pipeline.created_by,
+            "createdAt": pipeline.created_at.isoformat(),
+            "activeVersion": active.version if active else None,
+            "stages": list(active.stages) if active else [],
+            "pendingVersions": [v.version for v in versions if v.status == "proposed"],
+            "usedBy": sorted(a.name for a in transaction.applications() if a.shared_pipeline == pipeline.name),
+            "versions": [
+                {
+                    "version": v.version, "status": v.status, "sha256": v.script_sha256,
+                    "stages": list(v.stages), "createdBy": v.created_by, "createdAt": v.created_at.isoformat(),
+                    "decidedBy": v.decided_by, "decidedAt": v.decided_at.isoformat() if v.decided_at else None,
+                    "rejectionReason": v.rejection_reason,
+                    **({"script": v.script} if scripts else {}),
+                }
+                for v in reversed(versions)
+            ],
+        }
+
+    def shared_pipelines(self) -> list[dict[str, object]]:
+        with self._transaction() as transaction:
+            return [self._pipeline_json(transaction, p, scripts=False) for p in transaction.shared_pipelines()]
+
+    def shared_pipeline_detail(self, name: str) -> dict[str, object]:
+        with self._transaction() as transaction:
+            pipeline = transaction.shared_pipeline(name)
+            if pipeline is None:
+                raise DeliveryError("PIPELINE_NOT_FOUND", f"no pipeline {name!r}", 404)
+            return self._pipeline_json(transaction, pipeline, scripts=True)
+
+    def _new_version(self, transaction: PlatformSession, name: str, script: str, actor: str, requires_approval: bool) -> SharedPipelineVersion:
+        try:
+            blocks = parse(script)
+        except PipelineScriptError as exc:
+            raise DeliveryError(exc.code, exc.message, 422) from exc
+        versions = transaction.shared_pipeline_versions(name)
+        if any(v.status == "proposed" for v in versions):
+            raise DeliveryError("PIPELINE_VERSION_PENDING", f"{name!r} already has a version waiting for approval", 409)
+        version = SharedPipelineVersion(
+            pipeline_name=name, version=max((v.version for v in versions), default=0) + 1, script=script,
+            script_sha256=script_sha256(script), stages=tuple(stages_summary(blocks)),
+            status="proposed", created_by=actor,
+        )
+        if not requires_approval:
+            version = self._activate(transaction, version, decided_by=actor)
+        transaction.save_shared_pipeline_version(version)
+        return version
+
+    def _activate(self, transaction: PlatformSession, version: SharedPipelineVersion, *, decided_by: str) -> SharedPipelineVersion:
+        now = _now()
+        current = self._active_version(transaction, version.pipeline_name)
+        if current is not None:
+            transaction.save_shared_pipeline_version(replace(current, status="superseded"))
+        return replace(version, status="active", decided_by=decided_by, decided_at=now)
+
+    def create_shared_pipeline(self, *, name: str, description: str, script: str, actor: str,
+                               requires_approval: bool = True) -> dict[str, object]:
+        if not PIPELINE_NAME.match(name):
+            raise DeliveryError("PIPELINE_NAME_INVALID", f"pipeline name must match {PIPELINE_NAME.pattern}", 422)
+        with self._transaction() as transaction:
+            pipeline = SharedPipeline(name=name, description=description.strip(), created_by=actor)
+            if not transaction.insert_shared_pipeline(pipeline):
+                raise DeliveryError("PIPELINE_EXISTS", f"pipeline {name!r} already exists", 409)
+            version = self._new_version(transaction, name, script, actor, requires_approval)
+            self._apply(transaction, UnitOfWork(audit=[AuditRecord(
+                "pipeline.created", actor=actor,
+                payload={"pipeline": name, "version": version.version, "sha256": version.script_sha256, "status": version.status},
+            )]))
+            return self._pipeline_json(transaction, pipeline, scripts=True)
+
+    def propose_shared_pipeline_version(self, name: str, *, script: str, actor: str,
+                                        requires_approval: bool = True) -> dict[str, object]:
+        with self._transaction() as transaction:
+            pipeline = transaction.shared_pipeline(name, for_update=True)
+            if pipeline is None:
+                raise DeliveryError("PIPELINE_NOT_FOUND", f"no pipeline {name!r}", 404)
+            version = self._new_version(transaction, name, script, actor, requires_approval)
+            self._apply(transaction, UnitOfWork(audit=[AuditRecord(
+                "pipeline.version_proposed", actor=actor,
+                payload={"pipeline": name, "version": version.version, "sha256": version.script_sha256, "status": version.status},
+            )]))
+            return self._pipeline_json(transaction, pipeline, scripts=True)
+
+    def decide_shared_pipeline_version(self, name: str, version_number: int, *, approve: bool, actor: str,
+                                       reason: str | None = None, separation_of_duties: bool = True) -> dict[str, object]:
+        with self._transaction() as transaction:
+            # Locks the pipeline: two decisions on it are serialised, so two approvals cannot
+            # both supersede the same active version.
+            pipeline = transaction.shared_pipeline(name, for_update=True)
+            if pipeline is None:
+                raise DeliveryError("PIPELINE_NOT_FOUND", f"no pipeline {name!r}", 404)
+            version = next((v for v in transaction.shared_pipeline_versions(name) if v.version == version_number), None)
+            if version is None:
+                raise DeliveryError("PIPELINE_VERSION_NOT_FOUND", f"{name!r} has no version {version_number}", 404)
+            if version.status != "proposed":
+                raise DeliveryError("PIPELINE_VERSION_DECIDED", f"version {version_number} is {version.status}", 409)
+            if separation_of_duties and version.created_by == actor:
+                raise DeliveryError(
+                    "SEPARATION_OF_DUTIES",
+                    "a pipeline version must be approved or rejected by someone other than its author",
+                    403,
+                )
+            if approve:
+                decided = self._activate(transaction, version, decided_by=actor)
+            else:
+                if not (reason or "").strip():
+                    raise DeliveryError("REASON_REQUIRED", "a rejection needs a reason", 422)
+                decided = replace(version, status="rejected", decided_by=actor, decided_at=_now(),
+                                  rejection_reason=reason.strip())
+            transaction.save_shared_pipeline_version(decided)
+            self._apply(transaction, UnitOfWork(audit=[AuditRecord(
+                "pipeline.version_approved" if approve else "pipeline.version_rejected", actor=actor,
+                payload={"pipeline": name, "version": version_number, "author": version.created_by,
+                         "sha256": version.script_sha256, **({"reason": decided.rejection_reason} if not approve else {})},
+            )]))
+            return self._pipeline_json(transaction, pipeline, scripts=True)
+
+    def set_application_pipeline(self, application_id: UUID, name: str | None, *, actor: str) -> Application:
+        with self._transaction() as transaction:
+            application = transaction.application(application_id)
+            if application is None:
+                raise DeliveryError("APPLICATION_NOT_FOUND", "application not found", 404)
+            if name is not None:
+                if transaction.shared_pipeline(name) is None:
+                    raise DeliveryError("PIPELINE_NOT_FOUND", f"no pipeline {name!r}", 404)
+                if self._active_version(transaction, name) is None:
+                    raise DeliveryError("PIPELINE_NOT_ACTIVE", f"pipeline {name!r} has no approved version yet", 409)
+            updated = replace(application, shared_pipeline=name)
+            self._apply(transaction, UnitOfWork(applications=[updated], audit=[AuditRecord(
+                "application.pipeline_changed", application_id=application_id, actor=actor,
+                payload={"from": application.shared_pipeline, "to": name},
+            )]))
+            return updated
+
     def _custom_stages_for(self, application: Application) -> list[dict[str, object]]:
         with self._transaction() as transaction:
             catalog = {item.id: item for item in transaction.stage_catalog()}
@@ -1142,23 +1339,45 @@ class DeliveryPlatform:
         for definition in custom_stage_definitions(customs):
             catalog.setdefault(definition.id, definition)
 
+    def _fail_launch(self, application: Application, run: PipelineRun, error: str) -> None:
+        failed = replace(run, status=PipelineStatus.FAILED, version=run.version + 1, updated_at=_now())
+        unit = UnitOfWork(runs=[(failed, run.version)])
+        unit.logs.append((run.id, [f"ci-launch-failed: {error}"]))
+        unit.audit.append(
+            AuditRecord(
+                "pipeline.launch_failed",
+                application_id=application.id,
+                pipeline_run_id=run.id,
+                correlation_id=run.correlation_id,
+                payload={"error": error},
+            )
+        )
+        self._commit(unit)
+
     def _launch_ci(self, application: Application, run: PipelineRun) -> PipelineRun:
         """Hand the queued run to the configured CI engine and record its identity."""
 
+        try:
+            pipeline_stages, custom_stages = self._ci_stages_for(application, run)
+        except DeliveryError as exc:
+            # Refused before any engine saw it; left queued, the run would wait forever
+            # for a launch that can never happen.
+            self._fail_launch(application, run, exc.message)
+            raise
         request = CiLaunchRequest(
             application_id=application.id,
             application_name=application.name,
             repository_url=application.repository_url,
             pipeline_template=application.pipeline_template,
             runtime=application.runtime.value,
-            stages=application.stages,
+            stages=pipeline_stages,
             pipeline_run_id=run.id,
             commit_sha=run.commit_sha,
             branch=run.branch,
             environment=run.environment.value,
             correlation_id=run.correlation_id or "",
             parameters=dict(run.parameters),
-            custom_stages=self._custom_stages_for(application),
+            custom_stages=custom_stages,
             publish_artifact=run.publish_artifact,
             source_ref=pull_request_ref(run.trigger.get("ref")),
         )
@@ -1166,24 +1385,7 @@ class DeliveryPlatform:
             launched = self.ci_launcher.launch(request)
         except CiLaunchError as exc:
             # No engine took the build: fail the run instead of leaving it queued forever.
-            failed = replace(
-                run,
-                status=PipelineStatus.FAILED,
-                version=run.version + 1,
-                updated_at=_now(),
-            )
-            unit = UnitOfWork(runs=[(failed, run.version)])
-            unit.logs.append((run.id, [f"ci-launch-failed: {exc}"]))
-            unit.audit.append(
-                AuditRecord(
-                    "pipeline.launch_failed",
-                    application_id=application.id,
-                    pipeline_run_id=run.id,
-                    correlation_id=run.correlation_id,
-                    payload={"error": str(exc)},
-                )
-            )
-            self._commit(unit)
+            self._fail_launch(application, run, str(exc))
             raise DeliveryError("CI_LAUNCH_FAILED", str(exc), 502) from exc
         if launched is None:
             return run

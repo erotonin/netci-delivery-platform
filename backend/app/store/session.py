@@ -29,6 +29,8 @@ from ..domain.models import (
     ServerHealthRecord,
     ServerMaintenanceState,
     ServerTelemetry,
+    SharedPipeline,
+    SharedPipelineVersion,
     StageDefinition,
 )
 from ..persistence import AuditRecord, IdempotencyRow, UnitOfWork
@@ -420,6 +422,17 @@ class PlatformSession(Protocol):
     def upsert_stage_definition(self, stage: StageDefinition) -> None: ...
 
     def delete_stage_definition(self, stage_id: str) -> bool: ...
+
+    # Shared pipelines (ADR-058). `for_update` locks the pipeline row for a decision.
+    def shared_pipelines(self) -> tuple[SharedPipeline, ...]: ...
+
+    def shared_pipeline(self, name: str, *, for_update: bool = False) -> SharedPipeline | None: ...
+
+    def insert_shared_pipeline(self, pipeline: SharedPipeline) -> bool: ...
+
+    def shared_pipeline_versions(self, name: str) -> tuple[SharedPipelineVersion, ...]: ...
+
+    def save_shared_pipeline_version(self, version: SharedPipelineVersion) -> None: ...
 
     def get_server_telemetry(self, server_name: str) -> ServerTelemetry | None: ...
 

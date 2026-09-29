@@ -87,6 +87,160 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HealthResponse'
+  /pipelines:
+    get:
+      operationId: listSharedPipelines
+      summary: Shared CI pipelines (ADR-058), with their active version and the modules using each
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/SharedPipeline' }
+    post:
+      operationId: createSharedPipeline
+      summary: >-
+        Create a shared pipeline with its first version (platform-admin). With separation of
+        duties on, the version runs nowhere until a different platform-admin approves it.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SharedPipelineCreate' }
+      responses:
+        '201':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SharedPipeline' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422':
+          description: >-
+            The script is refused, with the reason as `code`: PIPELINE_SCRIPT_INVALID,
+            PIPELINE_BUILTIN_EDITED, PIPELINE_STAGE_DUPLICATE, PIPELINE_STAGE_NOT_CI,
+            PIPELINE_STAGE_UNKNOWN, PIPELINE_STAGE_RESERVED, PIPELINE_STAGE_INVALID,
+            PIPELINE_STAGE_EMPTY, PIPELINE_ORDER_INVALID, PIPELINE_REQUIRED_MISSING,
+            PIPELINE_NAME_INVALID.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+  /pipelines/building-blocks:
+    get:
+      operationId: getPipelineBuildingBlocks
+      summary: What the pipeline designer offers -- built-in stages (their block is fixed) and author-block templates
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PipelineBuildingBlocks' }
+  /pipelines/{name}:
+    get:
+      operationId: getSharedPipeline
+      summary: A shared pipeline with every version's script
+      parameters:
+        - { name: name, in: path, required: true, schema: { type: string } }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SharedPipeline' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /pipelines/{name}/versions:
+    post:
+      operationId: proposeSharedPipelineVersion
+      summary: Propose a new version of a shared pipeline (platform-admin); one pending version at a time
+      parameters:
+        - { name: name, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SharedPipelineVersionCreate' }
+      responses:
+        '201':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SharedPipeline' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/UnprocessableEntity' }
+  /pipelines/{name}/versions/{version}/approve:
+    post:
+      operationId: approveSharedPipelineVersion
+      summary: >-
+        Approve a proposed version (a platform-admin other than its author). It becomes the
+        active version; the previous active one is superseded. Runs already queued keep theirs.
+      parameters:
+        - { name: name, in: path, required: true, schema: { type: string } }
+        - { name: version, in: path, required: true, schema: { type: integer, minimum: 1 } }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SharedPipeline' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /pipelines/{name}/versions/{version}/reject:
+    post:
+      operationId: rejectSharedPipelineVersion
+      summary: Reject a proposed version, with a reason (a platform-admin other than its author)
+      parameters:
+        - { name: name, in: path, required: true, schema: { type: string } }
+        - { name: version, in: path, required: true, schema: { type: integer, minimum: 1 } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [reason]
+              properties:
+                reason: { type: string, minLength: 1, maxLength: 1000 }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SharedPipeline' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/UnprocessableEntity' }
+  /modules/{moduleId}/shared-pipeline:
+    put:
+      operationId: setModuleSharedPipeline
+      summary: >-
+        Choose the shared pipeline a module's runs use, by name; null returns the module to its
+        catalog stages. The pipeline must have an active version.
+      parameters:
+        - { name: moduleId, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                name: { type: string, nullable: true, minLength: 2, maxLength: 63 }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [moduleId, pipeline]
+                properties:
+                  moduleId: { type: string }
+                  pipeline: { type: string, nullable: true }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
   /stage-catalog:
     get:
       operationId: listStageCatalog
@@ -3713,6 +3867,10 @@ components:
         defaultEnvironment: { $ref: '#/components/schemas/Environment', default: dev }
         stages: { type: array, items: { type: string } }
         pipelineConfig: { $ref: '#/components/schemas/ModulePipelineConfig' }
+        pipeline:
+          type: string
+          nullable: true
+          description: A shared pipeline (ADR-058) with an active version; its runs use it instead of `stages`.
         ownerTeam:
           type: string
           minLength: 1
@@ -4029,6 +4187,90 @@ components:
           properties:
             id: { type: string, format: uuid }
             createdAt: { type: string, format: date-time }
+    SharedPipelineCreate:
+      type: object
+      additionalProperties: false
+      required: [name, script]
+      properties:
+        name: { type: string, pattern: '^[a-z][a-z0-9-]{1,62}$' }
+        description: { type: string, maxLength: 1000, default: '' }
+        script: { $ref: '#/components/schemas/PipelineScript' }
+    SharedPipelineVersionCreate:
+      type: object
+      additionalProperties: false
+      required: [script]
+      properties:
+        script: { $ref: '#/components/schemas/PipelineScript' }
+    PipelineScript:
+      type: string
+      minLength: 1
+      maxLength: 65536
+      description: >-
+        One script cut into stages by marker lines `# @stage <id> "<Name>"`, with ` builtin`
+        for a stage netCI implements. A builtin block contains only `netci-builtin <id>`;
+        other blocks are bash run in the build container without credentials. build, sbom,
+        vulnerability-scan, sign and publish are required, in that order.
+    PipelineStageSummary:
+      type: object
+      required: [id, name, builtin]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        builtin: { type: boolean }
+    SharedPipelineVersion:
+      type: object
+      required: [version, status, sha256, stages, createdBy, createdAt]
+      properties:
+        version: { type: integer, minimum: 1 }
+        status: { type: string, enum: [proposed, active, rejected, superseded] }
+        sha256: { type: string, pattern: '^[0-9a-f]{64}$' }
+        stages: { type: array, items: { $ref: '#/components/schemas/PipelineStageSummary' } }
+        createdBy: { type: string }
+        createdAt: { type: string, format: date-time }
+        decidedBy: { type: string, nullable: true }
+        decidedAt: { type: string, format: date-time, nullable: true }
+        rejectionReason: { type: string, nullable: true }
+        script: { type: string, description: Present on a single pipeline, not in the list }
+    SharedPipeline:
+      type: object
+      required: [name, description, createdBy, createdAt, activeVersion, stages, pendingVersions, usedBy, versions]
+      properties:
+        name: { type: string }
+        description: { type: string }
+        createdBy: { type: string }
+        createdAt: { type: string, format: date-time }
+        activeVersion: { type: integer, nullable: true }
+        stages: { type: array, items: { $ref: '#/components/schemas/PipelineStageSummary' } }
+        pendingVersions: { type: array, items: { type: integer } }
+        usedBy: { type: array, items: { type: string }, description: Names of the applications using it }
+        versions: { type: array, items: { $ref: '#/components/schemas/SharedPipelineVersion' } }
+    PipelineBuildingBlocks:
+      type: object
+      required: [builtins, templates, order, required]
+      properties:
+        builtins:
+          type: array
+          items:
+            type: object
+            required: [id, name, required, block]
+            properties:
+              id: { type: string }
+              name: { type: string }
+              required: { type: boolean }
+              block: { type: string }
+        templates:
+          type: array
+          items:
+            type: object
+            required: [id, name, description, body, block]
+            properties:
+              id: { type: string }
+              name: { type: string }
+              description: { type: string }
+              body: { type: string }
+              block: { type: string }
+        order: { type: array, items: { type: string } }
+        required: { type: array, items: { type: string } }
     StageDefinition:
       type: object
       required: [id, name, category, kind, required, enabledByDefault, position]

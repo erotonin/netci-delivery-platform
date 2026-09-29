@@ -454,7 +454,7 @@ private List netciCustomStagesAfter(String anchor) {
     def raw = params.NETCI_CUSTOM_STAGES?.trim()
     if (!raw) { return [] }
     def entries = readJSON(text: raw)
-    return entries.findAll { it.after == anchor && it.script }
+    return entries.findAll { it.after == anchor && (it.script || it.code) }
 }
 
 private void netciRunCustomStages(String anchor) {
@@ -467,6 +467,25 @@ private void netciRunCustomStages(String anchor) {
         def environment = (entry.env ?: [:]).collect { k, v -> "${k}=${v}" }
         stage(entry.name ?: entry.id) {
             netciInBuilder {
+                if (entry.code) {
+                    // A block of a shared pipeline (ADR-058): its code comes from the version
+                    // netCI approved, not from the repository. Written beside the workspace
+                    // and decoded by the shell, so no part of it is ever Groovy; run with no
+                    // credential bound, like every author block.
+                    if (!(entry.id ==~ /^[a-z][a-z0-9-]{1,40}$/)) {
+                        error("custom stage id '${entry.id}' is not one netCI issues")
+                    }
+                    def dir = "${env.WORKSPACE_TMP ?: env.WORKSPACE + '@tmp'}/netci-blocks"
+                    writeFile(file: "${dir}/${entry.id}.b64", text: entry.code)
+                    withEnv(environment + ["NETCI_BLOCK=${dir}/${entry.id}"]) {
+                        sh '''
+                          set -eu
+                          base64 -d "${NETCI_BLOCK}.b64" > "${NETCI_BLOCK}.sh"
+                          bash "${NETCI_BLOCK}.sh"
+                        '''
+                    }
+                    return
+                }
                 if (!fileExists(entry.script)) {
                     error("custom stage '${entry.id}' names ${entry.script}, which is not in this commit")
                 }

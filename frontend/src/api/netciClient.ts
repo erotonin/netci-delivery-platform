@@ -357,6 +357,75 @@ export async function request<T>(path: string, init: RequestInit = {}): Promise<
   return body as T
 }
 
+// ------------------------------------------------------------ shared pipelines (ADR-058)
+
+export type PipelineStageSummary = { id: string; name: string; builtin: boolean }
+
+export type SharedPipelineVersion = {
+  version: number
+  status: 'proposed' | 'active' | 'rejected' | 'superseded'
+  sha256: string
+  stages: PipelineStageSummary[]
+  createdBy: string
+  createdAt: string
+  decidedBy: string | null
+  decidedAt: string | null
+  rejectionReason: string | null
+  /** Present on a single pipeline (getSharedPipeline), not in the list. */
+  script?: string
+}
+
+export type SharedPipeline = {
+  name: string
+  description: string
+  createdBy: string
+  createdAt: string
+  activeVersion: number | null
+  stages: PipelineStageSummary[]
+  pendingVersions: number[]
+  usedBy: string[]
+  versions: SharedPipelineVersion[]
+}
+
+export type PipelineBuildingBlocks = {
+  builtins: Array<{ id: string; name: string; required: boolean; block: string }>
+  templates: Array<{ id: string; name: string; description: string; body: string; block: string }>
+  order: string[]
+  required: string[]
+}
+
+export function listSharedPipelines(): Promise<SharedPipeline[]> {
+  return request<{ items: SharedPipeline[] }>('/pipelines').then((body) => body.items)
+}
+
+export function getSharedPipeline(name: string): Promise<SharedPipeline> {
+  return request<SharedPipeline>(`/pipelines/${encodeURIComponent(name)}`)
+}
+
+export function getPipelineBuildingBlocks(): Promise<PipelineBuildingBlocks> {
+  return request<PipelineBuildingBlocks>('/pipelines/building-blocks')
+}
+
+export function createSharedPipeline(payload: { name: string; description: string; script: string }): Promise<SharedPipeline> {
+  return request<SharedPipeline>('/pipelines', { method: 'POST', body: JSON.stringify(payload) })
+}
+
+export function proposeSharedPipelineVersion(name: string, script: string): Promise<SharedPipeline> {
+  return request<SharedPipeline>(`/pipelines/${encodeURIComponent(name)}/versions`, { method: 'POST', body: JSON.stringify({ script }) })
+}
+
+export function approveSharedPipelineVersion(name: string, version: number): Promise<SharedPipeline> {
+  return request<SharedPipeline>(`/pipelines/${encodeURIComponent(name)}/versions/${version}/approve`, { method: 'POST' })
+}
+
+export function rejectSharedPipelineVersion(name: string, version: number, reason: string): Promise<SharedPipeline> {
+  return request<SharedPipeline>(`/pipelines/${encodeURIComponent(name)}/versions/${version}/reject`, { method: 'POST', body: JSON.stringify({ reason }) })
+}
+
+export function setModuleSharedPipeline(moduleId: string, name: string | null): Promise<{ moduleId: string; pipeline: string | null }> {
+  return request(`/modules/${encodeURIComponent(moduleId)}/shared-pipeline`, { method: 'PUT', body: JSON.stringify({ name }) })
+}
+
 export function getStageCatalog(): Promise<StageCatalog> {
   return request<StageCatalog>('/stage-catalog')
 }
@@ -463,6 +532,8 @@ export type PortalModule = {
   ownerTeam?: string | null
   repositoryUrl?: string | null
   pipelineTemplate?: string | null
+  /** The shared pipeline its runs use (ADR-058), or null for its catalog stages. */
+  pipeline?: string | null
   versions: string[]
   deploymentEnvironments: DeploymentEnvironmentConfig[]
   pipelineConfig: Partial<ModulePipelineConfig>
@@ -729,7 +800,7 @@ export function createSystem(payload: { id: string; unit: string; description: s
   })
 }
 
-export function createModule(systemId: string, payload: { name: string; displayName: string; repositoryUrl: string; pipelineTemplate: string; runtime: Runtime; moduleType: string; description: string; defaultEnvironment: Environment; deploymentEnvironments: DeploymentEnvironmentConfig[]; stages?: string[]; pipelineConfig?: ModulePipelineConfig; ownerTeam?: string }): Promise<PortalModule> {
+export function createModule(systemId: string, payload: { name: string; displayName: string; repositoryUrl: string; pipelineTemplate: string; runtime: Runtime; moduleType: string; description: string; defaultEnvironment: Environment; deploymentEnvironments: DeploymentEnvironmentConfig[]; stages?: string[]; pipelineConfig?: ModulePipelineConfig; ownerTeam?: string; pipeline?: string }): Promise<PortalModule> {
   return request<PortalModule>(`/systems/${encodeURIComponent(systemId)}/modules`, {
     method: 'POST',
     headers: { 'Idempotency-Key': requestId(), 'X-Correlation-Id': requestId() },

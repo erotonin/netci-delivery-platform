@@ -74,6 +74,7 @@ from .adapters.scm import MAX_WEBHOOK_PAYLOAD_BYTES, ScmParsedEvent, get_scm_pro
 from .adapters import gitlab_repo
 from .adapters.gitlab_repo import GitLabRepoError
 from .delivery import TEMPLATES, CiResult, DeliveryError, DeliveryPlatform
+from .shared_pipelines import BUILTIN_NAMES, CI_BUILTINS, REQUIRED_BUILTINS, builtin_block
 from .pipeline_designer import (
     PipelineProposalError,
     builtin_stage_code,
@@ -1376,6 +1377,8 @@ class ModuleCreate(StrictBody):
     pipelineConfig: ModulePipelineConfig | None = None
     deploymentEnvironments: list[ModuleEnvironmentCreate] = Field(min_length=1, max_length=3)
     ownerTeam: str | None = Field(default=None, min_length=1, max_length=255)
+    #: A shared pipeline (ADR-058) by name: its approved script is what the module's builds run.
+    pipeline: str | None = Field(default=None, min_length=2, max_length=63)
 
     @model_validator(mode="after")
     def validate_deployment_environments(self) -> "ModuleCreate":
@@ -1970,6 +1973,121 @@ def remove_custom_stage(stageId: str, principal: Principal = AdminAccess) -> Res
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
+# ------------------------------------------------------------ shared pipelines (ADR-058)
+
+#: Starting points for author blocks, offered in the designer. Each uses only what the build
+#: toolbox has (bash, make, python3, trivy); the author edits it after appending.
+AUTHOR_BLOCK_TEMPLATES: tuple[dict[str, str], ...] = (
+    {"id": "shell-step", "name": "Shell step", "description": "Any commands, run in the build container.",
+     "body": 'echo "replace with your commands"'},
+    {"id": "make-target", "name": "Make target", "description": "Run a target of the repository's Makefile.",
+     "body": "make test"},
+    {"id": "secret-scan", "name": "Secret scan (trivy fs)",
+     "description": "Fail the build on secrets committed to the repository.",
+     "body": "trivy fs --scanners secret --exit-code 1 --no-progress ."},
+    {"id": "iac-scan", "name": "IaC misconfiguration scan (trivy config)",
+     "description": "Fail on HIGH/CRITICAL misconfigurations in Dockerfiles, Kubernetes and Terraform.",
+     "body": "trivy config --exit-code 1 --severity HIGH,CRITICAL ."},
+)
+
+
+class SharedPipelineCreate(StrictBody):
+    name: str = Field(min_length=2, max_length=63)
+    description: str = Field(default="", max_length=1000)
+    script: str = Field(min_length=1, max_length=65536)
+
+
+class SharedPipelineVersionCreate(StrictBody):
+    script: str = Field(min_length=1, max_length=65536)
+
+
+class SharedPipelineRejection(StrictBody):
+    reason: str = Field(min_length=1, max_length=1000)
+
+
+class ModuleSharedPipelineUpdate(StrictBody):
+    #: None detaches the module: its runs use its catalog stages again.
+    name: str | None = Field(default=None, min_length=2, max_length=63)
+
+
+@app.get("/pipelines")
+def list_shared_pipelines(principal: Principal = ReadAccess) -> dict[str, object]:
+    return {"items": platform.shared_pipelines()}
+
+
+@app.get("/pipelines/building-blocks")
+def pipeline_building_blocks(principal: Principal = ReadAccess) -> dict[str, object]:
+    """What the designer offers on its left: netCI's built-in stages (their block is fixed)
+    and starting points for the author's own blocks."""
+
+    return {
+        "builtins": [
+            {"id": b, "name": BUILTIN_NAMES[b], "required": b in REQUIRED_BUILTINS, "block": builtin_block(b)}
+            for b in CI_BUILTINS
+        ],
+        "templates": [
+            {**t, "block": f'# @stage {t["id"]} "{t["name"]}"\n{t["body"]}\n'} for t in AUTHOR_BLOCK_TEMPLATES
+        ],
+        "order": list(CI_BUILTINS),
+        "required": list(REQUIRED_BUILTINS),
+    }
+
+
+@app.get("/pipelines/{name}")
+def get_shared_pipeline(name: str, principal: Principal = ReadAccess) -> dict[str, object]:
+    return platform.shared_pipeline_detail(name)
+
+
+@app.post("/pipelines", status_code=status.HTTP_201_CREATED)
+def create_shared_pipeline(payload: SharedPipelineCreate, principal: Principal = AdminAccess) -> dict[str, object]:
+    """Create a pipeline with its first version. With separation of duties on it runs
+    nowhere until a different platform administrator approves that version."""
+
+    return platform.create_shared_pipeline(
+        name=payload.name, description=payload.description, script=payload.script,
+        actor=principal.subject, requires_approval=separation_of_duties_enabled(principal),
+    )
+
+
+@app.post("/pipelines/{name}/versions", status_code=status.HTTP_201_CREATED)
+def propose_shared_pipeline_version(name: str, payload: SharedPipelineVersionCreate,
+                                    principal: Principal = AdminAccess) -> dict[str, object]:
+    return platform.propose_shared_pipeline_version(
+        name, script=payload.script, actor=principal.subject,
+        requires_approval=separation_of_duties_enabled(principal),
+    )
+
+
+@app.post("/pipelines/{name}/versions/{version}/approve")
+def approve_shared_pipeline_version(name: str, version: int, principal: Principal = AdminAccess) -> dict[str, object]:
+    return platform.decide_shared_pipeline_version(
+        name, version, approve=True, actor=principal.subject,
+        separation_of_duties=separation_of_duties_enabled(principal),
+    )
+
+
+@app.post("/pipelines/{name}/versions/{version}/reject")
+def reject_shared_pipeline_version(name: str, version: int, payload: SharedPipelineRejection,
+                                   principal: Principal = AdminAccess) -> dict[str, object]:
+    return platform.decide_shared_pipeline_version(
+        name, version, approve=False, actor=principal.subject, reason=payload.reason,
+        separation_of_duties=separation_of_duties_enabled(principal),
+    )
+
+
+@app.put("/modules/{moduleId}/shared-pipeline")
+def set_module_shared_pipeline(moduleId: str, payload: ModuleSharedPipelineUpdate,
+                               principal: Principal = DeveloperAccess) -> dict[str, object]:
+    try:
+        module = _require_module_access(moduleId, principal)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail={"code": "MODULE_NOT_FOUND", "message": str(exc)}) from exc
+    if not module.get("applicationId"):
+        raise HTTPException(status_code=409, detail={"code": "MODULE_NOT_PROVISIONED", "message": "module has no delivery application"})
+    application = platform.set_application_pipeline(UUID(str(module["applicationId"])), payload.name, actor=principal.subject)
+    return {"moduleId": moduleId, "pipeline": application.shared_pipeline}
+
+
 class ModuleStagesUpdate(StrictBody):
     stages: list[str] = Field(min_length=1, max_length=64)
     # {"<custom stage id>": {"<PARAM>": "<value>"}}; only declared names, safe values.
@@ -2429,6 +2547,7 @@ def create_module(
                 stages=payload.stages,
                 idempotency_key=idempotency_key,
                 owner_team=owner_team,
+                shared_pipeline=payload.pipeline,
                 session=transaction,
             )
             existing = transaction.portal_module_for_application(application.id)

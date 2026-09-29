@@ -67,6 +67,8 @@ class Application:
     created_at: datetime = field(default_factory=utc_now)
     # Per-stage parameter values for the custom stages in `stages`.
     stage_parameters: dict[str, dict[str, str]] = field(default_factory=dict)
+    # The shared pipeline (ADR-058) its runs use, by name; None keeps the template's stages.
+    shared_pipeline: str | None = None
 
 
 @dataclass(frozen=True)
@@ -447,3 +449,30 @@ class L7CanaryRule:
     cookie: str | None = None
     user_email_regex: str | None = None
 
+
+@dataclass(frozen=True)
+class SharedPipeline:
+    """A CI pipeline the platform owns (ADR-058); modules refer to it by name."""
+
+    name: str
+    created_by: str
+    description: str = ""
+    created_at: datetime = field(default_factory=utc_now)
+
+
+@dataclass(frozen=True)
+class SharedPipelineVersion:
+    """One saved script of a shared pipeline: proposed, then active or rejected by a second
+    administrator; an active version becomes superseded when the next one is approved."""
+
+    pipeline_name: str
+    version: int
+    script: str
+    script_sha256: str
+    stages: tuple[dict[str, Any], ...]
+    status: str
+    created_by: str
+    created_at: datetime = field(default_factory=utc_now)
+    decided_by: str | None = None
+    decided_at: datetime | None = None
+    rejection_reason: str | None = None

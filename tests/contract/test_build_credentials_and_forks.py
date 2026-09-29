@@ -333,3 +333,40 @@ def test_a_malformed_switch_is_refused_rather_than_read_as_one_or_the_other(run,
     result, _ = run(CONTAINER_CI / "sbom.sh", **{name: "yes"})
     assert result.returncode != 0
     assert f"{name} must be true or false" in result.stderr
+
+
+def _function(source: str, name: str) -> str:
+    start = source.index(f"private void {name}(")
+    return source[start:source.index("\n}\n", start)]
+
+
+def test_a_shared_pipeline_block_runs_with_no_credential_bound():
+    """ADR-058: the cut exists so an author block never holds the signing or registry key."""
+
+    runner = _function(PIPELINE, "netciRunCustomStages")
+    for binding in ("withCredentials", "netciRegistryAuth", "netciCallbackAuth", "sshagent", "credentials("):
+        assert binding not in runner, binding
+    assert "entry.code" in runner and "readJSON" not in runner
+
+
+def test_a_shared_pipeline_block_decodes_to_the_code_netci_approved(tmp_path):
+    """The block travels base64 and is decoded by the shell: the bytes run are the bytes approved."""
+
+    import base64
+    import sys
+
+    sys.path.insert(0, str(ROOT / "backend"))
+    from app import shared_pipelines as sp
+
+    body = "printf '%s\\n' '${NOT_GROOVY} \"dq\" `tick` \\ back' > out.txt"
+    text = "".join(sp.builtin_block(b) for b in sp.CI_BUILTINS).replace(
+        "netci-builtin build\n", f'netci-builtin build\n# @stage odd-chars "Odd"\n{body}\n'
+    )
+    _, custom = sp.run_parameters(sp.parse(text))
+    block = tmp_path / "odd-chars"
+    (tmp_path / "odd-chars.b64").write_text(custom[0]["code"])
+    shell = re.search(r"sh '''\n(.*?)'''", _function(PIPELINE, "netciRunCustomStages"), re.S).group(1)
+    subprocess.run(["bash", "-c", shell], cwd=tmp_path, env={"NETCI_BLOCK": str(block), "PATH": "/usr/bin:/bin"},
+                   check=True, timeout=10)
+    assert (tmp_path / "out.txt").read_text() == '${NOT_GROOVY} "dq" `tick` \\ back\n'
+    assert base64.b64decode(custom[0]["code"]).decode().endswith(body + "\n")

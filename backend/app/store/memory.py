@@ -43,6 +43,8 @@ from ..domain.models import (
     ServerHealthRecord,
     ServerMaintenanceState,
     ServerTelemetry,
+    SharedPipeline,
+    SharedPipelineVersion,
     StageDefinition,
     WaiverStatus,
 )
@@ -121,6 +123,8 @@ class _State:
     agent_connections: dict[str, AgentConnection] = field(default_factory=dict)
     agent_commands: dict[UUID, AgentCommand] = field(default_factory=dict)
     stage_catalog: dict[str, StageDefinition] = field(default_factory=lambda: {s.id: s for s in BUILTIN_STAGES})
+    shared_pipelines: dict[str, SharedPipeline] = field(default_factory=dict)
+    shared_pipeline_versions: dict[tuple[str, int], SharedPipelineVersion] = field(default_factory=dict)
 
     def copy(self) -> "_State":
         return _State(
@@ -166,6 +170,8 @@ class _State:
             agent_connections=dict(self.agent_connections),
             agent_commands=dict(self.agent_commands),
             stage_catalog=dict(self.stage_catalog),
+            shared_pipelines=dict(self.shared_pipelines),
+            shared_pipeline_versions=dict(self.shared_pipeline_versions),
         )
 
 
@@ -1199,6 +1205,31 @@ class InMemorySession:
 
     def delete_stage_definition(self, stage_id: str) -> bool:
         return self._state.stage_catalog.pop(stage_id, None) is not None
+
+    def shared_pipelines(self) -> tuple[SharedPipeline, ...]:
+        return tuple(sorted(self._state.shared_pipelines.values(), key=lambda p: p.name))
+
+    def shared_pipeline(self, name: str, *, for_update: bool = False) -> SharedPipeline | None:
+        return self._state.shared_pipelines.get(name)
+
+    def insert_shared_pipeline(self, pipeline: SharedPipeline) -> bool:
+        if pipeline.name in self._state.shared_pipelines:
+            return False
+        self._state.shared_pipelines[pipeline.name] = pipeline
+        return True
+
+    def shared_pipeline_versions(self, name: str) -> tuple[SharedPipelineVersion, ...]:
+        return tuple(sorted((v for (n, _), v in self._state.shared_pipeline_versions.items() if n == name),
+                            key=lambda v: v.version))
+
+    def save_shared_pipeline_version(self, version: SharedPipelineVersion) -> None:
+        if version.status == "active" and any(
+            v.status == "active" and v.version != version.version
+            for v in self.shared_pipeline_versions(version.pipeline_name)
+        ):
+            # The same guarantee as the partial unique index in PostgreSQL.
+            raise ValueError(f"{version.pipeline_name} already has an active version")
+        self._state.shared_pipeline_versions[(version.pipeline_name, version.version)] = version
 
     def insert_break_glass_request(self, record: BreakGlassRecord) -> None:
         self._state.break_glass_requests[record.id] = record
