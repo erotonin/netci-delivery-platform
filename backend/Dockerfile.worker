@@ -1,4 +1,4 @@
-FROM ghcr.io/sigstore/cosign/cosign:v3.1.2 AS cosign
+FROM ghcr.io/sigstore/cosign/cosign:v3.1.3 AS cosign
 
 # kubernetes.core.helm shells out to the helm binary. Pinned and checked against the
 # published digest, for the same reason as kubectl in the API image.
