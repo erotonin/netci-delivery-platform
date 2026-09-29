@@ -32,7 +32,7 @@ jenkins:
   gitCredentialsId: netci-git
   registryCredentialsId: netci-harbor
   # 0.4 reports toolVersions; older libraries are refused by the toolchain gate (ADR-056).
-  sharedLibrary: netci-shared-library@netci-0.4.1
+  sharedLibrary: netci-shared-library@netci-0.4.2
   callbackUrl: http://netci-netci-platform-api.netci-system.svc:8000
 
 temporal:

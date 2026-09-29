@@ -103,7 +103,7 @@ controller:
           globalLibraries:
             libraries:
               - name: netci-shared-library
-                defaultVersion: netci-0.4.1
+                defaultVersion: netci-0.4.2
                 implicit: false
                 allowVersionOverride: true
                 retriever:
