@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import {
   ArrowLeft, Box, Check, CheckCircle2, Code2, Copy, ExternalLink, GitBranch,
-  History, MoreHorizontal, Play, Plus, RotateCcw, Settings, ShieldAlert,
+  History, MoreHorizontal, Play, Plus, RotateCcw, Settings, ShieldAlert, Sliders,
   TerminalSquare, XCircle, Zap, ZoomIn, ZoomOut,
 } from 'lucide-react'
 import {
@@ -16,6 +16,7 @@ import {
 import { usePortalFeedback } from './PortalFeedback'
 import { DoraCards, Modal, StatusPill } from './PortalShell'
 import type { DoraCardMetric, ModuleTab } from './portalTypes'
+import { PipelineStagesSettings } from './ModuleSettings'
 
 const pipelineStages = ['checkout', 'unit-test', 'build', 'sbom', 'vulnerability-scan', 'sign', 'publish', 'deploy', 'health-check']
 function EmptyModuleData({ title, description }: { title: string; description: string }) {
@@ -39,54 +40,6 @@ const statusLabel = (status: string) => ({
   never_deployed: 'chưa triển khai', healthy: 'healthy', failed: 'failed', rolled_back: 'rolled back',
   deploying: 'deploying', pending_approval: 'chờ phê duyệt', rollback_in_progress: 'đang rollback', cancelled: 'cancelled', rollback_failed: 'rollback failed',
 }[status] ?? status.replace(/_/g, ' '))
-
-/** Each check's own scan may have found nothing to say -- `passed: null` means netCI could
- * not evaluate it, not that it passed. Shown as "unknown", in the same muted tone as any
- * other missing data, so it can never be mistaken for a green check at a glance. */
-function ScorecardPanel({ moduleId }: { moduleId: string }) {
-  const [scorecard, setScorecard] = useState<ModuleScorecard | null>(null)
-  const [error, setError] = useState('')
-  useEffect(() => {
-    let active = true
-    getModuleScorecard(moduleId).then((result) => { if (active) { setScorecard(result); setError('') } }).catch((reason) => { if (active) setError(reason instanceof Error ? reason.message : 'Unable to load scorecard.') })
-    return () => { active = false }
-  }, [moduleId])
-  return <section className="panel">
-    <div className="panel-heading"><div><h2>Scorecard</h2><p>{scorecard ? `${scorecard.score.passed}/${scorecard.score.known} (${scorecard.score.total}) checks passed` : 'What each check found, or could not check.'}</p></div></div>
-    {error && <p className="muted" style={{ padding: '0 17px 16px' }}>{error}</p>}
-    {!error && !scorecard && <p className="muted" style={{ padding: '0 17px 16px' }}>Loading scorecard…</p>}
-    {scorecard && (scorecard.checks.length === 0 ? <p className="muted" style={{ padding: '0 17px 16px' }}>No checks recorded yet.</p> : <ul style={{ listStyle: 'none', margin: 0, padding: '0 17px 16px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
-      {scorecard.checks.map((check) => <li key={check.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '10px', borderBottom: '1px solid var(--border)', paddingBottom: '8px' }}>
-        <span><strong>{check.title}</strong><br /><small className="muted">{check.detail}</small></span>
-        {check.passed === true && <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', color: 'var(--green)', fontSize: '11px', fontWeight: 600, whiteSpace: 'nowrap' }}><CheckCircle2 size={15} />pass</span>}
-        {check.passed === false && <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', color: 'var(--red)', fontSize: '11px', fontWeight: 600, whiteSpace: 'nowrap' }}><XCircle size={15} />fail</span>}
-        {check.passed === null && <span className="muted" style={{ fontSize: '11px', fontWeight: 600, whiteSpace: 'nowrap' }}>unknown</span>}
-      </li>)}
-    </ul>)}
-  </section>
-}
-
-function InsightsPanel({ moduleId }: { moduleId: string }) {
-  const [insights, setInsights] = useState<ModuleInsights | null>(null)
-  const [error, setError] = useState('')
-  useEffect(() => {
-    let active = true
-    getModuleInsights(moduleId, 30).then((result) => { if (active) { setInsights(result); setError('') } }).catch((reason) => { if (active) setError(reason instanceof Error ? reason.message : 'Unable to load insights.') })
-    return () => { active = false }
-  }, [moduleId])
-  const failureClasses = insights ? Object.entries(insights.failures.byClass) : []
-  return <section className="panel">
-    <div className="panel-heading"><div><h2>Insights</h2><p>Last 30 days</p></div></div>
-    {error && <p className="muted" style={{ padding: '0 17px 16px' }}>{error}</p>}
-    {!error && !insights && <p className="muted" style={{ padding: '0 17px 16px' }}>Loading insights…</p>}
-    {insights && <div className="quality-facts">
-      <div><span>Failures</span><strong>{insights.failures.total} total{failureClasses.length > 0 ? ` · ${failureClasses.map(([cls, count]) => `${cls}: ${count}`).join(', ')}` : ''}</strong></div>
-      <div><span>Flaky suspects</span><strong>{insights.flaky.count}</strong></div>
-      <div><span>Queue time</span><strong>{insights.queueTime.samples > 0 ? `p50 ${insights.queueTime.p50Seconds}s · p95 ${insights.queueTime.p95Seconds}s` : 'không có dữ liệu'}</strong></div>
-      <div><span>Lead time</span><strong>{insights.leadTime.samples > 0 ? `mean ${insights.leadTime.meanSeconds}s (${insights.leadTime.samples} runs)` : 'không có dữ liệu'}</strong></div>
-    </div>}
-  </section>
-}
 
 function OverviewTab({ moduleId, onOpenRun }: { moduleId: string; onOpenRun?: (run: PipelineRun) => void }) {
   const [overview, setOverview] = useState<ModuleOverview | null>(null)
@@ -124,10 +77,6 @@ function OverviewTab({ moduleId, onOpenRun }: { moduleId: string; onOpenRun?: (r
           : 'pipeline không gửi kết quả test'}</strong></div>
       </div>}
     </section>
-    <div className="module-overview-grid">
-      <ScorecardPanel moduleId={moduleId} />
-      <InsightsPanel moduleId={moduleId} />
-    </div>
     <div className="module-overview-grid">
       <section className="panel"><div className="panel-heading"><div><h2>Build gần đây</h2><p>{overview.recentRuns.length} lượt chạy mới nhất</p></div></div>
         <div className="data-table history-table compact"><div className="table-row table-head"><span>Trạng thái</span><span>Môi trường</span><span>Commit</span><span>Artifact</span><span>Bởi</span><span>Khi nào</span></div>
@@ -554,6 +503,7 @@ function PipelineTab({ moduleId, pipelineConfig, deploymentEnvironments, initial
   const [liveRuns, setLiveRuns] = useState<PipelineRun[]>([])
   const [busyPipeline, setBusyPipeline] = useState<string | null>(null)
   const [triggered, setTriggered] = useState<string | null>(null)
+  const [showStagesEditor, setShowStagesEditor] = useState(false)
   const [refs, setRefs] = useState<GitRefs | null>(null)
   // 'loading' until the request settles. A failed request used to leave `refs`
   // null and the hint still promising that netCI would fill the commit in, which
@@ -669,7 +619,29 @@ function PipelineTab({ moduleId, pipelineConfig, deploymentEnvironments, initial
     )
   }
   if (historyPipeline) { const historyRuns = runsForPipeline(historyPipeline); return <section className="history-view"><button className="back-button" onClick={() => setHistoryPipeline(null)}><ArrowLeft size={16} />All Environments</button><div className="run-heading"><div><h2>{historyPipeline.name} · Build History</h2><p>Runs targeting this environment, newest first; status reported by Jenkins and worker.</p></div><button className="primary-button" disabled={busyPipeline === historyPipeline.id} onClick={() => openRunModal(historyPipeline)}><Play size={15} />{busyPipeline === historyPipeline.id ? 'Queuing…' : 'Run Pipeline'}</button></div><section className="panel table-panel"><div className="data-table history-table"><div className="table-row table-head"><span>Build</span><span>Commit</span><span>Branch</span><span>Triggered By</span><span>Started</span><span>Status</span><span /></div>{historyRuns.map((item) => <button className="table-row table-button" onClick={() => setRun({ pipeline: historyPipeline, liveRun: item })} key={item.id}><span className="request-id" title={item.jenkinsRunId ?? item.id}>#{item.jenkinsRunId ? item.jenkinsRunId.split('#').pop() : item.id.slice(0, 8)}</span><span className="mono" title={item.commitSha}>{shortSha(item.commitSha)}</span><span title={item.trigger?.reason ?? ''}>{item.branch}<small className="run-intent"> · {triggerText(item)}{runIntent(item) !== 'deploys' ? ` · ${runIntent(item)}` : ''}</small></span><span title={item.startedBy ?? ''}>{person(item.startedBy)}</span><span title={item.createdAt}>{new Date(item.createdAt).toLocaleString('en-US')}</span><RunStatus run={item} /><ExternalLink size={15} /></button>)}</div>{!historyRuns.length && <div className="empty-table"><History size={22} /><strong>No pipeline runs for this environment yet</strong><span>Click "Run Pipeline" to build a commit and deploy.</span></div>}</section>{triggered && <div className="toast success-toast"><CheckCircle2 size={17} />{triggered} has been queued.</div>}</section> }
-  return <><section className="panel repo-strip"><div><span>Repository</span><strong className="mono">{refs?.repositoryUrl ?? '…'}</strong></div>{refs?.error ? <div className="repo-error"><ShieldAlert size={14} />Failed to read branches from repository: {refs.error}</div> : <div><span>Branch</span><strong>{refs ? refs.branches.map((b) => `${b.name} @ ${b.sha.slice(0, 7)}`).join(' · ') || 'no branches' : 'loading…'}</strong></div>}{refs && refs.tags.length > 0 && <div><span>Latest Tags</span><strong>{refs.tags.slice(0, 3).map((t) => t.name).join(' · ')}</strong></div>}</section><DeliveryFlowPanel moduleId={moduleId} /><div className="pipeline-card-grid">{definitions.map((pipeline) => {
+  return <>
+    <section className="panel repo-strip"><div><span>Repository</span><strong className="mono">{refs?.repositoryUrl ?? '…'}</strong></div>{refs?.error ? <div className="repo-error"><ShieldAlert size={14} />Failed to read branches from repository: {refs.error}</div> : <div><span>Branch</span><strong>{refs ? refs.branches.map((b) => `${b.name} @ ${b.sha.slice(0, 7)}`).join(' · ') || 'no branches' : 'loading…'}</strong></div>}{refs && refs.tags.length > 0 && <div><span>Latest Tags</span><strong>{refs.tags.slice(0, 3).map((t) => t.name).join(' · ')}</strong></div>}</section>
+    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', margin: '14px 0 10px' }}>
+      <div>
+        <h3 style={{ margin: 0, fontSize: '15px', fontWeight: 600 }}>Cấu hình & Môi trường Pipeline</h3>
+        <p style={{ margin: '3px 0 0', color: 'var(--muted)', fontSize: '12px' }}>Chỉnh sửa trực tiếp stages trong shared pipeline, tham số và trigger pipeline cho từng môi trường.</p>
+      </div>
+      <button
+        className="secondary-button"
+        style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
+        onClick={() => setShowStagesEditor(!showStagesEditor)}
+      >
+        <Sliders size={15} />
+        {showStagesEditor ? 'Ẩn cấu hình Stages' : 'Chỉnh sửa Pipeline Stages'}
+      </button>
+    </div>
+    {showStagesEditor && (
+      <div style={{ marginBottom: '20px' }}>
+        <PipelineStagesSettings moduleId={moduleId} />
+      </div>
+    )}
+    <DeliveryFlowPanel moduleId={moduleId} />
+    <div className="pipeline-card-grid">{definitions.map((pipeline) => {
     const live = runsForPipeline(pipeline)[0]
     const env = pipeline.id.replace('cd-', '')
     return <article className="pipeline-card panel" key={pipeline.id}><div className="pipeline-card-title"><span className={`pipeline-icon pipeline-${pipeline.id}`}><GitBranch size={18} /></span><div><h3>{pipeline.name}</h3><p>build → publish → deploy to <b>{env}</b> · branch {pipeline.branch}{env === 'prod' ? ' · approval required' : ''}</p></div><button aria-label={`Open history ${pipeline.name}`} onClick={() => setHistoryPipeline(pipeline)}><MoreHorizontal size={18} /></button></div><div className="last-build" style={live ? { cursor: 'pointer' } : undefined} title={live ? "Click để mở chi tiết Pipeline Run này" : undefined} onClick={() => { if (live) setRun({ pipeline, liveRun: live }) }}><span>Latest Run</span><strong title={live?.jenkinsRunId ?? live?.id}>{live ? `#${live.jenkinsRunId ? live.jenkinsRunId.split('#').pop() : live.id.slice(0, 8)}` : '—'}</strong>{live ? <RunStatus run={live} /> : <StatusPill status="idle" />}</div>{live?.status === 'waiting_approval' && <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: '#fff4df', border: '1px solid #dda11d', borderRadius: '6px', padding: '6px 10px', margin: '8px 0', fontSize: '0.82rem', color: '#9d6b0c', cursor: 'pointer' }} onClick={() => setRun({ pipeline, liveRun: live })}><span>⏳ <strong>Chờ phê duyệt</strong> để deploy Prod</span><span style={{ textDecoration: 'underline', fontWeight: 600 }}>Duyệt ngay →</span></div>}<dl><div><dt>Commit</dt><dd className="mono" title={live?.commitSha}>{shortSha(live?.commitSha)}{live?.branch ? ` (${live.branch})` : ''}</dd></div><div><dt>Artifact</dt><dd className="mono" title={live?.artifactDigest ?? ''}>{shortDigest(live?.artifactDigest)}</dd></div><div><dt>Triggered By</dt><dd title={live?.startedBy ?? ''}>{person(live?.startedBy)}</dd></div><div><dt>Started</dt><dd title={live?.createdAt}>{live ? timeAgo(live.createdAt) : 'none'}</dd></div></dl><footer><button className="secondary-button" onClick={() => setHistoryPipeline(pipeline)}><History size={15} />History</button><button className="primary-button" style={{ height: '32px', padding: '0 12px', fontSize: '0.82rem', display: 'flex', alignItems: 'center', gap: '6px' }} disabled={busyPipeline === pipeline.id} aria-label={`Run ${pipeline.name}`} onClick={() => openRunModal(pipeline)}><Play size={14} />Run Pipeline</button></footer></article>

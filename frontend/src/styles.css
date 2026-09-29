@@ -416,9 +416,51 @@ textarea { min-height: 78px; padding: 9px 10px; resize: vertical; font-size: 11p
 
 .module-heading { align-items: center; }
 .module-title { display: flex; align-items: flex-start; gap: 11px; }
-.tabs { height: 43px; border-bottom: 1px solid var(--border); display: flex; align-items: flex-end; gap: 22px; margin: -6px 0 20px; }
-.tabs button { height: 43px; border: 0; border-bottom: 2px solid transparent; background: transparent; color: var(--muted); padding: 0 2px; font-size: 11px; font-weight: 600; }
-.tabs button.active { border-bottom-color: var(--accent); color: var(--accent); }
+.tabs {
+  height: 44px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 20px;
+  padding: 0 4px;
+}
+.tabs button {
+  position: relative;
+  height: 38px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  padding: 0 14px;
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.tabs button:hover {
+  color: #1e293b;
+  background-color: rgba(0, 0, 0, 0.04);
+}
+.tabs button.active {
+  color: var(--accent);
+  font-weight: 600;
+  background: rgba(124, 58, 237, 0.06);
+}
+.tabs button.active::after {
+  content: '';
+  position: absolute;
+  bottom: -4px;
+  left: 8px;
+  right: 8px;
+  height: 2px;
+  background-color: var(--accent);
+  border-radius: 2px 2px 0 0;
+}
 .module-overview-grid { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, .85fr); gap: 14px; margin-bottom: 14px; }
 .module-overview-grid > .panel { min-width: 0; overflow: hidden; }
 .all-passing { color: var(--green); display: flex; align-items: center; gap: 5px; font-size: 9px; }

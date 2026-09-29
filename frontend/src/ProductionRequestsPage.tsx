@@ -561,21 +561,47 @@ function NewRequest({
   const applyDagWavePreset = () => {
     const payment = versionedModules.find((m) => m.id === 'payment-gateway')
     const ledger = versionedModules.find((m) => m.id === 'ledger-service')
-    if (payment && ledger) {
-      setSelected([payment.id, ledger.id])
+    const portal = versionedModules.find((m) => m.id === 'banking-portal' || m.id === 'banking-web')
+    if (ledger && payment && portal) {
+      setSelected([ledger.id, payment.id, portal.id])
       setDrafts((prev) => ({
         ...prev,
-        [payment.id]: {
-          moduleId: payment.id,
-          version: payment.versions[0] ?? '',
-          deploymentOrder: 1,
-          dependencies: [],
-        },
         [ledger.id]: {
           moduleId: ledger.id,
           version: ledger.versions[0] ?? '',
+          deploymentOrder: 1,
+          dependencies: [],
+        },
+        [payment.id]: {
+          moduleId: payment.id,
+          version: payment.versions[0] ?? '',
           deploymentOrder: 2,
+          dependencies: [ledger.id],
+        },
+        [portal.id]: {
+          moduleId: portal.id,
+          version: portal.versions[0] ?? '',
+          deploymentOrder: 3,
           dependencies: [payment.id],
+        },
+      }))
+      return
+    }
+    if (ledger && payment) {
+      setSelected([ledger.id, payment.id])
+      setDrafts((prev) => ({
+        ...prev,
+        [ledger.id]: {
+          moduleId: ledger.id,
+          version: ledger.versions[0] ?? '',
+          deploymentOrder: 1,
+          dependencies: [],
+        },
+        [payment.id]: {
+          moduleId: payment.id,
+          version: payment.versions[0] ?? '',
+          deploymentOrder: 2,
+          dependencies: [ledger.id],
         },
       }))
       return

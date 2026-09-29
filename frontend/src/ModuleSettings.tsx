@@ -90,7 +90,7 @@ function GeneralSettings({ module, moduleId, onDeleted }: { module: SettingsModu
  * by a platform administrator, each a script in the repository) slot in after their
  * anchor. Nothing here writes a Jenkinsfile: netCI hands the list to the shared pipeline.
  */
-function PipelineStagesSettings({ moduleId }: { moduleId: string }) {
+export function PipelineStagesSettings({ moduleId }: { moduleId: string }) {
   const { notify } = usePortalFeedback()
   const [catalog, setCatalog] = useState<StageDefinition[]>([])
   const [templateStages, setTemplateStages] = useState<string[]>([])

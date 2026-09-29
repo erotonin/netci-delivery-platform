@@ -459,9 +459,8 @@ export function CatalogPage({
       {/* Tabs Navigation */}
       <div
         role="tablist"
+        className="tabs"
         style={{
-          display: 'flex',
-          gap: '1rem',
           borderBottom: '1px solid var(--border-color, #e2e8f0)',
           marginBottom: '1.5rem',
         }}
@@ -469,67 +468,28 @@ export function CatalogPage({
         <button
           role="tab"
           aria-selected={tab === 'services'}
+          className={tab === 'services' ? 'active' : ''}
           onClick={() => setTab('services')}
-          style={{
-            padding: '0.75rem 1.25rem',
-            fontWeight: 600,
-            borderBottom: tab === 'services' ? '2px solid var(--primary, #2563eb)' : '2px solid transparent',
-            color: tab === 'services' ? 'var(--primary, #2563eb)' : 'var(--text-muted, #64748b)',
-            background: 'none',
-            borderTop: 'none',
-            borderLeft: 'none',
-            borderRight: 'none',
-            cursor: 'pointer',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '0.5rem',
-          }}
         >
-          <Compass size={18} /> Services & Dependency Graph
+          <Compass size={17} /> Services & Dependency Graph
         </button>
 
         <button
           role="tab"
           aria-selected={tab === 'previews'}
+          className={tab === 'previews' ? 'active' : ''}
           onClick={() => setTab('previews')}
-          style={{
-            padding: '0.75rem 1.25rem',
-            fontWeight: 600,
-            borderBottom: tab === 'previews' ? '2px solid var(--primary, #2563eb)' : '2px solid transparent',
-            color: tab === 'previews' ? 'var(--primary, #2563eb)' : 'var(--text-muted, #64748b)',
-            background: 'none',
-            borderTop: 'none',
-            borderLeft: 'none',
-            borderRight: 'none',
-            cursor: 'pointer',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '0.5rem',
-          }}
         >
-          <GitBranch size={18} /> Ephemeral Preview Environments
+          <GitBranch size={17} /> Ephemeral Preview Environments
         </button>
 
         <button
           role="tab"
           aria-selected={tab === 'resources'}
+          className={tab === 'resources' ? 'active' : ''}
           onClick={() => setTab('resources')}
-          style={{
-            padding: '0.75rem 1.25rem',
-            fontWeight: 600,
-            borderBottom: tab === 'resources' ? '2px solid var(--primary, #2563eb)' : '2px solid transparent',
-            color: tab === 'resources' ? 'var(--primary, #2563eb)' : 'var(--text-muted, #64748b)',
-            background: 'none',
-            borderTop: 'none',
-            borderLeft: 'none',
-            borderRight: 'none',
-            cursor: 'pointer',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '0.5rem',
-          }}
         >
-          <Database size={18} /> Self-Service Resources
+          <Database size={17} /> Self-Service Resources
         </button>
       </div>
 

@@ -727,13 +727,17 @@ export function SystemPage({ systemId, navigate }: { systemId: string; navigate:
   }, [systemId])
 
   useEffect(() => {
-    getDora('systems', systemId).then((result) => setDoraMetrics(result.metrics.map((metric) => ({
-      key: metric.key,
-      label: metric.label,
-      value: String(metric.value),
-      unit: metric.unit,
-      hint: metric.hint,
-    })))).catch(() => setDoraMetrics([]))
+    getDora('systems', systemId).then((result) => {
+      const tones: Record<string, string> = { deploymentFrequency: 'purple', leadTime: 'blue', changeFailureRate: 'red', timeToRestoreService: 'green' }
+      setDoraMetrics(result.metrics.map((metric) => ({
+        key: metric.key,
+        label: metric.label,
+        value: String(metric.value),
+        unit: metric.unit,
+        hint: metric.hint,
+        tone: tones[metric.key] ?? 'blue',
+      })))
+    }).catch(() => setDoraMetrics([]))
   }, [systemId])
 
   const handleDeleteSystem = async () => {
