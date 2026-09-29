@@ -1,5 +1,5 @@
 # Built from the repository root (compose: context `.`), like the worker.
-FROM ghcr.io/sigstore/cosign/cosign:v3.1.2 AS cosign
+FROM ghcr.io/sigstore/cosign/cosign:v3.1.3 AS cosign
 
 # kubectl drives per-project build namespaces (NETCI_BUILD_ISOLATION=kubernetes) and the
 # ingress-nginx traffic router. Pinned to a cluster-compatible minor and checked against
