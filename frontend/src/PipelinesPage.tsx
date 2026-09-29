@@ -4,7 +4,6 @@ import { usePortalFeedback } from './PortalFeedback'
 import {
   NetciApiError,
   SharedPipeline,
-  SharedPipelineVersion,
   PipelineBuildingBlocks,
   PortalModule,
   listSharedPipelines,
@@ -17,13 +16,33 @@ import {
   setModuleSharedPipeline,
   listModules,
 } from './api/netciClient'
-import { ChevronLeft } from 'lucide-react'
+import {
+  AlertTriangle,
+  ArrowRight,
+  Box,
+  Check,
+  CheckCircle2,
+  ChevronLeft,
+  Code,
+  Copy,
+  FileCode,
+  GitBranch,
+  Layers,
+  Plus,
+  RefreshCw,
+  Shield,
+  ShieldCheck,
+  Sliders,
+  Terminal,
+} from 'lucide-react'
 import './pipelines.css'
 
 type ViewState = 
   | { type: 'list' } 
   | { type: 'designer', pipelineName?: string, prefillScript?: string } 
   | { type: 'detail', name: string }
+
+type EditorTab = 'script' | 'jenkinsfile' | 'compliance'
 
 function computeDiff(oldText: string, newText: string): { type: 'added' | 'removed' | 'unchanged', text: string }[] {
   const oldLines = oldText.split('\n')
@@ -64,6 +83,107 @@ function errorText(err: unknown): string {
   return err instanceof Error ? err.message : String(err)
 }
 
+function generateDeclarativeJenkinsfile(stages: Array<{ id: string; name: string; builtin: boolean }>, script: string): string {
+  const stageDefs = stages.map(st => {
+    if (st.builtin) {
+      return `        stage('${st.name}') {
+            steps {
+                netciInBuilder {
+                    // netCI Built-in Quality Gate (Executed in isolated container)
+                    sh 'netci-builtin ${st.id}'
+                }
+            }
+        }`
+    }
+    const lines = script.split('\n')
+    const startIdx = lines.findIndex(l => l.startsWith(`# @stage ${st.id}`))
+    const customCommands: string[] = []
+    if (startIdx !== -1) {
+      for (let idx = startIdx + 1; idx < lines.length; idx++) {
+        if (lines[idx].startsWith('# @stage')) break
+        if (lines[idx].trim() && !lines[idx].trim().startsWith('#')) {
+          customCommands.push(lines[idx])
+        }
+      }
+    }
+    const bodyCode = customCommands.length ? customCommands.join('\n                    ') : 'echo "Running custom stage..."'
+    return `        stage('${st.name}') {
+            steps {
+                netciInBuilder {
+                    // Custom pipeline stage: bash commands
+                    sh '''
+                    ${bodyCode}
+                    '''
+                }
+            }
+        }`
+  }).join('\n\n')
+
+  return `// ==============================================================================
+// netCI Production Declarative Jenkinsfile (Air-gapped VTNet Delivery)
+// Pipeline Model: Shared CI Pipeline (ADR-058)
+// Executed by: netCI Jenkins Controller & Kubernetes Pod Agent
+// ==============================================================================
+@Library('netci-shared-library@netci-0.4.2') _
+
+pipeline {
+    agent {
+        kubernetes {
+            inheritFrom 'netci-default-agent'
+            yaml '''
+              spec:
+                containers:
+                  - name: netci-builder
+                    image: 172.17.0.1:8930/netci/agent-toolbox:2026.1
+                    securityContext:
+                      privileged: false
+                      allowPrivilegeEscalation: false
+            '''
+        }
+    }
+    options {
+        timeout(time: 60, unit: 'MINUTES')
+        disableConcurrentBuilds()
+        ansiColor('xterm')
+    }
+    environment {
+        NETCI_TOOLBOX_VERSION = '2026.1'
+        NETCI_SLSA_LEVEL      = '1'
+        NETCI_TRIVY_DB_MIRROR = '172.17.0.1:8930/mirror/aquasec/trivy-db:2'
+    }
+    stages {
+        stage('Checkout SCM') {
+            steps {
+                checkout scm
+            }
+        }
+
+${stageDefs}
+
+        stage('Publish Attestation & Evidence') {
+            steps {
+                netciInBuilder {
+                    // Export SLSA v1 provenance, SBOM and Trivy scan evidence to netCI platform
+                    sh 'python3 \${NETCI_TOOLING_DIR}/scripts/netci_callback.py evidence'
+                }
+            }
+        }
+    }
+    post {
+        always {
+            archiveArtifacts artifacts: '.netci-out/**', allowEmptyArchive: true
+            cleanWs(deleteDirs: true)
+        }
+        success {
+            echo "==> CI Succeeded! Artifact ready for CD Deployment via Temporal."
+        }
+        failure {
+            echo "==> CI Quality Gate Failed! Deployment blocked (100% fail-closed)."
+        }
+    }
+}`
+}
+
 export function PipelinesPage({ moduleId, navigate }: { moduleId?: string; navigate: Navigate }) {
   const [view, setView] = useState<ViewState>({ type: 'list' })
   const feedback = usePortalFeedback()
@@ -86,6 +206,9 @@ export function PipelinesPage({ moduleId, navigate }: { moduleId?: string; navig
   const [designerError, setDesignerError] = useState('')
   const [designerSubmitError, setDesignerSubmitError] = useState('')
   const [designerSubmitting, setDesignerSubmitting] = useState(false)
+  const [editorTab, setEditorTab] = useState<EditorTab>('script')
+  const [copiedScript, setCopiedScript] = useState(false)
+  const [copiedJenkinsfile, setCopiedJenkinsfile] = useState(false)
 
   // Detail state
   const [detailPipeline, setDetailPipeline] = useState<SharedPipeline | null>(null)
@@ -94,6 +217,7 @@ export function PipelinesPage({ moduleId, navigate }: { moduleId?: string; navig
   const [rejectReason, setRejectReason] = useState('')
   const [rejectingVersion, setRejectingVersion] = useState<number | null>(null)
   const [viewScriptVersion, setViewScriptVersion] = useState<number | null>(null)
+  const [detailTab, setDetailTab] = useState<'script' | 'jenkinsfile'>('script')
 
   useEffect(() => {
     if (view.type === 'list') {
@@ -153,8 +277,6 @@ export function PipelinesPage({ moduleId, navigate }: { moduleId?: string; navig
     }
   }, [view])
 
-  // Approve, reject and attach answer with the server's reason when refused -- a second
-  // administrator is required (403), or the version was decided meanwhile (409).
   const act = async (action: () => Promise<unknown>, success: string, after?: () => void) => {
     try {
       await action()
@@ -249,72 +371,140 @@ export function PipelinesPage({ moduleId, navigate }: { moduleId?: string; navig
     return hints
   }, [blocks, parsedStages])
 
+  const declarativeJenkinsfile = useMemo(() => {
+    return generateDeclarativeJenkinsfile(parsedStages, designerScript)
+  }, [parsedStages, designerScript])
+
+  const handleCopyScript = () => {
+    navigator.clipboard.writeText(designerScript)
+    setCopiedScript(true)
+    setTimeout(() => setCopiedScript(false), 2000)
+  }
+
+  const handleCopyJenkinsfile = () => {
+    navigator.clipboard.writeText(declarativeJenkinsfile)
+    setCopiedJenkinsfile(true)
+    setTimeout(() => setCopiedJenkinsfile(false), 2000)
+  }
+
+  const handleApplyFullCiTemplate = () => {
+    const fullTemplate = [
+      '# @stage unit-test "Unit Tests" builtin',
+      '# [CI Gate 1] Chạy bộ unit test và xuất báo cáo coverage',
+      'netci-builtin unit-test',
+      '',
+      '# @stage build "Build" builtin',
+      '# [CI Gate 2] Đóng gói container image và gắn mã băm SHA256 bất biến',
+      'netci-builtin build',
+      '',
+      '# @stage sbom "Generate SBOM" builtin',
+      '# [CI Gate 3] Xuất danh mục thành phần phần mềm CycloneDX JSON',
+      'netci-builtin sbom',
+      '',
+      '# @stage vulnerability-scan "Vulnerability Scan" builtin',
+      '# [CI Gate 4] Quét lỗ hổng bảo mật offline bằng Trivy CVE DB',
+      'netci-builtin vulnerability-scan',
+      '',
+      '# @stage sign "Sign Artifact" builtin',
+      '# [CI Gate 5] Ký số nguồn gốc Provenance theo chuẩn SLSA v1 bằng Cosign',
+      'netci-builtin sign',
+      '',
+      '# @stage publish "Publish Artifact" builtin',
+      '# [CI Gate 6] Đẩy container image đã ký số lên Harbor Registry',
+      'netci-builtin publish',
+      '',
+    ].join('\n')
+    setDesignerScript(fullTemplate)
+    feedback.notify('Đã nạp toàn bộ kịch bản CI chuẩn SLSA v1 đầy đủ!')
+  }
+
   if (view.type === 'list') {
     return (
       <div className="pl-container">
         <PageHeader 
-          title="Pipelines" 
-          description="Pipeline là phần CI dùng chung (test, build, SBOM, scan, ký, publish), được duyệt bởi người thứ hai. CD (deploy) do netCI/Temporal thực hiện theo từng module. Module chọn pipeline theo tên."
+          title="Shared Pipelines" 
+          description="Quản lý và thiết kế các kịch bản CI pipeline dùng chung (test, build, SBOM, scan, ký số, publish). CD (deploy) do netCI Temporal worker thực hiện theo từng module."
+          action={
+            <button className="primary-button" onClick={() => setView({ type: 'designer' })}>
+              <Plus size={16} style={{ marginRight: '6px' }} />
+              New pipeline
+            </button>
+          }
         />
-        {moduleId && (
-          <div className="pl-card" style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
-            <span>Module {moduleId} dùng pipeline:</span>
-            <select 
-              value={currentModulePipeline} 
-              onChange={e => setCurrentModulePipeline(e.target.value)}
-              style={{ padding: '0.5rem', borderRadius: '4px', border: '1px solid var(--border)' }}
-            >
-              <option value="">&lt;None&gt;</option>
-              {pipelines.filter(p => p.activeVersion !== null).map(p => (
-                <option key={p.name} value={p.name}>{p.name}</option>
-              ))}
-            </select>
-            <button 
-              className="primary-button" 
-              disabled={savingModule}
-              onClick={async () => {
-                setSavingModule(true)
-                await act(() => setModuleSharedPipeline(moduleId, currentModulePipeline || null),
-                  currentModulePipeline ? `Module ${moduleId} dùng pipeline ${currentModulePipeline} từ lần chạy tới.` : `Module ${moduleId} không còn dùng pipeline chung.`)
-                setSavingModule(false)
-              }}
-            >Save</button>
-          </div>
-        )}
-        
-        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-          <h3>Danh sách Pipelines</h3>
-          <button className="primary-button" onClick={() => setView({ type: 'designer' })}>New pipeline</button>
-        </div>
 
-        {loadingPipelines && <div>Đang tải...</div>}
-        {errorPipelines && <div style={{ color: 'red' }}>Lỗi: {errorPipelines}</div>}
-        {!loadingPipelines && pipelines.length === 0 && (
-          <div className="pl-card text-center">
-            <p>Chưa có pipeline nào. Hãy tạo một pipeline mới.</p>
+        {moduleId && (
+          <div className="pl-card" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: '#eff6ff', borderColor: '#bfdbfe' }}>
+            <div>
+              <strong style={{ color: '#1e40af' }}>Module {moduleId} dùng pipeline:</strong>
+              <div style={{ fontSize: '0.875rem', color: '#1d4ed8' }}>
+                {currentModulePipeline ? `Đang dùng pipeline: ${currentModulePipeline}` : 'Chưa gán shared pipeline nào (đang dùng stage catalog riêng của module).'}
+              </div>
+            </div>
+            <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+              <select 
+                value={currentModulePipeline} 
+                onChange={e => setCurrentModulePipeline(e.target.value)}
+                style={{ padding: '0.4rem', borderRadius: '4px', border: '1px solid #93c5fd' }}
+              >
+                <option value="">-- Không dùng shared pipeline --</option>
+                {pipelines.filter(p => p.activeVersion !== null).map(p => (
+                  <option key={p.name} value={p.name}>{p.name} (v{p.activeVersion})</option>
+                ))}
+              </select>
+              <button 
+                className="primary-button"
+                disabled={savingModule}
+                onClick={async () => {
+                  setSavingModule(true)
+                  try {
+                    await setModuleSharedPipeline(moduleId, currentModulePipeline || null)
+                    feedback.notify('Đã cập nhật pipeline cho module!')
+                  } catch (err) {
+                    feedback.notify(errorText(err), 'error')
+                  } finally {
+                    setSavingModule(false)
+                  }
+                }}
+              >
+                {savingModule ? 'Lưu…' : 'Save'}
+              </button>
+            </div>
           </div>
         )}
+
+        {loadingPipelines && <div>Đang tải danh sách pipelines...</div>}
+        {errorPipelines && <div style={{ color: 'red' }}>Lỗi: {errorPipelines}</div>}
+
         <div className="pl-grid">
           {pipelines.map(p => (
-            <div key={p.name} className="pl-card" style={{ cursor: 'pointer' }} onClick={() => setView({ type: 'detail', name: p.name })}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start' }}>
-                <h4 style={{ margin: '0 0 0.5rem 0' }}>{p.name}</h4>
+            <div key={p.name} className="pl-card" style={{ display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+              <div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '0.5rem' }}>
+                  <h3 style={{ margin: 0, fontSize: '1.125rem' }}>
+                    <button className="link-button" onClick={() => setView({ type: 'detail', name: p.name })} style={{ fontSize: '1.125rem', fontWeight: 600 }}>
+                      {p.name}
+                    </button>
+                  </h3>
+                  {p.activeVersion !== null ? (
+                    <span className="pl-chip pl-chip-builtin" style={{ margin: 0 }}>v{p.activeVersion}</span>
+                  ) : (
+                    <span style={{ fontSize: '0.75rem', color: '#dc2626', background: '#fee2e2', padding: '2px 8px', borderRadius: '12px' }}>chưa có bản được duyệt</span>
+                  )}
+                </div>
+                <p style={{ fontSize: '0.875rem', color: '#6b7280', margin: '0 0 1rem 0' }}>{p.description || 'Không có mô tả'}</p>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', marginBottom: '1rem' }}>
+                  {p.stages.map(s => (
+                    <span key={s.id} className={`pl-chip ${s.builtin ? 'pl-chip-builtin' : 'pl-chip-custom'}`} style={{ margin: 0 }}>
+                      {s.name}
+                    </span>
+                  ))}
+                </div>
+              </div>
+              <div style={{ borderTop: '1px solid var(--border, #e5e7eb)', paddingTop: '0.75rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.75rem', color: '#6b7280' }}>
+                <span>Sử dụng bởi: {p.usedBy.length} modules</span>
                 {p.pendingVersions.length > 0 && (
-                  <span style={{ fontSize: '0.75rem', background: '#fef3c7', color: '#92400e', padding: '2px 6px', borderRadius: '4px' }}>chờ duyệt v{p.pendingVersions[0]}</span>
+                  <span style={{ color: '#d97706', fontWeight: 500 }}>chờ duyệt v{p.pendingVersions.join(', v')}</span>
                 )}
-              </div>
-              <p style={{ fontSize: '0.875rem', color: '#6b7280', margin: '0 0 1rem 0' }}>{p.description}</p>
-              <div style={{ marginBottom: '1rem' }}>
-                <span style={{ fontSize: '0.875rem', fontWeight: 500 }}>Active version: </span>
-                <span style={{ fontSize: '0.875rem' }}>{p.activeVersion !== null ? `v${p.activeVersion}` : 'chưa có bản được duyệt'}</span>
-              </div>
-              <div style={{ display: 'flex', flexWrap: 'wrap' }}>
-                {p.stages.map(s => (
-                  <span key={s.id} className={`pl-chip ${s.builtin ? 'pl-chip-builtin' : 'pl-chip-custom'}`}>{s.name}</span>
-                ))}
-              </div>
-              <div style={{ fontSize: '0.75rem', color: '#6b7280', marginTop: '0.5rem' }}>
-                Sử dụng bởi: {p.usedBy.length} modules
               </div>
             </div>
           ))}
@@ -324,95 +514,357 @@ export function PipelinesPage({ moduleId, navigate }: { moduleId?: string; navig
   }
 
   if (view.type === 'designer') {
+    const hasBuild = parsedStages.some(s => s.id === 'build')
+    const hasSbom = parsedStages.some(s => s.id === 'sbom')
+    const hasScan = parsedStages.some(s => s.id === 'vulnerability-scan')
+    const hasSign = parsedStages.some(s => s.id === 'sign')
+    const hasPublish = parsedStages.some(s => s.id === 'publish')
+
     return (
       <div className="pl-container">
-        <button className="link-button" onClick={() => setView(view.pipelineName ? { type: 'detail', name: view.pipelineName } : { type: 'list' })} style={{ alignSelf: 'flex-start', display: 'flex', alignItems: 'center' }}><ChevronLeft size={16}/> Quay lại</button>
+        <button className="link-button" onClick={() => setView(view.pipelineName ? { type: 'detail', name: view.pipelineName } : { type: 'list' })} style={{ alignSelf: 'flex-start', display: 'flex', alignItems: 'center' }}>
+          <ChevronLeft size={16}/> Quay lại
+        </button>
+
         <PageHeader 
           title={view.pipelineName ? `Propose new version for ${view.pipelineName}` : 'Tạo pipeline mới'}
-          description="Thiết kế kịch bản pipeline bằng cách thêm các stage từ danh sách hoặc tự viết mã bash."
+          description="Thiết kế kịch bản CI Pipeline tự động. Chọn các stage từ danh mục hoặc bổ sung các lệnh shell tuỳ chỉnh để thực thi trong Jenkins."
         />
+
+        {/* Visual Pipeline Flow Ribbon */}
+        <div className="pl-flow-banner">
+          <div className="pl-flow-header">
+            <h4>
+              <GitBranch size={16} />
+              Luồng thực thi Pipeline (Execution Flow Preview)
+            </h4>
+            <span style={{ fontSize: '12px', color: 'var(--muted, #64748b)' }}>
+              {parsedStages.length} stage(s) được cấu hình
+            </span>
+          </div>
+
+          <div className="pl-flow-track">
+            <div className="pl-flow-node start">
+              <Code size={14} />
+              <span>Checkout SCM</span>
+            </div>
+
+            <ArrowRight size={14} className="pl-flow-arrow" />
+
+            {parsedStages.map((s, idx) => (
+              <div key={idx} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <div className={`pl-flow-node ${s.builtin ? 'required' : 'custom'}`}>
+                  {s.id === 'unit-test' && <CheckCircle2 size={14} />}
+                  {s.id === 'build' && <Box size={14} />}
+                  {s.id === 'sbom' && <Layers size={14} />}
+                  {s.id === 'vulnerability-scan' && <Shield size={14} />}
+                  {s.id === 'sign' && <ShieldCheck size={14} />}
+                  {s.id === 'publish' && <Box size={14} />}
+                  {!['unit-test', 'build', 'sbom', 'vulnerability-scan', 'sign', 'publish'].includes(s.id) && <Terminal size={14} />}
+                  <span>{s.name}</span>
+                  <small style={{ fontSize: '10px', opacity: 0.8, textTransform: 'uppercase' }}>
+                    {s.builtin ? 'CI Gate' : 'Custom'}
+                  </small>
+                </div>
+                <ArrowRight size={14} className="pl-flow-arrow" />
+              </div>
+            ))}
+
+            <div className="pl-flow-node cd" title="CD Deployment do netCI Temporal Worker đảm nhiệm">
+              <Check size={14} />
+              <span>CD Deployment</span>
+              <small style={{ fontSize: '10px', background: '#10b981', color: '#fff', padding: '1px 4px', borderRadius: '3px' }}>Temporal</small>
+            </div>
+          </div>
+        </div>
         
         {designerLoading && <div>Đang tải building blocks...</div>}
         {designerError && <div style={{ color: 'red' }}>Lỗi: {designerError}</div>}
         
         {blocks && (
           <div className="pl-designer">
-            <div>
-              <h4>Built-in stages</h4>
-              <div className="pl-blocks-list">
-                {blocks.builtins.map(b => {
-                  const added = parsedStages.some(s => s.id === b.id)
-                  return (
-                    <button 
-                      key={b.id} 
-                      className="pl-block-item" 
-                      disabled={added}
-                      onClick={() => setDesignerScript(prev => prev + (prev.endsWith('\n') || !prev ? '' : '\n') + b.block + '\n')}
-                    >
-                      <div style={{ fontWeight: 500 }}>{b.name} {b.required && <span style={{ color: '#ef4444', fontSize: '0.75rem' }}>(Required)</span>}</div>
-                      {added && <div style={{ fontSize: '0.75rem', color: '#10b981' }}>added</div>}
-                    </button>
-                  )
-                })}
-              </div>
-              
-              <h4 style={{ marginTop: '1.5rem' }}>Templates</h4>
-              <div className="pl-blocks-list">
-                {blocks.templates.map(t => (
+            {/* Left Sidebar: Stage Library */}
+            <div className="pl-sidebar-col">
+              <div className="pl-card">
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.75rem' }}>
+                  <h4 style={{ margin: 0, fontSize: '0.9rem', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <ShieldCheck size={16} color="#2563eb" />
+                    Built-in stages
+                  </h4>
                   <button 
-                    key={t.id} 
-                    className="pl-block-item"
-                    onClick={() => setDesignerScript(prev => prev + (prev.endsWith('\n') || !prev ? '' : '\n') + t.block + '\n')}
+                    type="button" 
+                    className="pl-editor-btn" 
+                    onClick={handleApplyFullCiTemplate}
+                    title="Nạp toàn bộ kịch bản chuẩn SLSA v1"
                   >
-                    <div style={{ fontWeight: 500 }}>{t.name}</div>
-                    <div style={{ fontSize: '0.75rem', color: '#6b7280' }}>{t.description}</div>
+                    ⚡ Điền mẫu chuẩn
                   </button>
-                ))}
+                </div>
+                <p style={{ margin: '0 0 10px 0', fontSize: '11.5px', color: 'var(--muted, #64748b)' }}>
+                  Các cổng kiểm soát chất lượng & an toàn thực thi bằng toolbox bảo mật của netCI:
+                </p>
+
+                <div className="pl-blocks-list">
+                  {blocks.builtins.map(b => {
+                    const added = parsedStages.some(s => s.id === b.id)
+                    return (
+                      <button 
+                        key={b.id} 
+                        className="pl-block-item" 
+                        disabled={added}
+                        onClick={() => setDesignerScript(prev => prev + (prev.endsWith('\n') || !prev ? '' : '\n') + b.block + '\n')}
+                      >
+                        <div className="pl-block-title">
+                          <span>{b.name}</span>
+                          {b.required && <span style={{ color: '#ef4444', fontSize: '10.5px' }}>(Required)</span>}
+                        </div>
+                        <div className="pl-block-desc">
+                          {b.id === 'unit-test' && 'Chạy Unit Test & kiểm tra Code Coverage'}
+                          {b.id === 'build' && 'Compile source code & đóng gói Docker container'}
+                          {b.id === 'sbom' && 'Xuất file CycloneDX SBOM kiểm kê phụ thuộc'}
+                          {b.id === 'vulnerability-scan' && 'Quét lỗ hổng offline bằng Trivy CVE DB'}
+                          {b.id === 'sign' && 'Ký số nguồn gốc Provenance SLSA v1 bằng Cosign'}
+                          {b.id === 'publish' && 'Đẩy image & chữ ký số lên Harbor Registry'}
+                        </div>
+                        {added ? (
+                          <div style={{ fontSize: '11px', color: '#10b981', marginTop: '4px', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '4px' }}>
+                            <Check size={12} /> added
+                          </div>
+                        ) : (
+                          <div style={{ fontSize: '11px', color: '#2563eb', marginTop: '4px', fontWeight: 500, display: 'flex', alignItems: 'center', gap: '4px' }}>
+                            <Plus size={12} /> Thêm vào pipeline
+                          </div>
+                        )}
+                      </button>
+                    )
+                  })}
+                </div>
+                
+                <h4 style={{ marginTop: '1.5rem', marginBottom: '0.75rem', fontSize: '0.9rem', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <Terminal size={16} color="#7c3aed" />
+                  Templates
+                </h4>
+                <p style={{ margin: '0 0 10px 0', fontSize: '11.5px', color: 'var(--muted, #64748b)' }}>
+                  Các bước kiểm tra mở rộng (chạy trong sandbox không cấp credentials):
+                </p>
+
+                <div className="pl-blocks-list">
+                  {blocks.templates.map(t => (
+                    <button 
+                      key={t.id} 
+                      className="pl-block-item"
+                      onClick={() => setDesignerScript(prev => prev + (prev.endsWith('\n') || !prev ? '' : '\n') + t.block + '\n')}
+                    >
+                      <div className="pl-block-title">
+                        <span>{t.name}</span>
+                        <Plus size={13} color="#7c3aed" />
+                      </div>
+                      <div className="pl-block-desc">{t.description}</div>
+                    </button>
+                  ))}
+                </div>
               </div>
             </div>
             
+            {/* Right Column: Code Editor & Previews */}
             <div className="pl-editor-col">
               {!view.pipelineName && (
-                <div style={{ display: 'flex', gap: '1rem' }}>
-                  <input className="pl-input" placeholder="Tên pipeline (vd: my-pipeline)" value={designerName} onChange={e => setDesignerName(e.target.value)} pattern="^[a-z][a-z0-9-]{1,62}$" />
-                  <input className="pl-input" placeholder="Mô tả ngắn" value={designerDesc} onChange={e => setDesignerDesc(e.target.value)} />
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+                  <div>
+                    <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, marginBottom: '4px' }}>Tên Pipeline</label>
+                    <input className="pl-input" placeholder="Tên pipeline (vd: my-pipeline)" value={designerName} onChange={e => setDesignerName(e.target.value)} pattern="^[a-z][a-z0-9-]{1,62}$" />
+                  </div>
+                  <div>
+                    <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, marginBottom: '4px' }}>Mô tả kịch bản</label>
+                    <input className="pl-input" placeholder="Mô tả ngắn" value={designerDesc} onChange={e => setDesignerDesc(e.target.value)} />
+                  </div>
                 </div>
               )}
+
+              {/* Editor Tabs Switcher */}
+              <div className="pl-editor-tabs">
+                <button 
+                  type="button" 
+                  className={`pl-tab-button ${editorTab === 'script' ? 'active' : ''}`}
+                  onClick={() => setEditorTab('script')}
+                >
+                  <FileCode size={15} />
+                  <span>pipeline.sh (CI Script Thực Thi)</span>
+                </button>
+                <button 
+                  type="button" 
+                  className={`pl-tab-button ${editorTab === 'jenkinsfile' ? 'active' : ''}`}
+                  onClick={() => setEditorTab('jenkinsfile')}
+                >
+                  <Sliders size={15} />
+                  <span>Jenkinsfile (Declarative Pipeline Preview)</span>
+                </button>
+                <button 
+                  type="button" 
+                  className={`pl-tab-button ${editorTab === 'compliance' ? 'active' : ''}`}
+                  onClick={() => setEditorTab('compliance')}
+                >
+                  <ShieldCheck size={15} />
+                  <span>Kiểm toán Tuân thủ SLSA & Quality Gate</span>
+                </button>
+              </div>
+
+              {/* Editor Shell */}
+              <div className="pl-editor-shell">
+                <div className="pl-editor-header">
+                  <div className="pl-editor-title">
+                    {editorTab === 'script' && (
+                      <>
+                        <FileCode size={14} color="#60a5fa" />
+                        <span>pipeline.sh</span>
+                        <span className="file-badge">BASH / NETCI RUNNER</span>
+                      </>
+                    )}
+                    {editorTab === 'jenkinsfile' && (
+                      <>
+                        <Sliders size={14} color="#a78bfa" />
+                        <span>Jenkinsfile</span>
+                        <span className="file-badge" style={{ background: '#7c3aed' }}>DECLARATIVE GROOVY</span>
+                      </>
+                    )}
+                    {editorTab === 'compliance' && (
+                      <>
+                        <ShieldCheck size={14} color="#34d399" />
+                        <span>Security & Policy Gate Audit</span>
+                      </>
+                    )}
+                  </div>
+
+                  <div className="pl-editor-actions">
+                    {editorTab === 'script' && (
+                      <>
+                        <span style={{ fontSize: '11px', color: '#94a3b8' }}>
+                          {designerScript.split('\n').length} dòng · {parsedStages.length} stage(s)
+                        </span>
+                        <button type="button" className="pl-editor-btn" onClick={handleCopyScript}>
+                          {copiedScript ? <Check size={12} color="#10b981" /> : <Copy size={12} />}
+                          {copiedScript ? 'Đã chép' : 'Sao chép'}
+                        </button>
+                        <button type="button" className="pl-editor-btn" onClick={() => setDesignerScript('')}>
+                          Làm sạch
+                        </button>
+                      </>
+                    )}
+                    {editorTab === 'jenkinsfile' && (
+                      <button type="button" className="pl-editor-btn" onClick={handleCopyJenkinsfile}>
+                        {copiedJenkinsfile ? <Check size={12} color="#10b981" /> : <Copy size={12} />}
+                        {copiedJenkinsfile ? 'Đã chép Jenkinsfile' : 'Sao chép Jenkinsfile'}
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {editorTab === 'script' && (
+                  <textarea 
+                    className="pl-textarea" 
+                    aria-label="Pipeline script" 
+                    spellCheck={false}
+                    value={designerScript}
+                    onChange={e => setDesignerScript(e.target.value)}
+                    onKeyDown={handleKeyDown}
+                    placeholder="# Kịch bản pipeline CI thực thi trên runner..."
+                  />
+                )}
+
+                {editorTab === 'jenkinsfile' && (
+                  <pre className="pl-jenkinsfile-pre">
+                    {declarativeJenkinsfile}
+                  </pre>
+                )}
+
+                {editorTab === 'compliance' && (
+                  <div style={{ padding: '1.25rem', color: '#e2e8f0' }}>
+                    <h4 style={{ margin: '0 0 10px 0', fontSize: '14px', color: '#fff' }}>
+                      Báo cáo Tuân thủ Cổng Kiểm soát (Gate Verification)
+                    </h4>
+                    <p style={{ margin: '0 0 14px 0', fontSize: '12px', color: '#94a3b8' }}>
+                      netCI áp dụng nguyên tắc 100% Fail-closed. Bản build chỉ được thăng cấp (promote) khi vượt qua toàn bộ các cổng bảo mật bắt buộc:
+                    </p>
+
+                    <div className="pl-compliance-grid">
+                      <div className="pl-compliance-card" style={{ borderColor: hasBuild ? '#10b981' : '#f87171' }}>
+                        <strong style={{ color: hasBuild ? '#059669' : '#dc2626' }}>
+                          {hasBuild ? <CheckCircle2 size={15} /> : <AlertTriangle size={15} />}
+                          Compile & Build Container
+                        </strong>
+                        <small>{hasBuild ? 'Gắn SHA256 digest bất biến' : 'Chưa có stage build'}</small>
+                      </div>
+
+                      <div className="pl-compliance-card" style={{ borderColor: hasSbom ? '#10b981' : '#f87171' }}>
+                        <strong style={{ color: hasSbom ? '#059669' : '#dc2626' }}>
+                          {hasSbom ? <CheckCircle2 size={15} /> : <AlertTriangle size={15} />}
+                          Xuất SBOM CycloneDX
+                        </strong>
+                        <small>{hasSbom ? 'Kiểm kê nguồn gốc thư viện' : 'Thiếu stage tạo SBOM'}</small>
+                      </div>
+
+                      <div className="pl-compliance-card" style={{ borderColor: hasScan ? '#10b981' : '#f87171' }}>
+                        <strong style={{ color: hasScan ? '#059669' : '#dc2626' }}>
+                          {hasScan ? <CheckCircle2 size={15} /> : <AlertTriangle size={15} />}
+                          Quét Lỗ Hổng Trivy CVE
+                        </strong>
+                        <small>{hasScan ? 'Đối chiếu air-gapped CVE DB' : 'Thiếu stage quét CVE'}</small>
+                      </div>
+
+                      <div className="pl-compliance-card" style={{ borderColor: hasSign ? '#10b981' : '#f87171' }}>
+                        <strong style={{ color: hasSign ? '#059669' : '#dc2626' }}>
+                          {hasSign ? <CheckCircle2 size={15} /> : <AlertTriangle size={15} />}
+                          Ký Số SLSA v1 (Cosign)
+                        </strong>
+                        <small>{hasSign ? 'Chứng thực chữ ký in-toto' : 'Thiếu chữ ký số SLSA'}</small>
+                      </div>
+
+                      <div className="pl-compliance-card" style={{ borderColor: hasPublish ? '#10b981' : '#f87171' }}>
+                        <strong style={{ color: hasPublish ? '#059669' : '#dc2626' }}>
+                          {hasPublish ? <CheckCircle2 size={15} /> : <AlertTriangle size={15} />}
+                          Phát hành Harbor Registry
+                        </strong>
+                        <small>{hasPublish ? 'Lưu trữ OCI image an toàn' : 'Thiếu stage đẩy Harbor'}</small>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
               
-              <textarea 
-                className="pl-textarea" 
-                aria-label="Pipeline script" 
-                spellCheck={false}
-                value={designerScript}
-                onChange={e => setDesignerScript(e.target.value)}
-                onKeyDown={handleKeyDown}
-              />
-              
+              {/* Preview stages card */}
               <div className="pl-card">
-                <h4>Preview stages</h4>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
+                  <h4 style={{ margin: 0, fontSize: '0.875rem' }}>Thứ tự thực thi các Stages ({parsedStages.length})</h4>
+                  <span style={{ fontSize: '11px', color: 'var(--muted, #64748b)' }}>Thực thi tuần tự trong build toolbox</span>
+                </div>
                 <ol className="pl-preview-list">
                   {parsedStages.map((s, idx) => (
                     <li key={idx}>
-                      <strong>{s.name}</strong> <code>{s.id}</code> {s.builtin && <span style={{ color: '#1d4ed8', fontSize: '0.75rem' }}>(builtin)</span>}
+                      <strong>{s.name}</strong> <code>{s.id}</code> {s.builtin && <span style={{ color: '#1d4ed8', fontSize: '0.75rem', fontWeight: 600 }}>(builtin)</span>}
                     </li>
                   ))}
                 </ol>
                 {designerHints.length > 0 && (
                   <div className="pl-hints">
-                    {designerHints.map((h, idx) => <div key={idx}>{h}</div>)}
+                    {designerHints.map((h, idx) => <div key={idx} style={{ display: 'flex', alignItems: 'center', gap: '6px' }}><AlertTriangle size={14} />{h}</div>)}
                   </div>
                 )}
               </div>
               
               {designerSubmitError && (
-                <div style={{ color: 'red', padding: '1rem', background: '#fee2e2', borderRadius: '6px' }}>
+                <div style={{ color: 'red', padding: '1rem', background: '#fee2e2', borderRadius: '6px', fontSize: '13px' }}>
                   Lỗi: {designerSubmitError}
                 </div>
               )}
               
-              <button className="primary-button" style={{ alignSelf: 'flex-start' }} disabled={designerSubmitting} onClick={handleDesignerSubmit}>
-                Gửi để duyệt
-              </button>
+              <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+                <button className="primary-button" style={{ alignSelf: 'flex-start' }} disabled={designerSubmitting} onClick={handleDesignerSubmit}>
+                  {designerSubmitting ? 'Đang gửi…' : 'Gửi để duyệt'}
+                </button>
+                <small style={{ color: 'var(--muted, #64748b)', fontSize: '12px' }}>
+                  * Sau khi gửi, cần một Quản trị viên (Platform Admin) khác phê duyệt để phiên bản có hiệu lực (Quy tắc 4 mắt ADR-058).
+                </small>
+              </div>
             </div>
           </div>
         )}
@@ -423,14 +875,63 @@ export function PipelinesPage({ moduleId, navigate }: { moduleId?: string; navig
   if (view.type === 'detail') {
     return (
       <div className="pl-container">
-        <button className="link-button" onClick={() => setView({ type: 'list' })} style={{ alignSelf: 'flex-start', display: 'flex', alignItems: 'center' }}><ChevronLeft size={16}/> Quay lại danh sách</button>
+        <button className="link-button" onClick={() => setView({ type: 'list' })} style={{ alignSelf: 'flex-start', display: 'flex', alignItems: 'center' }}>
+          <ChevronLeft size={16}/> Quay lại danh sách
+        </button>
         
         {detailLoading && <div>Đang tải...</div>}
         {detailError && <div style={{ color: 'red' }}>Lỗi: {detailError}</div>}
         
         {detailPipeline && (
           <>
-            <PageHeader title={detailPipeline.name} description={detailPipeline.description} />
+            <PageHeader title={detailPipeline.name} description={detailPipeline.description || 'Không có mô tả'} />
+
+            {/* Visual Pipeline Flow Ribbon for Active Pipeline */}
+            <div className="pl-flow-banner">
+              <div className="pl-flow-header">
+                <h4>
+                  <GitBranch size={16} />
+                  Sơ đồ Stages của Pipeline {detailPipeline.name}
+                </h4>
+                <span style={{ fontSize: '12px', color: 'var(--muted, #64748b)' }}>
+                  Phiên bản active: {detailPipeline.activeVersion !== null ? `v${detailPipeline.activeVersion}` : 'Chưa có'}
+                </span>
+              </div>
+
+              <div className="pl-flow-track">
+                <div className="pl-flow-node start">
+                  <Code size={14} />
+                  <span>Checkout SCM</span>
+                </div>
+
+                <ArrowRight size={14} className="pl-flow-arrow" />
+
+                {detailPipeline.stages.map((s, idx) => (
+                  <div key={idx} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                    <div className={`pl-flow-node ${s.builtin ? 'required' : 'custom'}`}>
+                      {s.id === 'unit-test' && <CheckCircle2 size={14} />}
+                      {s.id === 'build' && <Box size={14} />}
+                      {s.id === 'sbom' && <Layers size={14} />}
+                      {s.id === 'vulnerability-scan' && <Shield size={14} />}
+                      {s.id === 'sign' && <ShieldCheck size={14} />}
+                      {s.id === 'publish' && <Box size={14} />}
+                      {!['unit-test', 'build', 'sbom', 'vulnerability-scan', 'sign', 'publish'].includes(s.id) && <Terminal size={14} />}
+                      <span>{s.name}</span>
+                      <small style={{ fontSize: '10px', opacity: 0.8, textTransform: 'uppercase' }}>
+                        {s.builtin ? 'Built-in' : 'Custom'}
+                      </small>
+                    </div>
+                    <ArrowRight size={14} className="pl-flow-arrow" />
+                  </div>
+                ))}
+
+                <div className="pl-flow-node cd">
+                  <Check size={14} />
+                  <span>CD Deployment (Temporal)</span>
+                </div>
+              </div>
+            </div>
+
             <div className="pl-card">
               <div style={{ marginBottom: '1rem' }}>
                 <span style={{ fontWeight: 500 }}>Active version: </span>
@@ -456,13 +957,18 @@ export function PipelinesPage({ moduleId, navigate }: { moduleId?: string; navig
                     setView({ type: 'designer', pipelineName: detailPipeline.name, prefillScript: activeVer?.script || '' })
                   }}
                 >
+                  <Plus size={15} style={{ marginRight: '6px' }} />
                   Propose new version
                 </button>
               </div>
             </div>
 
             <div className="pl-card">
-              <h4>Version History</h4>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1rem' }}>
+                <h4 style={{ margin: 0 }}>Version History</h4>
+                <small style={{ color: 'var(--muted, #64748b)' }}>Nguyên tắc 4 mắt: người tạo không được tự duyệt phiên bản của mình</small>
+              </div>
+              
               <div style={{ overflowX: 'auto' }}>
                 <table className="pl-history-table">
                   <thead>
@@ -487,7 +993,9 @@ export function PipelinesPage({ moduleId, navigate }: { moduleId?: string; navig
                           {v.rejectionReason && <div style={{ color: '#991b1b', fontSize: '12px' }}>Lý do: {v.rejectionReason}</div>}
                         </td>
                         <td>
-                          <button className="link-button" onClick={() => setViewScriptVersion(viewScriptVersion === v.version ? null : v.version)}>View script</button>
+                          <button className="link-button" onClick={() => setViewScriptVersion(viewScriptVersion === v.version ? null : v.version)}>
+                            {viewScriptVersion === v.version ? 'Ẩn kịch bản' : 'View script'}
+                          </button>
                           {v.status === 'proposed' && (
                             <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.5rem' }}>
                               <button 
@@ -532,10 +1040,42 @@ export function PipelinesPage({ moduleId, navigate }: { moduleId?: string; navig
 
               {viewScriptVersion !== null && (
                 <div style={{ marginTop: '1.5rem' }}>
-                  <h4>Script for v{viewScriptVersion}</h4>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
+                    <h4 style={{ margin: 0 }}>Kịch bản phiên bản v{viewScriptVersion}</h4>
+                    <div className="pl-editor-tabs" style={{ marginBottom: 0 }}>
+                      <button 
+                        type="button" 
+                        className={`pl-tab-button ${detailTab === 'script' ? 'active' : ''}`}
+                        onClick={() => setDetailTab('script')}
+                      >
+                        <FileCode size={14} /> pipeline.sh
+                      </button>
+                      <button 
+                        type="button" 
+                        className={`pl-tab-button ${detailTab === 'jenkinsfile' ? 'active' : ''}`}
+                        onClick={() => setDetailTab('jenkinsfile')}
+                      >
+                        <Sliders size={14} /> Jenkinsfile
+                      </button>
+                    </div>
+                  </div>
+
                   {(() => {
                     const ver = detailPipeline.versions.find(v => v.version === viewScriptVersion)
                     if (!ver) return null
+                    
+                    if (detailTab === 'jenkinsfile') {
+                      const jf = generateDeclarativeJenkinsfile(ver.stages || [], ver.script || '')
+                      return (
+                        <div className="pl-editor-shell">
+                          <div className="pl-editor-header">
+                            <span className="pl-editor-title">Jenkinsfile (v{viewScriptVersion})</span>
+                          </div>
+                          <pre className="pl-jenkinsfile-pre">{jf}</pre>
+                        </div>
+                      )
+                    }
+
                     if (ver.status === 'proposed' && detailPipeline.activeVersion !== null) {
                       const activeVer = detailPipeline.versions.find(v => v.version === detailPipeline.activeVersion)
                       const diffs = computeDiff(activeVer?.script || '', ver.script || '')
@@ -553,9 +1093,14 @@ export function PipelinesPage({ moduleId, navigate }: { moduleId?: string; navig
                       )
                     }
                     return (
-                      <pre className="pl-diff-pre">
-                        {ver.script}
-                      </pre>
+                      <div className="pl-editor-shell">
+                        <div className="pl-editor-header">
+                          <span className="pl-editor-title">pipeline.sh (v{viewScriptVersion})</span>
+                        </div>
+                        <pre className="pl-jenkinsfile-pre">
+                          {ver.script}
+                        </pre>
+                      </div>
                     )
                   })()}
                 </div>
