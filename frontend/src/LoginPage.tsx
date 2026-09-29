@@ -69,8 +69,8 @@ export function LoginPage({ onLogin }: { onLogin: (session: AuthSession) => void
       })
       .catch((cause) => {
         if (cancelled) return
-        if (cause instanceof NetciApiError && cause.status === 403) setError('Đăng nhập SSO thành công nhưng tài khoản chưa được cấp quyền nào trên netCI.')
-        else setError(`Đăng nhập SSO thất bại: ${cause instanceof Error ? cause.message : String(cause)}`)
+        if (cause instanceof NetciApiError && cause.status === 403) setError('SSO login succeeded, but the account has not been assigned any roles in netCI.')
+        else setError(`SSO login failed: ${cause instanceof Error ? cause.message : String(cause)}`)
       })
       .finally(() => { if (!cancelled) setBusy(false) })
     return () => { cancelled = true }
@@ -94,11 +94,11 @@ export function LoginPage({ onLogin }: { onLogin: (session: AuthSession) => void
       onLogin({ token: credential, identity })
     } catch (cause) {
       if (cause instanceof NetciApiError && cause.status === 401) {
-        setError('Thông tin đăng nhập không hợp lệ hoặc đã bị thu hồi.')
+        setError('Invalid credentials or token has been revoked.')
       } else if (cause instanceof NetciApiError && cause.status === 403) {
-        setError('Tài khoản hợp lệ nhưng chưa được cấp quyền nào trên netCI.')
+        setError('Account is valid, but has not been assigned any roles in netCI.')
       } else {
-        setError('Không kết nối được tới netCI API. Kiểm tra dịch vụ và thử lại.')
+        setError('Cannot connect to netCI API. Check service status and try again.')
       }
     } finally {
       setBusy(false)
@@ -110,7 +110,7 @@ export function LoginPage({ onLogin }: { onLogin: (session: AuthSession) => void
     const trimmedUser = username.trim().toLowerCase()
     const trimmedPass = password.trim()
     if (!trimmedUser) {
-      setError('Vui lòng nhập tên đăng nhập (admin hoặc dev).')
+      setError('Please enter a username (admin or dev).')
       return
     }
     // Check credentials for demo
@@ -126,14 +126,14 @@ export function LoginPage({ onLogin }: { onLogin: (session: AuthSession) => void
     if (authMode === 'token' || authMode === 'oidc') {
       await loginWithPersona(trimmedPass || trimmedUser)
     } else {
-      setError('Tài khoản hoặc mật khẩu không chính xác. Hãy dùng admin/admin hoặc dev/dev.')
+      setError('Incorrect username or password. Please use admin/admin or dev/dev.')
     }
   }
 
   const signInToken = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     if (!token.trim()) {
-      setError('Nhập access token do platform team cấp.')
+      setError('Enter an access token issued by the platform team.')
       return
     }
     await loginWithPersona(token.trim())
@@ -145,7 +145,7 @@ export function LoginPage({ onLogin }: { onLogin: (session: AuthSession) => void
       <div className="login-story-copy">
         <span className="login-eyebrow"><ShieldCheck size={16} />netCI Platform · Continuous Delivery</span>
         <h1 id="login-story-title">Track every release, from commit to production.</h1>
-        <p>Đăng nhập một lần (SSO) để quản lý pipeline, phiên bản và yêu cầu triển khai trên tất cả hệ thống.</p>
+        <p>Single Sign-On (SSO) to manage pipelines, versions, and release requests across all systems.</p>
       </div>
       <small>netCI Platform · Continuous Delivery</small>
     </section>
@@ -154,24 +154,24 @@ export function LoginPage({ onLogin }: { onLogin: (session: AuthSession) => void
         <div className="login-mark" style={{ backgroundColor: '#ee0033', color: '#fff', fontSize: '13px', fontWeight: 900, textTransform: 'lowercase' }}>netci</div>
         <h2>Sign in to your account</h2>
 
-        {authMode === null && <p className="login-checking" role="status"><Loader2 size={16} className="spin" />Đang kiểm tra cấu hình xác thực…</p>}
+        {authMode === null && <p className="login-checking" role="status"><Loader2 size={16} className="spin" />Checking authentication configuration…</p>}
 
         {authMode === 'unreachable' && <div className="login-error" role="alert">
-          <ShieldAlert size={16} />netCI API không phản hồi. Portal không thể đăng nhập khi chưa gọi được <code>/me</code>.
+          <ShieldAlert size={16} />netCI API is unreachable. The portal cannot authenticate without calling <code>/me</code>.
         </div>}
 
         {authMode === 'auth-required' && <div className="login-error" role="alert">
-          <ShieldAlert size={16} />API đang chạy nhưng từ chối chế độ không xác thực qua proxy. Hãy cấu hình <code>NETCI_AUTH_MODE=token</code> hoặc <code>oidc</code> cho topology này.
+          <ShieldAlert size={16} />API is running but rejected unauthenticated proxy mode. Configure <code>NETCI_AUTH_MODE=token</code> or <code>oidc</code> for this topology.
         </div>}
 
         {authMode === 'none' && !manualMode && (
-          <p className="login-checking" role="status"><Loader2 size={16} className="spin" />netCI đang chạy chế độ demo — đang vào Portal…</p>
+          <p className="login-checking" role="status"><Loader2 size={16} className="spin" />netCI is running in demo mode — loading Portal…</p>
         )}
 
         {(authMode === 'none' && manualMode) && (
           <>
             <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem', marginBottom: '16px' }}>
-              Chọn tài khoản demo để trải nghiệm cơ chế <strong>Phân tách quyền hạn (Separation of Duties)</strong>:
+              Select a demo persona to test <strong>Separation of Duties</strong>:
             </p>
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginBottom: '20px' }}>
@@ -193,8 +193,8 @@ export function LoginPage({ onLogin }: { onLogin: (session: AuthSession) => void
               >
                 <UserCog size={24} style={{ color: '#93c5fd' }} />
                 <div>
-                  <div style={{ fontWeight: 600, fontSize: '0.95rem' }}>1. Tài khoản: admin / admin</div>
-                  <div style={{ fontSize: '0.8rem', opacity: 0.85 }}>Alexander Admin (Platform Lead & Reviewer - Duyệt Release)</div>
+                  <div style={{ fontWeight: 600, fontSize: '0.95rem' }}>1. Persona: admin / admin</div>
+                  <div style={{ fontSize: '0.8rem', opacity: 0.85 }}>Alexander Admin (Platform Lead & Reviewer - Approves Releases)</div>
                 </div>
               </button>
 
@@ -216,15 +216,15 @@ export function LoginPage({ onLogin }: { onLogin: (session: AuthSession) => void
               >
                 <UserCheck size={24} style={{ color: '#a7f3d0' }} />
                 <div>
-                  <div style={{ fontWeight: 600, fontSize: '0.95rem' }}>2. Tài khoản: dev / dev</div>
-                  <div style={{ fontSize: '0.8rem', opacity: 0.85 }}>David Developer (Tạo Module, Build CI, Gửi yêu cầu Release)</div>
+                  <div style={{ fontWeight: 600, fontSize: '0.95rem' }}>2. Persona: dev / dev</div>
+                  <div style={{ fontSize: '0.8rem', opacity: 0.85 }}>David Developer (Creates Modules, CI Builds, Submits Releases)</div>
                 </div>
               </button>
             </div>
 
             <div style={{ position: 'relative', textAlign: 'center', margin: '16px 0' }}>
               <hr style={{ borderColor: 'rgba(255,255,255,0.1)' }} />
-              <span style={{ position: 'absolute', top: '-10px', left: '50%', transform: 'translateX(-50%)', background: '#1e293b', padding: '0 8px', fontSize: '0.75rem', color: '#94a3b8' }}>HOẶC ĐĂNG NHẬP THỦ CÔNG</span>
+              <span style={{ position: 'absolute', top: '-10px', left: '50%', transform: 'translateX(-50%)', background: '#1e293b', padding: '0 8px', fontSize: '0.75rem', color: '#94a3b8' }}>OR MANUAL SIGN IN</span>
             </div>
 
             <form className="login-form" onSubmit={handleCredentialsSubmit} noValidate>
@@ -257,7 +257,7 @@ export function LoginPage({ onLogin }: { onLogin: (session: AuthSession) => void
 
               <button className="login-primary" type="submit" disabled={busy} style={{ backgroundColor: '#ee0033', borderColor: '#ee0033' }}>
                 {busy ? <Loader2 size={18} className="spin" /> : <LogIn size={18} />}
-                {busy ? 'Đang xác thực…' : 'Sign In'}
+                {busy ? 'Authenticating…' : 'Sign In'}
               </button>
             </form>
           </>
@@ -267,17 +267,17 @@ export function LoginPage({ onLogin }: { onLogin: (session: AuthSession) => void
           <div className="login-sso">
             <button className="login-primary" type="button" onClick={signInWithProvider} disabled={busy} data-testid="sso-login" style={{ backgroundColor: '#ee0033', borderColor: '#ee0033', fontWeight: 700 }}>
               {busy ? <Loader2 size={18} className="spin" /> : <LogIn size={18} />}
-              {busy ? 'Đang xác thực…' : 'Sign in with SSO (Keycloak)'}
+              {busy ? 'Authenticating…' : 'Sign in with SSO (Keycloak)'}
             </button>
-            <small>Chuyển tới <code>{oidc.issuer}</code> để xác thực; netCI kiểm tra token trả về và quyết định quyền.</small>
+            <small>Redirects to <code>{oidc.issuer}</code> to authenticate; netCI validates the returned token and assigns roles.</small>
           </div>
         )}
         {authMode === 'oidc' && oidc?.error && <div className="login-error" role="alert">
-          <ShieldAlert size={16} />Identity provider <code>{oidc.issuer}</code> không phản hồi discovery; dán token bên dưới.
+          <ShieldAlert size={16} />Identity provider <code>{oidc.issuer}</code> discovery failed; paste token below.
         </div>}
 
         {(authMode === 'token' || authMode === 'oidc') && <>
-          <p>{authMode === 'oidc' ? 'Hoặc dán một token từ identity provider.' : 'Dán access token do platform team cấp.'} Quyền của bạn do netCI quyết định, không do Portal.</p>
+          <p>{authMode === 'oidc' ? 'Or paste a token from identity provider.' : 'Paste an access token issued by the platform team.'} Your permissions are determined by netCI, not the Portal.</p>
           <form className="login-form" onSubmit={signInToken} noValidate>
             <div className="login-field">
               <label htmlFor="login-token">Access token</label>
@@ -295,15 +295,15 @@ export function LoginPage({ onLogin }: { onLogin: (session: AuthSession) => void
             {error && <div className="login-error" role="alert">{error}</div>}
             <button className="login-primary" type="submit" disabled={busy}>
               {busy ? <Loader2 size={18} className="spin" /> : <LogIn size={18} />}
-              {busy ? 'Đang xác thực…' : 'Đăng nhập'}
+              {busy ? 'Authenticating…' : 'Sign In'}
             </button>
           </form>
           <div className="login-preview-note">
             <KeyRound size={15} />
             <span>
               {authMode === 'oidc'
-                ? 'netCI đang xác thực bằng OIDC: dùng access token từ identity provider của tập đoàn.'
-                : 'netCI đang xác thực bằng token: xem docs/security-model.md để biết cách cấp và thu hồi token.'}
+                ? 'netCI authenticates via OIDC: use an access token from enterprise identity provider.'
+                : 'netCI authenticates via token: see docs/security-model.md on how tokens are issued and revoked.'}
             </span>
           </div>
         </>}

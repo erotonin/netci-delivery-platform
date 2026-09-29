@@ -20,12 +20,12 @@ describe('async states', () => {
     const load = vi.fn(() => new Promise<string>((done) => { resolve = done }))
     render(<Probe load={load} render={(data) => <p>{data}</p>} />)
 
-    expect(screen.getByRole('status', { name: /Đang tải/i })).toBeTruthy()
+    expect(screen.getByRole('status', { name: /(?:Loading|Đang tải)/i })).toBeTruthy()
     expect(screen.queryByText('the data')).toBeNull()
 
     resolve('the data')
     await screen.findByText('the data')
-    expect(screen.queryByRole('status', { name: /Đang tải/i })).toBeNull()
+    expect(screen.queryByRole('status', { name: /(?:Loading|Đang tải)/i })).toBeNull()
   })
 
   it('distinguishes "failed to load" from "there is nothing"', async () => {
@@ -33,7 +33,7 @@ describe('async states', () => {
     // is down" and an empty screen that means "you have no systems" must not look alike.
     const failing = render(<Probe load={() => Promise.reject(new NetciApiError(500, null, 'boom'))} render={() => <p>never</p>} />)
     await screen.findByRole('alert')
-    expect(screen.getByRole('alert').textContent).toMatch(/sự cố|Không kết nối/i)
+    expect(screen.getByRole('alert').textContent).toMatch(/(?:issues|Cannot connect|sự cố|Không kết nối)/i)
     failing.unmount()
 
     render(
@@ -41,10 +41,10 @@ describe('async states', () => {
         load={() => Promise.resolve([])}
         render={() => <p>never</p>}
         isEmpty={(data) => data.length === 0}
-        empty={<p>Chưa có hệ thống nào</p>}
+        empty={<p>No systems yet</p>}
       />,
     )
-    await screen.findByText('Chưa có hệ thống nào')
+    await screen.findByText('No systems yet')
     expect(screen.queryByRole('alert')).toBeNull()
   })
 
@@ -56,7 +56,7 @@ describe('async states', () => {
     render(<Probe load={load} render={(data) => <p>{data as string}</p>} />)
 
     await screen.findByRole('alert')
-    await user.click(screen.getByRole('button', { name: /Thử lại/i }))
+    await user.click(screen.getByRole('button', { name: /(?:Retry|Thử lại)/i }))
 
     await screen.findByText('recovered')
     expect(load).toHaveBeenCalledTimes(2)
@@ -74,17 +74,17 @@ describe('async states', () => {
     )
 
     expect(screen.getByText('last good value')).toBeTruthy()
-    expect(screen.getByRole('status').textContent).toMatch(/gần nhất/i)
+    expect(screen.getByRole('status').textContent).toMatch(/(?:recently|gần nhất)/i)
     // And a way to try again, rather than requiring a page reload.
-    screen.getByRole('button', { name: /Thử lại/i }).click()
+    screen.getByRole('button', { name: /(?:Retry|Thử lại)/i }).click()
     expect(reload).toHaveBeenCalled()
   })
 
   it('translates status codes into something the reader can act on', () => {
-    expect(describeError(new NetciApiError(403, null, 'x'))).toMatch(/không có quyền/i)
-    expect(describeError(new NetciApiError(429, null, 'x'))).toMatch(/quá nhiều/i)
-    expect(describeError(new NetciApiError(500, null, 'x'))).toMatch(/sự cố/i)
-    expect(describeError(new Error('offline'))).toMatch(/Không kết nối/i)
+    expect(describeError(new NetciApiError(403, null, 'x'))).toMatch(/(?:permission|không có quyền)/i)
+    expect(describeError(new NetciApiError(429, null, 'x'))).toMatch(/(?:Too many requests|quá nhiều)/i)
+    expect(describeError(new NetciApiError(500, null, 'x'))).toMatch(/(?:issues|sự cố)/i)
+    expect(describeError(new Error('offline'))).toMatch(/(?:Cannot connect|Không kết nối)/i)
   })
 })
 
@@ -96,10 +96,10 @@ describe('ErrorBoundary', () => {
 
     render(<ErrorBoundary><Broken /></ErrorBoundary>)
 
-    expect(screen.getByRole('alert').textContent).toMatch(/Giao diện gặp lỗi/i)
+    expect(screen.getByRole('alert').textContent).toMatch(/(?:Application Error|Giao diện gặp lỗi)/i)
     // The user is told their data is safe and given a way forward, not a white page.
-    expect(screen.getByText(/không bị ảnh hưởng/i)).toBeTruthy()
-    expect(screen.getByRole('button', { name: /Tải lại Portal/i })).toBeTruthy()
+    expect(screen.getByText(/(?:remains unaffected|không bị ảnh hưởng)/i)).toBeTruthy()
+    expect(screen.getByRole('button', { name: /(?:Reload Portal|Tải lại Portal)/i })).toBeTruthy()
     consoleError.mockRestore()
   })
 

@@ -57,7 +57,7 @@ describe('ModuleSettings', () => {
 
     await user.click(screen.getByRole('button', { name: /Confirm Remove/i }))
     expect(deleteModule).toHaveBeenCalledWith('backend-api')
-    await screen.findByText(/Đã xóa module backend-api/i)
+    await screen.findByText(/(?:Deleted module backend-api|Đã xóa module backend-api)/i)
     expect(onDeleted).toHaveBeenCalled()
   })
 

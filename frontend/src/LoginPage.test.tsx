@@ -59,7 +59,7 @@ describe('LoginPage', () => {
 
     render(<LoginPage onLogin={vi.fn()} />)
 
-    await waitFor(() => expect(screen.getByRole('alert').textContent).toMatch(/API đang chạy/i))
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toMatch(/(?:API is running|API đang chạy)/i))
     expect(screen.getByRole('alert').textContent).toMatch(/NETCI_AUTH_MODE=token/)
     expect(screen.queryByLabelText('Access token')).toBeNull()
   })
@@ -73,14 +73,14 @@ describe('LoginPage', () => {
     // A rejected token must not become a session.
     whoamiMock.mockImplementationOnce(() => Promise.reject(new NetciApiError(401, null, 'unknown or revoked token')))
     await user.type(field, 'bad-token')
-    await user.click(screen.getByRole('button', { name: /Đăng nhập/i }))
-    await waitFor(() => expect(screen.getByRole('alert').textContent).toMatch(/không hợp lệ|thu hồi/i))
+    await user.click(screen.getByRole('button', { name: /(?:Sign In|Đăng nhập)/i }))
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toMatch(/(?:Invalid credentials|không hợp lệ|thu hồi)/i))
     expect(onLogin).not.toHaveBeenCalled()
 
     whoamiMock.mockResolvedValueOnce(identity('token'))
     await user.clear(field)
     await user.type(field, 'good-token')
-    await user.click(screen.getByRole('button', { name: /Đăng nhập/i }))
+    await user.click(screen.getByRole('button', { name: /(?:Sign In|Đăng nhập)/i }))
 
     await waitFor(() => expect(onLogin).toHaveBeenCalledWith({ token: 'good-token', identity: identity('token') }))
   })
@@ -93,9 +93,9 @@ describe('LoginPage', () => {
 
     whoamiMock.mockImplementationOnce(() => Promise.reject(new NetciApiError(403, null, 'no group maps to a netCI role')))
     await user.type(field, 'roleless-token')
-    await user.click(screen.getByRole('button', { name: /Đăng nhập/i }))
+    await user.click(screen.getByRole('button', { name: /(?:Sign In|Đăng nhập)/i }))
 
-    await waitFor(() => expect(screen.getByRole('alert').textContent).toMatch(/chưa được cấp quyền/i))
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toMatch(/(?:not been assigned|chưa được cấp quyền)/i))
     expect(onLogin).not.toHaveBeenCalled()
   })
 

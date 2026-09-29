@@ -185,10 +185,10 @@ describe('ReleaseCalendarPage', () => {
     fireEvent.click(screen.getByRole('button', { name: /new freeze/i }))
     expect(await screen.findByTestId('freeze-form')).toBeTruthy()
 
-    fireEvent.change(screen.getByLabelText(/name/i), { target: { value: 'Test Freeze' } })
-    fireEvent.change(screen.getByLabelText(/start/i), { target: { value: '2026-09-24T10:00' } })
-    fireEvent.change(screen.getByLabelText(/end/i), { target: { value: '2026-09-24T18:00' } })
-    fireEvent.change(screen.getByLabelText(/reason/i), { target: { value: 'Test reason' } })
+    fireEvent.change(screen.getByLabelText(/^name$/i), { target: { value: 'Test Freeze' } })
+    fireEvent.change(screen.getByLabelText(/^start$/i), { target: { value: '2026-09-24T10:00' } })
+    fireEvent.change(screen.getByLabelText(/^end$/i), { target: { value: '2026-09-24T18:00' } })
+    fireEvent.change(screen.getByLabelText(/^reason$/i), { target: { value: 'Test reason' } })
 
     fireEvent.click(screen.getByRole('button', { name: /create freeze/i }))
 
@@ -200,12 +200,12 @@ describe('ReleaseCalendarPage', () => {
   it('month grid renders the right number of cells for a fixed now (Monday-first)', async () => {
     render(<ReleaseCalendarPage now={new Date('2026-10-15T12:00:00+07:00')} />)
     expect(await screen.findByTestId('calendar-summary')).toBeTruthy()
-    expect(screen.getByText('Tháng 10, 2026')).toBeTruthy()
-    expect(screen.getByRole('grid', { name: /lịch phát hành theo tháng/i })).toBeTruthy()
+    expect(screen.getByText('October, 2026')).toBeTruthy()
+    expect(screen.getByRole('grid', { name: /monthly release calendar/i })).toBeTruthy()
 
     // 7 columns Monday-first
     const headers = screen.getAllByRole('columnheader').map((el) => el.textContent)
-    expect(headers).toEqual(['T2', 'T3', 'T4', 'T5', 'T6', 'T7', 'CN'])
+    expect(headers).toEqual(['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'])
 
     // October 2026 has 5 complete weeks = 35 cells
     const cells = screen.getAllByRole('gridcell')
@@ -228,22 +228,22 @@ describe('ReleaseCalendarPage', () => {
     expect(day24.textContent).toContain('payments-api')
   })
 
-  it('next and prev month buttons change the title and reset with Hôm nay', async () => {
+  it('next and prev month buttons change the title and reset with Today', async () => {
     render(<ReleaseCalendarPage now={new Date('2026-09-23T12:00:00+07:00')} />)
     expect(await screen.findByTestId('calendar-summary')).toBeTruthy()
-    expect(screen.getByText('Tháng 9, 2026')).toBeTruthy()
+    expect(screen.getByText('September, 2026')).toBeTruthy()
 
-    fireEvent.click(screen.getByRole('button', { name: 'Tháng sau' }))
-    expect(screen.getByText('Tháng 10, 2026')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Next month' }))
+    expect(screen.getByText('October, 2026')).toBeTruthy()
 
-    fireEvent.click(screen.getByRole('button', { name: 'Tháng trước' }))
-    expect(screen.getByText('Tháng 9, 2026')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Previous month' }))
+    expect(screen.getByText('September, 2026')).toBeTruthy()
 
-    fireEvent.click(screen.getByRole('button', { name: 'Tháng trước' }))
-    expect(screen.getByText('Tháng 8, 2026')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Previous month' }))
+    expect(screen.getByText('August, 2026')).toBeTruthy()
 
-    fireEvent.click(screen.getByRole('button', { name: 'Hôm nay' }))
-    expect(screen.getByText('Tháng 9, 2026')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Today' }))
+    expect(screen.getByText('September, 2026')).toBeTruthy()
   })
 
   it('marks days covered by a freeze', async () => {
@@ -294,7 +294,7 @@ describe('ReleaseCalendarPage', () => {
     expect(panel.textContent).toContain('shop-prod-01 is in maintenance now (disk replacement)')
 
     // Close side panel
-    fireEvent.click(screen.getByRole('button', { name: 'Đóng' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }))
     expect(screen.queryByTestId('calendar-side-panel')).toBeNull()
   })
 
@@ -302,7 +302,7 @@ describe('ReleaseCalendarPage', () => {
     render(<ReleaseCalendarPage now={new Date('2026-09-23T12:00:00+07:00')} />)
     expect(await screen.findByTestId('calendar-summary')).toBeTruthy()
 
-    fireEvent.click(screen.getByRole('button', { name: 'Danh sách' }))
+    fireEvent.click(screen.getByRole('button', { name: 'List' }))
 
     const agenda = await screen.findByTestId('calendar-agenda-view')
     expect(agenda).toBeTruthy()

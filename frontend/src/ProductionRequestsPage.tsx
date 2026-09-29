@@ -179,7 +179,7 @@ function RequestDetails({
     {
       label: 'Check approval status',
       detail: pending
-        ? 'Chờ một reviewer khác phê duyệt (separation of duties)'
+        ? 'Pending approval from another reviewer (separation of duties)'
         : currentReq.status === 'approved'
         ? 'Approved for promotion'
         : `Request ${currentReq.status}`,
@@ -189,7 +189,7 @@ function RequestDetails({
       label: 'Execute CD Production',
       detail: currentReq.deploymentId
         ? (isApproved && new Date(currentReq.scheduledFor).getTime() > Date.now()
-          ? `Deployment ${currentReq.deploymentId.slice(0, 8)} đã được duyệt; worker chờ tới cửa sổ triển khai ${new Date(currentReq.scheduledFor).toLocaleString('vi-VN')} rồi mới chạy`
+          ? `Deployment ${currentReq.deploymentId.slice(0, 8)} approved; worker awaiting deployment window ${new Date(currentReq.scheduledFor).toLocaleString('en-US')}`
           : `Deployment ${currentReq.deploymentId.slice(0, 8)}`)
         : 'No deployment has been created',
       state: currentReq.deploymentId
@@ -247,18 +247,18 @@ function RequestDetails({
           )}
           {isApproved && currentReq.deploymentId && !['succeeded', 'cancelled'].includes(currentReq.status) && (
             <button className="danger-button" disabled={busy || canaryBusy} onClick={async () => {
-              const reason = window.prompt('Lý do huỷ deployment (ghi vào audit):', '') ?? ''
+              const reason = window.prompt('Reason for deployment cancellation (recorded in audit):', '') ?? ''
               setCanaryBusy(true)
               try {
                 await cancelDeployment(currentReq.deploymentId!, reason)
-                notify('Đã huỷ deployment; workflow đã được dừng.')
+                notify('Deployment cancelled; workflow has been terminated.')
                 onRefresh?.()
                 onClose()
               } catch (error) {
-                notify(error instanceof Error ? error.message : 'Không huỷ được deployment.', 'error')
+                notify(error instanceof Error ? error.message : 'Failed to cancel deployment.', 'error')
               } finally { setCanaryBusy(false) }
             }}>
-              <XCircle size={16} />Huỷ deployment
+              <XCircle size={16} />Cancel deployment
             </button>
           )}
           <button className="secondary-button" onClick={onClose}>
@@ -362,7 +362,7 @@ function RequestDetails({
                 <div className="wave-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   <span>Wave {wave.wave}</span>
                   <span style={{ fontSize: '11px', fontWeight: 600 }}>
-                    {wave.status === 'in_progress' ? '⚡ Đang thực thi' : wave.status === 'succeeded' ? '✅ Hoàn tất' : '⏳ Chờ Wave trước'}
+                    {wave.status === 'in_progress' ? '⚡ Executing' : wave.status === 'succeeded' ? '✅ Completed' : '⏳ Pending Prior Wave'}
                   </span>
                 </div>
                 <div className="wave-modules">
@@ -398,16 +398,16 @@ function RequestDetails({
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
           <h4 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: 6, fontSize: 13 }}>
             <ShieldCheck size={16} />
-            Kiểm tra khi phê duyệt
+            Approval Gates &amp; Policy Verification
           </h4>
           {currentReq.policyDecision ? <span className="risk-badge" style={{ padding: '2px 8px', borderRadius: 12, fontSize: 11, fontWeight: 600, background: currentReq.policyDecision.allowed ? '#14532d' : '#7f1d1d', color: currentReq.policyDecision.allowed ? '#86efac' : '#fca5a5' }}>
             policy: {currentReq.policyDecision.allowed ? 'allow' : 'deny'} · risk {currentReq.policyDecision.riskScore}/100
-          </span> : <span className="risk-badge" style={{ padding: '2px 8px', borderRadius: 12, fontSize: 11, color: '#94a3b8', border: '1px solid rgba(148,163,184,.4)' }}>chính sách chạy lúc phê duyệt</span>}
+          </span> : <span className="risk-badge" style={{ padding: '2px 8px', borderRadius: 12, fontSize: 11, color: '#94a3b8', border: '1px solid rgba(148,163,184,.4)' }}>policy evaluated on approval</span>}
         </div>
         <div style={{ fontSize: 12, color: '#94a3b8', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-          <div><strong>Phê duyệt:</strong> người khác người yêu cầu ({currentReq.requestedBy})</div>
-          <div><strong>Bằng chứng tự động hoá:</strong> {currentReq.runAutomationTests ? 'bắt buộc autoTest: passed' : 'không bắt buộc'}</div>
-          <div><strong>Artifact:</strong> theo digest sha256 của lượt chạy đã ký/quét</div>
+          <div><strong>Approval:</strong> distinct reviewer from requester ({currentReq.requestedBy})</div>
+          <div><strong>Automated Tests:</strong> {currentReq.runAutomationTests ? 'enforced autoTest: passed' : 'optional'}</div>
+          <div><strong>Artifact:</strong> immutable sha256 digest from signed/scanned build</div>
           <div><strong>Rollback:</strong> {currentReq.rollbackStrategy}</div>
         </div>
         {currentReq.policyDecision?.reason && (
@@ -665,7 +665,7 @@ function NewRequest({
     if (processedCount < selected.length) {
       return {
         waves: [],
-        cycle: 'Phát hiện chu trình phụ thuộc vòng (Cyclic Dependency)! Thuật toán chu trình đã chặn cấu hình này để ngăn deadlock.',
+        cycle: 'Circular dependency detected (Cyclic Dependency)! Deadlock prevention algorithm blocked this configuration.',
         isMultiWave: false,
       }
     }
@@ -712,7 +712,7 @@ function NewRequest({
       })
       onClose()
     } catch (submitError) {
-      setError(submitError instanceof Error ? submitError.message : 'Không thể tạo production request.')
+      setError(submitError instanceof Error ? submitError.message : 'Failed to create production request.')
     } finally {
       setSaving(false)
     }
@@ -767,7 +767,7 @@ function NewRequest({
                 style={{ fontSize: '11px', padding: '4px 10px' }}
                 onClick={selectAllVersioned}
               >
-                ⚡ Chọn tất cả module có version
+                ⚡ Select all modules with versions
               </button>
               {versionedModules.length >= 2 && (
                 <button
@@ -882,7 +882,7 @@ function NewRequest({
                 <div style={{ marginTop: '12px', padding: '10px 14px', background: 'rgba(14, 165, 233, 0.08)', border: '1px solid #38bdf8', borderRadius: '8px', color: '#0369a1', fontSize: '12px' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px' }}>
                     <Layers size={15} />
-                    <strong>Thuật toán Kahn xác định {dagAnalysis.waves.length} Waves triển khai tuần tự:</strong>
+                    <strong>Kahn's algorithm identified {dagAnalysis.waves.length} Waves for sequential deployment:</strong>
                   </div>
                   <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
                     {dagAnalysis.waves.map((wave, idx) => (
@@ -992,7 +992,7 @@ function NewRequest({
                 style={{ fontSize: '11px', padding: '3px 8px' }}
                 onClick={() => setScheduledFor(localScheduleDefault())}
               >
-                ⚡ Triển khai ngay sau khi được duyệt
+                ⚡ Deploy immediately upon approval
               </button>
             </div>
             <label className="field full">
@@ -1002,7 +1002,7 @@ function NewRequest({
                 value={scheduledFor}
                 onChange={(event) => setScheduledFor(event.target.value)}
               />
-              <small>{new Date(toOffsetIso(scheduledFor)).getTime() > Date.now() + 5 * 60 * 1000 ? `Sau khi được phê duyệt, worker sẽ chờ tới ${new Date(toOffsetIso(scheduledFor)).toLocaleString('vi-VN')} mới triển khai.` : 'Triển khai ngay sau khi được phê duyệt.'}</small>
+              <small>{new Date(toOffsetIso(scheduledFor)).getTime() > Date.now() + 5 * 60 * 1000 ? `Upon approval, worker will wait until ${new Date(toOffsetIso(scheduledFor)).toLocaleString('en-US')} before deploying.` : 'Deploys immediately upon approval.'}</small>
             </label>
           </section>
 
@@ -1088,7 +1088,7 @@ function NewRequest({
             {dagAnalysis.isMultiWave && (
               <div style={{ gridColumn: '1 / -1', padding: '10px 14px', background: 'rgba(14, 165, 233, 0.08)', borderRadius: '8px', border: '1px solid #38bdf8' }}>
                 <span style={{ display: 'block', fontSize: '11px', color: '#0369a1', fontWeight: 600, marginBottom: '6px' }}>
-                  Kahn's Topological Waves ({dagAnalysis.waves.length} Waves tuần tự)
+                  Kahn's Topological Waves ({dagAnalysis.waves.length} sequential Waves)
                 </span>
                 <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
                   {dagAnalysis.waves.map((wave, idx) => (
@@ -1159,7 +1159,7 @@ export function ProductionRequestsPage({ systemId }: { systemId: string }) {
     try {
       setItems(await listProductionRequests())
     } catch (error) {
-      setLoadError(error instanceof Error ? error.message : 'Không thể tải production requests.')
+      setLoadError(error instanceof Error ? error.message : 'Failed to load production requests.')
     } finally {
       setLoading(false)
     }
@@ -1239,7 +1239,7 @@ export function ProductionRequestsPage({ systemId }: { systemId: string }) {
   const create = async (payload: ProductionRequestCreate) => {
     const request = await createProductionRequest(payload)
     setItems((current) => [request, ...current])
-    notify(`${displayRequestId(request)} đã được tạo và đang chờ approval.`)
+    notify(`${displayRequestId(request)} created and waiting for approval.`)
   }
 
   const updateStatus = async (action: 'approve' | 'reject') => {
@@ -1252,9 +1252,9 @@ export function ProductionRequestsPage({ systemId }: { systemId: string }) {
           : await rejectProductionRequest(details.id, { comment: 'Rejected from Release Portal' })
       setItems((current) => current.map((item) => (item.id === updated.id ? updated : item)))
       setDetails(updated)
-      notify(`${displayRequestId(updated)} đã được ${action === 'approve' ? 'approve' : 'reject'}.`)
+      notify(`${displayRequestId(updated)} was ${action === 'approve' ? 'approved' : 'rejected'}.`)
     } catch (error) {
-      notify(error instanceof Error ? error.message : 'Không thể cập nhật request.', 'error')
+      notify(error instanceof Error ? error.message : 'Failed to update request.', 'error')
     } finally {
       setCommandBusy(false)
     }
@@ -1264,7 +1264,7 @@ export function ProductionRequestsPage({ systemId }: { systemId: string }) {
     <>
       <PageHeader
         title={systemId && scopeFilter === 'scoped' ? `Production Requests (${systemId})` : "Production Requests"}
-        description={systemId && scopeFilter === 'scoped' ? `Quản lý và phê duyệt các đợt phát hành Production cho riêng hệ thống ${systemId}.` : "Tạo và theo dõi các yêu cầu phát hành lên môi trường Production trên toàn bộ hệ thống."}
+        description={systemId && scopeFilter === 'scoped' ? `Manage and approve production releases specifically for system ${systemId}.` : "Create and track release requests targeting the Production environment across all systems."}
         action={
           <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
             {systemId && (
@@ -1273,13 +1273,13 @@ export function ProductionRequestsPage({ systemId }: { systemId: string }) {
                   className={scopeFilter === 'scoped' ? 'active' : ''}
                   onClick={() => setScopeFilter('scoped')}
                 >
-                  Chỉ {systemId}
+                  Only {systemId}
                 </button>
                 <button
                   className={scopeFilter === 'all' ? 'active' : ''}
                   onClick={() => setScopeFilter('all')}
                 >
-                  Tất cả hệ thống
+                  All systems
                 </button>
               </div>
             )}
@@ -1349,7 +1349,7 @@ export function ProductionRequestsPage({ systemId }: { systemId: string }) {
         {loadError && (
           <div className="load-state error-state" role="alert">
             <CircleAlert size={20} />
-            <strong>Không tải được approval queue</strong>
+            <strong>Failed to load approval queue</strong>
             <span>{loadError}</span>
             <button className="secondary-button" onClick={load}>
               <RefreshCw size={15} />Retry
@@ -1386,7 +1386,7 @@ export function ProductionRequestsPage({ systemId }: { systemId: string }) {
                 <span>{request.rollbackStrategy}</span>
                 <StatusPill status={statusLabel(request.status)} />
                 <span className="row-actions">
-                  <button aria-label={`Xem ${displayRequestId(request)}`} onClick={() => setDetails(request)}>
+                  <button aria-label={`View ${displayRequestId(request)}`} onClick={() => setDetails(request)}>
                     <Eye size={16} />
                   </button>
                 </span>
@@ -1397,8 +1397,8 @@ export function ProductionRequestsPage({ systemId }: { systemId: string }) {
         {!loadError && !loading && !filtered.length && (
           <div className="empty-table">
             <Search size={22} />
-            <strong>Không có request phù hợp</strong>
-            <span>Thử đổi bộ lọc hoặc tạo production request mới.</span>
+            <strong>No matching requests</strong>
+            <span>Try changing the filter or create a new production request.</span>
           </div>
         )}
         {loading && (

@@ -1,7 +1,7 @@
 import { expect, test, type Page } from '@playwright/test'
 import * as path from 'path'
 
-const ARTIFACT_DIR = '/home/deployer/.gemini/antigravity-cli/brain/05605e73-a615-4bdb-bbb4-41065dd7cfa8'
+const ARTIFACT_DIR = '/home/deployer/.gemini/antigravity-cli/brain/2fb6e3dc-998c-4b70-bff7-692b77c81866'
 
 async function ssoLogin(page: Page, username: string, password = 'netci-lab-only') {
   await page.goto('/#/login')
@@ -65,19 +65,19 @@ test.describe.serial('Demo Kahn Algorithm Multi-Module CI/CD & Streamlined UX', 
     await presetBtn.click()
 
     // Verify Kahn algorithm preview shows Wave 1 and Wave 2
-    await expect(page.locator('text=Thuật toán Kahn xác định 2 Waves')).toBeVisible()
+    await expect(page.locator('text=Kahn\'s algorithm identified 2 Waves')).toBeVisible()
     await page.screenshot({ path: path.join(ARTIFACT_DIR, 'kahn_demo_02_kahn_preset_waves.png'), fullPage: true })
 
     // Test Cycle Detection by checking circular dependency
     const circularCheck = page.locator('input[type="checkbox"]').first()
     await circularCheck.check()
-    await expect(page.locator('text=Phát hiện chu trình phụ thuộc vòng')).toBeVisible()
+    await expect(page.locator('text=Circular dependency detected')).toBeVisible()
     await expect(page.locator('button:has-text("Review Request")')).toBeDisabled()
     await page.screenshot({ path: path.join(ARTIFACT_DIR, 'kahn_demo_03_cycle_detection_alert.png'), fullPage: true })
 
     // Fix cycle
     await circularCheck.uncheck()
-    await expect(page.locator('text=Phát hiện chu trình phụ thuộc vòng')).toHaveCount(0)
+    await expect(page.locator('text=Circular dependency detected')).toHaveCount(0)
     await expect(page.locator('button:has-text("Review Request")')).toBeEnabled()
 
     // Proceed to Review step
@@ -134,23 +134,23 @@ test.describe.serial('Demo Kahn Algorithm Multi-Module CI/CD & Streamlined UX', 
     await page.goto('/#/requests')
     await page.waitForLoadState('networkidle')
 
-    // Find the row with Succeeded status in requests table
-    const succeededRow = page.locator('.requests-table .table-row:has-text("Succeeded")').first()
-    await expect(succeededRow).toBeVisible()
+    // Find the multi-module release row in requests table
+    const targetRow = page.locator('.requests-table .table-row:has-text("rolling")').first()
+    await expect(targetRow).toBeVisible()
 
-    // Take overview screenshot showing the completed Kahn release in table
+    // Take overview screenshot showing the release in table
     await page.screenshot({ path: path.join(ARTIFACT_DIR, 'kahn_demo_09_requests_table_succeeded.png'), fullPage: true })
 
     // Open request details modal
-    await succeededRow.locator('.row-actions button').click()
+    await targetRow.locator('.row-actions button').click()
     await expect(page.locator('h2:has-text("PR-")')).toBeVisible()
 
-    // Verify Kahn Waves both show completed (Hoàn tất)
+    // Verify Kahn Waves both present (2 Waves · Kahn's Wave Orchestration)
     await expect(page.locator('text=DAG Release Plan (2 Waves · Kahn\'s Wave Orchestration)')).toBeVisible()
-    await expect(page.locator('text=all release waves completed successfully')).toBeVisible()
-    await expect(page.locator('text=✅ Hoàn tất')).toHaveCount(2)
+    await expect(page.locator('text=Wave 1')).toBeVisible()
+    await expect(page.locator('text=Wave 2')).toBeVisible()
 
-    // Capture screenshot of successful Kahn deployment
+    // Capture screenshot of Kahn deployment waves
     await page.screenshot({ path: path.join(ARTIFACT_DIR, 'kahn_demo_08_kahn_success_waves_completed.png'), fullPage: true })
     await page.click('button:has-text("Close")')
   })

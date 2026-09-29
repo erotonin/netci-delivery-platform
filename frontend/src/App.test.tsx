@@ -49,7 +49,7 @@ describe('App authentication and navigation', () => {
     expect(stored.identity.authMode).toBe('none')
     expect(stored.token).toBeNull()
 
-    const search = screen.getByRole('textbox', { name: /Tìm kiếm toàn cục/i })
+    const search = screen.getByRole('textbox', { name: /(?:Global search|Tìm kiếm toàn cục)/i })
     await user.type(search, 'Notification Worker{Enter}')
     await screen.findByText('Module test page')
     expect(window.location.hash).toBe('#/systems/netChat/modules/notification-worker')
@@ -60,7 +60,7 @@ describe('App authentication and navigation', () => {
 
     // No logout control exists when netCI runs without authentication: there is no
     // credential to drop, and a button that signs the user straight back in is a lie.
-    expect(screen.queryByRole('button', { name: /Đăng xuất/i })).toBeNull()
-    expect(screen.getAllByText(/Chưa bật xác thực/i).length).toBeGreaterThan(0)
+    expect(screen.queryByRole('button', { name: /(?:Sign out|Đăng xuất)/i })).toBeNull()
+    expect(screen.getAllByText(/(?:Authentication disabled|Chưa bật xác thực)/i).length).toBeGreaterThan(0)
   })
 })

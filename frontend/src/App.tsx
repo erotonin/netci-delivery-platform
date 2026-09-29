@@ -141,13 +141,13 @@ function PortalApp({ session, onLogout }: { session: AuthSession; onLogout: () =
 
   const { page, systemId, moduleId, settingsOpen } = route
   return <PortalShell page={page} systemId={systemId} moduleId={moduleId} session={session} navigate={navigate} onLogout={onLogout} onSettings={handleSettings}>
-    {apiState === 'offline' && <div className="connection-banner" role="status"><WifiOff size={16} /><span><strong>Backend chưa kết nối.</strong> Portal không hiển thị dữ liệu thay thế; hãy khôi phục API để tiếp tục.</span><button onClick={checkApi}><RefreshCw size={15} />Thử lại</button></div>}
+    {apiState === 'offline' && <div className="connection-banner" role="status"><WifiOff size={16} /><span><strong>Backend not connected.</strong> The portal does not display fallback data; restore the API to continue.</span><button onClick={checkApi}><RefreshCw size={15} />Retry</button></div>}
     {platformSettingsOpen && (
       <Modal
         title="Platform Settings & Runtime Overview"
-        description="Thông tin kiến trúc kết nối, hạ tầng triển khai và trạng thái an ninh của netCI Delivery Platform."
+        description="Architecture connection info, deployment infrastructure, and security posture of netCI Delivery Platform."
         onClose={() => setPlatformSettingsOpen(false)}
-        footer={<button className="primary-button" onClick={() => setPlatformSettingsOpen(false)}>Đóng</button>}
+        footer={<button className="primary-button" onClick={() => setPlatformSettingsOpen(false)}>Close</button>}
       >
         <div className="form-grid" style={{ gap: '12px' }}>
           <label className="field full">

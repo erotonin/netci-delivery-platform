@@ -305,11 +305,11 @@ export function PipelinesPage({ moduleId, navigate }: { moduleId?: string; navig
     try {
       if (view.type === 'designer' && view.pipelineName) {
         await proposeSharedPipelineVersion(view.pipelineName, designerScript)
-        feedback.notify('Thành công! Cần một quản trị viên khác duyệt để phiên bản có hiệu lực.')
+        feedback.notify('Success! Requires approval from another administrator to take effect.')
         setView({ type: 'detail', name: view.pipelineName })
       } else {
         await createSharedPipeline({ name: designerName, description: designerDesc, script: designerScript })
-        feedback.notify('Thành công! Cần một quản trị viên khác duyệt để phiên bản có hiệu lực.')
+        feedback.notify('Success! Requires approval from another administrator to take effect.')
         setView({ type: 'detail', name: designerName })
       }
     } catch (err) {
@@ -355,14 +355,14 @@ export function PipelinesPage({ moduleId, navigate }: { moduleId?: string; navig
     const hints: string[] = []
     const currentIds = parsedStages.map(s => s.id)
     blocks.required.forEach(req => {
-      if (!currentIds.includes(req)) hints.push(`Thiếu stage bắt buộc: ${req}`)
+      if (!currentIds.includes(req)) hints.push(`Missing required stage: ${req}`)
     })
     let lastOrderIdx = -1
     parsedStages.filter(s => s.builtin).forEach(s => {
       const orderIdx = blocks.order.indexOf(s.id)
       if (orderIdx !== -1) {
         if (orderIdx < lastOrderIdx) {
-          hints.push(`Sai thứ tự: ${s.id} bị đặt sai vị trí`)
+          hints.push(`Incorrect order: ${s.id} is misplaced`)
         } else {
           lastOrderIdx = orderIdx
         }
@@ -390,32 +390,32 @@ export function PipelinesPage({ moduleId, navigate }: { moduleId?: string; navig
   const handleApplyFullCiTemplate = () => {
     const fullTemplate = [
       '# @stage unit-test "Unit Tests" builtin',
-      '# [CI Gate 1] Chạy bộ unit test và xuất báo cáo coverage',
+      '# [CI Gate 1] Run unit tests and publish coverage report',
       'netci-builtin unit-test',
       '',
       '# @stage build "Build" builtin',
-      '# [CI Gate 2] Đóng gói container image và gắn mã băm SHA256 bất biến',
+      '# [CI Gate 2] Package container image and compute immutable SHA256 digest',
       'netci-builtin build',
       '',
       '# @stage sbom "Generate SBOM" builtin',
-      '# [CI Gate 3] Xuất danh mục thành phần phần mềm CycloneDX JSON',
+      '# [CI Gate 3] Export CycloneDX JSON software bill of materials',
       'netci-builtin sbom',
       '',
       '# @stage vulnerability-scan "Vulnerability Scan" builtin',
-      '# [CI Gate 4] Quét lỗ hổng bảo mật offline bằng Trivy CVE DB',
+      '# [CI Gate 4] Scan for vulnerabilities offline using air-gapped Trivy CVE DB',
       'netci-builtin vulnerability-scan',
       '',
       '# @stage sign "Sign Artifact" builtin',
-      '# [CI Gate 5] Ký số nguồn gốc Provenance theo chuẩn SLSA v1 bằng Cosign',
+      '# [CI Gate 5] Cryptographically sign provenance attestations (SLSA v1) with Cosign',
       'netci-builtin sign',
       '',
       '# @stage publish "Publish Artifact" builtin',
-      '# [CI Gate 6] Đẩy container image đã ký số lên Harbor Registry',
+      '# [CI Gate 6] Push signed container image to Harbor Registry',
       'netci-builtin publish',
       '',
     ].join('\n')
     setDesignerScript(fullTemplate)
-    feedback.notify('Đã nạp toàn bộ kịch bản CI chuẩn SLSA v1 đầy đủ!')
+    feedback.notify('SLSA v1 standard CI template loaded!')
   }
 
   if (view.type === 'list') {
@@ -423,7 +423,7 @@ export function PipelinesPage({ moduleId, navigate }: { moduleId?: string; navig
       <div className="pl-container">
         <PageHeader 
           title="Shared Pipelines" 
-          description="Quản lý và thiết kế các kịch bản CI pipeline dùng chung (test, build, SBOM, scan, ký số, publish). CD (deploy) do netCI Temporal worker thực hiện theo từng module."
+          description="Manage and design shared CI pipeline workflows (test, build, SBOM, scan, sign, publish). CD (deployment) is handled per module by netCI Temporal workers."
           action={
             <button className="primary-button" onClick={() => setView({ type: 'designer' })}>
               <Plus size={16} style={{ marginRight: '6px' }} />
@@ -435,9 +435,9 @@ export function PipelinesPage({ moduleId, navigate }: { moduleId?: string; navig
         {moduleId && (
           <div className="pl-card" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: '#eff6ff', borderColor: '#bfdbfe' }}>
             <div>
-              <strong style={{ color: '#1e40af' }}>Module {moduleId} dùng pipeline:</strong>
+              <strong style={{ color: '#1e40af' }}>Module {moduleId} shared pipeline:</strong>
               <div style={{ fontSize: '0.875rem', color: '#1d4ed8' }}>
-                {currentModulePipeline ? `Đang dùng pipeline: ${currentModulePipeline}` : 'Chưa gán shared pipeline nào (đang dùng stage catalog riêng của module).'}
+                {currentModulePipeline ? `Current pipeline: ${currentModulePipeline}` : 'No shared pipeline assigned (using module-specific stage catalog).'}
               </div>
             </div>
             <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
@@ -446,7 +446,7 @@ export function PipelinesPage({ moduleId, navigate }: { moduleId?: string; navig
                 onChange={e => setCurrentModulePipeline(e.target.value)}
                 style={{ padding: '0.4rem', borderRadius: '4px', border: '1px solid #93c5fd' }}
               >
-                <option value="">-- Không dùng shared pipeline --</option>
+                <option value="">-- No shared pipeline --</option>
                 {pipelines.filter(p => p.activeVersion !== null).map(p => (
                   <option key={p.name} value={p.name}>{p.name} (v{p.activeVersion})</option>
                 ))}
@@ -458,7 +458,7 @@ export function PipelinesPage({ moduleId, navigate }: { moduleId?: string; navig
                   setSavingModule(true)
                   try {
                     await setModuleSharedPipeline(moduleId, currentModulePipeline || null)
-                    feedback.notify('Đã cập nhật pipeline cho module!')
+                    feedback.notify('Updated pipeline for module!')
                   } catch (err) {
                     feedback.notify(errorText(err), 'error')
                   } finally {
@@ -466,14 +466,14 @@ export function PipelinesPage({ moduleId, navigate }: { moduleId?: string; navig
                   }
                 }}
               >
-                {savingModule ? 'Lưu…' : 'Save'}
+                {savingModule ? 'Saving…' : 'Save'}
               </button>
             </div>
           </div>
         )}
 
-        {loadingPipelines && <div>Đang tải danh sách pipelines...</div>}
-        {errorPipelines && <div style={{ color: 'red' }}>Lỗi: {errorPipelines}</div>}
+        {loadingPipelines && <div>Loading pipelines...</div>}
+        {errorPipelines && <div style={{ color: 'red' }}>Error: {errorPipelines}</div>}
 
         <div className="pl-grid">
           {pipelines.map(p => (
@@ -488,10 +488,10 @@ export function PipelinesPage({ moduleId, navigate }: { moduleId?: string; navig
                   {p.activeVersion !== null ? (
                     <span className="pl-chip pl-chip-builtin" style={{ margin: 0 }}>v{p.activeVersion}</span>
                   ) : (
-                    <span style={{ fontSize: '0.75rem', color: '#dc2626', background: '#fee2e2', padding: '2px 8px', borderRadius: '12px' }}>chưa có bản được duyệt</span>
+                    <span style={{ fontSize: '0.75rem', color: '#dc2626', background: '#fee2e2', padding: '2px 8px', borderRadius: '12px' }}>no approved version</span>
                   )}
                 </div>
-                <p style={{ fontSize: '0.875rem', color: '#6b7280', margin: '0 0 1rem 0' }}>{p.description || 'Không có mô tả'}</p>
+                <p style={{ fontSize: '0.875rem', color: '#6b7280', margin: '0 0 1rem 0' }}>{p.description || 'No description'}</p>
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', marginBottom: '1rem' }}>
                   {p.stages.map(s => (
                     <span key={s.id} className={`pl-chip ${s.builtin ? 'pl-chip-builtin' : 'pl-chip-custom'}`} style={{ margin: 0 }}>
@@ -501,9 +501,9 @@ export function PipelinesPage({ moduleId, navigate }: { moduleId?: string; navig
                 </div>
               </div>
               <div style={{ borderTop: '1px solid var(--border, #e5e7eb)', paddingTop: '0.75rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.75rem', color: '#6b7280' }}>
-                <span>Sử dụng bởi: {p.usedBy.length} modules</span>
+                <span>Used by: {p.usedBy.length} modules</span>
                 {p.pendingVersions.length > 0 && (
-                  <span style={{ color: '#d97706', fontWeight: 500 }}>chờ duyệt v{p.pendingVersions.join(', v')}</span>
+                  <span style={{ color: '#d97706', fontWeight: 500 }}>pending approval v{p.pendingVersions.join(', v')}</span>
                 )}
               </div>
             </div>
@@ -523,12 +523,12 @@ export function PipelinesPage({ moduleId, navigate }: { moduleId?: string; navig
     return (
       <div className="pl-container">
         <button className="link-button" onClick={() => setView(view.pipelineName ? { type: 'detail', name: view.pipelineName } : { type: 'list' })} style={{ alignSelf: 'flex-start', display: 'flex', alignItems: 'center' }}>
-          <ChevronLeft size={16}/> Quay lại
+          <ChevronLeft size={16}/> Back
         </button>
 
         <PageHeader 
-          title={view.pipelineName ? `Propose new version for ${view.pipelineName}` : 'Tạo pipeline mới'}
-          description="Thiết kế kịch bản CI Pipeline tự động. Chọn các stage từ danh mục hoặc bổ sung các lệnh shell tuỳ chỉnh để thực thi trong Jenkins."
+          title={view.pipelineName ? `Propose new version for ${view.pipelineName}` : 'Create New Pipeline'}
+          description="Design automated CI pipeline workflows. Select stages from the building block catalog or customize shell execution commands in Jenkins."
         />
 
         {/* Visual Pipeline Flow Ribbon */}
@@ -536,10 +536,10 @@ export function PipelinesPage({ moduleId, navigate }: { moduleId?: string; navig
           <div className="pl-flow-header">
             <h4>
               <GitBranch size={16} />
-              Luồng thực thi Pipeline (Execution Flow Preview)
+              Pipeline Execution Flow Preview
             </h4>
             <span style={{ fontSize: '12px', color: 'var(--muted, #64748b)' }}>
-              {parsedStages.length} stage(s) được cấu hình
+              {parsedStages.length} configured stage(s)
             </span>
           </div>
 
@@ -570,7 +570,7 @@ export function PipelinesPage({ moduleId, navigate }: { moduleId?: string; navig
               </div>
             ))}
 
-            <div className="pl-flow-node cd" title="CD Deployment do netCI Temporal Worker đảm nhiệm">
+            <div className="pl-flow-node cd" title="CD Deployment coordinated by netCI Temporal Worker">
               <Check size={14} />
               <span>CD Deployment</span>
               <small style={{ fontSize: '10px', background: '#10b981', color: '#fff', padding: '1px 4px', borderRadius: '3px' }}>Temporal</small>
@@ -578,8 +578,8 @@ export function PipelinesPage({ moduleId, navigate }: { moduleId?: string; navig
           </div>
         </div>
         
-        {designerLoading && <div>Đang tải building blocks...</div>}
-        {designerError && <div style={{ color: 'red' }}>Lỗi: {designerError}</div>}
+        {designerLoading && <div>Loading building blocks...</div>}
+        {designerError && <div style={{ color: 'red' }}>Error: {designerError}</div>}
         
         {blocks && (
           <div className="pl-designer">
@@ -595,13 +595,13 @@ export function PipelinesPage({ moduleId, navigate }: { moduleId?: string; navig
                     type="button" 
                     className="pl-editor-btn" 
                     onClick={handleApplyFullCiTemplate}
-                    title="Nạp toàn bộ kịch bản chuẩn SLSA v1"
+                    title="Load complete SLSA v1 standard template"
                   >
-                    ⚡ Điền mẫu chuẩn
+                    ⚡ Load Standard Template
                   </button>
                 </div>
                 <p style={{ margin: '0 0 10px 0', fontSize: '11.5px', color: 'var(--muted, #64748b)' }}>
-                  Các cổng kiểm soát chất lượng & an toàn thực thi bằng toolbox bảo mật của netCI:
+                  Standard quality & security gates executed in netCI build toolbox:
                 </p>
 
                 <div className="pl-blocks-list">
@@ -619,12 +619,12 @@ export function PipelinesPage({ moduleId, navigate }: { moduleId?: string; navig
                           {b.required && <span style={{ color: '#ef4444', fontSize: '10.5px' }}>(Required)</span>}
                         </div>
                         <div className="pl-block-desc">
-                          {b.id === 'unit-test' && 'Chạy Unit Test & kiểm tra Code Coverage'}
-                          {b.id === 'build' && 'Compile source code & đóng gói Docker container'}
-                          {b.id === 'sbom' && 'Xuất file CycloneDX SBOM kiểm kê phụ thuộc'}
-                          {b.id === 'vulnerability-scan' && 'Quét lỗ hổng offline bằng Trivy CVE DB'}
-                          {b.id === 'sign' && 'Ký số nguồn gốc Provenance SLSA v1 bằng Cosign'}
-                          {b.id === 'publish' && 'Đẩy image & chữ ký số lên Harbor Registry'}
+                          {b.id === 'unit-test' && 'Run unit tests & code coverage analysis'}
+                          {b.id === 'build' && 'Compile source code & package Docker container'}
+                          {b.id === 'sbom' && 'Export CycloneDX SBOM dependency inventory'}
+                          {b.id === 'vulnerability-scan' && 'Scan for vulnerabilities offline using air-gapped Trivy DB'}
+                          {b.id === 'sign' && 'Cryptographically sign provenance attestations (SLSA v1) via Cosign'}
+                          {b.id === 'publish' && 'Publish container image & signatures to Harbor Registry'}
                         </div>
                         {added ? (
                           <div style={{ fontSize: '11px', color: '#10b981', marginTop: '4px', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '4px' }}>
@@ -632,7 +632,7 @@ export function PipelinesPage({ moduleId, navigate }: { moduleId?: string; navig
                           </div>
                         ) : (
                           <div style={{ fontSize: '11px', color: '#2563eb', marginTop: '4px', fontWeight: 500, display: 'flex', alignItems: 'center', gap: '4px' }}>
-                            <Plus size={12} /> Thêm vào pipeline
+                            <Plus size={12} /> Add to pipeline
                           </div>
                         )}
                       </button>
@@ -645,14 +645,14 @@ export function PipelinesPage({ moduleId, navigate }: { moduleId?: string; navig
                   Templates
                 </h4>
                 <p style={{ margin: '0 0 10px 0', fontSize: '11.5px', color: 'var(--muted, #64748b)' }}>
-                  Các bước kiểm tra mở rộng (chạy trong sandbox không cấp credentials):
+                  Custom verification steps (executed in sandbox without privileged credentials):
                 </p>
 
                 <div className="pl-blocks-list">
                   {blocks.templates.map(t => (
                     <button 
                       key={t.id} 
-                      className="pl-block-item"
+                      className="pl-block-item" 
                       onClick={() => setDesignerScript(prev => prev + (prev.endsWith('\n') || !prev ? '' : '\n') + t.block + '\n')}
                     >
                       <div className="pl-block-title">
@@ -671,12 +671,12 @@ export function PipelinesPage({ moduleId, navigate }: { moduleId?: string; navig
               {!view.pipelineName && (
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
                   <div>
-                    <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, marginBottom: '4px' }}>Tên Pipeline</label>
-                    <input className="pl-input" placeholder="Tên pipeline (vd: my-pipeline)" value={designerName} onChange={e => setDesignerName(e.target.value)} pattern="^[a-z][a-z0-9-]{1,62}$" />
+                    <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, marginBottom: '4px' }}>Pipeline Name</label>
+                    <input className="pl-input" placeholder="Pipeline name (e.g. my-pipeline)" value={designerName} onChange={e => setDesignerName(e.target.value)} pattern="^[a-z][a-z0-9-]{1,62}$" />
                   </div>
                   <div>
-                    <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, marginBottom: '4px' }}>Mô tả kịch bản</label>
-                    <input className="pl-input" placeholder="Mô tả ngắn" value={designerDesc} onChange={e => setDesignerDesc(e.target.value)} />
+                    <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, marginBottom: '4px' }}>Description</label>
+                    <input className="pl-input" placeholder="Short description" value={designerDesc} onChange={e => setDesignerDesc(e.target.value)} />
                   </div>
                 </div>
               )}
@@ -697,7 +697,7 @@ export function PipelinesPage({ moduleId, navigate }: { moduleId?: string; navig
                   onClick={() => setEditorTab('script')}
                 >
                   <FileCode size={15} />
-                  <span>pipeline.sh (CI Script Thực Thi)</span>
+                  <span>pipeline.sh (CI Script)</span>
                 </button>
                 <button 
                   type="button" 
@@ -705,7 +705,7 @@ export function PipelinesPage({ moduleId, navigate }: { moduleId?: string; navig
                   onClick={() => setEditorTab('compliance')}
                 >
                   <ShieldCheck size={15} />
-                  <span>Kiểm toán Tuân thủ SLSA & Quality Gate</span>
+                  <span>SLSA & Quality Gate Compliance Audit</span>
                 </button>
               </div>
 
@@ -739,25 +739,25 @@ export function PipelinesPage({ moduleId, navigate }: { moduleId?: string; navig
                     {editorTab === 'jenkinsfile' && (
                       <>
                         <span style={{ fontSize: '11px', color: '#a78bfa', marginRight: '6px' }}>
-                          ⚡ Sinh tự động từ các stages được chọn
+                          ⚡ Auto-generated from selected stages
                         </span>
                         <button type="button" className="pl-editor-btn" onClick={handleCopyJenkinsfile}>
                           {copiedJenkinsfile ? <Check size={12} color="#10b981" /> : <Copy size={12} />}
-                          {copiedJenkinsfile ? 'Đã chép Jenkinsfile' : 'Sao chép Jenkinsfile'}
+                          {copiedJenkinsfile ? 'Copied Jenkinsfile' : 'Copy Jenkinsfile'}
                         </button>
                       </>
                     )}
                     {editorTab === 'script' && (
                       <>
                         <span style={{ fontSize: '11px', color: '#94a3b8' }}>
-                          {designerScript.split('\n').length} dòng · {parsedStages.length} stage(s)
+                          {designerScript.split('\n').length} lines · {parsedStages.length} stage(s)
                         </span>
                         <button type="button" className="pl-editor-btn" onClick={handleCopyScript}>
                           {copiedScript ? <Check size={12} color="#10b981" /> : <Copy size={12} />}
-                          {copiedScript ? 'Đã chép' : 'Sao chép'}
+                          {copiedScript ? 'Copied' : 'Copy'}
                         </button>
                         <button type="button" className="pl-editor-btn" onClick={() => setDesignerScript('')}>
-                          Làm sạch
+                          Clear
                         </button>
                       </>
                     )}
@@ -771,7 +771,7 @@ export function PipelinesPage({ moduleId, navigate }: { moduleId?: string; navig
                   value={designerScript}
                   onChange={e => setDesignerScript(e.target.value)}
                   onKeyDown={handleKeyDown}
-                  placeholder="# Kịch bản pipeline CI thực thi trên runner..."
+                  placeholder="# CI pipeline execution script running on runner..."
                   style={{ display: editorTab === 'script' ? 'block' : 'none' }}
                 />
 
@@ -784,10 +784,10 @@ export function PipelinesPage({ moduleId, navigate }: { moduleId?: string; navig
                 {editorTab === 'compliance' && (
                   <div style={{ padding: '1.25rem', color: '#e2e8f0' }}>
                     <h4 style={{ margin: '0 0 10px 0', fontSize: '14px', color: '#fff' }}>
-                      Báo cáo Tuân thủ Cổng Kiểm soát (Gate Verification)
+                      Quality Gate Compliance Verification
                     </h4>
                     <p style={{ margin: '0 0 14px 0', fontSize: '12px', color: '#94a3b8' }}>
-                      netCI áp dụng nguyên tắc 100% Fail-closed. Bản build chỉ được thăng cấp (promote) khi vượt qua toàn bộ các cổng bảo mật bắt buộc:
+                      netCI enforces a strict 100% Fail-closed policy. Builds are promoted only when all mandatory quality gates pass:
                     </p>
 
                     <div className="pl-compliance-grid">
@@ -796,39 +796,39 @@ export function PipelinesPage({ moduleId, navigate }: { moduleId?: string; navig
                           {hasBuild ? <CheckCircle2 size={15} /> : <AlertTriangle size={15} />}
                           Compile & Build Container
                         </strong>
-                        <small>{hasBuild ? 'Gắn SHA256 digest bất biến' : 'Chưa có stage build'}</small>
+                        <small>{hasBuild ? 'Attaches immutable SHA-256 digest' : 'Build stage missing'}</small>
                       </div>
 
                       <div className="pl-compliance-card" style={{ borderColor: hasSbom ? '#10b981' : '#f87171' }}>
                         <strong style={{ color: hasSbom ? '#059669' : '#dc2626' }}>
                           {hasSbom ? <CheckCircle2 size={15} /> : <AlertTriangle size={15} />}
-                          Xuất SBOM CycloneDX
+                          Export CycloneDX SBOM
                         </strong>
-                        <small>{hasSbom ? 'Kiểm kê nguồn gốc thư viện' : 'Thiếu stage tạo SBOM'}</small>
+                        <small>{hasSbom ? 'Inventories software dependencies' : 'SBOM stage missing'}</small>
                       </div>
 
                       <div className="pl-compliance-card" style={{ borderColor: hasScan ? '#10b981' : '#f87171' }}>
                         <strong style={{ color: hasScan ? '#059669' : '#dc2626' }}>
                           {hasScan ? <CheckCircle2 size={15} /> : <AlertTriangle size={15} />}
-                          Quét Lỗ Hổng Trivy CVE
+                          Trivy CVE Vulnerability Scan
                         </strong>
-                        <small>{hasScan ? 'Đối chiếu air-gapped CVE DB' : 'Thiếu stage quét CVE'}</small>
+                        <small>{hasScan ? 'Verified against air-gapped CVE database' : 'Vulnerability scan missing'}</small>
                       </div>
 
                       <div className="pl-compliance-card" style={{ borderColor: hasSign ? '#10b981' : '#f87171' }}>
                         <strong style={{ color: hasSign ? '#059669' : '#dc2626' }}>
                           {hasSign ? <CheckCircle2 size={15} /> : <AlertTriangle size={15} />}
-                          Ký Số SLSA v1 (Cosign)
+                          Sign SLSA v1 Provenance (Cosign)
                         </strong>
-                        <small>{hasSign ? 'Chứng thực chữ ký in-toto' : 'Thiếu chữ ký số SLSA'}</small>
+                        <small>{hasSign ? 'Attests cryptographic provenance signature' : 'SLSA signature stage missing'}</small>
                       </div>
 
                       <div className="pl-compliance-card" style={{ borderColor: hasPublish ? '#10b981' : '#f87171' }}>
                         <strong style={{ color: hasPublish ? '#059669' : '#dc2626' }}>
                           {hasPublish ? <CheckCircle2 size={15} /> : <AlertTriangle size={15} />}
-                          Phát hành Harbor Registry
+                          Publish to Harbor Registry
                         </strong>
-                        <small>{hasPublish ? 'Lưu trữ OCI image an toàn' : 'Thiếu stage đẩy Harbor'}</small>
+                        <small>{hasPublish ? 'Stores secure OCI image in registry' : 'Publish stage missing'}</small>
                       </div>
                     </div>
                   </div>
@@ -838,8 +838,8 @@ export function PipelinesPage({ moduleId, navigate }: { moduleId?: string; navig
               {/* Preview stages card */}
               <div className="pl-card">
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
-                  <h4 style={{ margin: 0, fontSize: '0.875rem' }}>Thứ tự thực thi các Stages ({parsedStages.length})</h4>
-                  <span style={{ fontSize: '11px', color: 'var(--muted, #64748b)' }}>Thực thi tuần tự trong build toolbox</span>
+                  <h4 style={{ margin: 0, fontSize: '0.875rem' }}>Execution Stage Order ({parsedStages.length})</h4>
+                  <span style={{ fontSize: '11px', color: 'var(--muted, #64748b)' }}>Sequential execution in build toolbox</span>
                 </div>
                 <ol className="pl-preview-list">
                   {parsedStages.map((s, idx) => (
@@ -857,16 +857,16 @@ export function PipelinesPage({ moduleId, navigate }: { moduleId?: string; navig
               
               {designerSubmitError && (
                 <div style={{ color: 'red', padding: '1rem', background: '#fee2e2', borderRadius: '6px', fontSize: '13px' }}>
-                  Lỗi: {designerSubmitError}
+                  Error: {designerSubmitError}
                 </div>
               )}
               
               <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
                 <button className="primary-button" style={{ alignSelf: 'flex-start' }} disabled={designerSubmitting} onClick={handleDesignerSubmit}>
-                  {designerSubmitting ? 'Đang gửi…' : 'Gửi để duyệt'}
+                  {designerSubmitting ? 'Submitting…' : 'Submit for approval'}
                 </button>
                 <small style={{ color: 'var(--muted, #64748b)', fontSize: '12px' }}>
-                  * Sau khi gửi, cần một Quản trị viên (Platform Admin) khác phê duyệt để phiên bản có hiệu lực (Quy tắc 4 mắt ADR-058).
+                  * After submitting, a separate Platform Admin must approve before this version takes effect (Separation of Duties ADR-058).
                 </small>
               </div>
             </div>
@@ -880,25 +880,25 @@ export function PipelinesPage({ moduleId, navigate }: { moduleId?: string; navig
     return (
       <div className="pl-container">
         <button className="link-button" onClick={() => setView({ type: 'list' })} style={{ alignSelf: 'flex-start', display: 'flex', alignItems: 'center' }}>
-          <ChevronLeft size={16}/> Quay lại danh sách
+          <ChevronLeft size={16}/> Back to list
         </button>
         
-        {detailLoading && <div>Đang tải...</div>}
-        {detailError && <div style={{ color: 'red' }}>Lỗi: {detailError}</div>}
+        {detailLoading && <div>Loading...</div>}
+        {detailError && <div style={{ color: 'red' }}>Error: {detailError}</div>}
         
         {detailPipeline && (
           <>
-            <PageHeader title={detailPipeline.name} description={detailPipeline.description || 'Không có mô tả'} />
+            <PageHeader title={detailPipeline.name} description={detailPipeline.description || 'No description'} />
 
             {/* Visual Pipeline Flow Ribbon for Active Pipeline */}
             <div className="pl-flow-banner">
               <div className="pl-flow-header">
                 <h4>
                   <GitBranch size={16} />
-                  Sơ đồ Stages của Pipeline {detailPipeline.name}
+                  Stage Execution Flow for Pipeline {detailPipeline.name}
                 </h4>
                 <span style={{ fontSize: '12px', color: 'var(--muted, #64748b)' }}>
-                  Phiên bản active: {detailPipeline.activeVersion !== null ? `v${detailPipeline.activeVersion}` : 'Chưa có'}
+                  Active version: {detailPipeline.activeVersion !== null ? `v${detailPipeline.activeVersion}` : 'None'}
                 </span>
               </div>
 
@@ -939,7 +939,7 @@ export function PipelinesPage({ moduleId, navigate }: { moduleId?: string; navig
             <div className="pl-card">
               <div style={{ marginBottom: '1rem' }}>
                 <span style={{ fontWeight: 500 }}>Active version: </span>
-                <span>{detailPipeline.activeVersion !== null ? `v${detailPipeline.activeVersion}` : 'chưa có bản được duyệt'}</span>
+                <span>{detailPipeline.activeVersion !== null ? `v${detailPipeline.activeVersion}` : 'no approved version'}</span>
               </div>
               <div style={{ marginBottom: '1rem' }}>
                 <span style={{ fontWeight: 500 }}>Stages: </span>
@@ -951,7 +951,7 @@ export function PipelinesPage({ moduleId, navigate }: { moduleId?: string; navig
               </div>
               <div>
                 <span style={{ fontWeight: 500 }}>Used by: </span>
-                <span style={{ color: '#6b7280' }}>{detailPipeline.usedBy.join(', ') || 'Chưa có module nào sử dụng'}</span>
+                <span style={{ color: '#6b7280' }}>{detailPipeline.usedBy.join(', ') || 'Not used by any module yet'}</span>
               </div>
               <div style={{ marginTop: '1.5rem' }}>
                 <button 
@@ -970,7 +970,7 @@ export function PipelinesPage({ moduleId, navigate }: { moduleId?: string; navig
             <div className="pl-card">
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1rem' }}>
                 <h4 style={{ margin: 0 }}>Version History</h4>
-                <small style={{ color: 'var(--muted, #64748b)' }}>Nguyên tắc 4 mắt: người tạo không được tự duyệt phiên bản của mình</small>
+                <small style={{ color: 'var(--muted, #64748b)' }}>Separation of duties: Authors cannot approve their own proposed versions</small>
               </div>
               
               <div style={{ overflowX: 'auto' }}>
@@ -994,11 +994,11 @@ export function PipelinesPage({ moduleId, navigate }: { moduleId?: string; navig
                         <td>{new Date(v.createdAt).toLocaleString()}</td>
                         <td>
                           {v.decidedBy ? `${v.decidedBy} at ${new Date(v.decidedAt!).toLocaleString()}` : '-'}
-                          {v.rejectionReason && <div style={{ color: '#991b1b', fontSize: '12px' }}>Lý do: {v.rejectionReason}</div>}
+                          {v.rejectionReason && <div style={{ color: '#991b1b', fontSize: '12px' }}>Reason: {v.rejectionReason}</div>}
                         </td>
                         <td>
                           <button className="link-button" onClick={() => setViewScriptVersion(viewScriptVersion === v.version ? null : v.version)}>
-                            {viewScriptVersion === v.version ? 'Ẩn kịch bản' : 'View script'}
+                            {viewScriptVersion === v.version ? 'Hide script' : 'View script'}
                           </button>
                           {v.status === 'proposed' && (
                             <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.5rem' }}>
@@ -1006,7 +1006,7 @@ export function PipelinesPage({ moduleId, navigate }: { moduleId?: string; navig
                                 className="primary-button" 
                                 style={{ padding: '0.25rem 0.5rem', fontSize: '0.75rem' }}
                                 onClick={() => act(() => approveSharedPipelineVersion(detailPipeline.name, v.version),
-                                  `Đã duyệt v${v.version}: các lần chạy mới dùng phiên bản này.`, () => loadDetail(detailPipeline.name))}
+                                  `Approved v${v.version}: new runs will use this version.`, () => loadDetail(detailPipeline.name))}
                               >Approve</button>
                               <button 
                                 className="secondary-button" 
@@ -1018,21 +1018,21 @@ export function PipelinesPage({ moduleId, navigate }: { moduleId?: string; navig
                           {rejectingVersion === v.version && (
                             <div className="pl-inline-form">
                               <input 
-                                placeholder="Lý do từ chối" 
+                                placeholder="Rejection reason" 
                                 value={rejectReason} 
                                 onChange={e => setRejectReason(e.target.value)} 
                               />
                               <button 
-                                className="primary-button"
+                                className="primary-button" 
                                 style={{ padding: '0.25rem 0.5rem', fontSize: '0.75rem' }}
                                 disabled={!rejectReason.trim()}
                                 onClick={() => act(() => rejectSharedPipelineVersion(detailPipeline.name, v.version, rejectReason.trim()),
-                                  `Đã từ chối v${v.version}.`, () => {
+                                  `Rejected v${v.version}.`, () => {
                                     setRejectingVersion(null)
                                     setRejectReason('')
                                     loadDetail(detailPipeline.name)
                                   })}
-                              >Gửi</button>
+                              >Submit</button>
                             </div>
                           )}
                         </td>
@@ -1045,7 +1045,7 @@ export function PipelinesPage({ moduleId, navigate }: { moduleId?: string; navig
               {viewScriptVersion !== null && (
                 <div style={{ marginTop: '1.5rem' }}>
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
-                    <h4 style={{ margin: 0 }}>Kịch bản phiên bản v{viewScriptVersion}</h4>
+                    <h4 style={{ margin: 0 }}>Pipeline Script (v{viewScriptVersion})</h4>
                     <div className="pl-editor-tabs" style={{ marginBottom: 0 }}>
                       <button 
                         type="button" 

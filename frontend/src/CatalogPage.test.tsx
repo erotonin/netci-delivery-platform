@@ -222,26 +222,26 @@ describe('Catalog explanations, intro panel and contextual hints', () => {
     )
 
     // Intro panel header & lead paragraph
-    expect(await screen.findByRole('heading', { level: 2, name: /Giới thiệu Service Catalog/i })).toBeTruthy()
+    expect(await screen.findByRole('heading', { level: 2, name: /Service Catalog Overview/i })).toBeTruthy()
     expect(
-      screen.getByText(/Service Catalog là danh bạ của mọi service\/module: ai sở hữu, mức độ quan trọng \(tier\), vòng đời, phụ thuộc giữa các service/i)
+      screen.getByText(/The Service Catalog is the directory for every service\/module/i)
     ).toBeTruthy()
     expect(
-      screen.getByText(/Nó là nguồn sự thật cho câu hỏi “service này của ai, gọi tới ai, có được deploy không”/i)
+      screen.getByText(/It is the single source of truth for “who owns this service, what does it call, and can it be deployed\?”/i)
     ).toBeTruthy()
 
     // 3 tab explanation cards
     expect(screen.getByRole('heading', { level: 3, name: /^Services$/i })).toBeTruthy()
-    expect(screen.getByText(/Danh bạ định danh mọi service\/module: quản lý team sở hữu/i)).toBeTruthy()
+    expect(screen.getByText(/Identity directory for every service\/module: manages owning teams/i)).toBeTruthy()
 
     expect(screen.getByRole('heading', { level: 3, name: /^Previews$/i })).toBeTruthy()
-    expect(screen.getByText(/Môi trường preview tạm thời và cô lập cho một merge request/i)).toBeTruthy()
+    expect(screen.getByText(/Ephemeral and isolated preview environments for a merge\/pull request/i)).toBeTruthy()
 
     expect(screen.getByRole('heading', { level: 3, name: /^Resources$/i })).toBeTruthy()
-    expect(screen.getByText(/Cổng tự phục vụ yêu cầu tài nguyên đám mây/i)).toBeTruthy()
+    expect(screen.getByText(/Self-service portal for cloud resources/i)).toBeTruthy()
 
-    // Each card specifies what a user can try right now ("Demo được gì")
-    const demoLabels = screen.getAllByText('Demo được gì:')
+    // Each card specifies what a user can try right now ("Available capabilities")
+    const demoLabels = screen.getAllByText('Available capabilities:')
     expect(demoLabels.length).toBe(3)
   })
 
@@ -253,22 +253,22 @@ describe('Catalog explanations, intro panel and contextual hints', () => {
     )
 
     // Initially open by default
-    const toggleButton = await screen.findByRole('button', { name: 'Ẩn giải thích' })
+    const toggleButton = await screen.findByRole('button', { name: 'Hide overview' })
     expect(toggleButton).toBeTruthy()
-    expect(screen.getByText(/Service Catalog là danh bạ của mọi service\/module/i)).toBeTruthy()
+    expect(screen.getByText(/The Service Catalog is the directory for every service\/module/i)).toBeTruthy()
 
     // Click toggle to collapse
     fireEvent.click(toggleButton)
 
     // Button label switches and content is hidden
-    expect(screen.getByRole('button', { name: 'Xem giải thích' })).toBeTruthy()
-    expect(screen.queryByText(/Service Catalog là danh bạ của mọi service\/module/i)).toBeNull()
+    expect(screen.getByRole('button', { name: 'Show overview' })).toBeTruthy()
+    expect(screen.queryByText(/The Service Catalog is the directory for every service\/module/i)).toBeNull()
     expect(window.localStorage.getItem('netci.catalog.introHidden')).toBe('true')
 
     // Click toggle again to expand
-    fireEvent.click(screen.getByRole('button', { name: 'Xem giải thích' }))
-    expect(screen.getByRole('button', { name: 'Ẩn giải thích' })).toBeTruthy()
-    expect(screen.getByText(/Service Catalog là danh bạ của mọi service\/module/i)).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Show overview' }))
+    expect(screen.getByRole('button', { name: 'Hide overview' })).toBeTruthy()
+    expect(screen.getByText(/The Service Catalog is the directory for every service\/module/i)).toBeTruthy()
     expect(window.localStorage.getItem('netci.catalog.introHidden')).toBe('false')
   })
 
@@ -281,8 +281,8 @@ describe('Catalog explanations, intro panel and contextual hints', () => {
     )
 
     // Should start collapsed
-    expect(await screen.findByRole('button', { name: 'Xem giải thích' })).toBeTruthy()
-    expect(screen.queryByText(/Service Catalog là danh bạ của mọi service\/module/i)).toBeNull()
+    expect(await screen.findByRole('button', { name: 'Show overview' })).toBeTruthy()
+    expect(screen.queryByText(/The Service Catalog is the directory for every service\/module/i)).toBeNull()
   })
 
   it('shows contextual hint on each tab above its content', async () => {
@@ -294,19 +294,19 @@ describe('Catalog explanations, intro panel and contextual hints', () => {
 
     // Tab 1: Services (active by default)
     expect(
-      await screen.findByText(/Services: xem owner\/tier\/lifecycle, đồ thị phụ thuộc, đánh dấu deprecated và kiểm tra chu trình phụ thuộc\./i)
+      await screen.findByText(/Services: inspect owner\/tier\/lifecycle, dependency graphs, mark deprecated, and verify dependency cycles\./i)
     ).toBeTruthy()
 
     // Tab 2: Previews
     fireEvent.click(screen.getByRole('tab', { name: /Ephemeral Preview Environments/i }))
     expect(
-      await screen.findByText(/Previews: môi trường preview tạm thời cho một merge request, tự huỷ khi hết hạn\./i)
+      await screen.findByText(/Previews: ephemeral preview environments for a merge request, auto-destroyed upon expiry\./i)
     ).toBeTruthy()
 
     // Tab 3: Resources
     fireEvent.click(screen.getByRole('tab', { name: /Self-Service Resources/i }))
     expect(
-      await screen.findByText(/Resources: yêu cầu tài nguyên \(DB, bucket…\) qua phê duyệt; provider chưa cấu hình thì trạng thái.*fail-closed.*chứ không giả lập\./i)
+      await screen.findByText(/Resources: request infrastructure resources \(DB, bucket…\) with dual approvals; unconfigured providers fail closed without simulation\./i)
     ).toBeTruthy()
   })
 })

@@ -31,8 +31,8 @@ export function ToolchainPage() {
   return (
     <section className="page" data-testid="toolchain-page">
       <PageHeader
-        title="Quản lý Toolchain"
-        description="Theo dõi phiên bản công cụ chuẩn, phát hiện sai lệch (drift) trên các Jenkins controller và độ tươi mới CSDL Trivy (ADR-056)."
+        title="Toolchain Management"
+        description="Monitor standard tool versions, detect drift across Jenkins controllers, and track Trivy DB freshness (ADR-056)."
         action={
           <button
             type="button"
@@ -40,26 +40,26 @@ export function ToolchainPage() {
             onClick={loadData}
             style={{ padding: '6px 14px', minHeight: '36px', fontSize: '13px' }}
           >
-            <RefreshCw size={14} /> Làm mới
+            <RefreshCw size={14} /> Refresh
           </button>
         }
       />
 
       {state === 'loading' && (
         <div className="panel empty-table" data-testid="toolchain-loading">
-          Đang tải dữ liệu toolchain…
+          Loading toolchain data…
         </div>
       )}
 
       {state === 'error' && (
         <div className="inline-error" role="alert" data-testid="toolchain-error">
-          Không thể tải dữ liệu toolchain: {error}
+          Failed to load toolchain data: {error}
         </div>
       )}
 
       {state === 'ready' && data && (
         <>
-          {/* Cảnh báo độ tươi mới CSDL Trivy */}
+          {/* Trivy DB Freshness Alert */}
           {data.trivyDb.stale ? (
             <div
               className="inline-error"
@@ -79,10 +79,10 @@ export function ToolchainPage() {
             >
               <AlertTriangle size={20} color="var(--red)" />
               <div>
-                <strong>Cảnh báo: Cơ sở dữ liệu Trivy đã quá hạn (Stale)!</strong>
+                <strong>Warning: Trivy database is stale!</strong>
                 <div style={{ fontSize: '12px', marginTop: '2px' }}>
-                  CSDL quan sát lần cuối vào: {data.trivyDb.observedUpdatedAt || 'Chưa có dữ liệu'} (Vượt quá ngưỡng tối đa cho phép {data.trivyDb.maxAgeHours} giờ).
-                  Cần cập nhật CSDL Trivy trên các controller để đảm bảo phát hiện chính xác lỗ hổng bảo mật.
+                  Database last observed at: {data.trivyDb.observedUpdatedAt || 'No data recorded'} (Exceeds maximum threshold of {data.trivyDb.maxAgeHours} hours).
+                  Update the Trivy database on the controllers to ensure accurate vulnerability detection.
                 </div>
               </div>
             </div>
@@ -103,12 +103,12 @@ export function ToolchainPage() {
             >
               <CheckCircle2 size={18} color="var(--green)" />
               <span>
-                <strong>Cơ sở dữ liệu Trivy hợp lệ (Fresh):</strong> Cập nhật lúc {data.trivyDb.observedUpdatedAt || 'N/A'} (Ngưỡng tối đa: {data.trivyDb.maxAgeHours} giờ).
+                <strong>Trivy Database Fresh:</strong> Updated at {data.trivyDb.observedUpdatedAt || 'N/A'} (Max threshold: {data.trivyDb.maxAgeHours} hours).
               </span>
             </div>
           )}
 
-          {/* Sai lệch phiên bản (Drift) */}
+          {/* Version Drift */}
           {data.drift.length > 0 ? (
             <div
               className="panel"
@@ -132,7 +132,7 @@ export function ToolchainPage() {
                 }}
               >
                 <AlertTriangle size={18} />
-                <strong>Phát hiện sai lệch phiên bản ({data.drift.length} cảnh báo drift)</strong>
+                <strong>Version Drift Detected ({data.drift.length} drift warning{data.drift.length === 1 ? '' : 's'})</strong>
               </div>
               <table
                 className="data-table"
@@ -141,9 +141,9 @@ export function ToolchainPage() {
               >
                 <thead>
                   <tr className="table-head">
-                    <th style={{ padding: '10px 14px' }}>Công cụ</th>
-                    <th style={{ padding: '10px 14px' }}>Khai báo chuẩn</th>
-                    <th style={{ padding: '10px 14px' }}>Thực tế quan sát</th>
+                    <th style={{ padding: '10px 14px' }}>Tool</th>
+                    <th style={{ padding: '10px 14px' }}>Declared</th>
+                    <th style={{ padding: '10px 14px' }}>Observed</th>
                     <th style={{ padding: '10px 14px' }}>Controller</th>
                   </tr>
                 </thead>
@@ -161,7 +161,7 @@ export function ToolchainPage() {
                     >
                       <td style={{ padding: '10px 14px' }}>{item.tool}</td>
                       <td style={{ padding: '10px 14px' }}>{item.declared}</td>
-                      <td style={{ padding: '10px 14px' }}>{item.observed || 'Không tìm thấy (null)'}</td>
+                      <td style={{ padding: '10px 14px' }}>{item.observed || 'Not found (null)'}</td>
                       <td style={{ padding: '10px 14px' }}>{item.controllerId || 'default'}</td>
                     </tr>
                   ))}
@@ -185,12 +185,12 @@ export function ToolchainPage() {
             >
               <CheckCircle2 size={18} color="var(--green)" />
               <span>
-                <strong>Không phát hiện sai lệch (Zero Drift):</strong> Toàn bộ công cụ quan sát trên các controller đều khớp với cấu hình chuẩn.
+                <strong>Zero Drift Detected:</strong> All tools observed on controllers match the declared specification.
               </span>
             </div>
           )}
 
-          {/* Bảng công cụ khai báo chuẩn */}
+          {/* Declared Toolchain Table */}
           <div className="panel table-panel" style={{ marginBottom: '24px' }}>
             <div
               style={{
@@ -201,7 +201,7 @@ export function ToolchainPage() {
                 alignItems: 'center',
               }}
             >
-              <strong>Khai báo chuẩn (Declared Toolchain)</strong>
+              <strong>Declared Toolchain Specification</strong>
               {data.declared.toolbox && (
                 <span style={{ fontSize: '12px', color: 'var(--muted)' }}>
                   Toolbox Image: <code>{data.declared.toolbox.image}:{data.declared.toolbox.tag}</code>
@@ -215,10 +215,10 @@ export function ToolchainPage() {
             >
               <thead>
                 <tr className="table-head">
-                  <th style={{ padding: '10px 14px' }}>Công cụ</th>
-                  <th style={{ padding: '10px 14px' }}>Phiên bản khai báo</th>
-                  <th style={{ padding: '10px 14px' }}>Mã băm SHA256 / Gói</th>
-                  <th style={{ padding: '10px 14px' }}>Nguồn tải</th>
+                  <th style={{ padding: '10px 14px' }}>Tool</th>
+                  <th style={{ padding: '10px 14px' }}>Declared Version</th>
+                  <th style={{ padding: '10px 14px' }}>SHA256 Digest / Package</th>
+                  <th style={{ padding: '10px 14px' }}>Source / Download</th>
                 </tr>
               </thead>
               <tbody>
@@ -241,7 +241,7 @@ export function ToolchainPage() {
                           rel="noreferrer"
                           style={{ color: 'var(--blue)', textDecoration: 'none' }}
                         >
-                          Tải về
+                          Download
                         </a>
                       ) : tool.source ? (
                         tool.source
@@ -255,10 +255,10 @@ export function ToolchainPage() {
             </table>
           </div>
 
-          {/* Bảng quan sát thực tế theo controller */}
+          {/* Observed Controllers Table */}
           <div className="panel table-panel">
             <div style={{ padding: '14px 16px', borderBottom: '1px solid var(--border)' }}>
-              <strong>Quan sát thực tế theo Controller (Observed per Controller)</strong>
+              <strong>Observed per Controller</strong>
             </div>
             <table
               className="data-table"
@@ -268,7 +268,7 @@ export function ToolchainPage() {
               <thead>
                 <tr className="table-head">
                   <th style={{ padding: '10px 14px' }}>Controller ID</th>
-                  <th style={{ padding: '10px 14px' }}>Thời gian ghi nhận</th>
+                  <th style={{ padding: '10px 14px' }}>Recorded At</th>
                   <th style={{ padding: '10px 14px' }}>Syft</th>
                   <th style={{ padding: '10px 14px' }}>Trivy</th>
                   <th style={{ padding: '10px 14px' }}>Cosign</th>
@@ -281,7 +281,7 @@ export function ToolchainPage() {
                   <tr>
                     <td colSpan={7} style={{ textAlign: 'center', padding: '32px' }}>
                       <div className="empty-table">
-                        <p>Chưa có dữ liệu quan sát từ agent nào</p>
+                        <p>No observation data from any controller yet</p>
                       </div>
                     </td>
                   </tr>
@@ -355,7 +355,7 @@ export function ToolchainPage() {
   )
 }
 
-const DRIFT_KIND: Record<string, string> = { version: 'khác phiên bản', missing: 'thiếu', undeclared: 'không khai báo' }
+const DRIFT_KIND: Record<string, string> = { version: 'version mismatch', missing: 'missing', undeclared: 'undeclared' }
 
 /** netCI decides the controller image and every plugin; a controller that differs, or whose
  *  plugin list cannot be read, takes no build while enforcement is on (ADR-059). */
@@ -367,15 +367,15 @@ function JenkinsPluginsPanel({ jenkins }: { jenkins: ToolchainJenkins }) {
       <div style={{ padding: '14px 16px', borderBottom: '1px solid var(--border)' }}>
         <strong>Jenkins controller &amp; plugin (ADR-059)</strong>
         <p style={{ margin: '6px 0 0', fontSize: '13px', color: 'var(--muted)' }}>
-          netCI quyết định image controller và phiên bản của từng plugin (kể cả phụ thuộc) trong toolchain/versions.yaml.
+          netCI determines the controller image and each plugin version (including dependencies) in toolchain/versions.yaml.
           {jenkins.enforced
-            ? ' Controller lệch khai báo, hoặc không đọc được danh sách plugin, sẽ không nhận build.'
-            : ' Đang ở chế độ warn: lệch được ghi nhận nhưng build vẫn chạy.'}
+            ? ' Controllers with drifted declarations, or unreadable plugin lists, will not accept builds.'
+            : ' Warning mode: drift is recorded but builds continue to run.'}
         </p>
         {jenkins.controller && (
           <p style={{ margin: '6px 0 0', fontSize: '13px' }}>
             Image: <code className="mono">{jenkins.controller.image}:{jenkins.controller.tag}</code> · base{' '}
-            <code className="mono">{jenkins.controller.base.split('@')[0]}</code> · {plugins.length} plugin
+            <code className="mono">{jenkins.controller.base.split('@')[0]}</code> · {plugins.length} plugins
           </p>
         )}
       </div>
@@ -383,31 +383,31 @@ function JenkinsPluginsPanel({ jenkins }: { jenkins: ToolchainJenkins }) {
         <thead>
           <tr className="table-head">
             <th style={{ padding: '10px 14px' }}>Controller</th>
-            <th style={{ padding: '10px 14px' }}>Trạng thái</th>
-            <th style={{ padding: '10px 14px' }}>Chi tiết</th>
+            <th style={{ padding: '10px 14px' }}>Status</th>
+            <th style={{ padding: '10px 14px' }}>Details</th>
           </tr>
         </thead>
         <tbody>
           {jenkins.controllers.length === 0 && (
-            <tr><td colSpan={3} style={{ padding: '24px', textAlign: 'center', color: 'var(--muted)' }}>Chưa cấu hình Jenkins controller nào (NETCI_CI_MODE khác jenkins)</td></tr>
+            <tr><td colSpan={3} style={{ padding: '24px', textAlign: 'center', color: 'var(--muted)' }}>No Jenkins controllers configured (NETCI_CI_MODE is not jenkins)</td></tr>
           )}
           {jenkins.controllers.map((c) => (
             <tr key={c.controllerId} style={{ borderBottom: '1px solid var(--border)', fontSize: '13px', verticalAlign: 'top' }}>
               <td style={{ padding: '10px 14px' }}><strong>{c.controllerId}</strong></td>
               <td style={{ padding: '10px 14px' }}>
                 {!c.readable
-                  ? <span style={{ color: 'var(--red)', fontWeight: 700 }}><AlertTriangle size={14} /> Không đọc được</span>
+                  ? <span style={{ color: 'var(--red)', fontWeight: 700 }}><AlertTriangle size={14} /> Unreadable</span>
                   : c.drift.length
-                    ? <span style={{ color: 'var(--red)', fontWeight: 700 }}><AlertTriangle size={14} /> Lệch {c.drift.length} plugin</span>
-                    : <span style={{ color: 'var(--green)', fontWeight: 700 }}><CheckCircle2 size={14} /> Khớp ({c.pluginCount} plugin)</span>}
+                    ? <span style={{ color: 'var(--red)', fontWeight: 700 }}><AlertTriangle size={14} /> Drift ({c.drift.length} plugin{c.drift.length === 1 ? '' : 's'})</span>
+                    : <span style={{ color: 'var(--green)', fontWeight: 700 }}><CheckCircle2 size={14} /> Synchronized ({c.pluginCount} plugins)</span>}
               </td>
               <td style={{ padding: '10px 14px' }}>
-                {!c.readable && <span style={{ color: 'var(--muted)' }}>{c.error} — cần quyền Overall/SystemRead cho tài khoản netCI</span>}
+                {!c.readable && <span style={{ color: 'var(--muted)' }}>{c.error} — requires Overall/SystemRead permission for netCI account</span>}
                 {c.drift.length > 0 && (
                   <ul style={{ margin: 0, paddingLeft: '18px' }}>
                     {c.drift.map((d) => (
                       <li key={d.plugin}>
-                        <code className="mono">{d.plugin}</code> {DRIFT_KIND[d.kind] ?? d.kind}: đang chạy {d.observed ?? '—'}, khai báo {d.declared ?? '—'}
+                        <code className="mono">{d.plugin}</code> {DRIFT_KIND[d.kind] ?? d.kind}: running {d.observed ?? '—'}, declared {d.declared ?? '—'}
                       </li>
                     ))}
                   </ul>
@@ -419,7 +419,7 @@ function JenkinsPluginsPanel({ jenkins }: { jenkins: ToolchainJenkins }) {
       </table>
       <div style={{ padding: '10px 16px' }}>
         <button type="button" className="secondary-button" onClick={() => setShowAll((v) => !v)}>
-          {showAll ? 'Ẩn danh sách plugin khai báo' : `Xem ${plugins.length} plugin khai báo`}
+          {showAll ? 'Hide declared plugins' : `View ${plugins.length} declared plugins`}
         </button>
         {showAll && (
           <div style={{ columns: '3 240px', marginTop: '10px', fontSize: '12px' }}>

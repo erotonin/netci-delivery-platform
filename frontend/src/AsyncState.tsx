@@ -49,15 +49,15 @@ export function useAsyncData<T>(load: () => Promise<T>, dependencies: unknown[] 
 /** What went wrong, in words the reader can act on rather than a status code. */
 export function describeError(error: Error | null): string {
   if (error instanceof NetciApiError) {
-    if (error.status === 403) return 'Bạn không có quyền xem dữ liệu này.'
-    if (error.status === 404) return 'Không tìm thấy dữ liệu.'
-    if (error.status === 429) return 'Đang gửi quá nhiều yêu cầu. Chờ một chút rồi thử lại.'
-    if (error.status >= 500) return 'netCI API đang gặp sự cố. Dữ liệu bên dưới có thể đã cũ.'
+    if (error.status === 403) return 'You do not have permission to view this data.'
+    if (error.status === 404) return 'Data not found.'
+    if (error.status === 429) return 'Too many requests. Please wait a moment and try again.'
+    if (error.status >= 500) return 'netCI API is experiencing issues. Displayed data may be outdated.'
   }
-  return 'Không kết nối được tới netCI API.'
+  return 'Cannot connect to netCI API.'
 }
 
-export function Skeleton({ rows = 3, label = 'Đang tải' }: { rows?: number; label?: string }) {
+export function Skeleton({ rows = 3, label = 'Loading' }: { rows?: number; label?: string }) {
   return <div className="skeleton" role="status" aria-live="polite" aria-label={label}>
     {Array.from({ length: rows }, (_, index) => <i key={index} style={{ width: `${100 - index * 12}%` }} />)}
   </div>
@@ -80,7 +80,7 @@ export function LoadFailure({ error, onRetry }: { error: Error | null; onRetry: 
           incident. Truncated, because a stack trace in a panel helps nobody. */}
       {error?.message && <span>{error.message.slice(0, 160)}</span>}
     </div>
-    <button className="secondary-button" onClick={onRetry}><RefreshCw size={15} />Thử lại</button>
+    <button className="secondary-button" onClick={onRetry}><RefreshCw size={15} />Retry</button>
   </div>
 }
 
@@ -109,8 +109,8 @@ export function AsyncPanel<T>({
     {/* A reload that failed still shows the last good data, with a warning: stale data
         that says it is stale beats an empty screen that says nothing. */}
     {state.status === 'error' && <div className="sync-note is-warning" role="status">
-      <CircleAlert size={15} />{describeError(state.error)} Đang hiển thị dữ liệu tải được gần nhất.
-      <button className="link-button" onClick={state.reload}>Thử lại</button>
+      <CircleAlert size={15} />{describeError(state.error)} Displaying the most recently loaded data.
+      <button className="link-button" onClick={state.reload}>Retry</button>
     </div>}
     {children(state.data)}
   </>
@@ -139,11 +139,11 @@ export class ErrorBoundary extends Component<{ children: ReactNode }, { error: E
     if (!this.state.error) return this.props.children
     return <div className="portal-crash" role="alert">
       <CircleAlert size={28} />
-      <h1>Giao diện gặp lỗi</h1>
-      <p>Một phần của Portal không render được. Dữ liệu trên netCI không bị ảnh hưởng.</p>
+      <h1>Application Error</h1>
+      <p>A component of the Portal failed to render. Data on netCI remains unaffected.</p>
       <code>{this.state.error.message.slice(0, 300)}</code>
       <button className="primary-button" onClick={() => { this.setState({ error: null }); window.location.reload() }}>
-        <RefreshCw size={16} />Tải lại Portal
+        <RefreshCw size={16} />Reload Portal
       </button>
     </div>
   }

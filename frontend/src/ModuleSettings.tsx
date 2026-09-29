@@ -25,9 +25,9 @@ function GeneralSettings({ module, moduleId, onDeleted }: { module: SettingsModu
     try {
       const updated = await setModuleOwner(moduleId, owner.trim() || null)
       setForm((current) => ({ ...current, ownerTeam: updated.ownerTeam ?? null }))
-      notify(`Module ${moduleId} nay thuộc team ${updated.ownerTeam ?? '(không có)'}.`)
+      notify(`Module ${moduleId} is now owned by team ${updated.ownerTeam ?? '(none)'}.`)
     } catch (error) {
-      notify(error instanceof Error ? error.message : 'Không thể chuyển team sở hữu.', 'error')
+      notify(error instanceof Error ? error.message : 'Failed to transfer owner team.', 'error')
     } finally {
       setMovingOwner(false)
     }
@@ -37,9 +37,9 @@ function GeneralSettings({ module, moduleId, onDeleted }: { module: SettingsModu
     setSaving(true)
     try {
       await updateModule(moduleId, { displayName: form.name, moduleType: form.type, description: form.description })
-      notify('Đã lưu cấu hình module vào netCI.')
+      notify('Module configuration saved to netCI.')
     } catch (error) {
-      notify(error instanceof Error ? error.message : 'Không thể lưu cấu hình module.', 'error')
+      notify(error instanceof Error ? error.message : 'Failed to save module configuration.', 'error')
     } finally {
       setSaving(false)
     }
@@ -49,18 +49,18 @@ function GeneralSettings({ module, moduleId, onDeleted }: { module: SettingsModu
     setDeleting(true)
     try {
       await deleteModule(moduleId)
-      notify(`Đã xóa module ${moduleId}.`)
+      notify(`Deleted module ${moduleId}.`)
       setRemoveModal(false)
       onDeleted?.()
     } catch (error) {
-      notify(error instanceof Error ? error.message : 'Không thể xóa module.', 'error')
+      notify(error instanceof Error ? error.message : 'Failed to delete module.', 'error')
     } finally {
       setDeleting(false)
     }
   }
 
   return <>
-    <div className="settings-toolbar"><div><h2>General</h2><p>Thông tin module được lưu bền vững trong netCI.</p></div></div>
+    <div className="settings-toolbar"><div><h2>General</h2><p>Module information stored persistently in netCI.</p></div></div>
     <section className="panel settings-card">
       <div className="form-grid">
         <label className="field full"><span>Display name</span><input value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} /></label>
@@ -71,16 +71,16 @@ function GeneralSettings({ module, moduleId, onDeleted }: { module: SettingsModu
       <div className="settings-save"><button className="primary-button" disabled={saving || !form.name.trim()} onClick={save}><Check size={16} />{saving ? 'Saving…' : 'Save changes'}</button></div>
     </section>
     <section className="panel settings-card">
-      <div className="section-heading"><div><h3>Team sở hữu</h3><p>Chỉ thành viên team này xem và thay đổi module; thay đổi cấu hình prod cần một thành viên khác của team phê duyệt.</p></div></div>
+      <div className="section-heading"><div><h3>Owning Team</h3><p>Only members of this team can view and edit the module; prod configuration changes require approval from another team member.</p></div></div>
       <div className="form-grid">
         <label className="field full"><span>Owning team</span>{me.admin
-          ? <><input list="owner-team-options" value={owner} onChange={(event) => setOwner(event.target.value)} placeholder="tên group trong identity provider" /><datalist id="owner-team-options">{me.teams.map((team) => <option key={team} value={team} />)}</datalist></>
-          : <input value={form.ownerTeam ?? '(chưa gán)'} readOnly />}</label>
+          ? <><input list="owner-team-options" value={owner} onChange={(event) => setOwner(event.target.value)} placeholder="group name in identity provider" /><datalist id="owner-team-options">{me.teams.map((team) => <option key={team} value={team} />)}</datalist></>
+          : <input value={form.ownerTeam ?? '(unassigned)'} readOnly />}</label>
       </div>
-      {me.admin && <div className="settings-save"><button className="secondary-button" disabled={movingOwner || (owner.trim() || null) === (form.ownerTeam ?? null)} onClick={transferOwner}>{movingOwner ? 'Đang chuyển…' : 'Chuyển team sở hữu'}</button></div>}
+      {me.admin && <div className="settings-save"><button className="secondary-button" disabled={movingOwner || (owner.trim() || null) === (form.ownerTeam ?? null)} onClick={transferOwner}>{movingOwner ? 'Transferring…' : 'Transfer owner team'}</button></div>}
     </section>
-    <section className="danger-zone"><h3>Danger zone</h3><div><span><strong>Remove module</strong><p>Module sẽ bị gỡ khỏi Release Portal; lịch sử delivery vẫn được giữ lại.</p></span><button className="danger-button" onClick={() => setRemoveModal(true)}>Remove module</button></div></section>
-    {removeModal && <Modal title="Remove module" description={`Are you sure you want to remove ${moduleId}?`} onClose={() => setRemoveModal(false)} footer={<><button className="secondary-button" onClick={() => setRemoveModal(false)}>Cancel</button><button className="danger-button" disabled={deleting} onClick={handleRemove}>{deleting ? 'Removing…' : 'Confirm Remove'}</button></>}><div className="inline-error" role="status">Module sẽ không còn nhận lệnh delivery mới từ portal.</div></Modal>}
+    <section className="danger-zone"><h3>Danger zone</h3><div><span><strong>Remove module</strong><p>The module will be removed from Release Portal; delivery history is preserved.</p></span><button className="danger-button" onClick={() => setRemoveModal(true)}>Remove module</button></div></section>
+    {removeModal && <Modal title="Remove module" description={`Are you sure you want to remove ${moduleId}?`} onClose={() => setRemoveModal(false)} footer={<><button className="secondary-button" onClick={() => setRemoveModal(false)}>Cancel</button><button className="danger-button" disabled={deleting} onClick={handleRemove}>{deleting ? 'Removing…' : 'Confirm Remove'}</button></>}><div className="inline-error" role="status">Module will no longer accept new delivery commands from the portal.</div></Modal>}
   </>
 }
 
@@ -269,16 +269,16 @@ function ActivitySettings({ moduleId }: { moduleId: string }) {
       user: event.actor,
       pipeline: event.pipelineRunId ?? '—',
       detail: event.correlationId ?? '',
-      time: new Date(event.createdAt).toLocaleString('vi-VN'),
+      time: new Date(event.createdAt).toLocaleString('en-US'),
     })))).catch((error) => {
       setAuditEvents([])
-      setLoadError(error instanceof Error ? error.message : 'Không thể tải audit log.')
+      setLoadError(error instanceof Error ? error.message : 'Failed to load audit log.')
     })
   }, [moduleId])
 
   const visibleEvents = filter === 'All actions' ? auditEvents : auditEvents.filter((event) => `${event.action} ${event.pipeline}`.toLowerCase().includes(filter.toLowerCase()))
   const hasHistory = auditEvents.length > 0
-  return <><div className="settings-toolbar"><div><h2>Activity Log</h2><p>Audit trail bền vững, lấy trực tiếp từ backend.</p></div><select value={filter} onChange={(event) => setFilter(event.target.value)}><option>All actions</option><option>Pipeline</option><option>Access</option><option>Version</option></select></div>{loadError && <div className="inline-error" role="alert">{loadError}</div>}<section className="panel table-panel"><div className="data-table audit-table"><div className="table-row table-head"><span>Action</span><span>User</span><span>Pipeline</span><span>Detail</span><span>Time</span></div>{visibleEvents.map((event) => <div className="table-row" key={event.id}><span className="audit-action"><Activity size={15} />{event.action}</span><span>{event.user}</span><span>{event.pipeline}</span><span>{event.detail}</span><span>{event.time}</span></div>)}</div>{!loadError && !visibleEvents.length && <div className="empty-table"><History size={22} /><strong>{hasHistory ? 'No matching activity' : 'No activity yet'}</strong><span>{hasHistory ? 'Try another action filter.' : 'Audit events sẽ xuất hiện sau lệnh delivery đầu tiên.'}</span></div>}</section></>
+  return <><div className="settings-toolbar"><div><h2>Activity Log</h2><p>Persistent audit trail, retrieved directly from the backend.</p></div><select value={filter} onChange={(event) => setFilter(event.target.value)}><option>All actions</option><option>Pipeline</option><option>Access</option><option>Version</option></select></div>{loadError && <div className="inline-error" role="alert">{loadError}</div>}<section className="panel table-panel"><div className="data-table audit-table"><div className="table-row table-head"><span>Action</span><span>User</span><span>Pipeline</span><span>Detail</span><span>Time</span></div>{visibleEvents.map((event) => <div className="table-row" key={event.id}><span className="audit-action"><Activity size={15} />{event.action}</span><span>{event.user}</span><span>{event.pipeline}</span><span>{event.detail}</span><span>{event.time}</span></div>)}</div>{!loadError && !visibleEvents.length && <div className="empty-table"><History size={22} /><strong>{hasHistory ? 'No matching activity' : 'No activity yet'}</strong><span>{hasHistory ? 'Try another action filter.' : 'Audit events will appear after the first delivery command.'}</span></div>}</section></>
 }
 
 export function ModuleSettings({ systemId, moduleId, onClose, onDeleted }: { systemId: string; moduleId: string; onClose: () => void; onDeleted?: () => void }) {

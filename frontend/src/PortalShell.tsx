@@ -15,7 +15,7 @@ const systemTone: Record<string, string> = { unknown: 'gray', healthy: 'green', 
 const iconMap = { frequency: Activity, lead: Clock3, failure: ShieldAlert, recovery: Gauge }
 
 export function StatusPill({ status }: { status: string }) {
-  const key = status.toLowerCase().replace(/ /g, '-').replace('bảo-trì', 'maintenance').replace('pending-checks', 'pending')
+  const key = status.toLowerCase().replace(/ /g, '-').replace('pending-checks', 'pending')
   return <span className={`status status-${key}`}><i />{status}</span>
 }
 
@@ -72,7 +72,7 @@ export function Modal({ title, description, children, footer, onClose, wide = fa
 
   return <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target) onClose() }}>
     <section ref={modalRef} className={`modal ${wide ? 'modal-wide' : ''}`} role="dialog" aria-modal="true" aria-labelledby={titleId} aria-describedby={description ? descriptionId : undefined}>
-      <header><div><h2 id={titleId}>{title}</h2>{description && <p id={descriptionId}>{description}</p>}</div><button type="button" className="icon-button" aria-label="Đóng" onClick={onClose}><X size={18} /></button></header>
+      <header><div><h2 id={titleId}>{title}</h2>{description && <p id={descriptionId}>{description}</p>}</div><button type="button" className="icon-button" aria-label="Close" onClick={onClose}><X size={18} /></button></header>
       <div className="modal-body">{children}</div>
       <footer>{footer}</footer>
     </section>
@@ -120,14 +120,14 @@ function Sidebar({ page, systemId, moduleId, moduleLinks, navigationSystems, ses
         <span className="avatar">NA</span>
         <span>
           <strong>{session.identity.principal.displayName}</strong>
-          <small>Chưa bật xác thực</small>
+          <small>Authentication disabled</small>
         </span>
       </div>
     ) : (
       <button
         className="sidebar-user"
         onClick={onLogout}
-        title="Bấm để Đăng xuất / Chuyển tài khoản (admin ↔ dev)"
+        title="Click to sign out / switch account (admin ↔ dev)"
         style={{ cursor: 'pointer', textAlign: 'left', width: '100%', border: 'none', background: 'transparent' }}
       >
         <span className="avatar">{session.identity.principal.displayName.slice(0, 2).toUpperCase()}</span>
@@ -138,7 +138,7 @@ function Sidebar({ page, systemId, moduleId, moduleLinks, navigationSystems, ses
         <LogOut size={17} style={{ marginLeft: 'auto', opacity: 0.8 }} />
       </button>
     )}
-    <button className="sidebar-close" aria-label="Đóng menu" onClick={close}><X size={20} /></button>
+    <button className="sidebar-close" aria-label="Close menu" onClick={close}><X size={20} /></button>
   </aside>
 }
 
@@ -186,15 +186,15 @@ function TopBar({ page, systemId, moduleId, moduleLinks, navigationSystems, sess
   const results = query.trim() ? searchItems.filter((item) => `${item.label} ${item.detail}`.toLowerCase().includes(query.trim().toLowerCase())).slice(0, 7) : searchItems.slice(0, 5)
   const selectResult = (action: () => void) => { action(); setQuery(''); setSearchOpen(false) }
   return <header className="topbar">
-    <button className="mobile-menu" aria-label="Mở menu" onClick={onMenu}><Menu size={20} /></button>
+    <button className="mobile-menu" aria-label="Open menu" onClick={onMenu}><Menu size={20} /></button>
     <div className="breadcrumbs">{crumbs.filter(Boolean).map((crumb, index) => <span key={`${crumb}-${index}`}>{index > 0 && <i>/</i>}{crumb}</span>)}</div>
-    <div className="global-search-wrap"><label className="global-search"><Search size={16} /><input aria-label="Tìm kiếm toàn cục" placeholder="Search systems, modules…" value={query} onFocus={() => setSearchOpen(true)} onBlur={() => setTimeout(() => setSearchOpen(false), 200)} onChange={(event) => { setQuery(event.target.value); setSearchOpen(true) }} onKeyDown={(event) => { if (event.key === 'Escape') setSearchOpen(false); if (event.key === 'Enter' && results[0]) selectResult(results[0].action) }} /></label>{searchOpen && <section className="global-search-results" aria-label="Search results">{results.map((item) => <button key={item.key} onMouseDown={(event) => event.preventDefault()} onClick={() => selectResult(item.action)}><Search size={14} /><span><strong>{item.label}</strong><small>{item.detail}</small></span></button>)}{!results.length && <div><strong>No matching destination</strong><small>Try a system or module name.</small></div>}</section>}</div>
+    <div className="global-search-wrap"><label className="global-search"><Search size={16} /><input aria-label="Global search" placeholder="Search systems, modules…" value={query} onFocus={() => setSearchOpen(true)} onBlur={() => setTimeout(() => setSearchOpen(false), 200)} onChange={(event) => { setQuery(event.target.value); setSearchOpen(true) }} onKeyDown={(event) => { if (event.key === 'Escape') setSearchOpen(false); if (event.key === 'Enter' && results[0]) selectResult(results[0].action) }} /></label>{searchOpen && <section className="global-search-results" aria-label="Search results">{results.map((item) => <button key={item.key} onMouseDown={(event) => event.preventDefault()} onClick={() => selectResult(item.action)}><Search size={14} /><span><strong>{item.label}</strong><small>{item.detail}</small></span></button>)}{!results.length && <div><strong>No matching destination</strong><small>Try a system or module name.</small></div>}</section>}</div>
     <div className="topbar-actions">
-      <button className="icon-button notification-button" aria-label="Thông báo" aria-expanded={notifications} onClick={() => setNotifications(!notifications)}><Bell size={18} /></button>
-      <button className="icon-button" aria-label="Cài đặt" onClick={onSettings}><Settings size={18} /></button>
+      <button className="icon-button notification-button" aria-label="Notifications" aria-expanded={notifications} onClick={() => setNotifications(!notifications)}><Bell size={18} /></button>
+      <button className="icon-button" aria-label="Settings" onClick={onSettings}><Settings size={18} /></button>
       {session.token === null ? (
         <span className="auth-pill auth-pill-none" style={{ fontSize: '0.8rem', padding: '4px 10px', background: 'rgba(255,255,255,0.06)', borderRadius: '12px', color: 'var(--text-muted)' }}>
-          Chưa bật xác thực
+          Authentication disabled
         </span>
       ) : (
         <button
@@ -213,7 +213,7 @@ function TopBar({ page, systemId, moduleId, moduleLinks, navigationSystems, sess
             color: 'var(--text-main)',
             fontSize: '0.85rem'
           }}
-          title={`Đang đăng nhập: ${session.identity.principal.displayName} (${roleLabel(session)}). Bấm để Đăng xuất / Đổi tài khoản.`}
+          title={`Signed in as: ${session.identity.principal.displayName} (${roleLabel(session)}). Click to sign out / switch account.`}
         >
           <span className="avatar" style={{ width: '22px', height: '22px', fontSize: '0.75rem' }}>
             {session.identity.principal.displayName.slice(0, 2).toUpperCase()}
@@ -249,7 +249,7 @@ export function PortalShell({ children, page, systemId, moduleId, session, navig
   }, [page, systemId, moduleId])
   return <div className="portal-shell">
     <Sidebar page={page} systemId={systemId} moduleId={moduleId} moduleLinks={moduleLinks} navigationSystems={navigationSystems} session={session} navigate={(next, options) => { navigate(next, options); setMenuOpen(false) }} onLogout={onLogout} open={menuOpen} close={() => setMenuOpen(false)} />
-    {menuOpen && <button className="mobile-overlay" aria-label="Đóng menu" onClick={() => setMenuOpen(false)} />}
+    {menuOpen && <button className="mobile-overlay" aria-label="Close menu" onClick={() => setMenuOpen(false)} />}
     <div className="portal-main"><TopBar page={page} systemId={systemId} moduleId={moduleId} moduleLinks={moduleLinks} navigationSystems={navigationSystems} session={session} navigate={navigate} onSettings={onSettings} onLogout={onLogout} onMenu={() => setMenuOpen(true)} /><main className="page-content">{children}</main></div>
   </div>
 }

@@ -90,18 +90,18 @@ describe('PipelinesPage', () => {
     await screen.findByText('standard-go')
     
     // Check pending badge
-    expect(screen.getByText('chờ duyệt v2')).toBeTruthy()
+    expect(screen.getByText('pending approval v2')).toBeTruthy()
     
     // Check used-by count
-    expect(screen.getByText('Sử dụng bởi: 2 modules')).toBeTruthy()
+    expect(screen.getByText('Used by: 2 modules')).toBeTruthy()
     
     // Check active version formatting
     expect(screen.getByText('v1')).toBeTruthy()
     
     // Check pipeline without active version
     expect(screen.getByText('no-active')).toBeTruthy()
-    expect(screen.getByText('chưa có bản được duyệt')).toBeTruthy()
-    expect(screen.getByText('Sử dụng bởi: 0 modules')).toBeTruthy()
+    expect(screen.getByText('no approved version')).toBeTruthy()
+    expect(screen.getByText('Used by: 0 modules')).toBeTruthy()
   })
 
   it('designer: new pipeline prefilled with required builtin blocks; clicking a template appends its block to the textarea; a builtin already present is disabled', async () => {
@@ -114,7 +114,7 @@ describe('PipelinesPage', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'New pipeline' }))
     
     // Wait for designer to load
-    await screen.findByText('Tạo pipeline mới')
+    await screen.findByText('Create New Pipeline')
     
     // Check textarea is prefilled with required blocks (build and sbom)
     const textarea = screen.getByLabelText('Pipeline script') as HTMLTextAreaElement
@@ -148,15 +148,15 @@ describe('PipelinesPage', () => {
     render(<PipelinesPage navigate={vi.fn()} />)
     fireEvent.click(await screen.findByRole('button', { name: 'New pipeline' }))
     
-    await screen.findByText('Tạo pipeline mới')
+    await screen.findByText('Create New Pipeline')
     
-    const nameInput = screen.getByPlaceholderText('Tên pipeline (vd: my-pipeline)')
-    const descInput = screen.getByPlaceholderText('Mô tả ngắn')
+    const nameInput = screen.getByPlaceholderText('Pipeline name (e.g. my-pipeline)')
+    const descInput = screen.getByPlaceholderText('Short description')
     
     fireEvent.change(nameInput, { target: { value: 'my-pipe' } })
     fireEvent.change(descInput, { target: { value: 'cool pipe' } })
     
-    fireEvent.click(screen.getByRole('button', { name: 'Gửi để duyệt' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Submit for approval' }))
     
     await waitFor(() => {
       expect(createSharedPipeline).toHaveBeenCalledWith({
@@ -166,7 +166,7 @@ describe('PipelinesPage', () => {
       })
     })
     
-    await screen.findByText(`Lỗi: ${errorMsg}`)
+    await screen.findByText(`Error: ${errorMsg}`)
   })
 
   it('detail: approve calls approveSharedPipelineVersion; reject requires a reason and calls rejectSharedPipelineVersion', async () => {
@@ -198,8 +198,8 @@ describe('PipelinesPage', () => {
     const rejectBtn = screen.getByRole('button', { name: 'Reject' })
     fireEvent.click(rejectBtn)
     
-    const rejectReasonInput = screen.getByPlaceholderText('Lý do từ chối')
-    const rejectSubmitBtn = screen.getByRole('button', { name: 'Gửi' })
+    const rejectReasonInput = screen.getByPlaceholderText('Rejection reason')
+    const rejectSubmitBtn = screen.getByRole('button', { name: 'Submit' })
     
     // initially disabled
     expect(rejectSubmitBtn).toHaveProperty('disabled', true)
@@ -224,7 +224,7 @@ describe('PipelinesPage', () => {
 
     render(<PipelinesPage moduleId="payments-api" navigate={vi.fn()} />)
     
-    await screen.findByText('Module payments-api dùng pipeline:')
+    await screen.findByText('Module payments-api shared pipeline:')
     
     const select = screen.getByRole('combobox') as HTMLSelectElement
     expect(select.value).toBe('standard-go') // populated from module

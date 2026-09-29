@@ -127,27 +127,27 @@ function GeneralStep({
       <span><Layers3 size={18} /></span>
       <div>
         <h2>Select or define a module</h2>
-        <p>Chọn phân hệ từ danh mục DCIM hoặc tạo cấu hình phân hệ Local trực tiếp.</p>
+        <p>Select a module from DCIM catalog or create a local module configuration directly.</p>
       </div>
     </div>
     <div className="segmented compact" style={{ marginBottom: '16px' }}>
-      <button className={source === 'local' ? 'active' : ''} onClick={() => onSourceChange('local')}>Tạo Module Local (Tùy chọn runtime)</button>
-      <button className={source === 'dcim' ? 'active' : ''} onClick={() => onSourceChange('dcim')}>Chọn từ DCIM ({modules.length})</button>
+      <button className={source === 'local' ? 'active' : ''} onClick={() => onSourceChange('local')}>Create Local Module</button>
+      <button className={source === 'dcim' ? 'active' : ''} onClick={() => onSourceChange('dcim')}>Select from DCIM ({modules.length})</button>
     </div>
     {source === 'dcim' ? (
       <>
-        {integrationStatus === 'not_configured' && <div className="inline-error" role="status">DCIM chưa được cấu hình (NETCI_DCIM_BASE_URL). Bạn có thể chuyển sang tab "Tạo Module Local" để tiếp tục ngay.</div>}
+        {integrationStatus === 'not_configured' && <div className="inline-error" role="status">DCIM is not configured (NETCI_DCIM_BASE_URL). You can switch to "Create Local Module" tab to continue.</div>}
         <div className="dcim-module-list">
           {modules.map((item) => <button disabled={item.registered} className={selected === item.id ? 'selected' : ''} onClick={() => onSelect(item.id)} key={item.id}>
             <span className="radio">{selected === item.id && <i />}</span>
             <span className="module-symbol"><Box size={17} /></span>
-            <span><strong>{item.name}</strong><small>{item.id}{item.description ? ` · ${item.description}` : ''} · nguồn: {item.source ?? 'DCIM'}</small></span>
+            <span><strong>{item.name}</strong><small>{item.id}{item.description ? ` · ${item.description}` : ''} · source: {item.source ?? 'DCIM'}</small></span>
             {item.registered ? <em>Already added</em> : <ChevronRight size={17} />}
           </button>)}
         </div>
-        {integrationStatus === 'ready' && !modules.length && <div className="inline-empty"><Box size={23} /><span>NetBox có tenant này nhưng chưa có device nào — nên chưa có device role để chọn làm module.</span></div>}
-        {integrationStatus === 'not_registered' && <div className="inline-empty"><Box size={23} /><span>NetBox chưa có tenant "{systemId}". Tạo tenant và device (role = module) trong NetBox, hoặc dùng tab "Tạo Module Local".</span></div>}
-        {integrationStatus === 'error' && <div className="inline-error" role="status">Không truy vấn được DCIM — kiểm tra NetBox. netCI không tự bịa danh sách module.</div>}
+        {integrationStatus === 'ready' && !modules.length && <div className="inline-empty"><Box size={23} /><span>NetBox has this tenant but no devices — no device roles available to select as a module.</span></div>}
+        {integrationStatus === 'not_registered' && <div className="inline-empty"><Box size={23} /><span>NetBox has no tenant "{systemId}". Create a tenant and device (role = module) in NetBox, or use "Create Local Module".</span></div>}
+        {integrationStatus === 'error' && <div className="inline-error" role="status">Failed to query DCIM — verify NetBox status. netCI does not invent module lists.</div>}
       </>
     ) : (
       <>
@@ -206,7 +206,7 @@ function GeneralStep({
         <div className="panel wizard-form" style={{ marginBottom: '20px' }}>
         <div className="form-grid">
           <label className="field">
-            <span>Module code / ID (chữ thường, gạch nối) *</span>
+            <span>Module code / ID (lowercase, hyphens) *</span>
             <input
               value={customModule.code}
               onChange={(e) => {
@@ -248,16 +248,16 @@ function GeneralStep({
               <input
                 value={customModule.repositoryUrl}
                 onChange={(e) => onCustomModuleChange({ ...customModule, repositoryUrl: e.target.value })}
-                placeholder="https://github.com/my-org/core-api hoặc file:///path/to/local/git"
+                placeholder="https://github.com/my-org/core-api or file:///path/to/local/git"
               />
 
             <div style={{ marginTop: '10px', padding: '10px 14px', background: 'rgba(59, 130, 246, 0.08)', borderRadius: '8px', border: '1px solid rgba(59, 130, 246, 0.2)' }}>
               <div style={{ fontWeight: 600, color: '#60a5fa', fontSize: '0.84rem', marginBottom: '3px' }}>
-                💡 Phân biệt giữa Mã Nguồn (Code) và Cấu hình Pipeline (netci.yaml):
+                💡 Distinction between Source Code and Pipeline Configuration (netci.yaml):
               </div>
               <p style={{ margin: 0, fontSize: '0.78rem', color: '#cbd5e1', lineHeight: 1.5 }}>
-                • <strong>Mã nguồn (Code)</strong>: Chứa logic nghiệp vụ (.py, .ts, .go, Dockerfile...). Liên kết Git URL mà Jenkins có thể checkout được.<br />
-                • <strong>netci.yaml</strong>: Chỉ là file cấu hình các bước CI/CD (Test, Build, Scan, Deploy), được xem trước và tuỳ biến ở Bước 2.
+                • <strong>Source Code</strong>: Contains application business logic (.py, .ts, .go, Dockerfile...). Provide a Git URL checkoutable by Jenkins.<br />
+                • <strong>netci.yaml</strong>: CI/CD workflow steps (Test, Build, Scan, Deploy), previewed and customizable in Step 2.
               </p>
             </div>
           </div>
@@ -268,7 +268,7 @@ function GeneralStep({
               onChange={(e) => {
                 onInformationChange({ ...information, description: e.target.value })
               }}
-              placeholder="Mô tả chức năng nghiệp vụ của module..."
+              placeholder="Describe the business purpose of the module..."
             />
           </label>
         </div>
@@ -280,9 +280,9 @@ function GeneralStep({
       <div className="panel wizard-form">
         <div className="form-grid">
           <label className="field full"><span>Display name</span><input value={information.displayName} onChange={(event) => onInformationChange({ ...information, displayName: event.target.value })} /></label>
-          <label className="field"><span>Module code (device role trong NetBox)</span><input value={module.id} readOnly /></label>
-          <label className="field"><span>Type *</span><select value={information.moduleType} onChange={(event) => onInformationChange({ ...information, moduleType: event.target.value })}><option value="">— chọn —</option><option>Backend</option><option>Frontend</option><option>Worker</option><option>Gateway</option></select></label>
-          <label className="field full"><span>Repository URL *</span><input value={customModule.repositoryUrl} onChange={(event) => onCustomModuleChange({ ...customModule, repositoryUrl: event.target.value })} placeholder="URL git mà Jenkins checkout được" /><small>NetBox chỉ biết máy chủ; nguồn mã của module là do bạn khai.</small></label>
+          <label className="field"><span>Module code (device role in NetBox)</span><input value={module.id} readOnly /></label>
+          <label className="field"><span>Type *</span><select value={information.moduleType} onChange={(event) => onInformationChange({ ...information, moduleType: event.target.value })}><option value="">— select —</option><option>Backend</option><option>Frontend</option><option>Worker</option><option>Gateway</option></select></label>
+          <label className="field full"><span>Repository URL *</span><input value={customModule.repositoryUrl} onChange={(event) => onCustomModuleChange({ ...customModule, repositoryUrl: event.target.value })} placeholder="Git URL checkoutable by Jenkins" /><small>NetBox only tracks hosts; module source repository is configured here.</small></label>
           <label className="field full"><span>Description</span><textarea value={information.description} onChange={(event) => onInformationChange({ ...information, description: event.target.value })} /></label>
         </div>
       </div>
@@ -290,8 +290,8 @@ function GeneralStep({
     <div className="info-banner">
       <CheckCircle2 size={18} />
       <div>
-        <strong>Bước tiếp theo: Thiết lập CI/CD & Runtime</strong>
-        <p>Ở bước sau bạn sẽ cấu hình Pipeline runner và chọn Target triển khai (Kubernetes, Docker container, hoặc Linux Systemd).</p>
+        <strong>Next Step: CI/CD &amp; Runtime Setup</strong>
+        <p>In the next steps, you will select the shared CI pipeline and configure deployment targets (Kubernetes, Docker container, or Linux Systemd).</p>
       </div>
     </div>
   </div>
@@ -322,7 +322,7 @@ export function PipelineStep({
       })
       .catch((err) => {
         if (!active) return
-        setError(err instanceof Error ? err.message : 'Không thể tải danh sách pipelines')
+        setError(err instanceof Error ? err.message : 'Failed to load shared pipelines')
         setLoading(false)
       })
     return () => {
@@ -338,23 +338,23 @@ export function PipelineStep({
       <div className="wizard-section-title">
         <span><GitBranch size={18} /></span>
         <div>
-          <h2>Chọn pipeline CI chia sẻ</h2>
-          <p>Pipeline này chỉ thực hiện quy trình CI (build, test, scan); việc triển khai (CD) sẽ được cấu hình ở bước tiếp theo.</p>
+          <h2>Select Shared CI Pipeline</h2>
+          <p>This shared pipeline executes CI stages (build, test, scan); continuous deployment (CD) is configured in the next step.</p>
         </div>
         <button type="button" className="secondary-button" onClick={() => onManagePipelines?.()}>
-          Quản lý pipelines
+          Manage pipelines
         </button>
       </div>
 
       {loading && (
         <div className="panel empty-table" role="status">
-          Đang tải danh sách pipelines…
+          Loading pipelines…
         </div>
       )}
 
       {error && (
         <div className="inline-error" role="alert">
-          Không thể tải danh sách pipelines: {error}
+          Failed to load pipelines: {error}
         </div>
       )}
 
@@ -363,7 +363,7 @@ export function PipelineStep({
           {activePipelines.length === 0 && (
             <div className="inline-empty" role="status" style={{ marginBottom: '16px', padding: '24px' }}>
               <GitBranch size={24} />
-              <span>Chưa có pipeline nào được duyệt. Quản trị viên cần tạo và phê duyệt pipeline trên trang Pipelines.</span>
+              <span>No approved pipelines found. An administrator must create and approve a pipeline on the Pipelines page.</span>
             </div>
           )}
 
@@ -473,7 +473,7 @@ export function PipelineStep({
                   )}
 
                   <div style={{ fontSize: '0.76rem', color: 'var(--muted)', marginTop: '4px' }}>
-                    dùng bởi {pipeline.usedBy?.length ?? 0} module
+                    used by {pipeline.usedBy?.length ?? 0} module{pipeline.usedBy?.length === 1 ? '' : 's'}
                   </div>
                 </div>
               )
@@ -528,7 +528,7 @@ export function PipelineStep({
                       whiteSpace: 'nowrap',
                     }}
                   >
-                    chưa được duyệt
+                    pending approval
                   </span>
                 </div>
 
@@ -559,7 +559,7 @@ export function PipelineStep({
                 )}
 
                 <div style={{ fontSize: '0.76rem', color: 'var(--muted)', marginTop: '4px' }}>
-                  dùng bởi {pipeline.usedBy?.length ?? 0} module
+                  used by {pipeline.usedBy?.length ?? 0} module{pipeline.usedBy?.length === 1 ? '' : 's'}
                 </div>
               </div>
             ))}
@@ -606,7 +606,7 @@ function DeploymentStep({ systemId, moduleId, initialTarget = 'Docker', targetSe
     setProvisioning(true)
     try {
       const res = await autoProvisionDcimTargets(systemId, moduleId, initialTarget.toLowerCase())
-      notify(`Đã auto-provision thành công ${res.provisioned} NetBox targets cho tenant "${systemId}"!`)
+      notify(`Successfully auto-provisioned ${res.provisioned} NetBox targets for tenant "${systemId}"!`)
       const result = await listDcimServers(systemId, moduleId)
       setInventoryStatus(result.status)
       const mapped: TargetServer[] = result.items.map((item) => ({
@@ -622,7 +622,7 @@ function DeploymentStep({ systemId, moduleId, initialTarget = 'Docker', targetSe
         return candidate ? { ...env, servers: [candidate.name] } : env
       }))
     } catch (err) {
-      notify(err instanceof Error ? err.message : 'Không thể auto-provision NetBox targets', 'error')
+      notify(err instanceof Error ? err.message : 'Failed to auto-provision NetBox targets', 'error')
     } finally {
       setProvisioning(false)
     }
@@ -787,7 +787,7 @@ function DeploymentStep({ systemId, moduleId, initialTarget = 'Docker', targetSe
       : inventoryStatus === 'error'
         ? 'Cannot query DCIM. Check NetBox service status.'
         : null
-  return <div className="deployment-builder"><aside><div><h3>Environments</h3><button aria-label="Add environment" disabled={!availableEnvironment} title={availableEnvironment ? undefined : 'Dev, Staging and Production are already configured'} onClick={openAddEnvironment}><Plus size={16} /></button></div>{environments.map((environment, index) => <button className={active === index ? 'active' : ''} onClick={() => setActive(index)} key={`${environment.name}-${index}`}><span className={`env-dot env-${environment.environment.toLowerCase()}`} /><span><strong>{environment.name}</strong><small>{environment.target}</small></span><ChevronRight size={16} /></button>)}{!environments.length && <div className="empty-environments"><Globe2 size={24} /><p>No environments yet</p><button onClick={openAddEnvironment}>Add environment</button></div>}</aside><main>{inventoryNotice && <div className="inline-error" role="status" style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}><div>{inventoryNotice}</div>{inventoryStatus === 'not_registered' && <div><button type="button" className="primary-button" style={{ padding: '5px 12px', fontSize: '0.85rem' }} disabled={provisioning} onClick={handleAutoProvision}><Zap size={14} style={{ marginRight: '6px' }} />{provisioning ? 'Đang tạo NetBox Targets…' : '⚡ Auto-provision NetBox Tenant & Targets'}</button></div>}</div>}{current ? <><div className="panel" style={{ marginBottom: '16px', padding: '12px 16px' }}><div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '8px' }}><div><h3 style={{ margin: 0, fontSize: '0.95rem' }}>Target Runtime Environment</h3><p style={{ margin: '2px 0 0', fontSize: '0.8rem', color: 'var(--text-muted)' }}>Select deployment runtime target for ({current.name}):</p></div><div className="segmented compact">{deploymentTargets.map(({ label, icon: TargetIcon }) => <button key={label} type="button" className={current.target === label ? 'active' : ''} onClick={() => setEnvironments((items) => items.map((item) => ({ ...item, target: label, servers: label === 'Kubernetes' ? [] : item.servers, ...(label === 'Kubernetes' ? kubernetesDefaults(item.environment) : { kubeconfigRef: undefined, namespace: undefined }) })))}><TargetIcon size={14} style={{ marginRight: '6px' }} />{label}</button>)}</div></div></div><div className="environment-title"><div><h2>{current.name}</h2><p>{current.environment} · {current.target} deployment target</p></div><button className="secondary-button" onClick={openEditEnvironment}><Settings2 size={15} />Edit</button></div><TargetConfiguration current={current} targetServers={targetServers} updateCurrent={updateCurrent} onSelectServers={openServerPicker} /><section className="deployment-section panel"><div className="section-heading"><div><h3>Managed Deployment Adapter</h3><p>The checked-in {current.target} playbook manages the task order, immutable artifact deployment, health gate, and rollback behavior. Target selection above is the runtime routing control exposed here.</p></div></div></section></> : <div className="deployment-empty"><Globe2 size={34} /><h2>Configure deployment environments</h2><p>Add Dev, Staging or Production and bind its runtime target.</p><button className="primary-button" onClick={openAddEnvironment}><Plus size={16} />Add environment</button></div>}</main>
+  return <div className="deployment-builder"><aside><div><h3>Environments</h3><button aria-label="Add environment" disabled={!availableEnvironment} title={availableEnvironment ? undefined : 'Dev, Staging and Production are already configured'} onClick={openAddEnvironment}><Plus size={16} /></button></div>{environments.map((environment, index) => <button className={active === index ? 'active' : ''} onClick={() => setActive(index)} key={`${environment.name}-${index}`}><span className={`env-dot env-${environment.environment.toLowerCase()}`} /><span><strong>{environment.name}</strong><small>{environment.target}</small></span><ChevronRight size={16} /></button>)}{!environments.length && <div className="empty-environments"><Globe2 size={24} /><p>No environments yet</p><button onClick={openAddEnvironment}>Add environment</button></div>}</aside><main>{inventoryNotice && <div className="inline-error" role="status" style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}><div>{inventoryNotice}</div>{inventoryStatus === 'not_registered' && <div><button type="button" className="primary-button" style={{ padding: '5px 12px', fontSize: '0.85rem' }} disabled={provisioning} onClick={handleAutoProvision}><Zap size={14} style={{ marginRight: '6px' }} />{provisioning ? 'Provisioning NetBox Targets…' : '⚡ Auto-provision NetBox Tenant & Targets'}</button></div>}</div>}{current ? <><div className="panel" style={{ marginBottom: '16px', padding: '12px 16px' }}><div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '8px' }}><div><h3 style={{ margin: 0, fontSize: '0.95rem' }}>Target Runtime Environment</h3><p style={{ margin: '2px 0 0', fontSize: '0.8rem', color: 'var(--text-muted)' }}>Select deployment runtime target for ({current.name}):</p></div><div className="segmented compact">{deploymentTargets.map(({ label, icon: TargetIcon }) => <button key={label} type="button" className={current.target === label ? 'active' : ''} onClick={() => setEnvironments((items) => items.map((item) => ({ ...item, target: label, servers: label === 'Kubernetes' ? [] : item.servers, ...(label === 'Kubernetes' ? kubernetesDefaults(item.environment) : { kubeconfigRef: undefined, namespace: undefined }) })))}><TargetIcon size={14} style={{ marginRight: '6px' }} />{label}</button>)}</div></div></div><div className="environment-title"><div><h2>{current.name}</h2><p>{current.environment} · {current.target} deployment target</p></div><button className="secondary-button" onClick={openEditEnvironment}><Settings2 size={15} />Edit</button></div><TargetConfiguration current={current} targetServers={targetServers} updateCurrent={updateCurrent} onSelectServers={openServerPicker} /><section className="deployment-section panel"><div className="section-heading"><div><h3>Managed Deployment Adapter</h3><p>The checked-in {current.target} playbook manages the task order, immutable artifact deployment, health gate, and rollback behavior. Target selection above is the runtime routing control exposed here.</p></div></div></section></> : <div className="deployment-empty"><Globe2 size={34} /><h2>Configure deployment environments</h2><p>Add Dev, Staging or Production and bind its runtime target.</p><button className="primary-button" onClick={openAddEnvironment}><Plus size={16} />Add environment</button></div>}</main>
 
     {addEnv && <Modal title={editingEnvironment === null ? 'Add environment' : 'Edit environment'} description="Create a deployment target for this module." onClose={closeEnvironmentModal} footer={<><button className="secondary-button" onClick={closeEnvironmentModal}>Cancel</button><button className="primary-button" disabled={!environmentDraft.name.trim() || duplicateEnvironment} onClick={saveEnvironment}>{editingEnvironment === null ? 'Add environment' : 'Save changes'}</button></>}><div className="form-grid"><label className="field full"><span>Name</span><input value={environmentDraft.name} onChange={(event) => setEnvironmentDraft({ ...environmentDraft, name: event.target.value })} /></label><label className="field full"><span>Environment</span><select value={environmentDraft.environment} onChange={(event) => setEnvironmentDraft({ ...environmentDraft, environment: event.target.value as DeploymentEnvironment, name: environmentNames[event.target.value as DeploymentEnvironment] })}>{(['Dev', 'Staging', 'Production'] as DeploymentEnvironment[]).map((environment) => <option disabled={environments.some((item, index) => item.environment === environment && index !== editingEnvironment)} key={environment}>{environment}</option>)}</select></label>{duplicateEnvironment && <div className="inline-error full" role="alert">This environment is already configured.</div>}<div className="field full"><span>Deployment target</span><div className="target-options">{deploymentTargets.map(({ label, icon: TargetIcon, execution }) => <button className={environmentDraft.target === label ? 'selected' : ''} disabled={Boolean(lockedTarget && label !== lockedTarget)} title={lockedTarget && label !== lockedTarget ? `Application runtime is already ${lockedTarget}` : undefined} onClick={() => setEnvironmentDraft({ ...environmentDraft, target: label })} key={label}><TargetIcon size={18} /><span><strong>{label}</strong><small>{execution}</small></span></button>)}</div>{lockedTarget && <small className="target-policy-hint">Application runtime is shared by all deployment environments.</small>}</div></div></Modal>}
     {selectServers && <Modal title="Select target servers" description={`DCIM servers assigned to ${current.name}.`} onClose={() => setSelectServers(false)} footer={<><button className="secondary-button" onClick={() => setSelectServers(false)}>Cancel</button><button className="primary-button" disabled={!serverDraft.length} onClick={() => { updateCurrent({ servers: serverDraft }); setSelectServers(false) }}>Add selected servers</button></>}><div className="server-picker">{pickerCandidates.map(({ name, ip, status }) => <label key={name}><input type="checkbox" checked={serverDraft.includes(name)} onChange={(event) => setServerDraft((items) => event.target.checked ? [...items, name] : items.filter((item) => item !== name))} /><Server size={17} /><span><strong>{name}</strong><small>{ip || 'No IP in NetBox'} · NetBox: {status}</small></span></label>)}{!pickerCandidates.length && <div className="inline-empty"><Server size={23} /><span>{inventoryStatus === 'ready' ? `NetBox has no devices for tenant "${systemId}" at site "${siteSlug}".` : inventoryNotice}</span></div>}</div>{(inventoryStatus !== 'ready' || !pickerCandidates.length) && <div className="form-grid"><label className="field full"><span>Hostname (Manual Target Server)</span><input value={manualServer} placeholder="e.g. payments-api-docker-dev or localhost" onChange={(event) => setManualServer(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && manualServer.trim()) { setServerDraft((items) => items.includes(manualServer.trim()) ? items : [...items, manualServer.trim()]); setManualServer('') } }} /><small>Press Enter to add. Configured: {serverDraft.join(', ') || 'None'}</small></label></div>}</Modal>}
@@ -927,14 +927,14 @@ export function NewModuleWizard({
         ownerTeam: ownerTeam || undefined,
         pipeline: selectedPipeline,
       })
-      notify('Module đã được tạo thành công và sẵn sàng nhận pipeline run.')
+      notify('Module created successfully and ready for pipeline runs.')
     } catch (error) {
-      notify(error instanceof Error ? error.message : 'Không thể tạo module.', 'error')
+      notify(error instanceof Error ? error.message : 'Failed to create module.', 'error')
     } finally {
       setCreating(false)
     }
   }
   return <div className="new-module-page"><div className="wizard-header"><button className="back-button" onClick={onCancel}><ArrowLeft size={16} />Back to System</button><div><h1>New Module</h1><p>Add a module and configure its delivery lifecycle.</p></div><WizardSteps step={step} /></div><section className="wizard-shell">{step === 1 && <><GeneralStep systemId={systemId} modules={dcimModules} integrationStatus={dcimStatus} selected={selected} onSelect={selectModule} information={portalInformation} onInformationChange={setPortalInformation} source={moduleSource} onSourceChange={changeSource} customModule={customModule} onCustomModuleChange={setCustomModule} gitInfo={gitInfo} sampleApps={sampleApps} onSelectSample={handleSelectSample} />{(ownerTeams.length > 0 || canOwnAnyTeam) && <div className="wizard-content"><label className="field"><span>Owning team</span>{canOwnAnyTeam
-  ? <><input list="owner-teams" value={ownerTeam} onChange={(event) => setOwnerTeam(event.target.value)} placeholder="vd. team-payments" /><datalist id="owner-teams">{ownerTeams.map((team) => <option key={team} value={team} />)}</datalist><small>Platform-admin có thể giao module cho bất kỳ team nào (tên group trong identity provider). Chỉ thành viên team đó xem được module; thay đổi prod cần một thành viên khác của team phê duyệt.</small></>
+  ? <><input list="owner-teams" value={ownerTeam} onChange={(event) => setOwnerTeam(event.target.value)} placeholder="e.g. team-payments" /><datalist id="owner-teams">{ownerTeams.map((team) => <option key={team} value={team} />)}</datalist><small>Platform admins can assign modules to any team (group name in identity provider). Only verified team members can view; production promotions require approval from another team member.</small></>
   : <><select value={ownerTeam} onChange={(event) => setOwnerTeam(event.target.value)}>{ownerTeams.map((team) => <option key={team}>{team}</option>)}</select><small>Only members of this verified identity team can access the module.</small></>}</label></div>}</>}{step === 2 && <PipelineStep value={selectedPipeline} onChange={setSelectedPipeline} onManagePipelines={onManagePipelines} />}{step === 3 && <DeploymentStep systemId={systemId} moduleId={selected} initialTarget={selectedTarget} onValidityChange={setDeploymentReady} onConfigurationChange={setDeploymentConfig} />}</section><footer className="wizard-footer"><button className="secondary-button" disabled={creating} onClick={step === 1 ? onCancel : () => setStep(step - 1)}>{step === 1 ? 'Cancel' : 'Back'}</button>{step < 3 ? <button className="primary-button" disabled={(step === 1 && (!selected || !portalInformation.displayName.trim() || !portalInformation.moduleType || !(customModule.repositoryUrl ?? '').trim() || (ownerTeams.length > 0 && !ownerTeam))) || (step === 2 && !selectedPipeline)} onClick={() => setStep(step + 1)}>Next <ArrowRight size={16} /></button> : <button className="primary-button" disabled={!deploymentReady || creating} title={deploymentReady ? undefined : 'Complete an environment and its target connection'} onClick={finish}><Check size={16} />{creating ? 'Creating…' : 'Create Module'}</button>}</footer></div>
 }

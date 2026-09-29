@@ -19,7 +19,7 @@ describe('DashboardPage', () => {
   it('replaces artifact fallback values with the API projection', async () => {
     render(<DashboardPage navigate={vi.fn()} />)
 
-    expect(await screen.findByText('6 module')).toBeTruthy()
+    expect(await screen.findByText(/6 modules?/)).toBeTruthy()
     expect(screen.getByText('2', { selector: '.kpi-card strong' })).toBeTruthy()
     expect(screen.getByText('3 modules')).toBeTruthy()
   })

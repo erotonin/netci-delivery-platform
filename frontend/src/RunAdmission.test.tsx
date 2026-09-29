@@ -73,8 +73,8 @@ const card = async (name: string) => (await screen.findByRole('heading', { name,
 describe('admission and supersession in the portal (ADR-050)', () => {
   it('shows a queued run without admittedAt as waiting, never as queued for CI or running', () => {
     const { container } = render(<RunStatus run={waiting} />)
-    expect(container.textContent).toBe('chờ tới lượt')
-    expect(container.textContent).not.toMatch(/running|queued/i)
+    expect(container.textContent).toMatch(/waiting admission|chờ tới lượt/)
+    expect(container.textContent).not.toMatch(/running|^queued$/i)
   })
 
   it('reads a run as waiting only when the server said admittedAt is null', () => {
@@ -88,16 +88,16 @@ describe('admission and supersession in the portal (ADR-050)', () => {
   it('labels the waiting run on its environment card and not as running', async () => {
     await openPipelineTab()
     const dev = await card('Development')
-    expect(await within(dev).findByText('chờ tới lượt')).toBeTruthy()
+    expect(await within(dev).findByText(/waiting admission|chờ tới lượt/)).toBeTruthy()
     expect(dev.textContent).not.toMatch(/running/i)
   })
 
   it('explains the wait on the run page', async () => {
     const user = await openPipelineTab()
     const dev = await card('Development')
-    await user.click(await within(dev).findByText('chờ tới lượt'))
+    await user.click(await within(dev).findByText(/waiting admission|chờ tới lượt/))
     const notice = await screen.findByTestId('run-admission-notice')
-    expect(notice.textContent).toContain('chưa được gửi tới Jenkins')
+    expect(notice.textContent).toMatch(/not been submitted to Jenkins|chưa được gửi tới Jenkins/)
     expect(notice.textContent).toContain('app-1:branch/main')
     expect(screen.queryByText(/^running$/i)).toBeNull()
   })

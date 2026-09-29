@@ -77,7 +77,7 @@ describe('ToolchainPage', () => {
     render(<ToolchainPage />)
 
     expect(await screen.findByTestId('declared-table')).toBeTruthy()
-    expect(screen.getByText('Quản lý Toolchain')).toBeTruthy()
+    expect(screen.getByText('Toolchain Management')).toBeTruthy()
     expect(screen.getByText(/netci\/ci-toolbox:0.4.0/)).toBeTruthy()
 
     // Declared tools, read from the declared table: the observed table repeats versions
@@ -105,7 +105,7 @@ describe('ToolchainPage', () => {
     render(<ToolchainPage />)
 
     expect(await screen.findByTestId('no-drift-banner')).toBeTruthy()
-    expect(screen.getByText(/Không phát hiện sai lệch \(Zero Drift\)/)).toBeTruthy()
+    expect(screen.getByText(/Zero Drift Detected/)).toBeTruthy()
     expect(screen.queryByTestId('drift-panel')).toBeNull()
   })
 
@@ -140,7 +140,7 @@ describe('ToolchainPage', () => {
 
     expect(await screen.findByTestId('drift-panel')).toBeTruthy()
     expect(screen.getByTestId('drift-table')).toBeTruthy()
-    expect(screen.getByText(/Phát hiện sai lệch phiên bản \(1 cảnh báo drift\)/)).toBeTruthy()
+    expect(screen.getByText(/Version Drift Detected \(1 drift warning\)/)).toBeTruthy()
     const drift = within(screen.getByTestId('drift-table'))
     expect(drift.getByText('jenkins-staging-02')).toBeTruthy()
     expect(drift.getByText('1.50.0')).toBeTruthy()
@@ -151,7 +151,7 @@ describe('ToolchainPage', () => {
     render(<ToolchainPage />)
 
     expect(await screen.findByTestId('trivy-fresh-status')).toBeTruthy()
-    expect(screen.getByText(/Cơ sở dữ liệu Trivy hợp lệ \(Fresh\)/)).toBeTruthy()
+    expect(screen.getByText(/Trivy Database Fresh/)).toBeTruthy()
     expect(screen.queryByTestId('trivy-stale-warning')).toBeNull()
   })
 
@@ -169,8 +169,8 @@ describe('ToolchainPage', () => {
     render(<ToolchainPage />)
 
     expect(await screen.findByTestId('trivy-stale-warning')).toBeTruthy()
-    expect(screen.getByText(/Cảnh báo: Cơ sở dữ liệu Trivy đã quá hạn \(Stale\)!/)).toBeTruthy()
-    expect(screen.getByText(/Vượt quá ngưỡng tối đa cho phép 72 giờ/)).toBeTruthy()
+    expect(screen.getByText(/Warning: Trivy database is stale!/)).toBeTruthy()
+    expect(screen.getByText(/Exceeds maximum threshold of 72 hours/)).toBeTruthy()
     expect(screen.queryByTestId('trivy-fresh-status')).toBeNull()
   })
 
@@ -183,7 +183,7 @@ describe('ToolchainPage', () => {
     vi.mocked(getToolchain).mockResolvedValueOnce(emptyObservedData)
     render(<ToolchainPage />)
 
-    expect(await screen.findByText('Chưa có dữ liệu quan sát từ agent nào')).toBeTruthy()
+    expect(await screen.findByText('No observation data from any controller yet')).toBeTruthy()
   })
 
   it('displays error message when getToolchain rejects', async () => {
@@ -192,7 +192,7 @@ describe('ToolchainPage', () => {
 
     expect(await screen.findByRole('alert')).toBeTruthy()
     expect(screen.getByTestId('toolchain-error')).toBeTruthy()
-    expect(screen.getByText(/Không thể tải dữ liệu toolchain: Network error 500/)).toBeTruthy()
+    expect(screen.getByText(/Failed to load toolchain data: Network error 500/)).toBeTruthy()
   })
 
   it('re-fetches toolchain data when clicking refresh button', async () => {
@@ -201,7 +201,7 @@ describe('ToolchainPage', () => {
     await screen.findByTestId('declared-table')
     expect(getToolchain).toHaveBeenCalledTimes(1)
 
-    const refreshBtn = screen.getByText('Làm mới')
+    const refreshBtn = screen.getByText('Refresh')
     fireEvent.click(refreshBtn)
 
     expect(getToolchain).toHaveBeenCalledTimes(2)
@@ -225,11 +225,11 @@ describe('ToolchainPage', () => {
     render(<ToolchainPage />)
     const panel = await screen.findByTestId('jenkins-plugins')
     expect(within(panel).getByText('netci/jenkins-controller:2.555.3-netci1')).toBeTruthy()
-    expect(within(panel).getByText(/Lệch 1 plugin/)).toBeTruthy()
-    expect(within(panel).getByText(/đang chạy 719.v80e905ef14eb_, khai báo 728.v902a_273b_8947/)).toBeTruthy()
-    expect(within(panel).getByText(/Không đọc được/)).toBeTruthy()
-    expect(within(panel).getByText(/sẽ không nhận build/)).toBeTruthy()
-    fireEvent.click(within(panel).getByRole('button', { name: /Xem 2 plugin khai báo/ }))
+    expect(within(panel).getByText(/Drift \(1 plugin\)/)).toBeTruthy()
+    expect(within(panel).getByText(/running 719.v80e905ef14eb_, declared 728.v902a_273b_8947/)).toBeTruthy()
+    expect(within(panel).getByText(/Unreadable/)).toBeTruthy()
+    expect(within(panel).getByText(/will not accept builds/)).toBeTruthy()
+    fireEvent.click(within(panel).getByRole('button', { name: /View 2 declared plugins/ }))
     expect(within(panel).getAllByText('credentials-binding')).toHaveLength(2)
   })
 })

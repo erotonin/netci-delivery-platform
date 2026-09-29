@@ -58,24 +58,24 @@ export function DashboardPage({ navigate }: { navigate: Navigate }) {
 function DashboardContent({ dashboard, navigate }: { dashboard: PortalDashboard; navigate: Navigate }) {
   const successfulRuns = Math.max(0, Math.round(dashboard.kpis.pipelineRuns * dashboard.kpis.successRate / 100))
   const kpis = [
-    { label: 'Tổng số hệ thống', value: String(dashboard.kpis.systems), sub: `${dashboard.kpis.modules} module`, icon: Layers3, tone: 'pink' },
-    { label: 'Mức độ hoạt động', value: String(dashboard.kpis.pipelineRuns), sub: 'Lượt chạy pipeline', icon: Activity, tone: 'blue' },
-    { label: 'Tỉ lệ thành công', value: `${dashboard.kpis.successRate}%`, sub: `${successfulRuns} lượt thành công`, icon: CheckCircle2, tone: 'green' },
-    { label: 'Tỉ lệ thất bại', value: `${dashboard.kpis.failureRate}%`, sub: `${Math.max(dashboard.kpis.pipelineRuns - successfulRuns, 0)} lượt thất bại`, icon: CircleAlert, tone: 'red' },
+    { label: 'Total Systems', value: String(dashboard.kpis.systems), sub: `${dashboard.kpis.modules} modules`, icon: Layers3, tone: 'pink' },
+    { label: 'Pipeline Activity', value: String(dashboard.kpis.pipelineRuns), sub: 'Total pipeline runs', icon: Activity, tone: 'blue' },
+    { label: 'Success Rate', value: `${dashboard.kpis.successRate}%`, sub: `${successfulRuns} successful`, icon: CheckCircle2, tone: 'green' },
+    { label: 'Failure Rate', value: `${dashboard.kpis.failureRate}%`, sub: `${Math.max(dashboard.kpis.pipelineRuns - successfulRuns, 0)} failed`, icon: CircleAlert, tone: 'red' },
   ]
   const maximumActivity = Math.max(1, ...dashboard.pipelineActivity.map((item) => item.succeeded + item.failed))
   return <>
     <div className="kpi-grid">{kpis.map((item) => <article className="kpi-card" key={item.label}><span className={`kpi-icon tone-${item.tone}`}><item.icon size={19} /></span><div><p>{item.label}</p><strong>{item.value}</strong><small>{item.sub}</small></div></article>)}</div>
     <section className="panel chart-panel">
-      <div className="panel-heading"><div><h2>Hoạt động pipeline · 7 ngày gần nhất</h2><p>Release activity across all systems</p></div><div className="chart-legend"><span><i className="legend-success" />Thành công</span><span><i className="legend-failed" />Thất bại</span></div></div>
-      <div className="bar-chart"><div className="chart-y"><span>{maximumActivity}</span><span>{Math.round(maximumActivity * 2 / 3)}</span><span>{Math.round(maximumActivity / 3)}</span><span>0</span></div><div className="chart-grid-lines"><i /><i /><i /><i /></div><div className="bar-groups">{dashboard.pipelineActivity.map((item) => <div className="bar-group" key={item.date}><div className="bar-stack"><i className="bar-success" style={{ height: `${item.succeeded / maximumActivity * 116}px` }} /><i className="bar-failed" style={{ height: `${item.failed / maximumActivity * 116}px` }} /></div><span>{new Intl.DateTimeFormat('vi-VN', { day: '2-digit', month: '2-digit', timeZone: 'UTC' }).format(new Date(`${item.date}T00:00:00Z`))}</span></div>)}</div></div>
+      <div className="panel-heading"><div><h2>Pipeline Activity · Last 7 Days</h2><p>Release activity across all systems</p></div><div className="chart-legend"><span><i className="legend-success" />Success</span><span><i className="legend-failed" />Failure</span></div></div>
+      <div className="bar-chart"><div className="chart-y"><span>{maximumActivity}</span><span>{Math.round(maximumActivity * 2 / 3)}</span><span>{Math.round(maximumActivity / 3)}</span><span>0</span></div><div className="chart-grid-lines"><i /><i /><i /><i /></div><div className="bar-groups">{dashboard.pipelineActivity.map((item) => <div className="bar-group" key={item.date}><div className="bar-stack"><i className="bar-success" style={{ height: `${item.succeeded / maximumActivity * 116}px` }} /><i className="bar-failed" style={{ height: `${item.failed / maximumActivity * 116}px` }} /></div><span>{new Intl.DateTimeFormat('en-US', { day: '2-digit', month: '2-digit', timeZone: 'UTC' }).format(new Date(`${item.date}T00:00:00Z`))}</span></div>)}</div></div>
     </section>
     <section className="panel activity-panel">
-      <div className="panel-heading"><div><h2>Mức độ hoạt động theo hệ thống</h2><p>Pipeline activity by system and current health</p></div><button className="text-button" onClick={() => navigate('systems')}>Xem tất cả <ArrowRight size={15} /></button></div>
-      <div className="data-table dashboard-table"><div className="table-row table-head"><span>Hệ thống</span><span>Hoạt động</span><span>Thành công</span><span>Thất bại</span><span>Modules</span><span /></div>{dashboard.systems.map((system) => {
+      <div className="panel-heading"><div><h2>Activity by System</h2><p>Pipeline activity by system and current health</p></div><button className="text-button" onClick={() => navigate('systems')}>View all <ArrowRight size={15} /></button></div>
+      <div className="data-table dashboard-table"><div className="table-row table-head"><span>System</span><span>Activity</span><span>Success</span><span>Failure</span><span>Modules</span><span /></div>{dashboard.systems.map((system) => {
         const successRate = system.pipelineRuns ? Math.round((system.pipelineRuns - system.failedRuns) / system.pipelineRuns * 100) : 0
         const failureRate = system.pipelineRuns ? Math.round(system.failedRuns / system.pipelineRuns * 100) : 0
-        return <button className="table-row table-button" key={system.id} onClick={() => navigate('system', { systemId: system.id })}><span className="strong-cell"><i className={`system-health health-${system.status === 'healthy' ? 'green' : system.status === 'degraded' ? 'amber' : system.status === 'critical' ? 'red' : 'gray'}`} />{system.id}</span><span><Activity size={15} />{system.pipelineRuns ? `${system.pipelineRuns} lượt chạy` : 'Chưa có dữ liệu'}</span><span className="progress-value"><i className="progress"><b className="success-fill" style={{ width: `${successRate}%` }} /></i>{system.pipelineRuns ? `${successRate}%` : '—'}</span><span className="progress-value"><i className="progress"><b className="failed-fill" style={{ width: `${failureRate}%` }} /></i>{system.pipelineRuns ? `${failureRate}%` : '—'}</span><span><Box size={15} />{system.moduleCount} modules</span><ChevronRight size={16} /></button>
+        return <button className="table-row table-button" key={system.id} onClick={() => navigate('system', { systemId: system.id })}><span className="strong-cell"><i className={`system-health health-${system.status === 'healthy' ? 'green' : system.status === 'degraded' ? 'amber' : system.status === 'critical' ? 'red' : 'gray'}`} />{system.id}</span><span><Activity size={15} />{system.pipelineRuns ? `${system.pipelineRuns} runs` : 'No data yet'}</span><span className="progress-value"><i className="progress"><b className="success-fill" style={{ width: `${successRate}%` }} /></i>{system.pipelineRuns ? `${successRate}%` : '—'}</span><span className="progress-value"><i className="progress"><b className="failed-fill" style={{ width: `${failureRate}%` }} /></i>{system.pipelineRuns ? `${failureRate}%` : '—'}</span><span><Box size={15} />{system.moduleCount} modules</span><ChevronRight size={16} /></button>
       })}</div>
     </section>
   </>
@@ -131,10 +131,10 @@ export function SystemsPage({ navigate }: { navigate: Navigate }) {
     try {
       const response = await searchDcimServices(dcimQuery)
       setResults(response.items)
-      if (!response.items.length) setFormError('Không tìm thấy service phù hợp trong DCIM.')
+      if (!response.items.length) setFormError('No matching service found in DCIM.')
     } catch {
       setResults([])
-      setFormError('Không thể kết nối DCIM adapter. Kiểm tra backend rồi thử lại.')
+      setFormError('Unable to connect to DCIM adapter. Check backend and retry.')
     } finally {
       setSearching(false)
     }
@@ -146,17 +146,17 @@ export function SystemsPage({ navigate }: { navigate: Navigate }) {
     let code = ''
     if (systemSource === 'local') {
       systemId = localId.trim().toLowerCase().replace(/[^a-z0-9-_]/g, '-')
-      if (!systemId) { setFormError('Vui lòng nhập System ID (chữ thường, số, dấu gạch nối).'); return }
+      if (!systemId) { setFormError('Please enter System ID (lowercase, numbers, hyphens).'); return }
       if (items.some((item) => item.id.toLowerCase() === systemId.toLowerCase())) {
-        setFormError(`Hệ thống "${systemId}" đã tồn tại trong Release Portal.`)
+        setFormError(`System "${systemId}" already exists in Release Portal.`)
         return
       }
       unit = localUnit.trim() || 'Core Engineering'
-      description = localDescription.trim() || 'Hệ thống dịch vụ local'
+      description = localDescription.trim() || 'Local service system'
       code = systemId
     } else {
       if (!selected) return
-      if (items.some((item) => item.id === selected.id)) { setFormError(`${selected.name} đã tồn tại trong Release Portal.`); return }
+      if (items.some((item) => item.id === selected.id)) { setFormError(`${selected.name} already exists in Release Portal.`); return }
       systemId = selected.id
       unit = selected.tenant
       description = selected.description
@@ -179,44 +179,44 @@ export function SystemsPage({ navigate }: { navigate: Navigate }) {
         failed: created.failedRuns,
       }])
       setModal(false)
-      notify(`Hệ thống ${created.id} đã được khởi tạo thành công.`)
+      notify(`System ${created.id} initialized successfully.`)
       navigate('system', { systemId: created.id })
     } catch (error) {
-      setFormError(error instanceof Error ? error.message : 'Không thể tạo system.')
+      setFormError(error instanceof Error ? error.message : 'Failed to create system.')
     } finally {
       setSaving(false)
     }
   }
   return <>
-    <PageHeader title="Systems" description="Quản lý danh sách hệ thống trong Release Portal." action={<button className="primary-button" onClick={() => { setFormError(''); setModal(true) }}><Plus size={16} />New System</button>} />
+    <PageHeader title="Systems" description="Manage registered systems in Release Portal." action={<button className="primary-button" onClick={() => { setFormError(''); setModal(true) }}><Plus size={16} />New System</button>} />
     <section className="panel table-panel">
-      <div className="table-toolbar"><label className="input-with-icon"><Search size={16} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Tìm kiếm hệ thống…" /></label></div>
-      <div className="data-table systems-table"><div className="table-row table-head"><span>Hệ thống</span><span>Đơn vị</span><span>Mô tả</span><span>Modules</span><span>Trạng thái</span><span /></div>{filtered.map((system) => <button className="table-row table-button" key={system.id} onClick={() => navigate('system', { systemId: system.id })}><span className="strong-cell"><i className={`system-health health-${system.status === 'healthy' ? 'green' : system.status === 'degraded' ? 'amber' : system.status === 'critical' ? 'red' : 'gray'}`} />{system.id}</span><span className="truncate">{system.unit}</span><span className="truncate">{system.description}</span><span><Box size={15} />{system.modules.length} modules</span><StatusPill status={system.status[0].toUpperCase() + system.status.slice(1)} /><ChevronRight size={16} /></button>)}</div>{!filtered.length && loadState === 'loading' && <Skeleton rows={4} />}
+      <div className="table-toolbar"><label className="input-with-icon"><Search size={16} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search systems…" /></label></div>
+      <div className="data-table systems-table"><div className="table-row table-head"><span>System</span><span>Unit</span><span>Description</span><span>Modules</span><span>Status</span><span /></div>{filtered.map((system) => <button className="table-row table-button" key={system.id} onClick={() => navigate('system', { systemId: system.id })}><span className="strong-cell"><i className={`system-health health-${system.status === 'healthy' ? 'green' : system.status === 'degraded' ? 'amber' : system.status === 'critical' ? 'red' : 'gray'}`} />{system.id}</span><span className="truncate">{system.unit}</span><span className="truncate">{system.description}</span><span><Box size={15} />{system.modules.length} modules</span><StatusPill status={system.status[0].toUpperCase() + system.status.slice(1)} /><ChevronRight size={16} /></button>)}</div>{!filtered.length && loadState === 'loading' && <Skeleton rows={4} />}
       {!filtered.length && loadState === 'error' && <LoadFailure error={loadError} onRetry={() => setAttempt((value) => value + 1)} />}
-      {!filtered.length && loadState === 'ready' && <div className="empty-table"><Search size={22} /><strong>{query ? 'Không tìm thấy hệ thống' : 'Chưa có hệ thống nào'}</strong><span>{query ? 'Thử tên, mã service hoặc đơn vị khác.' : 'Thêm hệ thống đầu tiên để bắt đầu.'}</span></div>}
+      {!filtered.length && loadState === 'ready' && <div className="empty-table"><Search size={22} /><strong>{query ? 'No systems found' : 'No systems yet'}</strong><span>{query ? 'Try another name, service code, or unit.' : 'Add your first system to get started.'}</span></div>}
     </section>
-    {modal && <Modal title="Create new system" description="Khởi tạo hệ thống mới để quản lý phân hệ, CI/CD pipeline và hạ tầng triển khai." onClose={() => setModal(false)} footer={<><button className="secondary-button" onClick={() => setModal(false)}>Cancel</button><button className="primary-button" disabled={(systemSource === 'dcim' && !selected) || (systemSource === 'local' && !localId.trim()) || saving} onClick={saveSystem}>{saving ? 'Creating…' : 'Create System'}</button></>}>
+    {modal && <Modal title="Create new system" description="Initialize a new system to manage modules, CI/CD pipelines, and deployment infrastructure." onClose={() => setModal(false)} footer={<><button className="secondary-button" onClick={() => setModal(false)}>Cancel</button><button className="primary-button" disabled={(systemSource === 'dcim' && !selected) || (systemSource === 'local' && !localId.trim()) || saving} onClick={saveSystem}>{saving ? 'Creating…' : 'Create System'}</button></>}>
       <div className="segmented compact" style={{ marginBottom: '16px' }}>
-        <button className={systemSource === 'local' ? 'active' : ''} onClick={() => { setSystemSource('local'); setFormError('') }}>Tạo hệ thống Local</button>
-        <button className={systemSource === 'dcim' ? 'active' : ''} onClick={() => { setSystemSource('dcim'); setFormError('') }}>Tìm từ DCIM</button>
+        <button className={systemSource === 'local' ? 'active' : ''} onClick={() => { setSystemSource('local'); setFormError('') }}>Create Local System</button>
+        <button className={systemSource === 'dcim' ? 'active' : ''} onClick={() => { setSystemSource('dcim'); setFormError('') }}>Search from DCIM</button>
       </div>
       {systemSource === 'local' ? (
         <div className="form-grid">
           <label className="field full">
-            <span>System ID (Mã định danh duy nhất) *</span>
+            <span>System ID (Unique identifier) *</span>
             <input value={localId} onChange={(e) => {
               const val = e.target.value.toLowerCase().replace(/[^a-z0-9-_]/g, '-')
               setLocalId(val)
             }} placeholder="e.g. fintech-platform, payment-core, crm-hub" />
-            <small>Chữ thường, số, dấu gạch nối (e.g. fintech-core)</small>
+            <small>Lowercase letters, numbers, hyphens (e.g. fintech-core)</small>
           </label>
           <label className="field full">
-            <span>Đơn vị / Khối quản lý</span>
-            <input value={localUnit} onChange={(e) => setLocalUnit(e.target.value)} placeholder="Khối Công nghệ số" />
+            <span>Unit / Department</span>
+            <input value={localUnit} onChange={(e) => setLocalUnit(e.target.value)} placeholder="Digital Engineering" />
           </label>
           <label className="field full">
-            <span>Mô tả hệ thống</span>
-            <textarea value={localDescription} onChange={(e) => setLocalDescription(e.target.value)} placeholder="Mô tả chức năng và mục đích của hệ thống..." />
+            <span>System description</span>
+            <textarea value={localDescription} onChange={(e) => setLocalDescription(e.target.value)} placeholder="Describe system role and purpose..." />
           </label>
         </div>
       ) : (
@@ -280,7 +280,7 @@ export function ServersPage() {
       .then(([result, maintList, wList, agentRes]) => {
         if (active) {
           setItems(result.map(serverFromApi))
-          setLastSync('API · vừa xong')
+          setLastSync('API · just now')
           if (maintList && Array.isArray(maintList)) {
             const map: Record<string, boolean> = {}
             for (const s of maintList) {
@@ -301,7 +301,7 @@ export function ServersPage() {
         }
       })
       .catch((error) => {
-        if (active) notify(error instanceof Error ? error.message : 'Không thể tải inventory từ netCI API.', 'error')
+        if (active) notify(error instanceof Error ? error.message : 'Unable to load inventory from netCI API.', 'error')
       })
     return () => { active = false }
   }, [])
@@ -321,7 +321,7 @@ export function ServersPage() {
       ])
       setItems(result.map(serverFromApi))
       setSelectedIds([])
-      setLastSync('API · vừa xong')
+      setLastSync('API · just now')
       if (maintList && Array.isArray(maintList)) {
         const map: Record<string, boolean> = {}
         for (const s of maintList) {
@@ -330,9 +330,9 @@ export function ServersPage() {
         setMaintenanceMap(map)
       }
       setWaivers(wList)
-      notify('Đã đồng bộ các runtime target, trạng thái bảo trì và danh sách miễn trừ bảo mật.')
+      notify('Synchronized runtime targets, maintenance status, and security waivers.')
     } catch (error) {
-      notify(error instanceof Error ? error.message : 'Không thể đồng bộ inventory.', 'error')
+      notify(error instanceof Error ? error.message : 'Failed to synchronize inventory.', 'error')
     } finally {
       setSyncing(false)
     }
@@ -343,7 +343,7 @@ export function ServersPage() {
   const handleCreateWaiver = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!newCve.trim() || !newReason.trim()) {
-      notify('Vui lòng điền mã CVE và lý do miễn trừ.', 'error')
+      notify('Please provide CVE ID and waiver rationale.', 'error')
       return
     }
     setSavingWaiver(true)
@@ -357,13 +357,13 @@ export function ServersPage() {
         expiresAt: expiry.toISOString(),
       })
       setWaivers((prev) => [created, ...prev])
-      notify(`Đã tạo miễn trừ bảo mật cho ${created.cveId}`)
+      notify(`Created security waiver for ${created.cveId}`)
       setWaiverModal(false)
       setNewCve('')
       setNewModule('')
       setNewReason('')
     } catch (err) {
-      notify(err instanceof Error ? err.message : 'Không thể tạo miễn trừ bảo mật.', 'error')
+      notify(err instanceof Error ? err.message : 'Failed to create security waiver.', 'error')
     } finally {
       setSavingWaiver(false)
     }
@@ -436,10 +436,10 @@ export function ServersPage() {
       <div className="pagination">
         <span>Showing {filtered.length ? (page - 1) * pageSize + 1 : 0}–{Math.min(page * pageSize, filtered.length)} of {filtered.length}</span>
         <div>
-          <select aria-label="Số dòng mỗi trang" value={pageSize} onChange={(event) => { setPageSize(Number(event.target.value)); setPage(1) }}><option value={10}>10 / page</option><option value={20}>20 / page</option></select>
-          <button disabled={page <= 1} aria-label="Trang trước" onClick={() => setPage((current) => Math.max(1, current - 1))}><ChevronLeft size={16} /></button>
+          <select aria-label="Rows per page" value={pageSize} onChange={(event) => { setPageSize(Number(event.target.value)); setPage(1) }}><option value={10}>10 / page</option><option value={20}>20 / page</option></select>
+          <button disabled={page <= 1} aria-label="Previous page" onClick={() => setPage((current) => Math.max(1, current - 1))}><ChevronLeft size={16} /></button>
           <button className="page-active" disabled aria-current="page">{page}</button>
-          <button disabled={page >= totalPages} aria-label="Trang sau" onClick={() => setPage((current) => Math.min(totalPages, current + 1))}><ChevronRight size={16} /></button>
+          <button disabled={page >= totalPages} aria-label="Next page" onClick={() => setPage((current) => Math.min(totalPages, current + 1))}><ChevronRight size={16} /></button>
         </div>
       </div>
     </section>
@@ -450,24 +450,24 @@ export function ServersPage() {
         <div>
           <h3 style={{ margin: 0, fontSize: '15px', display: 'flex', alignItems: 'center', gap: '8px' }}>
             <ShieldAlert size={18} color="#0284c7" />
-            VEX Security Waivers (Miễn trừ lỗ hổng bảo mật)
+            VEX Security Waivers
           </h3>
           <p style={{ margin: '4px 0 0 0', fontSize: '12px', color: 'var(--text-muted, #64748b)' }}>
-            Miễn trừ có thời hạn cho các CVE Critical đã được đánh giá an toàn hoặc có biện pháp kiểm soát bù đắp (Compensating Controls).
+            Time-bound waivers for Critical CVEs with documented compensating controls or non-exploitable contexts.
           </p>
         </div>
         <button className="primary-button" onClick={() => setWaiverModal(true)}>
-          <Plus size={16} /> Tạo miễn trừ CVE
+          <Plus size={16} /> Create CVE Waiver
         </button>
       </div>
       <div className="data-table waivers-table">
         <div className="table-row table-head">
           <span>CVE Identifier</span>
           <span>Module</span>
-          <span>Lý do miễn trừ / Compensating Control</span>
-          <span>Người phê duyệt</span>
-          <span>Hết hạn</span>
-          <span>Thao tác</span>
+          <span>Rationale / Compensating Control</span>
+          <span>Approved By</span>
+          <span>Expires</span>
+          <span>Actions</span>
         </div>
         {waivers.map((w) => (
           <div className="table-row" key={w.id}>
@@ -519,35 +519,35 @@ export function ServersPage() {
           <>
             <button className="secondary-button" onClick={() => setWaiverModal(false)}>Cancel</button>
             <button className="primary-button" disabled={savingWaiver} onClick={handleCreateWaiver}>
-              {savingWaiver ? 'Đang lưu…' : 'Xác nhận miễn trừ'}
+              {savingWaiver ? 'Saving…' : 'Confirm Waiver'}
             </button>
           </>
         }
       >
         <form onSubmit={handleCreateWaiver} className="form-grid">
           <label className="field full">
-            <span>Mã CVE Identifier *</span>
+            <span>CVE Identifier *</span>
             <input value={newCve} onChange={(e) => setNewCve(e.target.value)} placeholder="e.g. CVE-2026-9999" required />
           </label>
           <label className="field full">
-            <span>Module áp dụng (Bỏ trống để áp dụng toàn hệ thống)</span>
+            <span>Target Module (Leave blank for system-wide)</span>
             <input value={newModule} onChange={(e) => setNewModule(e.target.value)} placeholder="e.g. billing-api" />
           </label>
           <label className="field full">
-            <span>Thời hạn miễn trừ (Số ngày)</span>
+            <span>Waiver Duration (Days)</span>
             <select value={newDays} onChange={(e) => setNewDays(e.target.value)}>
-              <option value="7">7 ngày</option>
-              <option value="14">14 ngày (Mặc định)</option>
-              <option value="30">30 ngày</option>
-              <option value="60">60 ngày</option>
+              <option value="7">7 days</option>
+              <option value="14">14 days (Default)</option>
+              <option value="30">30 days</option>
+              <option value="60">60 days</option>
             </select>
           </label>
           <label className="field full">
-            <span>Lý do / Compensating Control *</span>
+            <span>Rationale / Compensating Control *</span>
             <textarea
               value={newReason}
               onChange={(e) => setNewReason(e.target.value)}
-              placeholder="Mô tả phân tích VEX: Component không nhận untrusted input từ Internet, đã có WAF rule chặn payload, bản vá upstream sẽ được phát hành trong sprint tới..."
+              placeholder="Describe VEX analysis: Component does not accept untrusted Internet input, WAF rule blocks attack vector, upstream patch scheduled..."
               rows={3}
               required
             />
@@ -559,7 +559,7 @@ export function ServersPage() {
     {details && (
       <Modal
         title={`Server: ${details.id}`}
-        description="Chi tiết máy chủ triển khai và quan sát tài nguyên thời gian thực qua Outbound Runner Agent."
+        description="Deployment server details and real-time resource telemetry via Outbound Runner Agent."
         onClose={() => setDetails(null)}
         footer={<button className="primary-button" onClick={() => setDetails(null)}>Close</button>}
       >
@@ -592,7 +592,7 @@ export function ServersPage() {
           </div>
 
           {loadingTelemetry ? (
-            <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>Đang tải telemetry từ agent…</div>
+            <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>Loading agent telemetry…</div>
           ) : selectedTelemetry ? (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
               <div>
@@ -627,13 +627,13 @@ export function ServersPage() {
                 </div>
                 {selectedTelemetry.diskPercent > 90 && (
                   <small style={{ color: '#e11d48', marginTop: 4, display: 'block' }}>
-                    Cảnh báo: Ổ cứng trên 90%, pre-flight gate sẽ chặn deploy tự động.
+                    Warning: Disk usage above 90%, pre-flight gate will block automatic deployment.
                   </small>
                 )}
               </div>
             </div>
           ) : (
-            <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>Chưa có telemetry được ghi nhận.</div>
+            <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>No telemetry recorded yet.</div>
           )}
         </div>
 
@@ -648,7 +648,7 @@ export function ServersPage() {
             </span>
           </div>
           <p style={{ margin: '0 0 10px 0', fontSize: 12, color: 'var(--text-secondary)' }}>
-            Kết nối Outbound WebSocket đến <code>/api/v1/agents/ws</code>. Không mở port firewall inbound (Zero Inbound Port).
+            Outbound WebSocket connection to <code>/api/v1/agents/ws</code>. Zero inbound firewall ports required.
           </p>
 
           <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
@@ -672,9 +672,9 @@ export function ServersPage() {
                     command: agentCmd.trim() || 'uname -a',
                   })
                   setAgentOutput(res)
-                  notify(`Lệnh hoàn tất trên ${details.id} (exit code ${res.exitCode}) trong ${res.durationMs}ms`)
+                  notify(`Command completed on ${details.id} (exit code ${res.exitCode}) in ${res.durationMs}ms`)
                 } catch (err) {
-                  notify(err instanceof Error ? err.message : 'Không thể gửi lệnh qua Edge Runner Agent', 'error')
+                  notify(err instanceof Error ? err.message : 'Failed to dispatch command via Edge Runner Agent', 'error')
                 } finally {
                   setAgentRunning(false)
                 }
@@ -744,18 +744,18 @@ export function SystemPage({ systemId, navigate }: { systemId: string; navigate:
     setDeleting(true)
     try {
       await deleteSystem(systemId)
-      notify(`Đã xóa system ${systemId}.`)
+      notify(`Deleted system ${systemId}.`)
       setDeleteModal(false)
       navigate('systems')
     } catch (error) {
-      notify(error instanceof Error ? error.message : 'Không thể xóa system.', 'error')
+      notify(error instanceof Error ? error.message : 'Failed to delete system.', 'error')
     } finally {
       setDeleting(false)
     }
   }
 
   return <>
-    <div className="system-heading"><div><div className="title-status"><h1>{system.id}</h1><StatusPill status={system.status[0].toUpperCase() + system.status.slice(1)} /></div><p>{system.description}</p><small>Đơn vị: {system.unit} · Tạo bởi: <span title={system.owner}>{/^[0-9a-f]{8}-[0-9a-f]{4}-/.test(system.owner) ? `${system.owner.slice(0, 8)}…` : system.owner}</span></small></div><div className="heading-actions"><button className="danger-button" onClick={() => setDeleteModal(true)}><Trash2 size={16} />Delete System</button><button className="primary-button" onClick={() => navigate('new-module', { systemId })}><Plus size={16} />New Module</button></div></div>
+    <div className="system-heading"><div><div className="title-status"><h1>{system.id}</h1><StatusPill status={system.status[0].toUpperCase() + system.status.slice(1)} /></div><p>{system.description}</p><small>Unit: {system.unit} · Created by: <span title={system.owner}>{/^[0-9a-f]{8}-[0-9a-f]{4}-/.test(system.owner) ? `${system.owner.slice(0, 8)}…` : system.owner}</span></small></div><div className="heading-actions"><button className="danger-button" onClick={() => setDeleteModal(true)}><Trash2 size={16} />Delete System</button><button className="primary-button" onClick={() => navigate('new-module', { systemId })}><Plus size={16} />New Module</button></div></div>
     <div className="dora-section-label">DORA METRICS · LAST 30 DAYS</div>
     <DoraCards metrics={doraMetrics} />
     <section className="modules-section"><div className="section-heading"><h2>{system.modules.length} modules</h2><span>Live API projection</span></div><div className="module-grid">{system.modules.map((module) => <article className="module-card" key={module.id}><div className="module-card-top"><span className={`module-icon ${module.type === 'Frontend' ? 'blue' : 'purple'}`}><Box size={19} /></span><div><h3>{module.name}</h3><p>{module.description}</p></div><em className={`type-badge ${module.type === 'Frontend' ? 'blue' : 'purple'}`}>{module.type}</em></div><label>Versions</label><div className="version-chips">{module.versions.length ? module.versions.map((version) => <span key={version}>{version}</span>) : <span>None</span>}</div><label>Environments</label><div className="environment-grid">{module.environments.map((environment) => <div key={environment.name}><span>{environment.name === 'prod' ? 'Production' : environment.name === 'staging' ? 'Staging' : 'Dev'}</span><StatusPill status={environment.status.replace('_', ' ')} /></div>)}</div><button className="module-view-button" onClick={() => navigate('module', { systemId, moduleId: module.id })}>View Module <ArrowRight size={15} /></button></article>)}{!system.modules.length && <div className="empty-module-state"><Box size={27} /><strong>No modules yet</strong><span>Add a DCIM module to configure its delivery lifecycle.</span><button className="primary-button" onClick={() => navigate('new-module', { systemId })}><Plus size={15} />Add module</button></div>}</div></section>

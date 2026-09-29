@@ -376,13 +376,13 @@ export function CatalogPage({
       />
 
       {/* Collapsible intro panel */}
-      <section className="cat-intro-panel" aria-label="Giới thiệu Service Catalog">
+      <section className="cat-intro-panel" aria-label="Service Catalog Overview">
         <div className="cat-intro-header">
           <div className="cat-intro-title-wrap">
-            <h2 className="cat-intro-title">Giới thiệu Service Catalog</h2>
+            <h2 className="cat-intro-title">Service Catalog Overview</h2>
             {introHidden && (
               <span className="cat-intro-collapsed-hint">
-                Danh bạ dịch vụ, môi trường preview và tài nguyên self-service.
+                Directory of services, ephemeral preview environments, and self-service resources.
               </span>
             )}
           </div>
@@ -392,13 +392,13 @@ export function CatalogPage({
             onClick={toggleIntro}
             aria-expanded={!introHidden}
           >
-            {introHidden ? 'Xem giải thích' : 'Ẩn giải thích'}
+            {introHidden ? 'Show overview' : 'Hide overview'}
           </button>
         </div>
         {!introHidden && (
           <div className="cat-intro-body">
             <p className="cat-intro-lead">
-              Service Catalog là danh bạ của mọi service/module: ai sở hữu, mức độ quan trọng (tier), vòng đời, phụ thuộc giữa các service. Nó là nguồn sự thật cho câu hỏi &ldquo;service này của ai, gọi tới ai, có được deploy không&rdquo;.
+              The Service Catalog is the directory for every service/module: owner, importance tier, lifecycle, and service-to-service dependencies. It is the single source of truth for &ldquo;who owns this service, what does it call, and can it be deployed?&rdquo;.
             </p>
             <div className="cat-cards-grid">
               <article className="cat-card">
@@ -407,13 +407,13 @@ export function CatalogPage({
                     <Compass size={16} /> Services
                   </h3>
                   <p className="cat-card-desc">
-                    Danh bạ định danh mọi service/module: quản lý team sở hữu (owner), mức độ quan trọng (tier) và trạng thái vòng đời (lifecycle). Quản lý đồ thị phụ thuộc gọi dịch vụ upstream/downstream và phát hiện chu trình.
+                    Identity directory for every service/module: manages owning teams (owner), importance levels (tier), and lifecycle status. Manages upstream/downstream service dependency graphs and detects cycles.
                   </p>
                 </div>
                 <div className="cat-card-demo">
-                  <span className="cat-card-demo-label">Demo được gì:</span>
+                  <span className="cat-card-demo-label">Available capabilities:</span>
                   <span className="cat-card-demo-text">
-                    Xem owner/tier/lifecycle, đồ thị phụ thuộc; đăng ký service mới; thêm/xoá dependency; kiểm tra cảnh báo chu trình phụ thuộc.
+                    Inspect owner/tier/lifecycle, dependency graph; register new services; add/remove dependencies; verify circular dependency detection.
                   </span>
                 </div>
               </article>
@@ -424,13 +424,13 @@ export function CatalogPage({
                     <GitBranch size={16} /> Previews
                   </h3>
                   <p className="cat-card-desc">
-                    Môi trường preview tạm thời và cô lập cho một merge request / pull request, phục vụ kiểm thử tính năng trước khi hợp nhất.
+                    Ephemeral and isolated preview environments for a merge/pull request, enabling feature testing before merging.
                   </p>
                 </div>
                 <div className="cat-card-demo">
-                  <span className="cat-card-demo-label">Demo được gì:</span>
+                  <span className="cat-card-demo-label">Available capabilities:</span>
                   <span className="cat-card-demo-text">
-                    Tạo môi trường preview theo PR và commit SHA; cấu hình thời gian sống (TTL) để tự huỷ khi hết hạn; kiểm tra URL endpoint và chủ động huỷ sớm.
+                    Provision preview environments by PR and commit SHA; configure TTL for auto-destruction upon expiry; inspect endpoints and manually deprovision early.
                   </span>
                 </div>
               </article>
@@ -441,13 +441,13 @@ export function CatalogPage({
                     <Database size={16} /> Resources
                   </h3>
                   <p className="cat-card-desc">
-                    Cổng tự phục vụ yêu cầu tài nguyên đám mây (DB, Redis, S3, IAM role) có kiểm soát phê duyệt kép (dual-control governance) cho staging/production.
+                    Self-service portal for cloud resources (DB, Redis, S3, IAM roles) with dual-control governance for staging/production.
                   </p>
                 </div>
                 <div className="cat-card-demo">
-                  <span className="cat-card-demo-label">Demo được gì:</span>
+                  <span className="cat-card-demo-label">Available capabilities:</span>
                   <span className="cat-card-demo-text">
-                    Gửi yêu cầu tài nguyên qua JSON spec; phê duyệt (Approve); thu hồi (Deprovision); provider chưa cấu hình thì trạng thái fail-closed chứ không giả lập.
+                    Submit resource requests via JSON spec; dual-control approvals; deprovisioning; fail-closed behavior when providers are unconfigured.
                   </span>
                 </div>
               </article>
@@ -499,7 +499,7 @@ export function CatalogPage({
           <div className="cat-tab-hint">
             <Info size={16} className="cat-tab-hint-icon" />
             <span className="cat-tab-hint-text">
-              Services: xem owner/tier/lifecycle, đồ thị phụ thuộc, đánh dấu deprecated và kiểm tra chu trình phụ thuộc.
+              Services: inspect owner/tier/lifecycle, dependency graphs, mark deprecated, and verify dependency cycles.
             </span>
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: selectedService ? '1fr 1fr' : '1fr', gap: '1.5rem' }}>
@@ -722,7 +722,7 @@ export function CatalogPage({
           <div className="cat-tab-hint">
             <Info size={16} className="cat-tab-hint-icon" />
             <span className="cat-tab-hint-text">
-              Previews: môi trường preview tạm thời cho một merge request, tự huỷ khi hết hạn.
+              Previews: ephemeral preview environments for a merge request, auto-destroyed upon expiry.
             </span>
           </div>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
@@ -834,7 +834,7 @@ export function CatalogPage({
           <div className="cat-tab-hint">
             <Info size={16} className="cat-tab-hint-icon" />
             <span className="cat-tab-hint-text">
-              Resources: yêu cầu tài nguyên (DB, bucket…) qua phê duyệt; provider chưa cấu hình thì trạng thái &ldquo;fail-closed&rdquo; chứ không giả lập.
+              Resources: request infrastructure resources (DB, bucket…) with dual approvals; unconfigured providers fail closed without simulation.
             </span>
           </div>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>

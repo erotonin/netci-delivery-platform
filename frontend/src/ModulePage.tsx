@@ -30,15 +30,15 @@ const person = (subject?: string | null) => (!subject ? '—' : /^[0-9a-f]{8}-[0
 export function timeAgo(iso?: string | null): string {
   if (!iso) return '—'
   const seconds = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 1000))
-  if (seconds < 60) return 'vừa xong'
-  if (seconds < 3600) return `${Math.round(seconds / 60)} phút trước`
-  if (seconds < 86400) return `${Math.round(seconds / 3600)} giờ trước`
-  return `${Math.round(seconds / 86400)} ngày trước`
+  if (seconds < 60) return 'just now'
+  if (seconds < 3600) return `${Math.round(seconds / 60)}m ago`
+  if (seconds < 86400) return `${Math.round(seconds / 3600)}h ago`
+  return `${Math.round(seconds / 86400)}d ago`
 }
 const environmentLabel: Record<string, string> = { dev: 'Development', staging: 'Staging', prod: 'Production' }
 const statusLabel = (status: string) => ({
-  never_deployed: 'chưa triển khai', healthy: 'healthy', failed: 'failed', rolled_back: 'rolled back',
-  deploying: 'deploying', pending_approval: 'chờ phê duyệt', rollback_in_progress: 'đang rollback', cancelled: 'cancelled', rollback_failed: 'rollback failed',
+  never_deployed: 'never deployed', healthy: 'healthy', failed: 'failed', rolled_back: 'rolled back',
+  deploying: 'deploying', pending_approval: 'awaiting approval', rollback_in_progress: 'rolling back', cancelled: 'cancelled', rollback_failed: 'rollback failed',
 }[status] ?? status.replace(/_/g, ' '))
 
 function OverviewTab({ moduleId, onOpenRun }: { moduleId: string; onOpenRun?: (run: PipelineRun) => void }) {
@@ -57,34 +57,34 @@ function OverviewTab({ moduleId, onOpenRun }: { moduleId: string; onOpenRun?: (r
   return <>
     <div className="env-grid">{overview.environments.map((env) => <article className={`panel env-card env-${env.environment}`} key={env.environment}>
       <header><span className={`env-badge env-${env.environment}`}>{environmentLabel[env.environment] ?? env.environment}</span><StatusPill status={statusLabel(env.status)} /></header>
-      {env.status === 'never_deployed' ? <p className="muted">Chưa có deployment nào tới môi trường này.</p> : <dl>
-        <div><dt>Artifact</dt><dd className="mono" title={env.artifactDigest ?? ''}>{shortDigest(env.artifactDigest)}{env.version ? <em> · {env.version}</em> : <em className="muted"> · build chưa gắn version</em>}</dd></div>
+      {env.status === 'never_deployed' ? <p className="muted">No deployments to this environment yet.</p> : <dl>
+        <div><dt>Artifact</dt><dd className="mono" title={env.artifactDigest ?? ''}>{shortDigest(env.artifactDigest)}{env.version ? <em> · {env.version}</em> : <em className="muted"> · unversioned build</em>}</dd></div>
         <div><dt>Commit</dt><dd className="mono">{shortSha(env.commitSha)}</dd></div>
-        <div><dt>Chiến lược</dt><dd>{env.strategy ?? 'rolling'}</dd></div>
-        <div><dt>Cập nhật</dt><dd title={env.updatedAt}>{timeAgo(env.updatedAt)}</dd></div>
-        {env.approvedBy && <div><dt>Phê duyệt</dt><dd title={env.approvedBy}>{person(env.approvedBy)}</dd></div>}
-        {env.status === 'rolled_back' && <p className="muted">Đã rollback: môi trường đang chạy bản trước đó.</p>}
+        <div><dt>Strategy</dt><dd>{env.strategy ?? 'rolling'}</dd></div>
+        <div><dt>Updated</dt><dd title={env.updatedAt}>{timeAgo(env.updatedAt)}</dd></div>
+        {env.approvedBy && <div><dt>Approved by</dt><dd title={env.approvedBy}>{person(env.approvedBy)}</dd></div>}
+        {env.status === 'rolled_back' && <p className="muted">Rolled back: environment running previous release.</p>}
       </dl>}
     </article>)}</div>
     <section className="panel quality-strip">
-      <div className="panel-heading"><div><h2>Bằng chứng của artifact mới nhất</h2><p>{q.source ? <>Run <span className="mono">{q.source.pipelineRunId.slice(0, 8)}</span> · commit <span className="mono">{shortSha(q.source.commitSha)}</span> · digest <span className="mono">{shortDigest(q.source.artifactDigest)}</span> · {timeAgo(q.source.at)}</> : 'Chưa có build thành công nào có artifact.'}</p></div>{q.source && <StatusPill status={q.decision === 'allow' ? 'policy: allow' : `policy: ${q.decision ?? 'unknown'}`} />}</div>
+      <div className="panel-heading"><div><h2>Latest artifact provenance</h2><p>{q.source ? <>Run <span className="mono">{q.source.pipelineRunId.slice(0, 8)}</span> · commit <span className="mono">{shortSha(q.source.commitSha)}</span> · digest <span className="mono">{shortDigest(q.source.artifactDigest)}</span> · {timeAgo(q.source.at)}</> : 'No successful builds with an artifact.'}</p></div>{q.source && <StatusPill status={q.decision === 'allow' ? 'policy: allow' : `policy: ${q.decision ?? 'unknown'}`} />}</div>
       {q.source && <div className="quality-facts">
-        <div><span>SBOM</span><strong>{q.sbom?.present ? `${q.sbom.format ?? 'present'} (${q.sbom.generatedBy ?? '?'})` : 'không có'}</strong></div>
-        <div><span>Vulnerability scan</span><strong>{q.scan?.scanner ? `${q.scan.scanner}: ${q.scan.status ?? '?'} · critical ${q.scan.critical ?? '?'} · high ${q.scan.high ?? '?'}` : 'không có'}</strong></div>
-        <div><span>Chữ ký</span><strong>{q.signature?.verified ? `${q.signature.provider ?? 'cosign'} · verified` : 'chưa xác minh'}</strong></div>
-        <div><span>Kiểm thử của build</span><strong>{q.ciReport?.autoTest
+        <div><span>SBOM</span><strong>{q.sbom?.present ? `${q.sbom.format ?? 'present'} (${q.sbom.generatedBy ?? '?'})` : 'none'}</strong></div>
+        <div><span>Vulnerability scan</span><strong>{q.scan?.scanner ? `${q.scan.scanner}: ${q.scan.status ?? '?'} · critical ${q.scan.critical ?? '?'} · high ${q.scan.high ?? '?'}` : 'none'}</strong></div>
+        <div><span>Signature</span><strong>{q.signature?.verified ? `${q.signature.provider ?? 'cosign'} · verified` : 'not verified'}</strong></div>
+        <div><span>Build tests</span><strong>{q.ciReport?.autoTest
           ? `${q.ciReport.autoTest}${typeof q.ciReport.testsRun === 'number' ? ` · ${q.ciReport.testsRun} test` : ''}${q.ciReport.runner ? ` (${q.ciReport.runner})` : ''}${typeof (q.ciReport.coveragePercentage ?? q.ciReport.coverage) === 'number' ? ` · coverage ${q.ciReport.coveragePercentage ?? q.ciReport.coverage}%` : ''}`
-          : 'pipeline không gửi kết quả test'}</strong></div>
+          : 'pipeline did not report test results'}</strong></div>
       </div>}
     </section>
     <div className="module-overview-grid">
-      <section className="panel"><div className="panel-heading"><div><h2>Build gần đây</h2><p>{overview.recentRuns.length} lượt chạy mới nhất</p></div></div>
-        <div className="data-table history-table compact"><div className="table-row table-head"><span>Trạng thái</span><span>Môi trường</span><span>Commit</span><span>Artifact</span><span>Bởi</span><span>Khi nào</span></div>
+      <section className="panel"><div className="panel-heading"><div><h2>Recent builds</h2><p>{overview.recentRuns.length} most recent runs</p></div></div>
+        <div className="data-table history-table compact"><div className="table-row table-head"><span>Status</span><span>Environment</span><span>Commit</span><span>Artifact</span><span>By</span><span>When</span></div>
           {overview.recentRuns.map((run) => <button className="table-row table-button" key={run.id} onClick={() => onOpenRun?.(run)} title={run.id}><RunStatus run={run} /><span>{run.environment}</span><span className="mono">{shortSha(run.commitSha)}</span><span className="mono">{shortDigest(run.artifactDigest)}</span><span title={run.startedBy ?? ''}>{person(run.startedBy)}</span><span title={run.createdAt}>{timeAgo(run.createdAt)}</span></button>)}
         </div>
       </section>
-      <section className="panel"><div className="panel-heading"><div><h2>Deployment gần đây</h2><p>{overview.recentDeployments.length} bản ghi mới nhất</p></div></div>
-        <div className="data-table history-table compact five"><div className="table-row table-head"><span>Trạng thái</span><span>Môi trường</span><span>Artifact</span><span>Duyệt bởi</span><span>Khi nào</span></div>
+      <section className="panel"><div className="panel-heading"><div><h2>Recent deployments</h2><p>{overview.recentDeployments.length} most recent records</p></div></div>
+        <div className="data-table history-table compact five"><div className="table-row table-head"><span>Status</span><span>Environment</span><span>Artifact</span><span>Approved by</span><span>When</span></div>
           {overview.recentDeployments.map((d) => <div className="table-row" key={d.id} title={d.id}><StatusPill status={statusLabel(d.status)} /><span>{d.environment}</span><span className="mono">{shortDigest(d.artifactDigest)}{d.version ? ` · ${d.version}` : ''}</span><span title={d.approvedBy ?? ''}>{person(d.approvedBy)}</span><span title={d.updatedAt}>{timeAgo(d.updatedAt)}</span></div>)}
         </div>
       </section>
@@ -154,7 +154,7 @@ const shortRunId = (id: string) => `#${id.slice(0, 8)}`
  * that replaced it, so a cancellation nobody asked for is not mistaken for a failure. */
 export function RunStatus({ run }: { run: PipelineRun }) {
   if (isWaitingForAdmission(run)) {
-    return <span className="status status-waiting-admission" title="Waiting for admission: quota của phạm vi này đã đủ build đồng thời; run chưa được gửi tới Jenkins (ADR-050)."><i />chờ tới lượt</span>
+    return <span className="status status-waiting-admission" title="Waiting for admission: quota limit reached for concurrent builds; run has not been submitted to Jenkins (ADR-050)."><i />waiting admission</span>
   }
   if (run.status === 'cancelled' && run.supersededBy) {
     return <span className="status status-cancelled" title={`Cancelled: superseded by run ${run.supersededBy}`}><i />superseded by {shortRunId(run.supersededBy)}</span>
@@ -288,9 +288,9 @@ function PipelineRunView({
   const copyLog = async () => {
     try {
       await navigator.clipboard.writeText(log)
-      notify(`Đã sao chép log của stage ${selectedStageLabel}.`)
+      notify(`Copied logs for stage ${selectedStageLabel}.`)
     } catch {
-      notify('Trình duyệt không cho phép truy cập clipboard.', 'error')
+      notify('Browser clipboard access denied.', 'error')
     }
   }
 
@@ -300,9 +300,9 @@ function PipelineRunView({
     try {
       const updated = await cancelPipelineRun(liveRun.id, 'Cancelled via portal')
       onRunUpdated(updated)
-      notify('Pipeline run đã được hủy thành công.')
+      notify('Pipeline run cancelled successfully.')
     } catch (error) {
-      notify(error instanceof Error ? error.message : 'Không thể hủy pipeline run.', 'error')
+      notify(error instanceof Error ? error.message : 'Failed to cancel pipeline run.', 'error')
     } finally {
       setCancelling(false)
     }
@@ -314,9 +314,9 @@ function PipelineRunView({
     try {
       const newRun = await retryPipelineRun(liveRun.id)
       onRunUpdated(newRun)
-      notify(`Pipeline retry đã được tạo (#${newRun.id.slice(0, 8)}).`)
+      notify(`Pipeline retry created (#${newRun.id.slice(0, 8)}).`)
     } catch (error) {
-      notify(error instanceof Error ? error.message : 'Không thể retry pipeline run.', 'error')
+      notify(error instanceof Error ? error.message : 'Failed to retry pipeline run.', 'error')
     } finally {
       setRetrying(false)
     }
@@ -329,7 +329,7 @@ function PipelineRunView({
     setApproving(true)
     try {
       await approvePipelineRun(liveRun.id)
-      notify('Đã phê duyệt triển khai Production! CD workflow đã bắt đầu.')
+      notify('Production deployment approved! CD workflow initiated.')
       if (moduleId) {
         listModulePipelineRuns(moduleId)
           .then((res) => {
@@ -339,7 +339,7 @@ function PipelineRunView({
           .catch(() => {})
       }
     } catch (error) {
-      notify(error instanceof Error ? error.message : 'Không thể phê duyệt triển khai.', 'error')
+      notify(error instanceof Error ? error.message : 'Failed to approve deployment.', 'error')
     } finally {
       setApproving(false)
     }
@@ -368,8 +368,8 @@ function PipelineRunView({
         </div>
         <p>{liveRun ? `${liveRun.branch} · ${liveRun.commitSha} · ${triggerText(liveRun)} · ${runIntent(liveRun)} · triggered by ${liveRun.startedBy ?? 'unknown actor'}` : 'No pipeline run selected.'}{liveRun?.releaseTag && <> · version <b>{liveRun.releaseTag}</b></>}{liveRun?.jenkinsRunId && <><br /><span className="mono" style={{ opacity: 0.7 }}>Jenkins: {liveRun.jenkinsRunId}</span></>}{liveRun?.trigger?.reason && <><br /><small>{liveRun.trigger.reason}{typeof liveRun.trigger.changedFiles === 'number' ? ` · ${liveRun.trigger.changedFiles} changed file${liveRun.trigger.changedFiles === 1 ? '' : 's'}` : ''}</small></>}</p>
         {liveRun && isWaitingForAdmission(liveRun) && <p className="run-notice" role="status" data-testid="run-admission-notice">
-          Chờ tới lượt: quota của phạm vi này đã đủ build đồng thời, nên run chưa được gửi tới Jenkins. netCI admit run khi một build khác kết thúc (ADR-050).
-          {liveRun.concurrencyGroup ? <> Một commit mới hơn của <span className="mono">{liveRun.concurrencyGroup}</span> sẽ thay thế run này.</> : null}
+          Waiting for admission: concurrency quota limit reached for this scope; run has not been submitted to Jenkins. netCI will admit the run once another build finishes (ADR-050).
+          {liveRun.concurrencyGroup ? <> A newer commit in <span className="mono">{liveRun.concurrencyGroup}</span> will supersede this run.</> : null}
         </p>}
         {liveRun?.status === 'cancelled' && liveRun.supersededBy && <p className="run-notice" data-testid="run-superseded-notice">
           Superseded by {onOpenRun
@@ -416,9 +416,9 @@ function PipelineRunView({
           <small>{pipeline.stages.length} stages · {stages.length ? `${stages.length} reported` : 'per-stage results pending'} · {Math.round(zoom * 100)}%</small>
         </span>
         <div>
-          <button aria-label="Thu nhỏ" disabled={zoom <= .75} onClick={() => setZoom((value) => Math.max(.75, value - .25))}><ZoomOut size={16} /></button>
-          <button aria-label="Phóng to" disabled={zoom >= 1.5} onClick={() => setZoom((value) => Math.min(1.5, value + .25))}><ZoomIn size={16} /></button>
-          <button aria-label="Khôi phục" disabled={zoom === 1} onClick={() => setZoom(1)}><RotateCcw size={15} /></button>
+          <button aria-label="Zoom out" disabled={zoom <= .75} onClick={() => setZoom((value) => Math.max(.75, value - .25))}><ZoomOut size={16} /></button>
+          <button aria-label="Zoom in" disabled={zoom >= 1.5} onClick={() => setZoom((value) => Math.min(1.5, value + .25))}><ZoomIn size={16} /></button>
+          <button aria-label="Reset zoom" disabled={zoom === 1} onClick={() => setZoom(1)}><RotateCcw size={15} /></button>
         </div>
       </div>
       <div className="stage-graph" style={{ transform: `scale(${zoom})`, transformOrigin: 'left top' }}>
@@ -444,7 +444,7 @@ function PipelineRunView({
     <section className="log-panel">
       <div>
         <span><TerminalSquare size={16} />{selectedStageLabel}</span>
-        <button aria-label="Sao chép log" onClick={copyLog}><Copy size={15} /></button>
+        <button aria-label="Copy logs" onClick={copyLog}><Copy size={15} /></button>
       </div>
       <pre>{log}</pre>
     </section>
@@ -512,7 +512,7 @@ function PipelineTab({ moduleId, pipelineConfig, deploymentEnvironments, initial
 
   useEffect(() => {
     let active = true
-    listModulePipelineRuns(moduleId).then((result) => { if (active) setLiveRuns([...result.items].sort((a, b) => b.createdAt.localeCompare(a.createdAt))) }).catch((error) => { if (active) notify(error instanceof Error ? error.message : 'Không tải được pipeline history.', 'error') })
+    listModulePipelineRuns(moduleId).then((result) => { if (active) setLiveRuns([...result.items].sort((a, b) => b.createdAt.localeCompare(a.createdAt))) }).catch((error) => { if (active) notify(error instanceof Error ? error.message : 'Failed to load pipeline history.', 'error') })
     // Branches and tags come from the module's own repository, read by the server. The
     // Portal used to offer netCI's *own* build commit here, which does not exist in the
     // module's repository, so the default "Run" failed at checkout.
@@ -564,7 +564,7 @@ function PipelineTab({ moduleId, pipelineConfig, deploymentEnvironments, initial
     if (!runModalPipeline) return
     const rev = modalRevision.trim()
     if (!/^[0-9a-f]{7,64}$/i.test(rev)) {
-      setModalError('Commit SHA phải là 7–64 ký tự hex. Chọn một nhánh để netCI điền commit đầu nhánh.')
+      setModalError('Commit SHA must be 7–64 hex characters. Select a branch to populate head commit.')
       return
     }
     setBusyPipeline(runModalPipeline.id)
@@ -579,7 +579,7 @@ function PipelineTab({ moduleId, pipelineConfig, deploymentEnvironments, initial
       })
       setLiveRuns((current) => [next, ...current.filter((item) => item.id !== next.id)])
       setTriggered(runModalPipeline.name)
-      const waiting = isWaitingForAdmission(next) ? ' Chờ tới lượt: quota đang đầy, chưa gửi tới Jenkins.' : ''
+      const waiting = isWaitingForAdmission(next) ? ' Waiting for admission: quota full, not yet submitted to Jenkins.' : ''
       notify((modalDeploy ? `Queued build ${rev.slice(0, 8)} → ${modalEnv}.` : `Queued build ${rev.slice(0, 8)} (build only, not deployed).`) + waiting)
       setRunModalPipeline(null)
       setRun({ pipeline: runModalPipeline, liveRun: next })
@@ -599,7 +599,7 @@ function PipelineTab({ moduleId, pipelineConfig, deploymentEnvironments, initial
     }
     const known = liveRuns.find((item) => item.id === runId)
     if (known) { open(known); return }
-    getPipelineRun(runId).then(open).catch((error) => notify(error instanceof Error ? error.message : 'Không tải được pipeline run.', 'error'))
+    getPipelineRun(runId).then(open).catch((error) => notify(error instanceof Error ? error.message : 'Failed to load pipeline run.', 'error'))
   }
   if (run) {
     return (
@@ -623,8 +623,8 @@ function PipelineTab({ moduleId, pipelineConfig, deploymentEnvironments, initial
     <section className="panel repo-strip"><div><span>Repository</span><strong className="mono">{refs?.repositoryUrl ?? '…'}</strong></div>{refs?.error ? <div className="repo-error"><ShieldAlert size={14} />Failed to read branches from repository: {refs.error}</div> : <div><span>Branch</span><strong>{refs ? refs.branches.map((b) => `${b.name} @ ${b.sha.slice(0, 7)}`).join(' · ') || 'no branches' : 'loading…'}</strong></div>}{refs && refs.tags.length > 0 && <div><span>Latest Tags</span><strong>{refs.tags.slice(0, 3).map((t) => t.name).join(' · ')}</strong></div>}</section>
     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', margin: '14px 0 10px' }}>
       <div>
-        <h3 style={{ margin: 0, fontSize: '15px', fontWeight: 600 }}>Cấu hình & Môi trường Pipeline</h3>
-        <p style={{ margin: '3px 0 0', color: 'var(--muted)', fontSize: '12px' }}>Chỉnh sửa trực tiếp stages trong shared pipeline, tham số và trigger pipeline cho từng môi trường.</p>
+        <h3 style={{ margin: 0, fontSize: '15px', fontWeight: 600 }}>Pipeline Configuration & Environments</h3>
+        <p style={{ margin: '3px 0 0', color: 'var(--muted)', fontSize: '12px' }}>Configure shared pipeline stages, parameters, and execution triggers per environment.</p>
       </div>
       <button
         className="secondary-button"
@@ -632,7 +632,7 @@ function PipelineTab({ moduleId, pipelineConfig, deploymentEnvironments, initial
         onClick={() => setShowStagesEditor(!showStagesEditor)}
       >
         <Sliders size={15} />
-        {showStagesEditor ? 'Ẩn cấu hình Stages' : 'Chỉnh sửa Pipeline Stages'}
+        {showStagesEditor ? 'Hide Stages Config' : 'Edit Pipeline Stages'}
       </button>
     </div>
     {showStagesEditor && (
@@ -644,7 +644,7 @@ function PipelineTab({ moduleId, pipelineConfig, deploymentEnvironments, initial
     <div className="pipeline-card-grid">{definitions.map((pipeline) => {
     const live = runsForPipeline(pipeline)[0]
     const env = pipeline.id.replace('cd-', '')
-    return <article className="pipeline-card panel" key={pipeline.id}><div className="pipeline-card-title"><span className={`pipeline-icon pipeline-${pipeline.id}`}><GitBranch size={18} /></span><div><h3>{pipeline.name}</h3><p>build → publish → deploy to <b>{env}</b> · branch {pipeline.branch}{env === 'prod' ? ' · approval required' : ''}</p></div><button aria-label={`Open history ${pipeline.name}`} onClick={() => setHistoryPipeline(pipeline)}><MoreHorizontal size={18} /></button></div><div className="last-build" style={live ? { cursor: 'pointer' } : undefined} title={live ? "Click để mở chi tiết Pipeline Run này" : undefined} onClick={() => { if (live) setRun({ pipeline, liveRun: live }) }}><span>Latest Run</span><strong title={live?.jenkinsRunId ?? live?.id}>{live ? `#${live.jenkinsRunId ? live.jenkinsRunId.split('#').pop() : live.id.slice(0, 8)}` : '—'}</strong>{live ? <RunStatus run={live} /> : <StatusPill status="idle" />}</div>{live?.status === 'waiting_approval' && <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: '#fff4df', border: '1px solid #dda11d', borderRadius: '6px', padding: '6px 10px', margin: '8px 0', fontSize: '0.82rem', color: '#9d6b0c', cursor: 'pointer' }} onClick={() => setRun({ pipeline, liveRun: live })}><span>⏳ <strong>Chờ phê duyệt</strong> để deploy Prod</span><span style={{ textDecoration: 'underline', fontWeight: 600 }}>Duyệt ngay →</span></div>}<dl><div><dt>Commit</dt><dd className="mono" title={live?.commitSha}>{shortSha(live?.commitSha)}{live?.branch ? ` (${live.branch})` : ''}</dd></div><div><dt>Artifact</dt><dd className="mono" title={live?.artifactDigest ?? ''}>{shortDigest(live?.artifactDigest)}</dd></div><div><dt>Triggered By</dt><dd title={live?.startedBy ?? ''}>{person(live?.startedBy)}</dd></div><div><dt>Started</dt><dd title={live?.createdAt}>{live ? timeAgo(live.createdAt) : 'none'}</dd></div></dl><footer><button className="secondary-button" onClick={() => setHistoryPipeline(pipeline)}><History size={15} />History</button><button className="primary-button" style={{ height: '32px', padding: '0 12px', fontSize: '0.82rem', display: 'flex', alignItems: 'center', gap: '6px' }} disabled={busyPipeline === pipeline.id} aria-label={`Run ${pipeline.name}`} onClick={() => openRunModal(pipeline)}><Play size={14} />Run Pipeline</button></footer></article>
+    return <article className="pipeline-card panel" key={pipeline.id}><div className="pipeline-card-title"><span className={`pipeline-icon pipeline-${pipeline.id}`}><GitBranch size={18} /></span><div><h3>{pipeline.name}</h3><p>build → publish → deploy to <b>{env}</b> · branch {pipeline.branch}{env === 'prod' ? ' · approval required' : ''}</p></div><button aria-label={`Open history ${pipeline.name}`} onClick={() => setHistoryPipeline(pipeline)}><MoreHorizontal size={18} /></button></div><div className="last-build" style={live ? { cursor: 'pointer' } : undefined} title={live ? "Click to inspect this pipeline run" : undefined} onClick={() => { if (live) setRun({ pipeline, liveRun: live }) }}><span>Latest Run</span><strong title={live?.jenkinsRunId ?? live?.id}>{live ? `#${live.jenkinsRunId ? live.jenkinsRunId.split('#').pop() : live.id.slice(0, 8)}` : '—'}</strong>{live ? <RunStatus run={live} /> : <StatusPill status="idle" />}</div>{live?.status === 'waiting_approval' && <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: '#fff4df', border: '1px solid #dda11d', borderRadius: '6px', padding: '6px 10px', margin: '8px 0', fontSize: '0.82rem', color: '#9d6b0c', cursor: 'pointer' }} onClick={() => setRun({ pipeline, liveRun: live })}><span>⏳ <strong>Awaiting approval</strong> for Prod deployment</span><span style={{ textDecoration: 'underline', fontWeight: 600 }}>Review now →</span></div>}<dl><div><dt>Commit</dt><dd className="mono" title={live?.commitSha}>{shortSha(live?.commitSha)}{live?.branch ? ` (${live.branch})` : ''}</dd></div><div><dt>Artifact</dt><dd className="mono" title={live?.artifactDigest ?? ''}>{shortDigest(live?.artifactDigest)}</dd></div><div><dt>Triggered By</dt><dd title={live?.startedBy ?? ''}>{person(live?.startedBy)}</dd></div><div><dt>Started</dt><dd title={live?.createdAt}>{live ? timeAgo(live.createdAt) : 'none'}</dd></div></dl><footer><button className="secondary-button" onClick={() => setHistoryPipeline(pipeline)}><History size={15} />History</button><button className="primary-button" style={{ height: '32px', padding: '0 12px', fontSize: '0.82rem', display: 'flex', alignItems: 'center', gap: '6px' }} disabled={busyPipeline === pipeline.id} aria-label={`Run ${pipeline.name}`} onClick={() => openRunModal(pipeline)}><Play size={14} />Run Pipeline</button></footer></article>
   })}</div>
   {runModalPipeline && (
     <Modal
@@ -681,7 +681,7 @@ function PipelineTab({ moduleId, pipelineConfig, deploymentEnvironments, initial
           <span>Commit</span>
           {branchCommits && branchCommits.items.length > 0 ? (
             <select data-testid="run-commit-picker" value={branchCommits.items.some((c) => c.sha === modalRevision) ? modalRevision : ''} onChange={(e) => { if (e.target.value) setModalRevision(e.target.value) }}>
-              <option value="">— chọn commit —</option>
+              <option value="">— select commit —</option>
               {branchCommits.items.map((c) => <option key={c.sha} value={c.sha}>{c.sha.slice(0, 7)} · {c.subject} · {c.author} · {timeAgo(c.committedAt)}</option>)}
             </select>
           ) : (
@@ -720,7 +720,7 @@ type VersionRow = { tag: string; date: string; user: string; commit: string; cov
 function versionRow(item: ModuleVersion): VersionRow {
   return {
     tag: item.version,
-    date: item.createdAt ? new Date(item.createdAt).toLocaleString('vi-VN') : 'Not reported',
+    date: item.createdAt ? new Date(item.createdAt).toLocaleString('en-US') : 'Not reported',
     user: item.createdBy || 'unknown',
     commit: item.ciReport?.commit || item.artifactDigest || 'Not reported',
     coverage: typeof item.ciReport?.coveragePercentage === 'number' ? item.ciReport.coveragePercentage : typeof item.ciReport?.coverage === 'number' ? item.ciReport.coverage : null,
@@ -771,17 +771,17 @@ function VersionsTab({ moduleId }: { moduleId: string }) {
       await createModuleVersion(moduleId, { tag, gitTagUrl: gitTagUrl.trim() || undefined, artifactUrl: artifactUrl.trim() || undefined, pipelineRunId, artifactDigest })
       await loadVersions()
       setModal(false)
-      notify(`${tag} đã được đăng ký. CI có thể gửi quality report.`)
+      notify(`${tag} registered. CI can now submit quality reports.`)
     } catch (error) {
-      setFormError(error instanceof Error ? error.message : 'Không thể đăng ký version.')
+      setFormError(error instanceof Error ? error.message : 'Failed to register version.')
     } finally {
       setSaving(false)
     }
   }
   return <>
     <div className="tab-toolbar"><div><h2>Versions</h2><p>Register immutable release artifacts and receive CI quality reports.</p></div><button className="primary-button" onClick={() => setModal(true)}><Plus size={16} />New Version</button></div>
-    <section className="panel table-panel"><div className="data-table versions-table"><div className="table-row table-head"><span>Version</span><span>Released</span><span>By</span><span>Coverage</span><span>Dev</span><span>Staging</span><span>Production</span><span>Auto Test</span><span /></div>{versionItems.map((version) => <div className="table-row" key={version.tag}><span><strong>{version.tag}</strong><small className="mono" title={version.commit}>{version.commit.replace(/^sha256:/, '').slice(0, 12)}</small></span><span>{version.date}</span><span>{version.user}</span><span className="coverage-cell"><i><b style={{ width: `${version.coverage ?? 0}%` }} /></i>{version.coverage === null ? 'Not reported' : `${version.coverage}%`}</span><StatusPill status={version.dev.replace('_', ' ')} /><StatusPill status={version.staging.replace('_', ' ')} /><StatusPill status={version.prod.replace('_', ' ')} /><StatusPill status={version.autoTest} /><button className="row-more" aria-label={`Chi tiết ${version.tag}`} onClick={() => setSelectedTag(version.tag)}><MoreHorizontal size={17} /></button></div>)}</div>{!versionItems.length && <div className="empty-table"><strong>No release versions</strong><span>Register a verified artifact from a successful pipeline run.</span></div>}</section>
-    {modal && <Modal title="Register verified version" description="Link a semantic version to the exact artifact and successful pipeline that produced it." onClose={() => setModal(false)} footer={<><button className="secondary-button" onClick={() => setModal(false)}>Cancel</button><button className="primary-button" disabled={!/^v?\d+\.\d+\.\d+/.test(tag) || (gitTagUrl.trim() !== '' && !/^https?:\/\//.test(gitTagUrl)) || (artifactUrl.trim() !== '' && !/^https?:\/\//.test(artifactUrl)) || !pipelineRunId.trim() || !/^sha256:[0-9a-f]{64}$/.test(artifactDigest) || saving} onClick={saveVersion}>{saving ? 'Creating…' : 'Register Version'}</button></>}><div className="form-grid"><label className="field full"><span>Version tag</span><input value={tag} onChange={(event) => setTag(event.target.value)} placeholder="v2.5.0" /><small>Semantic version (v1.2.3). Tên gọi cho một artifact đã build; không tạo ra build mới.</small></label><label className="field full"><span>Build thành công</span>{builds.length ? <select value={pipelineRunId} onChange={(event) => chooseBuild(event.target.value)}><option value="">— chọn build —</option>{builds.map((b) => <option key={b.id} value={b.id}>#{b.jenkinsRunId ? b.jenkinsRunId.split('#').pop() : b.id.slice(0, 8)} · {b.environment} · {b.commitSha.slice(0, 8)} · {(b.artifactDigest ?? '').replace('sha256:', '').slice(0, 12)} · {new Date(b.createdAt).toLocaleString('vi-VN')}</option>)}</select> : <input value={pipelineRunId} onChange={(event) => setPipelineRunId(event.target.value)} placeholder="UUID của lượt chạy thành công" />}<small>{builds.length ? 'Chỉ các lượt chạy thành công có artifact; netCI kiểm tra digest và bằng chứng của lượt chạy khi đăng ký.' : 'Chưa có build thành công nào; chạy pipeline trước.'}</small></label><label className="field full"><span>Artifact digest</span><input className="mono" value={artifactDigest} onChange={(event) => setArtifactDigest(event.target.value)} placeholder="sha256:…" readOnly={builds.length > 0} /></label><label className="field full"><span>Git tag link <em className="muted">(tuỳ chọn)</em></span><input value={gitTagUrl} onChange={(event) => setGitTagUrl(event.target.value)} placeholder="https://git…/tags/v2.5.0" /></label><label className="field full"><span>Artifact link <em className="muted">(tuỳ chọn)</em></span><input value={artifactUrl} onChange={(event) => setArtifactUrl(event.target.value)} placeholder="https://registry…" /></label>{formError && <div className="inline-error full" role="alert">{formError}</div>}</div><div className="api-contract"><div><Code2 size={17} /><strong>CI report integration</strong></div><p>Publish quality metrics after the CI pipeline completes:</p><code>POST /api/modules/{moduleId}/versions/{'{tag}'}/ci-report</code><small>Authorization: Bearer &lt;pipeline-api-key&gt;</small><pre>{example}</pre></div></Modal>}
+    <section className="panel table-panel"><div className="data-table versions-table"><div className="table-row table-head"><span>Version</span><span>Released</span><span>By</span><span>Coverage</span><span>Dev</span><span>Staging</span><span>Production</span><span>Auto Test</span><span /></div>{versionItems.map((version) => <div className="table-row" key={version.tag}><span><strong>{version.tag}</strong><small className="mono" title={version.commit}>{version.commit.replace(/^sha256:/, '').slice(0, 12)}</small></span><span>{version.date}</span><span>{version.user}</span><span className="coverage-cell"><i><b style={{ width: `${version.coverage ?? 0}%` }} /></i>{version.coverage === null ? 'Not reported' : `${version.coverage}%`}</span><StatusPill status={version.dev.replace('_', ' ')} /><StatusPill status={version.staging.replace('_', ' ')} /><StatusPill status={version.prod.replace('_', ' ')} /><StatusPill status={version.autoTest} /><button className="row-more" aria-label={`Details ${version.tag}`} onClick={() => setSelectedTag(version.tag)}><MoreHorizontal size={17} /></button></div>)}</div>{!versionItems.length && <div className="empty-table"><strong>No release versions</strong><span>Register a verified artifact from a successful pipeline run.</span></div>}</section>
+    {modal && <Modal title="Register verified version" description="Link a semantic version to the exact artifact and successful pipeline that produced it." onClose={() => setModal(false)} footer={<><button className="secondary-button" onClick={() => setModal(false)}>Cancel</button><button className="primary-button" disabled={!/^v?\d+\.\d+\.\d+/.test(tag) || (gitTagUrl.trim() !== '' && !/^https?:\/\//.test(gitTagUrl)) || (artifactUrl.trim() !== '' && !/^https?:\/\//.test(artifactUrl)) || !pipelineRunId.trim() || !/^sha256:[0-9a-f]{64}$/.test(artifactDigest) || saving} onClick={saveVersion}>{saving ? 'Creating…' : 'Register Version'}</button></>}><div className="form-grid"><label className="field full"><span>Version tag</span><input value={tag} onChange={(event) => setTag(event.target.value)} placeholder="v2.5.0" /><small>Semantic version (v1.2.3). Label for an existing artifact; does not trigger a new build.</small></label><label className="field full"><span>Successful build</span>{builds.length ? <select value={pipelineRunId} onChange={(event) => chooseBuild(event.target.value)}><option value="">— select build —</option>{builds.map((b) => <option key={b.id} value={b.id}>#{b.jenkinsRunId ? b.jenkinsRunId.split('#').pop() : b.id.slice(0, 8)} · {b.environment} · {b.commitSha.slice(0, 8)} · {(b.artifactDigest ?? '').replace('sha256:', '').slice(0, 12)} · {new Date(b.createdAt).toLocaleString('en-US')}</option>)}</select> : <input value={pipelineRunId} onChange={(event) => setPipelineRunId(event.target.value)} placeholder="UUID of successful run" />}<small>{builds.length ? 'Only successful runs with artifacts; netCI verifies digest and provenance upon registration.' : 'No successful builds yet; run a pipeline first.'}</small></label><label className="field full"><span>Artifact digest</span><input className="mono" value={artifactDigest} onChange={(event) => setArtifactDigest(event.target.value)} placeholder="sha256:…" readOnly={builds.length > 0} /></label><label className="field full"><span>Git tag link <em className="muted">(optional)</em></span><input value={gitTagUrl} onChange={(event) => setGitTagUrl(event.target.value)} placeholder="https://git…/tags/v2.5.0" /></label><label className="field full"><span>Artifact link <em className="muted">(optional)</em></span><input value={artifactUrl} onChange={(event) => setArtifactUrl(event.target.value)} placeholder="https://registry…" /></label>{formError && <div className="inline-error full" role="alert">{formError}</div>}</div><div className="api-contract"><div><Code2 size={17} /><strong>CI report integration</strong></div><p>Publish quality metrics after the CI pipeline completes:</p><code>POST /api/modules/{moduleId}/versions/{'{tag}'}/ci-report</code><small>Authorization: Bearer &lt;pipeline-api-key&gt;</small><pre>{example}</pre></div></Modal>}
     {selectedTag && (() => { const version = versionItems.find((item) => item.tag === selectedTag); return version ? <Modal title={version.tag} description="Immutable release evidence recorded by netCI." onClose={() => setSelectedTag(null)} footer={<button className="secondary-button" onClick={() => setSelectedTag(null)}>Close</button>}><div className="review-grid"><div><span>Digest / report</span><strong className="mono">{version.commit}</strong></div><div><span>Released</span><strong>{version.date}</strong></div><div><span>Coverage</span><strong>{version.coverage === null ? 'Not reported' : `${version.coverage}%`}</strong></div><div><span>Promotion</span><strong>{version.promotable ? 'Eligible' : 'Blocked'}</strong></div><div><span>Signature</span><strong>{version.signed ? 'Verified' : 'Not verified'}</strong></div><div><span>SBOM / scan</span><strong>{version.sbom} / {version.scan}</strong></div></div></Modal> : null })()}
   </>
 }
@@ -811,9 +811,9 @@ function DoraTab({ moduleId }: { moduleId: string }) {
       setMetrics(next)
       setSourceEventCount(result.sourceEventCount ?? 0)
       setWindowLabel(`${result.window.from} to ${result.window.to} (${result.window.days} days)`)
-      setUpdatedAt(new Date().toLocaleTimeString('vi-VN'))
+      setUpdatedAt(new Date().toLocaleTimeString('en-US'))
     } catch (error) {
-      notify(error instanceof Error ? error.message : 'Không tải được DORA metrics.', 'error')
+      notify(error instanceof Error ? error.message : 'Failed to load DORA metrics.', 'error')
     } finally {
       setLoading(false)
     }
@@ -881,7 +881,7 @@ function ConfigTab({ moduleId }: { moduleId: string }) {
       const report = await detectDrift(moduleId)
       setDriftReport(report)
       // The banner below says it; a toast on every visit was noise.
-      if (announce) notify(report.hasDrift ? 'Có sai lệch giữa revision đang hoạt động và trạng thái đang chạy / NetBox.' : 'Không có sai lệch cấu hình.', report.hasDrift ? 'error' : 'success')
+      if (announce) notify(report.hasDrift ? 'Configuration drift detected between active revision and running state / NetBox.' : 'No configuration drift detected.', report.hasDrift ? 'error' : 'success')
     } catch (error) {
       notify(error instanceof Error ? error.message : 'Unable to run drift detection.', 'error')
     } finally {
@@ -1042,11 +1042,11 @@ function ConfigTab({ moduleId }: { moduleId: string }) {
                 Revision #{pendingRev.revisionNumber} requires production change approval
               </h3>
               <p style={{ margin: '0 0 8px 0', color: 'var(--text-secondary)' }}>
-                Proposed by <strong>{pendingRev.createdBy}</strong> at {new Date(pendingRev.createdAt).toLocaleString('vi-VN')}: <em>"{pendingRev.changeSummary}"</em>
+                Proposed by <strong>{pendingRev.createdBy}</strong> at {new Date(pendingRev.createdAt).toLocaleString('en-US')}: <em>"{pendingRev.changeSummary}"</em>
               </p>
               <small style={{ display: 'block', color: 'var(--text-muted)', marginBottom: 12 }}>
                 {me && me === pendingRev.createdBy
-                  ? 'Bạn là tác giả của thay đổi này: một reviewer khác phải phê duyệt (separation of duties).'
+                  ? 'You authored this change: another reviewer must approve (separation of duties).'
                   : 'Separation of duties applies: the author of a production configuration cannot approve their own change.'}
               </small>
               <div style={{ display: 'flex', gap: 10 }}>
@@ -1071,7 +1071,7 @@ function ConfigTab({ moduleId }: { moduleId: string }) {
         <div>
           <h2>Environment & Pipeline Configuration</h2>
           <p>
-            Cấu hình triển khai theo revision bất biến (phiên bản {configVersion}); thay đổi prod cần một reviewer khác phê duyệt; mỗi máy chủ đích được đối chiếu với NetBox.
+            Immutable deployment revision (v{configVersion}); prod changes require review approval; target servers verified against NetBox DCIM.
           </p>
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
@@ -1120,7 +1120,7 @@ function ConfigTab({ moduleId }: { moduleId: string }) {
             </div>
           ) : (
             <p style={{ margin: 0, fontSize: '0.88rem', color: 'var(--text-muted)' }}>
-              Không có deployment nào đã tới máy chủ lệch khỏi revision đang hoạt động, và DCIM chấp nhận mọi máy chủ đích đã cấu hình (trạng thái inventory, không phải kiểm tra "online").
+              No deployed servers drift from the active revision, and DCIM verified all configured target hosts (inventory state, not liveness probe).
             </p>
           )}
         </section>
@@ -1137,7 +1137,7 @@ function ConfigTab({ moduleId }: { moduleId: string }) {
               </div>
               <p style={{ margin: '0 0 6px 0', color: 'var(--text-secondary)' }}>{activeRev.changeSummary}</p>
               <small style={{ color: 'var(--text-muted)' }}>
-                Created by <span title={activeRev.createdBy}>{person(activeRev.createdBy)}</span> on {new Date(activeRev.createdAt).toLocaleString('vi-VN')}
+                Created by <span title={activeRev.createdBy}>{person(activeRev.createdBy)}</span> on {new Date(activeRev.createdAt).toLocaleString('en-US')}
                 {activeRev.approvedBy && <> · Approved by <span title={activeRev.approvedBy}>{person(activeRev.approvedBy)}</span></>}
               </small>
             </div>
@@ -1146,10 +1146,10 @@ function ConfigTab({ moduleId }: { moduleId: string }) {
             {(activeRev.deploymentConfig as unknown as DeploymentEnvironmentConfig[]).map((env) => <article className="env-card" key={env.environment} style={{ border: '1px solid var(--border)', borderRadius: 8 }}>
               <header><span className={`env-badge env-${env.environment}`}>{env.displayName || env.environment}</span><small className="muted">{env.runtime}</small></header>
               <dl>
-                <div><dt>Máy chủ</dt><dd className="mono">{env.servers?.length ? env.servers.join(', ') : (env.runtime === 'kubernetes' ? `namespace ${env.namespace ?? '—'}` : '—')}</dd></div>
+                <div><dt>Servers</dt><dd className="mono">{env.servers?.length ? env.servers.join(', ') : (env.runtime === 'kubernetes' ? `namespace ${env.namespace ?? '—'}` : '—')}</dd></div>
                 {env.runtime === 'kubernetes' && <div><dt>Kubeconfig</dt><dd className="mono">{env.kubeconfigRef ?? '—'}</dd></div>}
                 {Object.entries(env.runtimeSettings ?? {}).filter(([, v]) => v !== null && v !== undefined && v !== '').map(([k, v]) => <div key={k}><dt>{k}</dt><dd className="mono">{String(v)}</dd></div>)}
-                {env.runtime !== 'kubernetes' && (env.runtimeSettings?.become === null || env.runtimeSettings?.become === undefined) && <div><dt>become</dt><dd className="mono" title="Không khai trong revision; playbook mặc định leo thang quyền (sudo)">mặc định (bật)</dd></div>}
+                {env.runtime !== 'kubernetes' && (env.runtimeSettings?.become === null || env.runtimeSettings?.become === undefined) && <div><dt>become</dt><dd className="mono" title="Unspecified in revision; playbook defaults to privilege escalation (sudo)">default (enabled)</dd></div>}
               </dl>
             </article>)}
           </div>
@@ -1268,33 +1268,33 @@ function ConfigTab({ moduleId }: { moduleId: string }) {
             ) : (
               <>
                 {envDrafts.map((env, index) => <fieldset className="field full env-draft" key={env.environment}>
-                  <legend><span className={`env-badge env-${env.environment}`}>{env.displayName || env.environment}</span> <small className="muted">runtime {env.runtime}{env.environment === 'prod' ? ' · thay đổi prod cần một reviewer khác phê duyệt' : ''}</small></legend>
+                  <legend><span className={`env-badge env-${env.environment}`}>{env.displayName || env.environment}</span> <small className="muted">runtime {env.runtime}{env.environment === 'prod' ? ' · prod changes require reviewer approval' : ''}</small></legend>
                   <div className="form-grid">
-                    <label className="field full"><span>Máy chủ đích (tên trong NetBox, phân cách bằng dấu phẩy)</span>
-                      <input list={`dcim-${env.environment}`} value={env.servers.join(', ')} onChange={(e) => updateDraft(index, { servers: e.target.value.split(',').map((h) => h.trim()) })} placeholder={env.runtime === 'kubernetes' ? '(Kubernetes: không cần máy chủ)' : 'ví dụ: netci-prod-01'} />
+                    <label className="field full"><span>Target servers (NetBox hostnames, comma separated)</span>
+                      <input list={`dcim-${env.environment}`} value={env.servers.join(', ')} onChange={(e) => updateDraft(index, { servers: e.target.value.split(',').map((h) => h.trim()) })} placeholder={env.runtime === 'kubernetes' ? '(Kubernetes: servers not required)' : 'e.g. netci-prod-01'} />
                       <datalist id={`dcim-${env.environment}`}>{dcimHosts.filter((h) => !h.environment || h.environment === env.environment).map((h) => <option key={h.id} value={h.hostname}>{h.ipAddress ? `${h.hostname} (${h.ipAddress})` : h.hostname}</option>)}</datalist>
-                      <small>netCI kiểm tra tên máy chủ với NetBox (tenant/role/site) và trạng thái của nó trước mỗi lần triển khai.</small>
+                      <small>netCI verifies hostnames against NetBox (tenant/role/site) and checks status prior to deployment.</small>
                     </label>
                     {env.runtime === 'kubernetes' && <>
                       <label className="field"><span>Namespace</span><input value={env.namespace ?? ''} onChange={(e) => updateDraft(index, { namespace: e.target.value })} /></label>
                       <label className="field"><span>Kubeconfig secret ref</span><input value={env.kubeconfigRef ?? ''} onChange={(e) => updateDraft(index, { kubeconfigRef: e.target.value })} /></label>
                     </>}
                     {env.runtime === 'docker' && <>
-                      <label className="field"><span>Thư mục ứng dụng (appRoot)</span><input value={env.runtimeSettings?.appRoot ?? ''} onChange={(e) => updateDraftSettings(index, { appRoot: e.target.value })} /></label>
+                      <label className="field"><span>Application directory (appRoot)</span><input value={env.runtimeSettings?.appRoot ?? ''} onChange={(e) => updateDraftSettings(index, { appRoot: e.target.value })} /></label>
                       <label className="field"><span>Host port</span><input type="number" value={env.runtimeSettings?.hostPort ?? ''} onChange={(e) => updateDraftSettings(index, { hostPort: e.target.value === '' ? null : Number(e.target.value) })} /></label>
                       <label className="field"><span>Container port</span><input type="number" value={env.runtimeSettings?.containerPort ?? ''} onChange={(e) => updateDraftSettings(index, { containerPort: e.target.value === '' ? null : Number(e.target.value) })} /></label>
                       <label className="field"><span>Network mode</span><select value={env.runtimeSettings?.networkMode ?? 'bridge'} onChange={(e) => updateDraftSettings(index, { networkMode: e.target.value as 'bridge' | 'host' })}><option value="bridge">bridge</option><option value="host">host</option></select></label>
-                      <label className="field"><span>Registry host nhìn từ máy chủ (imagePullHost)</span><input value={env.runtimeSettings?.imagePullHost ?? ''} onChange={(e) => updateDraftSettings(index, { imagePullHost: e.target.value })} placeholder="registry.example:5000" /></label>
+                      <label className="field"><span>Registry host seen from server (imagePullHost)</span><input value={env.runtimeSettings?.imagePullHost ?? ''} onChange={(e) => updateDraftSettings(index, { imagePullHost: e.target.value })} placeholder="registry.example:5000" /></label>
                     </>}
                     {env.runtime === 'systemd' && <>
-                      <label className="field"><span>Cổng ứng dụng (appPort)</span><input type="number" value={env.runtimeSettings?.appPort ?? ''} onChange={(e) => updateDraftSettings(index, { appPort: e.target.value === '' ? null : Number(e.target.value) })} /></label>
-                      <label className="field"><span>Thư mục cài đặt (appRoot)</span><input value={env.runtimeSettings?.appRoot ?? ''} onChange={(e) => updateDraftSettings(index, { appRoot: e.target.value })} /></label>
-                      <label className="field"><span>Phạm vi systemd</span><select value={env.runtimeSettings?.systemdScope ?? 'user'} onChange={(e) => updateDraftSettings(index, { systemdScope: e.target.value as 'system' | 'user' })}><option value="user">user</option><option value="system">system</option></select></label>
+                      <label className="field"><span>Application port (appPort)</span><input type="number" value={env.runtimeSettings?.appPort ?? ''} onChange={(e) => updateDraftSettings(index, { appPort: e.target.value === '' ? null : Number(e.target.value) })} /></label>
+                      <label className="field"><span>Installation directory (appRoot)</span><input value={env.runtimeSettings?.appRoot ?? ''} onChange={(e) => updateDraftSettings(index, { appRoot: e.target.value })} /></label>
+                      <label className="field"><span>systemd scope</span><select value={env.runtimeSettings?.systemdScope ?? 'user'} onChange={(e) => updateDraftSettings(index, { systemdScope: e.target.value as 'system' | 'user' })}><option value="user">user</option><option value="system">system</option></select></label>
                     </>}
-                    {env.runtime !== 'kubernetes' && <label className="field checkbox-field"><input type="checkbox" checked={env.runtimeSettings?.become ?? true} onChange={(e) => updateDraftSettings(index, { become: e.target.checked })} /><span>Leo thang quyền (become/sudo) trên máy chủ — playbook mặc định bật khi không khai</span></label>}
+                    {env.runtime !== 'kubernetes' && <label className="field checkbox-field"><input type="checkbox" checked={env.runtimeSettings?.become ?? true} onChange={(e) => updateDraftSettings(index, { become: e.target.checked })} /><span>Privilege escalation (become/sudo) on server — enabled by default in playbook</span></label>}
                   </div>
                 </fieldset>)}
-                {!envDrafts.length && <p className="muted full">Revision hiện tại không có môi trường nào; dùng Raw JSON.</p>}
+                {!envDrafts.length && <p className="muted full">Current revision defines no environments; use Raw JSON.</p>}
               </>
             )}
 
@@ -1455,9 +1455,9 @@ export function ModulePage({ moduleId, onSettings }: { moduleId: string; onSetti
   const moduleCode = module.id
   if (loadError) {
     return <section className="panel" style={{ padding: 24 }}>
-      <h2 style={{ marginTop: 0 }}>{loadError.status === 403 ? 'Bạn không có quyền xem module này' : loadError.status === 404 ? 'Không tìm thấy module' : 'Không tải được module'}</h2>
+      <h2 style={{ marginTop: 0 }}>{loadError.status === 403 ? 'You do not have permission to view this module' : loadError.status === 404 ? 'Module not found' : 'Failed to load module'}</h2>
       <p className="muted">{loadError.message}</p>
-      <p className="muted" style={{ fontSize: '0.85rem' }}>Module <code>{moduleId}</code>. {loadError.status === 403 ? 'Quyền truy cập do team sở hữu module quyết định; hãy hỏi platform-admin hoặc team đó.' : ''}</p>
+      <p className="muted" style={{ fontSize: '0.85rem' }}>Module <code>{moduleId}</code>. {loadError.status === 403 ? 'Access is governed by the module owning team; contact platform-admin or the team owner.' : ''}</p>
     </section>
   }
   return <>

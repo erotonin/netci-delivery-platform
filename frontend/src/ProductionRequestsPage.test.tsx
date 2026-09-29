@@ -90,7 +90,7 @@ describe('ProductionRequestsPage (Phase 10)', () => {
     expect(screen.getByText('search-api')).toBeTruthy()
 
     // 2. Click Eye button to open details modal
-    const viewButton = screen.getByLabelText(/xem/i)
+    const viewButton = screen.getByLabelText(/view/i)
     fireEvent.click(viewButton)
 
     // 3. Verify modal shows DAG release plan waves and canary controls
@@ -130,7 +130,7 @@ describe('ProductionRequestsPage (Phase 10)', () => {
       </PortalFeedbackProvider>
     )
 
-    const viewButton = await screen.findByLabelText(/xem/i)
+    const viewButton = await screen.findByLabelText(/view/i)
     fireEvent.click(viewButton)
 
     const advanceButton = await screen.findByText(/Advance Step/i)
@@ -205,7 +205,7 @@ describe('separation of duties in the browser', () => {
         <ProductionRequestsPage systemId="" />
       </PortalFeedbackProvider>
     )
-    fireEvent.click(await screen.findByLabelText(/^Xem /))
+    fireEvent.click(await screen.findByLabelText(/^View /))
     return screen.findByTestId('request-approve')
   }
 

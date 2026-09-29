@@ -64,7 +64,7 @@ describe('PipelineStep in isolation', () => {
     expect(screen.getByText('Build Image')).toBeTruthy()
     expect(screen.getByText('Unit Tests')).toBeTruthy()
     expect(screen.getByText('Security Scan')).toBeTruthy()
-    expect(screen.getByText('dùng bởi 2 module')).toBeTruthy()
+    expect(screen.getByText('used by 2 modules')).toBeTruthy()
     expect(screen.getByText('Shared CI pipeline for standard microservices')).toBeTruthy()
 
     // Active card has role="radio", aria-checked="false"
@@ -72,9 +72,9 @@ describe('PipelineStep in isolation', () => {
     expect(activeRadio.getAttribute('aria-checked')).toBe('false')
     expect(activeRadio.getAttribute('aria-disabled')).toBeNull()
 
-    // Unapproved card has "chưa được duyệt" and aria-disabled="true"
+    // Unapproved card has "pending approval" and aria-disabled="true"
     expect(screen.getByText('unapproved-ci')).toBeTruthy()
-    expect(screen.getByText('chưa được duyệt')).toBeTruthy()
+    expect(screen.getByText('pending approval')).toBeTruthy()
     const disabledRadio = screen.getByRole('radio', { name: /unapproved-ci/i })
     expect(disabledRadio.getAttribute('aria-disabled')).toBe('true')
 
@@ -109,22 +109,22 @@ describe('PipelineStep in isolation', () => {
     vi.mocked(listSharedPipelines).mockResolvedValueOnce([mockPipelines[1]])
     render(<PipelineStep value="" onChange={vi.fn()} />)
 
-    expect(await screen.findByText(/Chưa có pipeline nào được duyệt/i)).toBeTruthy()
-    expect(screen.getByText(/Quản trị viên cần tạo và phê duyệt pipeline trên trang Pipelines/i)).toBeTruthy()
+    expect(await screen.findByText(/No approved pipelines found/i)).toBeTruthy()
+    expect(screen.getByText(/An administrator must create and approve a pipeline on the Pipelines page/i)).toBeTruthy()
   })
 
   it('shows empty state when pipeline list is empty', async () => {
     vi.mocked(listSharedPipelines).mockResolvedValueOnce([])
     render(<PipelineStep value="" onChange={vi.fn()} />)
 
-    expect(await screen.findByText(/Chưa có pipeline nào được duyệt/i)).toBeTruthy()
+    expect(await screen.findByText(/No approved pipelines found/i)).toBeTruthy()
   })
 
-  it('calls onManagePipelines when clicking "Quản lý pipelines"', async () => {
+  it('calls onManagePipelines when clicking "Manage pipelines"', async () => {
     const onManage = vi.fn()
     render(<PipelineStep value="" onChange={vi.fn()} onManagePipelines={onManage} />)
 
-    const manageBtn = await screen.findByRole('button', { name: /Quản lý pipelines/i })
+    const manageBtn = await screen.findByRole('button', { name: /Manage pipelines/i })
     fireEvent.click(manageBtn)
     expect(onManage).toHaveBeenCalledTimes(1)
   })
@@ -184,7 +184,7 @@ describe('NewModuleWizard pipeline step integration', () => {
     fireEvent.click(nextBtn)
 
     // Step 2 is active
-    expect(await screen.findByRole('heading', { name: 'Chọn pipeline CI chia sẻ' })).toBeTruthy()
+    expect(await screen.findByRole('heading', { name: 'Select Shared CI Pipeline' })).toBeTruthy()
 
     // Next button is disabled because no pipeline is selected
     expect(nextBtn.hasAttribute('disabled')).toBe(true)

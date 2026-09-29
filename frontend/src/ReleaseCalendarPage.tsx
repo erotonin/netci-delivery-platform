@@ -420,7 +420,11 @@ export function ReleaseCalendarPage({ now: fixedNow }: { now?: Date }) {
     setViewDate(new Date(now))
   }
 
-  const monthTitle = `Tháng ${viewDate.getMonth() + 1}, ${viewDate.getFullYear()}`
+  const MONTH_NAMES = [
+    'January', 'February', 'March', 'April', 'May', 'June',
+    'July', 'August', 'September', 'October', 'November', 'December',
+  ]
+  const monthTitle = `${MONTH_NAMES[viewDate.getMonth()]}, ${viewDate.getFullYear()}`
 
   // Render a freeze inside a calendar cell
   const renderCellFreeze = (freeze: ChangeFreeze, day: string) => {
@@ -496,8 +500,8 @@ export function ReleaseCalendarPage({ now: fixedNow }: { now?: Date }) {
   const renderAgendaList = () => (
     upcomingDays.length === 0 ? (
       <div className="panel empty-table">
-        <strong>Không có sự kiện sắp tới</strong>
-        <span>Không có bản phát hành hay freeze nào được lên lịch.</span>
+        <strong>No upcoming events</strong>
+        <span>No releases or freezes scheduled.</span>
       </div>
     ) : (
       upcomingDays.map((day) => {
@@ -512,13 +516,13 @@ export function ReleaseCalendarPage({ now: fixedNow }: { now?: Date }) {
             <div className="cal-agenda-day-header">
               <h4>
                 <CalendarDays size={15} />
-                {new Date(`${day}T00:00:00`).toLocaleDateString('vi-VN', {
+                {new Date(`${day}T00:00:00`).toLocaleDateString('en-US', {
                   weekday: 'short',
                   day: '2-digit',
-                  month: '2-digit',
+                  month: 'short',
                   year: 'numeric',
                 })}
-                {day === today ? ' · Hôm nay' : ''}
+                {day === today ? ' · Today' : ''}
               </h4>
             </div>
 
@@ -704,50 +708,50 @@ export function ReleaseCalendarPage({ now: fixedNow }: { now?: Date }) {
           <div className="cal-toolbar">
             <div className="cal-toolbar-nav">
               <button type="button" className="cal-today-btn" onClick={handleToday}>
-                Hôm nay
+                Today
               </button>
               <button
                 type="button"
                 className="cal-nav-btn"
-                aria-label="Tháng trước"
+                aria-label="Previous month"
                 onClick={handlePrev}
-                title="Tháng trước"
+                title="Previous month"
               >
                 <ChevronLeft size={16} />
               </button>
               <button
                 type="button"
                 className="cal-nav-btn"
-                aria-label="Tháng sau"
+                aria-label="Next month"
                 onClick={handleNext}
-                title="Tháng sau"
+                title="Next month"
               >
                 <ChevronRight size={16} />
               </button>
               <span className="cal-month-title">{monthTitle}</span>
             </div>
 
-            <div className="segmented cal-view-switch" role="group" aria-label="Chế độ xem">
+            <div className="segmented cal-view-switch" role="group" aria-label="View mode">
               <button
                 type="button"
                 className={viewMode === 'month' ? 'active' : ''}
                 onClick={() => setViewMode('month')}
               >
-                Tháng
+                Month
               </button>
               <button
                 type="button"
                 className={viewMode === 'week' ? 'active' : ''}
                 onClick={() => setViewMode('week')}
               >
-                Tuần
+                Week
               </button>
               <button
                 type="button"
                 className={viewMode === 'agenda' ? 'active' : ''}
                 onClick={() => setViewMode('agenda')}
               >
-                Danh sách
+                List
               </button>
             </div>
           </div>
@@ -755,21 +759,21 @@ export function ReleaseCalendarPage({ now: fixedNow }: { now?: Date }) {
           {/* Legend and Summary Stats Bar */}
           <div className="cal-legend-bar">
             <div className="cal-legend">
-              <span className="cal-legend-title">Trạng thái:</span>
+              <span className="cal-legend-title">Status:</span>
               <span className="cal-legend-item">
-                <span className="cal-legend-dot cal-dot-approved" /> Đã duyệt
+                <span className="cal-legend-dot cal-dot-approved" /> Approved
               </span>
               <span className="cal-legend-item">
-                <span className="cal-legend-dot cal-dot-pending" /> Chờ duyệt
+                <span className="cal-legend-dot cal-dot-pending" /> Pending
               </span>
               <span className="cal-legend-item">
-                <span className="cal-legend-dot cal-dot-executed" /> Đã thực hiện
+                <span className="cal-legend-dot cal-dot-executed" /> Completed
               </span>
               <span className="cal-legend-item">
-                <span className="cal-legend-dot cal-dot-rejected" /> Từ chối / Hủy
+                <span className="cal-legend-dot cal-dot-rejected" /> Rejected / Cancelled
               </span>
               <span className="cal-legend-item">
-                <span className="cal-legend-dot cal-dot-freeze" /> Đóng băng thay đổi
+                <span className="cal-legend-dot cal-dot-freeze" /> Change Freeze
               </span>
             </div>
 
@@ -808,16 +812,16 @@ export function ReleaseCalendarPage({ now: fixedNow }: { now?: Date }) {
           {/* Empty Month Note */}
           {stats.releasesThisMonth === 0 && (
             <div className="cal-empty-month-note" role="status">
-              <span>Không có bản phát hành nào được lên lịch trong tháng này.</span>
+              <span>No releases scheduled for this month.</span>
             </div>
           )}
 
           {/* View Modes */}
           {viewMode === 'month' && (
             <div className="cal-month-view">
-              <div className="cal-month-grid" role="grid" aria-label="Lịch phát hành theo tháng">
+              <div className="cal-month-grid" role="grid" aria-label="Monthly release calendar">
                 <div className="cal-grid-header" role="row">
-                  {['T2', 'T3', 'T4', 'T5', 'T6', 'T7', 'CN'].map((h) => (
+                  {['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map((h) => (
                     <div key={h} className="cal-header-cell" role="columnheader">
                       {h}
                     </div>
@@ -891,14 +895,14 @@ export function ReleaseCalendarPage({ now: fixedNow }: { now?: Date }) {
 
           {viewMode === 'week' && (
             <div className="cal-week-view">
-              <div className="cal-week-grid" role="grid" aria-label="Lịch phát hành theo tuần">
+              <div className="cal-week-grid" role="grid" aria-label="Weekly release calendar">
                 <div className="cal-grid-header" role="row">
                   {weekDays.map((item, idx) => {
-                    const names = ['T2', 'T3', 'T4', 'T5', 'T6', 'T7', 'CN']
+                    const names = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
                     return (
                       <div key={item.dateStr} className="cal-header-cell" role="columnheader">
                         <span>{names[idx]}</span>
-                        <small>{item.date.getDate()}/{item.date.getMonth() + 1}</small>
+                        <small>{item.date.getMonth() + 1}/{item.date.getDate()}</small>
                       </div>
                     )
                   })}
@@ -943,23 +947,23 @@ export function ReleaseCalendarPage({ now: fixedNow }: { now?: Date }) {
 
           {/* Side Panel for Day Details */}
           {selectedDay && (
-            <aside className="cal-side-panel" data-testid="calendar-side-panel" aria-label={`Chi tiết ngày ${selectedDay}`}>
+            <aside className="cal-side-panel" data-testid="calendar-side-panel" aria-label={`Day details ${selectedDay}`}>
               <div className="cal-side-panel-header">
                 <div>
                   <h3>
-                    {new Date(`${selectedDay}T00:00:00`).toLocaleDateString('vi-VN', {
+                    {new Date(`${selectedDay}T00:00:00`).toLocaleDateString('en-US', {
                       weekday: 'long',
+                      month: 'short',
                       day: '2-digit',
-                      month: '2-digit',
                       year: 'numeric',
                     })}
                   </h3>
-                  <small className="muted">{selectedDay === today ? 'Hôm nay' : selectedDay}</small>
+                  <small className="muted">{selectedDay === today ? 'Today' : selectedDay}</small>
                 </div>
                 <button
                   type="button"
                   className="icon-button"
-                  aria-label="Đóng"
+                  aria-label="Close"
                   onClick={() => {
                     setSelectedDay(null)
                     setSelectedRequestId(null)
@@ -1006,7 +1010,7 @@ export function ReleaseCalendarPage({ now: fixedNow }: { now?: Date }) {
                   <h4 className="cal-side-section-title">Releases</h4>
                   {(byDay.get(selectedDay) ?? []).length === 0 && (
                     <p className="muted" style={{ fontSize: '12px' }}>
-                      Không có bản phát hành nào được lên lịch cho ngày này.
+                      No releases scheduled for this day.
                     </p>
                   )}
                   {(byDay.get(selectedDay) ?? []).map((req) => {
@@ -1024,7 +1028,7 @@ export function ReleaseCalendarPage({ now: fixedNow }: { now?: Date }) {
                               {req.modules.map((m) => `${m.moduleName || m.moduleId} ${m.version}`).join(' · ')}
                             </strong>
                             <small className="muted" style={{ display: 'block', fontSize: '11px', marginTop: '2px' }}>
-                              {new Date(req.scheduledFor).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })} · requested by {req.requestedBy}
+                              {new Date(req.scheduledFor).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })} · requested by {req.requestedBy}
                             </small>
                           </div>
                           <StatusPill status={req.status.replace('_', ' ')} />

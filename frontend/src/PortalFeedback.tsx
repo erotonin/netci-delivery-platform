@@ -22,7 +22,7 @@ export function PortalFeedbackProvider({ children }: { children: ReactNode }) {
 
   return <FeedbackContext.Provider value={value}>
     {children}
-    {feedback && <div className={`toast toast-${feedback.kind}`} role={feedback.kind === 'error' ? 'alert' : 'status'} aria-live="polite"><Icon size={17} />{feedback.message}<button aria-label="Đóng thông báo" onClick={() => setFeedback(null)}><X size={15} /></button></div>}
+    {feedback && <div className={`toast toast-${feedback.kind}`} role={feedback.kind === 'error' ? 'alert' : 'status'} aria-live="polite"><Icon size={17} />{feedback.message}<button aria-label="Dismiss notification" onClick={() => setFeedback(null)}><X size={15} /></button></div>}
   </FeedbackContext.Provider>
 }
 
