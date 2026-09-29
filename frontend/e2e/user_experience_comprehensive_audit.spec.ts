@@ -201,31 +201,26 @@ test.describe.serial('Comprehensive Real-User Experience & Zero-Mock Platform Au
     console.log(`[Workflow 3] Successfully tested managerial system deletion for ${newSystemId}.`)
   })
 
-  test('Workflow 4: Service Catalog, Template Studio & Self-Service Resources', async ({ page }) => {
-    console.log('[Workflow 4] Testing Service Catalog & Template Studio...')
+  test('Workflow 4: Service Catalog, Services Graph & Self-Service Resources', async ({ page }) => {
+    console.log('[Workflow 4] Testing Service Catalog, Dependency Graph & Resources...')
     await ssoLogin(page, 'pat')
 
     await page.click('button:has-text("Service Catalog")')
-    await expect(page.locator('h1, h2')).toContainText(/Catalog/i)
+    await expect(page.locator('h1').first()).toContainText(/Catalog/i)
 
-    // Switch to Golden Path Templates Tab
-    await page.click('button:has-text("Golden Path Templates"), [role="tab"]:has-text("Golden Path Templates")')
-    await expect(page.locator('article:has-text("Golden Path")').first()).toBeVisible()
-    await page.screenshot({ path: path.join(ARTIFACT_DIR, 'user_audit_10_template_studio.png') })
+    // Verify Services & Dependency Graph
+    await expect(page.getByRole('tab', { name: /Services & Dependency Graph/i })).toBeVisible()
+    await page.screenshot({ path: path.join(ARTIFACT_DIR, 'user_audit_10_service_catalog.png') })
 
-    // Test 1-Click Instantiate
-    const instantiateBtn = page.locator('article button:has-text("1-Click Instantiate")').first()
-    await expect(instantiateBtn).toBeVisible()
-    await instantiateBtn.click()
-    await expect(page.locator('.modal')).toBeVisible()
-    await page.waitForTimeout(500)
-    await page.click('.modal button:has-text("Close")')
+    // Switch to Ephemeral Previews tab
+    await page.click('button:has-text("Ephemeral Preview Environments"), [role="tab"]:has-text("Ephemeral Preview Environments")')
+    await page.waitForTimeout(300)
 
     // Switch to Self-Service Resources tab (cloud infrastructure)
     await page.click('button:has-text("Self-Service Resources"), [role="tab"]:has-text("Self-Service Resources")')
     await page.waitForTimeout(500)
     await page.screenshot({ path: path.join(ARTIFACT_DIR, 'user_audit_11_self_service_resources.png') })
-    console.log('[Workflow 4] Template Studio & Self-service resources verified successfully.')
+    console.log('[Workflow 4] Service Catalog & Self-service resources verified successfully.')
   })
 
   test('Workflow 5: Complete Audit of All Enterprise Governance & Operations Screens', async ({ page }) => {

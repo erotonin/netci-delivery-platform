@@ -2,8 +2,8 @@ import { useEffect, useMemo, useState } from 'react'
 import {
   AlertTriangle, BookOpen, Box, CheckCircle2, ChevronRight, Clock,
   Code2, Compass, Cpu, Database, ExternalLink, GitBranch, GitCommit,
-  GitFork, Info, Layers, Network, Play, Plus, RefreshCw, Server, Shield,
-  ShieldAlert, ShieldCheck, Terminal, Trash2, X, XCircle, Zap,
+  GitFork, Info, Layers, Network, Plus, RefreshCw, Server, Shield,
+  ShieldAlert, ShieldCheck, Terminal, Trash2, X, XCircle,
 } from 'lucide-react'
 import {
   addServiceDependency,
@@ -11,9 +11,7 @@ import {
   createPreviewEnvironment,
   deprovisionSelfServiceResource,
   getServiceDependencies,
-  instantiateCatalogTemplate,
   listCatalogServices,
-  listCatalogTemplates,
   listPreviewEnvironments,
   listSelfServiceResources,
   registerCatalogService,
@@ -22,12 +20,9 @@ import {
   teardownPreviewEnvironment,
   type CatalogService,
   type CatalogServiceCreate,
-  type CatalogTemplate,
   type PreviewEnvironment,
   type ResourceRequest,
   type ServiceDependencyGraph,
-  registerCatalogTemplate,
-  type TemplateInstantiatedPlan,
 } from './api/netciClient'
 import { Modal, PageHeader, StatusPill } from './PortalShell'
 import { usePortalFeedback } from './PortalFeedback'
@@ -35,7 +30,7 @@ import type { AuthSession } from './LoginPage'
 import type { Navigate } from './PortalShell'
 import './catalog.css'
 
-type CatalogTab = 'services' | 'templates' | 'previews' | 'resources'
+type CatalogTab = 'services' | 'previews' | 'resources'
 
 const INTRO_HIDDEN_STORAGE_KEY = 'netci.catalog.introHidden'
 
@@ -108,12 +103,6 @@ export function CatalogPage({
   const [serviceSearch, setServiceSearch] = useState('')
   const [serviceTierFilter, setServiceTierFilter] = useState('all')
 
-  // Templates state
-  const [templates, setTemplates] = useState<CatalogTemplate[]>([])
-  const [templateSearch, setTemplateSearch] = useState('')
-  const [selectedTemplate, setSelectedTemplate] = useState<CatalogTemplate | null>(null)
-  const [instantiatePlan, setInstantiatePlan] = useState<TemplateInstantiatedPlan | null>(null)
-
   // Previews state
   const [previews, setPreviews] = useState<PreviewEnvironment[]>([])
   const [previewFilter, setPreviewFilter] = useState('active')
@@ -127,16 +116,6 @@ export function CatalogPage({
   const [showAddDependency, setShowAddDependency] = useState(false)
   const [showCreatePreview, setShowCreatePreview] = useState(false)
   const [showRequestResource, setShowRequestResource] = useState(false)
-  // Registering a Golden Path template was the one catalog action with an API, a client
-  // function and no way to reach it from the browser: a platform admin had to POST by
-  // hand. There is deliberately no delete -- modules carry the template they were
-  // instantiated from, so a template is retired by marking it deprecated, not removed.
-  const [showRegisterTemplate, setShowRegisterTemplate] = useState(false)
-  const [templateForm, setTemplateForm] = useState({
-    templateId: '', version: 'v1.0.0', name: '', description: '', category: 'backend',
-    parametersSchema: '{}', pipelineDefinition: '{}', isDeprecated: false,
-  })
-  const [templateFormError, setTemplateFormError] = useState('')
 
   // Service form
   const [serviceForm, setServiceForm] = useState<CatalogServiceCreate>({
@@ -168,11 +147,6 @@ export function CatalogPage({
   const [resType, setResType] = useState('postgresql')
   const [resSpec, setResSpec] = useState('{\n  "version": "16",\n  "storageGb": 20\n}')
 
-  // Template instantiate form
-  const [instAppName, setInstAppName] = useState('')
-  const [instTeam, setInstTeam] = useState(session?.identity?.principal?.teams?.[0] ?? 'platform-core')
-  const [instParams, setInstParams] = useState<Record<string, unknown>>({})
-
   // Load active tab data
   const refreshData = async () => {
     setLoading(true)
@@ -180,9 +154,6 @@ export function CatalogPage({
       if (tab === 'services') {
         const res = await listCatalogServices()
         setServices(res.items)
-      } else if (tab === 'templates') {
-        const res = await listCatalogTemplates()
-        setTemplates(res.items)
       } else if (tab === 'previews') {
         const res = await listPreviewEnvironments()
         setPreviews(res.items)
@@ -272,70 +243,7 @@ export function CatalogPage({
     }
   }
 
-  const handleInstantiateTemplate = async (e: React.FormEvent) => {
-    e.preventDefault()
-    if (!selectedTemplate) return
-    try {
-      const plan = await instantiateCatalogTemplate(selectedTemplate.templateId, {
-        applicationName: instAppName,
-        owningTeam: instTeam,
-        parameters: instParams,
-      })
-      setInstantiatePlan(plan)
-      feedback.notify(`Template '${selectedTemplate.name}' instantiated!`, 'success')
-    } catch (err: unknown) {
-      feedback.notify(`Instantiation failed: ${String(err)}`, 'error')
-    }
-  }
 
-  // A template version is immutable (the server answers 409 to a rewrite), so "editing" a
-  // Golden Path is registering its next version, starting from the current definition.
-  const isPlatformAdmin = Boolean(session?.identity.principal.roles.includes('platform-admin'))
-  const openNewVersion = (tpl: CatalogTemplate) => {
-    const match = /^v?(\d+)\.(\d+)\.(\d+)(.*)$/.exec(tpl.version)
-    const next = match ? `v${match[1]}.${match[2]}.${Number(match[3]) + 1}` : tpl.version
-    setTemplateForm({
-      templateId: tpl.templateId, version: next, name: tpl.name, description: tpl.description,
-      category: tpl.category, isDeprecated: false,
-      parametersSchema: JSON.stringify(tpl.parametersSchema ?? {}, null, 2),
-      pipelineDefinition: JSON.stringify(tpl.pipelineDefinition ?? {}, null, 2),
-    })
-    setTemplateFormError('')
-    setShowRegisterTemplate(true)
-  }
-
-  const handleRegisterTemplate = async (e: React.FormEvent) => {
-    e.preventDefault()
-    setTemplateFormError('')
-    let parametersSchema: Record<string, unknown>
-    let pipelineDefinition: Record<string, unknown>
-    try {
-      parametersSchema = JSON.parse(templateForm.parametersSchema || '{}')
-      pipelineDefinition = JSON.parse(templateForm.pipelineDefinition || '{}')
-    } catch (err: unknown) {
-      // Refuse here rather than send something the server will reject less clearly.
-      setTemplateFormError(`Parameters schema and pipeline definition must be JSON: ${String(err)}`)
-      return
-    }
-    try {
-      await registerCatalogTemplate({
-        templateId: templateForm.templateId.trim(),
-        version: templateForm.version.trim(),
-        name: templateForm.name.trim(),
-        description: templateForm.description.trim(),
-        category: templateForm.category.trim() || 'backend',
-        parametersSchema,
-        pipelineDefinition,
-        isDeprecated: templateForm.isDeprecated,
-      })
-      feedback.notify(`Template ${templateForm.templateId} ${templateForm.version} registered.`, 'success')
-      setShowRegisterTemplate(false)
-      setTemplateForm({ templateId: '', version: 'v1.0.0', name: '', description: '', category: 'backend', parametersSchema: '{}', pipelineDefinition: '{}', isDeprecated: false })
-      refreshData()
-    } catch (err: unknown) {
-      setTemplateFormError(String(err))
-    }
-  }
 
   const handleCreatePreview = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -428,15 +336,6 @@ export function CatalogPage({
     })
   }, [services, serviceSearch, serviceTierFilter])
 
-  const filteredTemplates = useMemo(() => {
-    return templates.filter(
-      (t) =>
-        t.name.toLowerCase().includes(templateSearch.toLowerCase()) ||
-        t.templateId.toLowerCase().includes(templateSearch.toLowerCase()) ||
-        t.category.toLowerCase().includes(templateSearch.toLowerCase())
-    )
-  }, [templates, templateSearch])
-
   const filteredPreviews = useMemo(() => {
     if (previewFilter === 'all') return previews
     return previews.filter((p) => p.status === previewFilter)
@@ -451,7 +350,7 @@ export function CatalogPage({
     <main className="catalog-page" style={{ padding: '1.5rem', maxWidth: '1440px', margin: '0 auto' }}>
       <PageHeader
         title="Service Catalog & Self-Service Portal"
-        description="Discover platform services, Golden Path pipeline templates, ephemeral preview environments, and request cloud infrastructure resources with dual-control governance."
+        description="Discover platform services, ephemeral preview environments, and request cloud infrastructure resources with dual-control governance."
         action={
           <div style={{ display: 'flex', gap: '0.75rem' }}>
             <button className="secondary-button" onClick={refreshData} disabled={loading}>
@@ -460,11 +359,6 @@ export function CatalogPage({
             {tab === 'services' && (
               <button className="primary-button" onClick={() => setShowRegisterService(true)}>
                 <Plus size={16} /> Register Service
-              </button>
-            )}
-            {tab === 'templates' && (
-              <button className="primary-button" data-testid="catalog-register-template" onClick={() => setShowRegisterTemplate(true)}>
-                <Plus size={16} /> Register Template
               </button>
             )}
             {tab === 'previews' && (
@@ -488,7 +382,7 @@ export function CatalogPage({
             <h2 className="cat-intro-title">Giới thiệu Service Catalog</h2>
             {introHidden && (
               <span className="cat-intro-collapsed-hint">
-                Danh bạ dịch vụ, Golden Paths, môi trường preview và tài nguyên self-service.
+                Danh bạ dịch vụ, môi trường preview và tài nguyên self-service.
               </span>
             )}
           </div>
@@ -520,23 +414,6 @@ export function CatalogPage({
                   <span className="cat-card-demo-label">Demo được gì:</span>
                   <span className="cat-card-demo-text">
                     Xem owner/tier/lifecycle, đồ thị phụ thuộc; đăng ký service mới; thêm/xoá dependency; kiểm tra cảnh báo chu trình phụ thuộc.
-                  </span>
-                </div>
-              </article>
-
-              <article className="cat-card">
-                <div className="cat-card-header">
-                  <h3 className="cat-card-title">
-                    <Zap size={16} /> Templates (Golden paths)
-                  </h3>
-                  <p className="cat-card-desc">
-                    Mẫu dựng service mới theo chuẩn công ty (repo + pipeline + cấu hình), chuẩn hoá runtime, quy trình CI/CD và các tham số khởi tạo ứng dụng.
-                  </p>
-                </div>
-                <div className="cat-card-demo">
-                  <span className="cat-card-demo-label">Demo được gì:</span>
-                  <span className="cat-card-demo-text">
-                    Khám phá template; tạo module từ template chỉ với một cú bấm và sinh kế hoạch cấu hình; admin có thể đăng ký hoặc tạo version mới.
                   </span>
                 </div>
               </article>
@@ -609,28 +486,6 @@ export function CatalogPage({
           }}
         >
           <Compass size={18} /> Services & Dependency Graph
-        </button>
-
-        <button
-          role="tab"
-          aria-selected={tab === 'templates'}
-          onClick={() => setTab('templates')}
-          style={{
-            padding: '0.75rem 1.25rem',
-            fontWeight: 600,
-            borderBottom: tab === 'templates' ? '2px solid var(--primary, #2563eb)' : '2px solid transparent',
-            color: tab === 'templates' ? 'var(--primary, #2563eb)' : 'var(--text-muted, #64748b)',
-            background: 'none',
-            borderTop: 'none',
-            borderLeft: 'none',
-            borderRight: 'none',
-            cursor: 'pointer',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '0.5rem',
-          }}
-        >
-          <Zap size={18} /> Golden Path Templates
         </button>
 
         <button
@@ -899,85 +754,7 @@ export function CatalogPage({
         </div>
       )}
 
-      {/* TAB 2: Golden Path Templates */}
-      {tab === 'templates' && (
-        <div>
-          <div className="cat-tab-hint">
-            <Info size={16} className="cat-tab-hint-icon" />
-            <span className="cat-tab-hint-text">
-              Templates (Golden paths): mẫu dựng service mới theo chuẩn công ty (repo + pipeline + cấu hình), tạo module từ template.
-            </span>
-          </div>
-          <div style={{ display: 'flex', gap: '1rem', marginBottom: '1.5rem' }}>
-            <input
-              type="text"
-              placeholder="Search Golden Path templates by name, ID, or category..."
-              value={templateSearch}
-              onChange={(e) => setTemplateSearch(e.target.value)}
-              style={{ flex: 1, padding: '0.5rem 0.75rem', borderRadius: '6px', border: '1px solid #cbd5e1' }}
-            />
-          </div>
 
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(350px, 1fr))', gap: '1.5rem' }}>
-            {filteredTemplates.map((tpl) => (
-              <article
-                key={tpl.templateId}
-                style={{
-                  background: '#ffffff',
-                  border: '1px solid #e2e8f0',
-                  borderRadius: '8px',
-                  padding: '1.5rem',
-                  display: 'flex',
-                  flexDirection: 'column',
-                  justifyContent: 'space-between',
-                  boxShadow: '0 2px 4px rgba(0,0,0,0.02)',
-                }}
-              >
-                <div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
-                    <span className="status status-blue" style={{ fontSize: '0.75rem' }}>{tpl.category}</span>
-                    <span style={{ fontSize: '0.8rem', color: '#64748b' }}>v{tpl.version}</span>
-                  </div>
-                  <h3 style={{ margin: '0.25rem 0 0.5rem', fontSize: '1.2rem', color: '#0f172a' }}>{tpl.name}</h3>
-                  <p style={{ fontSize: '0.9rem', color: '#475569', marginBottom: '1rem' }}>{tpl.description}</p>
-                </div>
-
-                <div>
-                  <div style={{ background: '#f8fafc', padding: '0.75rem', borderRadius: '6px', marginBottom: '1rem', fontSize: '0.8rem' }}>
-                    <div style={{ color: '#64748b', marginBottom: '0.25rem' }}><strong>Template ID:</strong> {tpl.templateId}</div>
-                    <div style={{ color: '#64748b' }}>
-                      <strong>Parameters:</strong> {Object.keys(tpl.parametersSchema || {}).length} configurable options
-                    </div>
-                  </div>
-
-                  <button
-                    className="primary-button"
-                    style={{ width: '100%', justifyContent: 'center' }}
-                    onClick={() => {
-                      setSelectedTemplate(tpl)
-                      setInstAppName('')
-                      setInstParams({})
-                      setInstantiatePlan(null)
-                    }}
-                  >
-                    <Play size={15} /> 1-Click Instantiate
-                  </button>
-                  {isPlatformAdmin && (
-                    <button
-                      className="secondary-button"
-                      data-testid={`catalog-new-version-${tpl.templateId}`}
-                      style={{ width: '100%', justifyContent: 'center', marginTop: '0.5rem' }}
-                      onClick={() => openNewVersion(tpl)}
-                    >
-                      <Plus size={15} /> New version
-                    </button>
-                  )}
-                </div>
-              </article>
-            ))}
-          </div>
-        </div>
-      )}
 
       {/* TAB 3: Ephemeral Preview Environments */}
       {tab === 'previews' && (
@@ -1367,180 +1144,7 @@ export function CatalogPage({
         </Modal>
       )}
 
-      {/* MODAL: 1-Click Template Instantiate */}
-      {selectedTemplate && (
-        <Modal
-          title={`Instantiate Golden Path: ${selectedTemplate.name}`}
-          description={`Version ${selectedTemplate.version} · Category: ${selectedTemplate.category}`}
-          onClose={() => setSelectedTemplate(null)}
-          wide
-          footer={
-            <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end' }}>
-              <button className="secondary-button" onClick={() => setSelectedTemplate(null)}>Close</button>
-              {!instantiatePlan && (
-                <button className="primary-button" form="instantiate-template-form" type="submit">
-                  Generate Application Plan
-                </button>
-              )}
-            </div>
-          }
-        >
-          {!instantiatePlan ? (
-            <form id="instantiate-template-form" onSubmit={handleInstantiateTemplate} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
-                <div>
-                  <label style={{ display: 'block', fontWeight: 600, fontSize: '0.85rem', marginBottom: '0.3rem' }}>Application Name (slug)</label>
-                  <input
-                    required
-                    type="text"
-                    placeholder="e.g. order-api"
-                    value={instAppName}
-                    onChange={(e) => setInstAppName(e.target.value)}
-                    style={{ width: '100%', padding: '0.5rem', borderRadius: '4px', border: '1px solid #cbd5e1' }}
-                  />
-                </div>
-                <div>
-                  <label style={{ display: 'block', fontWeight: 600, fontSize: '0.85rem', marginBottom: '0.3rem' }}>Owning Team</label>
-                  <input
-                    required
-                    type="text"
-                    value={instTeam}
-                    onChange={(e) => setInstTeam(e.target.value)}
-                    style={{ width: '100%', padding: '0.5rem', borderRadius: '4px', border: '1px solid #cbd5e1' }}
-                  />
-                </div>
-              </div>
 
-              {/* Dynamic Parameter Inputs from Template Schema */}
-              {selectedTemplate.parametersSchema && Object.keys(selectedTemplate.parametersSchema).length > 0 && (
-                <div style={{ background: '#f8fafc', padding: '1rem', borderRadius: '6px' }}>
-                  <h4 style={{ margin: '0 0 0.75rem', fontSize: '0.95rem' }}>Template Parameters</h4>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-                    {Object.entries(selectedTemplate.parametersSchema).map(([key, schemaAny]: [string, any]) => (
-                      <div key={key}>
-                        <label style={{ display: 'block', fontWeight: 500, fontSize: '0.85rem', marginBottom: '0.2rem' }}>
-                          {key} {schemaAny.required && <span style={{ color: '#ef4444' }}>*</span>}
-                          {schemaAny.description && <small style={{ color: '#64748b', marginLeft: '0.5rem' }}>{schemaAny.description}</small>}
-                        </label>
-                        <input
-                          type={schemaAny.type === 'integer' || schemaAny.type === 'number' ? 'number' : 'text'}
-                          defaultValue={schemaAny.default ?? ''}
-                          onChange={(e) => {
-                            const val = schemaAny.type === 'integer' ? parseInt(e.target.value, 10) : e.target.value
-                            setInstParams({ ...instParams, [key]: val })
-                          }}
-                          style={{ width: '100%', padding: '0.4rem 0.6rem', borderRadius: '4px', border: '1px solid #cbd5e1' }}
-                        />
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </form>
-          ) : (
-            <div>
-              <div style={{ padding: '1rem', background: '#f0fdf4', border: '1px solid #86efac', borderRadius: '6px', marginBottom: '1.25rem', color: '#166534' }}>
-                <CheckCircle2 size={20} style={{ verticalAlign: 'middle', marginRight: '0.5rem' }} />
-                <strong>Instantiated Configuration Plan Ready!</strong>
-              </div>
-
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '1.25rem' }}>
-                <div>
-                  <strong>Runtime:</strong> <code>{instantiatePlan.runtime}</code>
-                </div>
-                <div>
-                  <strong>Stages:</strong> {instantiatePlan.stages.join(' ➔ ')}
-                </div>
-              </div>
-
-              <div style={{ marginBottom: '1rem' }}>
-                <h4 style={{ margin: '0 0 0.5rem', fontSize: '0.95rem' }}>Generated Pipeline Config</h4>
-                <pre style={{ background: '#0f172a', color: '#f8fafc', padding: '1rem', borderRadius: '6px', fontSize: '0.85rem', overflowX: 'auto' }}>
-                  {JSON.stringify(instantiatePlan.pipelineConfig, null, 2)}
-                </pre>
-              </div>
-
-              <div>
-                <h4 style={{ margin: '0 0 0.5rem', fontSize: '0.95rem' }}>Deployment Config</h4>
-                <pre style={{ background: '#0f172a', color: '#f8fafc', padding: '1rem', borderRadius: '6px', fontSize: '0.85rem', overflowX: 'auto' }}>
-                  {JSON.stringify(instantiatePlan.deploymentConfig, null, 2)}
-                </pre>
-              </div>
-            </div>
-          )}
-        </Modal>
-      )}
-
-      {/* MODAL: Create Preview Environment */}
-      {showRegisterTemplate && (
-        <Modal
-          title="Register Golden Path Template"
-          description="A template is a versioned pipeline definition other teams instantiate. Registering a new version leaves earlier ones in place, so anything already built from them keeps its provenance."
-          onClose={() => setShowRegisterTemplate(false)}
-          footer={
-            <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end' }}>
-              <button className="secondary-button" onClick={() => setShowRegisterTemplate(false)}>Cancel</button>
-              <button className="primary-button" form="register-template-form" type="submit" data-testid="catalog-register-template-submit">Register Template</button>
-            </div>
-          }
-        >
-          <form id="register-template-form" onSubmit={handleRegisterTemplate} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
-              <div>
-                <label style={{ display: 'block', fontWeight: 600, fontSize: '0.85rem', marginBottom: '0.3rem' }} htmlFor="tpl-id">Template ID</label>
-                <input required type="text" id="tpl-id" placeholder="e.g. fastapi-service" value={templateForm.templateId}
-                  onChange={(e) => setTemplateForm((f) => ({ ...f, templateId: e.target.value }))}
-                  style={{ width: '100%', padding: '0.5rem', borderRadius: '4px', border: '1px solid #cbd5e1' }} />
-              </div>
-              <div>
-                <label style={{ display: 'block', fontWeight: 600, fontSize: '0.85rem', marginBottom: '0.3rem' }} htmlFor="tpl-version">Version</label>
-                <input required type="text" id="tpl-version" placeholder="v1.0.0" value={templateForm.version}
-                  onChange={(e) => setTemplateForm((f) => ({ ...f, version: e.target.value }))}
-                  style={{ width: '100%', padding: '0.5rem', borderRadius: '4px', border: '1px solid #cbd5e1' }} />
-                <small style={{ color: 'var(--text-muted)' }}>Semantic version; the server refuses anything else.</small>
-              </div>
-            </div>
-            <div>
-              <label style={{ display: 'block', fontWeight: 600, fontSize: '0.85rem', marginBottom: '0.3rem' }} htmlFor="tpl-name">Display name</label>
-              <input required type="text" id="tpl-name" placeholder="FastAPI Service" value={templateForm.name}
-                onChange={(e) => setTemplateForm((f) => ({ ...f, name: e.target.value }))}
-                style={{ width: '100%', padding: '0.5rem', borderRadius: '4px', border: '1px solid #cbd5e1' }} />
-            </div>
-            <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '1rem' }}>
-              <div>
-                <label style={{ display: 'block', fontWeight: 600, fontSize: '0.85rem', marginBottom: '0.3rem' }} htmlFor="tpl-description">Description</label>
-                <input type="text" id="tpl-description" value={templateForm.description}
-                  onChange={(e) => setTemplateForm((f) => ({ ...f, description: e.target.value }))}
-                  style={{ width: '100%', padding: '0.5rem', borderRadius: '4px', border: '1px solid #cbd5e1' }} />
-              </div>
-              <div>
-                <label style={{ display: 'block', fontWeight: 600, fontSize: '0.85rem', marginBottom: '0.3rem' }} htmlFor="tpl-category">Category</label>
-                <input type="text" id="tpl-category" placeholder="backend" value={templateForm.category}
-                  onChange={(e) => setTemplateForm((f) => ({ ...f, category: e.target.value }))}
-                  style={{ width: '100%', padding: '0.5rem', borderRadius: '4px', border: '1px solid #cbd5e1' }} />
-              </div>
-            </div>
-            <div>
-              <label style={{ display: 'block', fontWeight: 600, fontSize: '0.85rem', marginBottom: '0.3rem' }} htmlFor="tpl-parameters">Parameters schema (JSON)</label>
-              <textarea rows={4} className="mono" id="tpl-parameters" value={templateForm.parametersSchema}
-                onChange={(e) => setTemplateForm((f) => ({ ...f, parametersSchema: e.target.value }))}
-                style={{ width: '100%', padding: '0.5rem', borderRadius: '4px', border: '1px solid #cbd5e1', fontFamily: 'monospace' }} />
-            </div>
-            <div>
-              <label style={{ display: 'block', fontWeight: 600, fontSize: '0.85rem', marginBottom: '0.3rem' }} htmlFor="tpl-pipeline">Pipeline definition (JSON)</label>
-              <textarea rows={5} className="mono" id="tpl-pipeline" value={templateForm.pipelineDefinition}
-                onChange={(e) => setTemplateForm((f) => ({ ...f, pipelineDefinition: e.target.value }))}
-                style={{ width: '100%', padding: '0.5rem', borderRadius: '4px', border: '1px solid #cbd5e1', fontFamily: 'monospace' }} />
-            </div>
-            <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.85rem' }}>
-              <input type="checkbox" checked={templateForm.isDeprecated}
-                onChange={(e) => setTemplateForm((f) => ({ ...f, isDeprecated: e.target.checked }))} />
-              Mark deprecated — retires this version without removing it, so modules built from it keep their provenance.
-            </label>
-            {templateFormError && <div className="inline-error" role="alert">{templateFormError}</div>}
-          </form>
-        </Modal>
-      )}
 
       {showCreatePreview && (
         <Modal

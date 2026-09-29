@@ -159,36 +159,7 @@ describe('CatalogPage (Phase 12)', () => {
     expect(screen.getByText('frontend-bff')).toBeTruthy()
   })
 
-  it('navigates to Golden Path Templates and instantiates a template', async () => {
-    render(
-      <PortalFeedbackProvider>
-        <CatalogPage session={mockSession} />
-      </PortalFeedbackProvider>
-    )
 
-    // Switch to Golden Path Templates tab
-    const templatesTab = screen.getByRole('tab', { name: /Golden Path Templates/i })
-    fireEvent.click(templatesTab)
-
-    // Verify template card
-    expect(await screen.findByText('FastAPI Production Service')).toBeTruthy()
-
-    // Click 1-click instantiate
-    fireEvent.click(screen.getByText(/1-Click Instantiate/i))
-
-    // Fill instantiation form
-    expect(await screen.findByPlaceholderText(/e\.g\. order-api/i)).toBeTruthy()
-    fireEvent.change(screen.getByPlaceholderText(/e\.g\. order-api/i), {
-      target: { value: 'new-api' },
-    })
-
-    // Submit instantiate form
-    fireEvent.click(screen.getByRole('button', { name: /Generate Application Plan/i }))
-
-    // Verify plan is rendered
-    expect(await screen.findByText(/Instantiated Configuration Plan Ready!/i)).toBeTruthy()
-    expect(screen.getByText(/Generated Pipeline Config/i)).toBeTruthy()
-  })
 
   it('navigates to Ephemeral Previews and displays environment with URL', async () => {
     render(
@@ -232,66 +203,7 @@ describe('CatalogPage (Phase 12)', () => {
   })
 })
 
-describe('registering a Golden Path template from the browser', () => {
-  it('sends the form to the API, and refuses malformed JSON before it gets there', async () => {
-    const client = await import('./api/netciClient')
-    render(
-      <PortalFeedbackProvider>
-        <CatalogPage />
-      </PortalFeedbackProvider>
-    )
 
-    fireEvent.click(await screen.findByRole('tab', { name: /templates/i }))
-    fireEvent.click(await screen.findByTestId('catalog-register-template'))
-
-    fireEvent.change(screen.getByPlaceholderText('e.g. fastapi-service'), { target: { value: 'fastapi-service' } })
-    fireEvent.change(screen.getByPlaceholderText('FastAPI Service'), { target: { value: 'FastAPI Service' } })
-
-    // Malformed JSON is refused here rather than sent for the server to reject less clearly.
-    const schema = screen.getByLabelText(/Parameters schema/i)
-    fireEvent.change(schema, { target: { value: '{not json' } })
-    fireEvent.click(screen.getByTestId('catalog-register-template-submit'))
-    await waitFor(() => expect(screen.getByRole('alert')).toBeTruthy())
-    expect(vi.mocked(client.registerCatalogTemplate)).not.toHaveBeenCalled()
-
-    fireEvent.change(schema, { target: { value: '{"port": {"type": "integer"}}' } })
-    fireEvent.click(screen.getByTestId('catalog-register-template-submit'))
-
-    await waitFor(() => expect(vi.mocked(client.registerCatalogTemplate)).toHaveBeenCalledTimes(1))
-    expect(vi.mocked(client.registerCatalogTemplate).mock.calls[0][0]).toMatchObject({
-      templateId: 'fastapi-service',
-      version: 'v1.0.0',
-      name: 'FastAPI Service',
-      parametersSchema: { port: { type: 'integer' } },
-    })
-  })
-})
-
-describe('a new version of a Golden Path template', () => {
-  const admin = {
-    token: 't', identity: { authMode: 'token' as const, separationOfDuties: true,
-      principal: { subject: 'pat', displayName: 'Pat', email: '', roles: ['platform-admin'], teams: [], method: 'token' } },
-  }
-  const developer = { ...admin, identity: { ...admin.identity, principal: { ...admin.identity.principal, subject: 'dana', roles: ['developer'] } } }
-
-  it('starts from the current definition with the next patch version', async () => {
-    render(<PortalFeedbackProvider><CatalogPage session={admin} /></PortalFeedbackProvider>)
-    fireEvent.click(await screen.findByRole('tab', { name: /templates/i }))
-    fireEvent.click(await screen.findByTestId('catalog-new-version-fastapi-service'))
-
-    expect((screen.getByPlaceholderText('e.g. fastapi-service') as HTMLInputElement).value).toBe('fastapi-service')
-    // A version is immutable, so the form proposes the next one rather than the same.
-    expect((screen.getByPlaceholderText('v1.0.0') as HTMLInputElement).value).toBe('v1.0.1')
-    expect((screen.getByLabelText(/Parameters schema/i) as HTMLTextAreaElement).value).toContain('pythonVersion')
-  })
-
-  it('is not offered to someone who cannot register templates', async () => {
-    render(<PortalFeedbackProvider><CatalogPage session={developer} /></PortalFeedbackProvider>)
-    fireEvent.click(await screen.findByRole('tab', { name: /templates/i }))
-    await screen.findByText('FastAPI Production Service')
-    expect(screen.queryByTestId('catalog-new-version-fastapi-service')).toBeNull()
-  })
-})
 
 describe('Catalog explanations, intro panel and contextual hints', () => {
   beforeEach(() => {
@@ -302,7 +214,7 @@ describe('Catalog explanations, intro panel and contextual hints', () => {
     }
   })
 
-  it('renders collapsible intro panel explaining the service catalog and the four tabs', async () => {
+  it('renders collapsible intro panel explaining the service catalog and the three tabs', async () => {
     render(
       <PortalFeedbackProvider>
         <CatalogPage />
@@ -318,12 +230,9 @@ describe('Catalog explanations, intro panel and contextual hints', () => {
       screen.getByText(/Nó là nguồn sự thật cho câu hỏi “service này của ai, gọi tới ai, có được deploy không”/i)
     ).toBeTruthy()
 
-    // 4 tab explanation cards
+    // 3 tab explanation cards
     expect(screen.getByRole('heading', { level: 3, name: /^Services$/i })).toBeTruthy()
     expect(screen.getByText(/Danh bạ định danh mọi service\/module: quản lý team sở hữu/i)).toBeTruthy()
-
-    expect(screen.getByRole('heading', { level: 3, name: /Templates \(Golden paths\)/i })).toBeTruthy()
-    expect(screen.getByText(/Mẫu dựng service mới theo chuẩn công ty \(repo \+ pipeline \+ cấu hình\)/i)).toBeTruthy()
 
     expect(screen.getByRole('heading', { level: 3, name: /^Previews$/i })).toBeTruthy()
     expect(screen.getByText(/Môi trường preview tạm thời và cô lập cho một merge request/i)).toBeTruthy()
@@ -333,7 +242,7 @@ describe('Catalog explanations, intro panel and contextual hints', () => {
 
     // Each card specifies what a user can try right now ("Demo được gì")
     const demoLabels = screen.getAllByText('Demo được gì:')
-    expect(demoLabels.length).toBe(4)
+    expect(demoLabels.length).toBe(3)
   })
 
   it('toggles collapsible intro panel, hides/shows explanation and updates localStorage', async () => {
@@ -354,14 +263,12 @@ describe('Catalog explanations, intro panel and contextual hints', () => {
     // Button label switches and content is hidden
     expect(screen.getByRole('button', { name: 'Xem giải thích' })).toBeTruthy()
     expect(screen.queryByText(/Service Catalog là danh bạ của mọi service\/module/i)).toBeNull()
-    expect(screen.queryByText(/Mẫu dựng service mới theo chuẩn công ty/i)).toBeNull()
     expect(window.localStorage.getItem('netci.catalog.introHidden')).toBe('true')
 
     // Click toggle again to expand
     fireEvent.click(screen.getByRole('button', { name: 'Xem giải thích' }))
     expect(screen.getByRole('button', { name: 'Ẩn giải thích' })).toBeTruthy()
     expect(screen.getByText(/Service Catalog là danh bạ của mọi service\/module/i)).toBeTruthy()
-    expect(screen.getByText(/Mẫu dựng service mới theo chuẩn công ty/i)).toBeTruthy()
     expect(window.localStorage.getItem('netci.catalog.introHidden')).toBe('false')
   })
 
@@ -390,19 +297,13 @@ describe('Catalog explanations, intro panel and contextual hints', () => {
       await screen.findByText(/Services: xem owner\/tier\/lifecycle, đồ thị phụ thuộc, đánh dấu deprecated và kiểm tra chu trình phụ thuộc\./i)
     ).toBeTruthy()
 
-    // Tab 2: Templates
-    fireEvent.click(screen.getByRole('tab', { name: /Golden Path Templates/i }))
-    expect(
-      await screen.findByText(/Templates \(Golden paths\): mẫu dựng service mới theo chuẩn công ty \(repo \+ pipeline \+ cấu hình\), tạo module từ template\./i)
-    ).toBeTruthy()
-
-    // Tab 3: Previews
+    // Tab 2: Previews
     fireEvent.click(screen.getByRole('tab', { name: /Ephemeral Preview Environments/i }))
     expect(
       await screen.findByText(/Previews: môi trường preview tạm thời cho một merge request, tự huỷ khi hết hạn\./i)
     ).toBeTruthy()
 
-    // Tab 4: Resources
+    // Tab 3: Resources
     fireEvent.click(screen.getByRole('tab', { name: /Self-Service Resources/i }))
     expect(
       await screen.findByText(/Resources: yêu cầu tài nguyên \(DB, bucket…\) qua phê duyệt; provider chưa cấu hình thì trạng thái.*fail-closed.*chứ không giả lập\./i)
