@@ -19,7 +19,7 @@ ARG TRIVY_SHA256=2edd39da482bb4e9831962487b68f68e3928ec3137794757f54d00383d79547
 ADD https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz /trivy.tar.gz
 RUN echo "${TRIVY_SHA256}  /trivy.tar.gz" | sha256sum -c - && tar -xzf /trivy.tar.gz -C / trivy && chmod 0755 /trivy
 
-FROM python:3.12.10-slim-bookworm
+FROM python:3.14.7-slim-bookworm
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
