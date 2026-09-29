@@ -307,11 +307,11 @@ export function PipelinesPage({ moduleId, navigate }: { moduleId?: string; navig
     try {
       if (view.type === 'designer' && view.pipelineName) {
         await proposeSharedPipelineVersion(view.pipelineName, designerScript)
-        feedback.notify('Success! Requires approval from another administrator to take effect.')
+        feedback.notify('Success! Pipeline version saved and activated.')
         setView({ type: 'detail', name: view.pipelineName })
       } else {
         await createSharedPipeline({ name: designerName, description: designerDesc, script: designerScript })
-        feedback.notify('Success! Requires approval from another administrator to take effect.')
+        feedback.notify('Success! Pipeline created and activated.')
         setView({ type: 'detail', name: designerName })
       }
     } catch (err) {
@@ -1079,10 +1079,10 @@ export function PipelinesPage({ moduleId, navigate }: { moduleId?: string; navig
               
               <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
                 <button className="primary-button" style={{ alignSelf: 'flex-start' }} disabled={designerSubmitting} onClick={handleDesignerSubmit}>
-                  {designerSubmitting ? 'Submitting…' : 'Submit for approval'}
+                  {designerSubmitting ? 'Saving…' : view.pipelineName ? 'Save pipeline version' : 'Create pipeline'}
                 </button>
                 <small style={{ color: 'var(--muted, #64748b)', fontSize: '12px' }}>
-                  * After submitting, a separate Platform Admin must approve before this version takes effect (Separation of Duties ADR-058).
+                  * Pipeline takes effect immediately and is ready to be used by all modules.
                 </small>
               </div>
             </div>

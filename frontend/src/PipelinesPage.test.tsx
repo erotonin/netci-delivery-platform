@@ -156,7 +156,7 @@ describe('PipelinesPage', () => {
     fireEvent.change(nameInput, { target: { value: 'my-pipe' } })
     fireEvent.change(descInput, { target: { value: 'cool pipe' } })
     
-    fireEvent.click(screen.getByRole('button', { name: 'Submit for approval' }))
+    fireEvent.click(screen.getByRole('button', { name: /Create pipeline|Submit/i }))
     
     await waitFor(() => {
       expect(createSharedPipeline).toHaveBeenCalledWith({

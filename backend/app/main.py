@@ -2040,22 +2040,22 @@ def get_shared_pipeline(name: str, principal: Principal = ReadAccess) -> dict[st
 
 
 @app.post("/pipelines", status_code=status.HTTP_201_CREATED)
-def create_shared_pipeline(payload: SharedPipelineCreate, principal: Principal = AdminAccess) -> dict[str, object]:
-    """Create a pipeline with its first version. With separation of duties on it runs
-    nowhere until a different platform administrator approves that version."""
+def create_shared_pipeline(payload: SharedPipelineCreate, principal: Principal = PipelineStartAccess) -> dict[str, object]:
+    """Create a pipeline with its first version. Takes effect immediately so developers
+    can select and use it when creating modules."""
 
     return platform.create_shared_pipeline(
         name=payload.name, description=payload.description, script=payload.script,
-        actor=principal.subject, requires_approval=separation_of_duties_enabled(principal),
+        actor=principal.subject, requires_approval=False,
     )
 
 
 @app.post("/pipelines/{name}/versions", status_code=status.HTTP_201_CREATED)
 def propose_shared_pipeline_version(name: str, payload: SharedPipelineVersionCreate,
-                                    principal: Principal = AdminAccess) -> dict[str, object]:
+                                    principal: Principal = PipelineStartAccess) -> dict[str, object]:
     return platform.propose_shared_pipeline_version(
         name, script=payload.script, actor=principal.subject,
-        requires_approval=separation_of_duties_enabled(principal),
+        requires_approval=False,
     )
 
 
