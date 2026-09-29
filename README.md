@@ -29,12 +29,50 @@ Một bản hoàn chỉnh phải chứng minh được:
 Luồng chính:
 
 ```text
-Portal / Backstage -> netCI API -> Jenkins Router -> Jenkins A/B
-                                            -> ephemeral CI agent
-                                            -> immutable artifact digest
-                                            -> policy + approval
-                                            -> Docker | Kubernetes | Systemd
+Portal / Backstage -> netCI API -> admission (quota, supersede) -> Jenkins (CI, shared library)
+                                            -> ephemeral CI agent (namespace riêng mỗi project)
+                                            -> immutable artifact digest + SBOM + scan + chữ ký
+                                            -> callback evidence -> policy gate
+                                            -> Temporal worker (CD): verify -> approval -> deploy
+                                            -> Docker | Kubernetes | Systemd -> health -> rollback
 ```
+
+## Hiện trạng (2026-09-29)
+
+- **Pipeline dùng chung (ADR-058, amended).** Trang **Pipelines** liệt kê và tạo pipeline CI
+  dùng chung:
+  - bấm một stage bên trái thì code của nó được nối vào **một script** bên phải;
+  - bên cạnh có khung xem trước dạng Jenkinsfile declarative, sinh ở browser;
+  - module mới chỉ cần chọn pipeline theo tên;
+  - developer, reviewer hoặc platform-admin tạo pipeline hoặc lưu phiên bản mới thì phiên bản đó
+    **có hiệu lực ngay**, không qua bước duyệt; mọi thao tác đều có audit;
+  - chỉ bắt buộc stage `build` và `publish`;
+  - mỗi run ghim tên, phiên bản và sha256 của script;
+  - block do người dùng viết chạy trong builder **không có credential**.
+
+  Chữ ký, provenance và SBOM vẫn được kiểm lúc deploy.
+- **CI là Jenkins, CD là netCI/Temporal** (ADR-004, ADR-043). Jenkins không deploy.
+- **netCI quyết định toolchain (ADR-056, ADR-059).** `toolchain/versions.yaml` khai báo:
+  - phiên bản syft, trivy, cosign, buildah;
+  - image controller Jenkins (2.555.3 LTS, base ghim digest);
+  - **đủ 85 plugin**; `jenkins/plugins.txt` được sinh ra từ đó (`scripts/toolchain_sync.py`).
+
+  Controller có plugin lệch khai báo, hoặc không đọc được danh sách plugin, sẽ không nhận build.
+- **Portal (giao diện tiếng Anh):**
+  - Core Delivery: Dashboard, Systems & Pipelines, Pipelines, Production Requests, Service Catalog
+    (Services, Previews, Resources);
+  - Platform & Governance: Release Calendar (lịch tháng/tuần/danh sách), Servers, Toolchain;
+  - trang khác: Release Plan (DAG nhiều module), Scorecards, CI Cost.
+  - Đã bỏ: tab Golden Path Templates và trang Vulnerabilities.
+- **Ba cách chạy netCI:**
+  - lab systemd trên một máy (`netci_live`);
+  - Helm trên kind (`deploy/helm/netci-platform`);
+  - **lab mô phỏng công ty** `netci-corp`: cụm 3+3 node, GitLab, Harbor, một controller Jenkins có
+    backup/failover bằng Velero, ingress HA sau VIP. Xem [infra/corp/README.md](infra/corp/README.md)
+    và [runbook](docs/RUNBOOK-CORP-LAB.md).
+- **Chưa kiểm chứng live:** pipeline dùng chung có block tự viết, và cổng kiểm plugin trên
+  controller 2.555.3. Cụm corp cần chạy `scripts/corp/pin_node_ips.sh` rồi `scripts/corp/up.sh`
+  sau lần khởi động lại máy ngày 2026-09-29.
 
 ## Gate nào đã chạy thật
 
@@ -178,7 +216,7 @@ NETCI_OIDC_ROLE_MAP=netci-admins=platform-admin,release-managers=reviewer,engine
 | Role | Được làm gì |
 |---|---|
 | `viewer` | đọc mọi thứ, không sửa gì |
-| `developer` | tạo application/system, chạy pipeline dev/staging |
+| `developer` | tạo application/system, chạy pipeline dev/staging, tạo và sửa pipeline dùng chung |
 | `reviewer` | như developer, cộng thêm production: chạy, approve, reject |
 | `platform-admin` | như reviewer, cộng quản trị platform; **không bị giới hạn theo team** |
 | `pipeline` | chỉ báo *kết quả* build/deploy — không bao giờ cấp cho người |
@@ -217,7 +255,11 @@ Chi tiết, gồm cả cách nối OIDC và các forgery mà verifier từ chố
 - [DORA metrics](docs/dora-metrics.md)
 - [Assumptions](docs/assumptions.md)
 - [Troubleshooting](docs/troubleshooting.md)
-- [Architecture decisions](docs/decisions/ADR-001-system-boundary.md)
+- [Architecture decisions](docs/decisions/ADR-001-system-boundary.md) — 59 ADR trong `docs/decisions/`
+- [Shared pipelines (ADR-058)](docs/decisions/ADR-058-shared-pipelines-one-script-two-person-approval.md)
+  và [Jenkins controller và plugin (ADR-059)](docs/decisions/ADR-059-netci-decides-the-jenkins-controller-and-plugins.md)
+- [Lab mô phỏng công ty](infra/corp/README.md) và [runbook vận hành](docs/RUNBOOK-CORP-LAB.md)
+- [Context đầy đủ để vẽ sơ đồ kiến trúc](docs/diagrams/NETCI-CONTEXT-FOR-DIAGRAMS.md)
 
 ## Không được coi là evidence hoàn thành
 

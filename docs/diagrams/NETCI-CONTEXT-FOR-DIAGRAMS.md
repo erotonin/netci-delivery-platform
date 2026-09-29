@@ -1,7 +1,7 @@
 # netCI — toàn bộ context để vẽ sơ đồ
 
 Tài liệu này dành cho một phiên Claude Code (cloud) được giao **vẽ sơ đồ kiến trúc netCI**.
-Nó tóm tắt những gì code thực sự làm tại commit `695d08e` (nhánh `fix/prod-access-and-fail-closed-gaps`,
+Nó tóm tắt những gì code thực sự làm tại commit `695d08e` (tài liệu cập nhật sau đó) (nhánh `fix/prod-access-and-fail-closed-gaps`,
 2026-09-29), kèm đường dẫn nguồn để kiểm chứng. **Khi tài liệu này và code khác nhau, code đúng.**
 
 ---
@@ -137,7 +137,8 @@ ROLLED_BACK, CANCELLED: trạng thái cuối
 ```
 
 **Phiên bản shared pipeline** (`shared_pipeline_versions.status`):
-`proposed → active | rejected`; khi bản mới active thì bản active cũ → `superseded`.
+luồng hiện tại tạo thẳng `active`; khi bản mới active thì bản active cũ → `superseded`.
+`proposed → active | rejected` vẫn có trong code (endpoint approve/reject) nhưng portal không tạo `proposed`.
 Tối đa một bản `active` cho mỗi pipeline, do partial unique index trong DB đảm bảo.
 
 Enum khác: `Runtime` = docker | kubernetes | systemd; `Environment` = dev | staging | prod.
@@ -159,15 +160,22 @@ Enum khác: `Runtime` = docker | kubernetes | systemd; `Environment` = dev | sta
   với **đúng credential stage đó cần** (khoá cosign chỉ có trong Sign). **Block tác giả** là bash, chạy
   trong container builder **không có credential nào**. Đây là lý do script bị cắt ra chứ không chạy
   nguyên một file.
-- Stage builtin bắt buộc, **theo code hiện tại**: `build`, `publish` (`REQUIRED_BUILTINS` trong
-  `backend/app/shared_pipelines.py`). ADR-058 ghi là build, sbom, vulnerability-scan, sign, publish;
-  commit `3a7b899` đã nới lỏng. Dù vậy, cổng chữ ký và SBOM lúc deploy vẫn chặn artifact thiếu evidence.
+- Stage builtin bắt buộc: chỉ `build` và `publish` (`REQUIRED_BUILTINS` trong
+  `backend/app/shared_pipelines.py`, theo phần Amendment của ADR-058). unit-test, sbom,
+  vulnerability-scan và sign là tuỳ chọn. Tính deploy được do cổng policy lúc deploy quyết định:
+  artifact thiếu chữ ký, provenance hoặc SBOM bị chặn, bất kể pipeline chứa gì.
 - Thứ tự builtin cố định. `checkout` ngầm định luôn chạy đầu; `deploy` và `health-check` bị từ chối
   vì đó là CD.
-- **Duyệt: code hiện tại khác ADR-058.** ADR ghi mỗi phiên bản cần một admin khác duyệt. Commit
-  `695d08e` cho mọi developer tạo pipeline và phiên bản mới, **có hiệu lực ngay, không duyệt**
-  (`requires_approval=False`). API approve/reject vẫn tồn tại. Hãy vẽ đúng hành vi hiện tại, kèm ghi
-  chú *"khác ADR-058"*.
+- **Không có bước duyệt** (Amendment 2026-09-29 của ADR-058, chủ ý của chủ dự án). developer,
+  reviewer hoặc platform-admin tạo pipeline hoặc lưu phiên bản mới thì phiên bản đó **active ngay**;
+  bản active cũ chuyển thành `superseded`. Mọi thao tác đều có audit. API approve/reject và trạng
+  thái `proposed` vẫn còn trong code nhưng luồng của portal không tạo ra chúng.
+  Rủi ro được chấp nhận: sửa pipeline dùng chung ảnh hưởng mọi module dùng nó từ lần chạy kế tiếp.
+  Rủi ro này được giới hạn bởi bốn cơ chế:
+  - run ghim phiên bản;
+  - block tác giả không có credential;
+  - audit;
+  - cổng deploy.
 - Mỗi run **ghim** tên, version và sha256. Lúc launch, netCI băm lại script lưu trong DB; nếu không
   khớp thì run FAILED (`PIPELINE_VERSION_MISMATCH`) và có audit.
 - Jenkins nhận `NETCI_STAGES` (checkout + id các block) và `NETCI_CUSTOM_STAGES` (block tác giả,
@@ -177,7 +185,9 @@ Enum khác: `Runtime` = docker | kubernetes | systemd; `Environment` = dev | sta
   `GET /pipelines/building-blocks`, `GET /pipelines/{name}`, `POST /pipelines/{name}/versions`,
   `.../versions/{v}/approve|reject`, `PUT /modules/{id}/shared-pipeline`.
 - UI (`frontend/src/PipelinesPage.tsx`): danh sách; designer (catalog stage bên trái, **một** editor
-  script bên phải, xem trước dạng Jenkinsfile declarative, ribbon luồng thực thi, SLSA inspector);
+  script bên phải; khung **Jenkinsfile (Declarative) chỉ là bản xem trước sinh ở browser**
+  (`generateDeclarativeJenkinsfile`), Jenkins thật vẫn chạy shared library `netciPipeline`;
+  có ribbon luồng thực thi và bảng "SLSA & Quality Gate Compliance Audit");
   chi tiết (lịch sử phiên bản, diff, duyệt/từ chối).
 
 ---
@@ -215,6 +225,7 @@ Vẽ ranh giới tin cậy giữa: **Browser** | **netCI API** | **Jenkins/agent
 | Credential trong CI | Khoá cosign chỉ bind trong Sign; registry chỉ ở stage cần; fork PR không ký/không push | 054 |
 | Artifact → máy đích | cosign verify + SLSA provenance trước deploy; SBOM lưu và rescan (exposure) | 008, 044, 045 |
 | Production | Duyệt hai người, DB chọn người thắng khi duyệt đồng thời; break-glass dual-control; change freeze | 024, 038, 039, 047 |
+| Shared pipeline | **Không duyệt** (Amendment ADR-058); run ghim version + sha256, block tác giả không credential, audit; cổng deploy chặn artifact thiếu chữ ký/SBOM | 058 |
 | Deploy đồng thời | Lease theo app+env, fencing token tăng dần | 016, 041 |
 | Coding agent | Principal loại riêng | 052 |
 | Jenkins config | JCasC từ git, không sửa tay; plugin khai báo và kiểm drift | 006, 033, 059 |
@@ -330,7 +341,8 @@ tổ chức · 038 không biến môi trường nào mở rộng quyền prod ·
 047 change freeze · 048 trạng thái SCM qua outbox · 049 preview được deploy thật · 050 admission và
 supersede · 051 path filter · 052 coding agent là principal riêng · 053 chi phí CI · 054 build xác thực
 git/registry, fork không push · 055 một controller Jenkins, standby được restore · 056 netCI quyết định
-phiên bản tool · 057 designer theo module (đã bị 058 thay) · 058 shared pipeline · 059 netCI quyết định
+phiên bản tool · 057 designer theo module (đã bị 058 thay) · 058 shared pipeline (amended 2026-09-29: không duyệt, chỉ
+bắt buộc build + publish) · 059 netCI quyết định
 controller và plugin Jenkins.
 
 Nguồn: `docs/decisions/ADR-0NN-*.md`. Mỗi ADR có mục Context / Decision / Consequences / Evidence.

@@ -105,8 +105,8 @@ paths:
     post:
       operationId: createSharedPipeline
       summary: >-
-        Create a shared pipeline with its first version (platform-admin). With separation of
-        duties on, the version runs nowhere until a different platform-admin approves it.
+        Create a shared pipeline with its first version (developer, reviewer or platform-admin).
+        The version is active at once (ADR-058 amendment); the action is audited.
       requestBody:
         required: true
         content:
@@ -153,7 +153,10 @@ paths:
   /pipelines/{name}/versions:
     post:
       operationId: proposeSharedPipelineVersion
-      summary: Propose a new version of a shared pipeline (platform-admin); one pending version at a time
+      summary: >-
+        Save a new version of a shared pipeline (developer, reviewer or platform-admin). It is
+        active at once and supersedes the previous active version; runs already queued keep
+        the version they pinned.
       parameters:
         - { name: name, in: path, required: true, schema: { type: string } }
       requestBody:
@@ -173,8 +176,9 @@ paths:
     post:
       operationId: approveSharedPipelineVersion
       summary: >-
-        Approve a proposed version (a platform-admin other than its author). It becomes the
-        active version; the previous active one is superseded. Runs already queued keep theirs.
+        Approve a version left in the `proposed` state (a platform-admin other than its author).
+        The portal's create and save flows no longer create proposed versions (ADR-058
+        amendment); this endpoint remains for them. The approved version becomes active.
       parameters:
         - { name: name, in: path, required: true, schema: { type: string } }
         - { name: version, in: path, required: true, schema: { type: integer, minimum: 1 } }
@@ -4209,7 +4213,8 @@ components:
         One script cut into stages by marker lines `# @stage <id> "<Name>"`, with ` builtin`
         for a stage netCI implements. A builtin block contains only `netci-builtin <id>`;
         other blocks are bash run in the build container without credentials. build, sbom,
-        vulnerability-scan, sign and publish are required, in that order.
+        vulnerability-scan and sign are optional; build and publish are required; the
+        built-ins present keep that order.
     PipelineStageSummary:
       type: object
       required: [id, name, builtin]

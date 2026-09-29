@@ -5,6 +5,22 @@ Changelog and releases use Semantic Versioning once the project reaches 1.0.0.
 
 ## [Unreleased]
 
+### Changed - 2026-09-29: shared pipelines, toolchain governance, portal
+- **Shared CI pipelines (ADR-058, amended 2026-09-29):** one script per pipeline, cut into stages by
+  `# @stage` markers; built-in blocks run the library's code with scoped credentials, author blocks
+  run without any. Creating a pipeline or saving a version takes effect immediately for developer,
+  reviewer and platform-admin; only `build` and `publish` are required. Runs pin name, version and
+  sha256; launch re-hashes the script. Migration `0035_shared_pipelines.sql`.
+- **Jenkins controller and plugins declared (ADR-059):** `toolchain/versions.yaml` pins the
+  controller base by digest and all 85 plugins; `plugins.txt` is generated
+  (`scripts/toolchain_sync.py`); a controller with drifted or unreadable plugins takes no build.
+  Controller moved to Jenkins 2.555.3 LTS (fixes SECURITY-3672/3790/3796/3815/3729).
+- **Portal:** Pipelines page (designer, Jenkinsfile preview, version history), new-module wizard
+  picks a pipeline by name, Release Calendar month/week/list views, Service Catalog explanations,
+  UI in English; removed the Golden Path Templates tab and the Vulnerabilities page.
+- **Corp lab:** node addresses pinned (`scripts/corp/pin_node_ips.sh`) after a reboot broke etcd
+  quorum; library `netci-0.4.2`; images `0.3.0-corp4`.
+
 ### Added - Phase 13 (P2.4): Platform Integrity, Clean-Room Verification & Final Production Readiness Certification
 - **Automated Production Readiness Audit Suite (`scripts/production_readiness_audit.py`)**:
   - Implemented end-to-end verification covering all 13 architecture phases across 28 distinct invariant checks.

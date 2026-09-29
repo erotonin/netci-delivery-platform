@@ -10,6 +10,15 @@
 > đầy đủ của một thay đổi), §3.5 (AI agent là người dùng netCI), §3.6 (đã kiểm chứng live
 > tới đâu). Các phần này giải thích ADR-043 → ADR-052. Nếu thấy luồng CI/CD khó hiểu,
 > đọc §3.4 trước.
+>
+> Bổ sung 2026-09-29: có thêm ADR-053 → ADR-059 (bảng ở §5). Những thay đổi lớn:
+> - **Pipeline dùng chung** (ADR-058, amended): một script, không qua bước duyệt, chỉ bắt buộc
+>   build + publish. Trang Pipelines thay cho designer theo module.
+> - **netCI khai báo đủ 85 plugin Jenkins và kiểm drift trước mỗi build** (ADR-059).
+> - **Lab mô phỏng công ty** `netci-corp`: xem `infra/corp/README.md`.
+> - **Portal chuyển sang tiếng Anh**; đã bỏ tab Golden Path Templates và trang Vulnerabilities.
+>
+> Tổng quan cập nhật nhất và đủ để vẽ sơ đồ: `docs/diagrams/NETCI-CONTEXT-FOR-DIAGRAMS.md`.
 
 ---
 
@@ -1184,6 +1193,13 @@ sẵn trong ADR-015 chứ không phải trong trí nhớ của người đã ngh
 | **050** | Build được admit và supersede, không bị từ chối (§3.4 bước 4–5) |
 | **051** | Path filter chỉ bỏ qua thứ biết chắc là không đổi (§3.4 bước 2) |
 | **052** | Coding agent là principal thuộc loại riêng (§3.5) |
+| **053** | Chi phí CI là thời gian run giữ CI, không phải tổng các stage |
+| **054** | Build xác thực với git và registry; PR từ fork không bao giờ push |
+| **055** | Một Jenkins controller tại một thời điểm; bản dự phòng được restore từ backup, không chạy song song |
+| **056** | netCI quyết định phiên bản tool (syft, trivy, cosign, buildah) mà build dùng |
+| **057** | Designer pipeline theo module, merge trong git (đã bị ADR-058 thay) |
+| **058** | Pipeline dùng chung: một script cắt thành stage; amended 2026-09-29: không qua duyệt, chỉ bắt buộc build + publish |
+| **059** | netCI quyết định controller Jenkins và mọi plugin; controller lệch không nhận build |
 
 ---
 
