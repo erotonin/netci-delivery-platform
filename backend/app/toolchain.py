@@ -101,7 +101,30 @@ def validate_toolchain_dict(data: Any) -> dict[str, Any]:
     if not isinstance(max_age, (int, float)) or max_age <= 0:
         raise ToolchainValidationError("trivyDb.maxAgeHours must be a positive number")
 
+    _validate_jenkins(data.get("jenkins"))
     return data
+
+
+def _validate_jenkins(jenkins: Any) -> None:
+    """The controller and its plugins are declared like the tools are (ADR-059): a plugin
+    set left to the update site is a build environment nobody decided."""
+
+    if not isinstance(jenkins, dict):
+        raise ToolchainValidationError("toolchain specification missing 'jenkins' mapping")
+    controller = jenkins.get("controller")
+    if not isinstance(controller, dict) or not all(controller.get(k) for k in ("base", "image", "tag")):
+        raise ToolchainValidationError("jenkins.controller requires base, image and tag")
+    if "@sha256:" not in str(controller["base"]):
+        raise ToolchainValidationError("jenkins.controller.base must be pinned by digest (@sha256:)")
+    plugins = jenkins.get("plugins")
+    if not isinstance(plugins, dict) or not plugins:
+        raise ToolchainValidationError("jenkins.plugins must map every plugin to its version")
+    for name, version in plugins.items():
+        if not isinstance(version, str) or not version.strip():
+            raise ToolchainValidationError(f"jenkins plugin '{name}' requires a version")
+    missing = [name for name in jenkins.get("requires") or [] if name not in plugins]
+    if missing:
+        raise ToolchainValidationError(f"required jenkins plugins without a version: {', '.join(missing)}")
 
 
 def load_declared(path: Path | None = None) -> dict[str, Any]:
@@ -205,3 +228,28 @@ def trivy_db_age(
     stale = age_hours > max_age_hours
 
     return TrivyDbAge(age_hours=age_hours, stale=stale)
+
+
+def compare_plugins(
+    observed: dict[str, str] | None,
+    declared_map: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
+    """What a controller runs against what netCI declared (ADR-059).
+
+    Each entry is {'plugin', 'declared', 'observed', 'kind'}: `version` (installed at another
+    version), `missing` (declared, not installed or not active) or `undeclared` (installed,
+    not declared -- a plugin someone added by hand runs in every build too). An empty
+    observation is not "no drift": the caller could not read the controller, and says so.
+    """
+    spec = declared_map if declared_map is not None else declared()
+    wanted: dict[str, str] = dict(spec.get("jenkins", {}).get("plugins") or {})
+    have = dict(observed or {})
+    drifts: list[dict[str, Any]] = []
+    for name in sorted(set(wanted) | set(have)):
+        if name not in have:
+            drifts.append({"plugin": name, "declared": wanted[name], "observed": None, "kind": "missing"})
+        elif name not in wanted:
+            drifts.append({"plugin": name, "declared": None, "observed": have[name], "kind": "undeclared"})
+        elif str(have[name]) != str(wanted[name]):
+            drifts.append({"plugin": name, "declared": wanted[name], "observed": have[name], "kind": "version"})
+    return drifts

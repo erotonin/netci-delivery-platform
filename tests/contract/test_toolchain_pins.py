@@ -108,3 +108,20 @@ def test_download_urls_match_declared_versions():
         version = tool["version"]
         url = tool["url"]
         assert version in url, f"URL for {name} ({url}) must contain version {version}"
+
+
+def test_the_controller_image_is_built_from_the_declared_plugins_and_base():
+    """jenkins/plugins.txt and the Dockerfile's base are generated from versions.yaml (ADR-059)."""
+    import subprocess
+    import sys
+
+    result = subprocess.run([sys.executable, str(ROOT / "scripts/toolchain_sync.py"), "--check"],
+                            capture_output=True, text=True, timeout=60)
+    assert result.returncode == 0, result.stderr
+
+
+def test_the_corp_controller_runs_the_declared_tag():
+    declared = load_versions_yaml()["jenkins"]["controller"]
+    values = yaml.safe_load((ROOT / "infra/corp/jenkins/values.yaml").read_text(encoding="utf-8"))
+    image = values["controller"]["image"]
+    assert image["repository"] == declared["image"] and image["tag"] == declared["tag"]

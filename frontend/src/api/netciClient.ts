@@ -2050,11 +2050,34 @@ export type ToolchainTrivyDbStatus = {
   ageHours?: number | null
 }
 
+export type JenkinsPluginDrift = {
+  plugin: string
+  declared: string | null
+  observed: string | null
+  kind: 'version' | 'missing' | 'undeclared'
+}
+
+/** The controller and plugins netCI declares, and what each controller runs (ADR-059). */
+export type ToolchainJenkins = {
+  controller: { base: string; image: string; tag: string } | null
+  plugins: Record<string, string>
+  requires: string[]
+  controllers: Array<{
+    controllerId: string
+    readable: boolean
+    error: string | null
+    pluginCount: number | null
+    drift: JenkinsPluginDrift[]
+  }>
+  enforced: boolean
+}
+
 export type ToolchainStatus = {
   declared: ToolchainDeclared
   observed: ToolchainObservedItem[]
   drift: ToolchainDriftItem[]
   trivyDb: ToolchainTrivyDbStatus
+  jenkins?: ToolchainJenkins
 }
 
 export function getToolchain(): Promise<ToolchainStatus> {

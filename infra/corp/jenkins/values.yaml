@@ -7,10 +7,11 @@ controller:
   image:
     registry: 172.17.0.1:8930
     repository: netci/jenkins-controller
-    tag: 2.541.1-netci2          # netci2 adds matrix-auth
+    tag: 2.555.3-netci1          # toolchain/versions.yaml decides it (ADR-059); a contract test holds them equal
   installPlugins: false          # baked into the image: a restart must not depend on the update site
   numExecutors: 0
-  javaOpts: "-Xms256m -Xmx768m -Djenkins.install.runSetupWizard=false"
+  # SystemRead lets netci-sa read the plugin list (ADR-059) without Administer.
+  javaOpts: "-Xms256m -Xmx768m -Djenkins.install.runSetupWizard=false -Djenkins.security.SystemReadPermission=true"
   resources:
     requests: {cpu: 100m, memory: 512Mi}
     limits: {cpu: "1", memory: 1536Mi}
@@ -55,9 +56,10 @@ controller:
                   name: "netCI service account"
                   password: "${jenkins-casc-secrets-netci-sa-password}"
           # Least privilege: people administer, netCI gets exactly what its adapter calls --
-          # create/configure/read/build/cancel jobs and read the queue. No Administer, so
-          # JCasC export/reload and the plugin list (multi-controller drift, ADR-030) answer
-          # 403 to netCI: with one controller there is nothing to compare it with.
+          # create/configure/read/build/cancel jobs, read the queue, and read (never change)
+          # the controller's configuration: SystemRead is how netCI checks the plugin set
+          # against toolchain/versions.yaml before every build (ADR-059). No Administer, so
+          # JCasC export/reload still answer 403 to netCI.
           authorizationStrategy:
             globalMatrix:
               entries:
@@ -69,6 +71,7 @@ controller:
                     name: netci-sa
                     permissions:
                       - "Overall/Read"
+                      - "Overall/SystemRead"
                       - "Job/Build"
                       - "Job/Cancel"
                       - "Job/Configure"

@@ -101,6 +101,7 @@ from .policy.rules import (
     require_environment_permission,
     require_separation_of_duties,
     require_team_access,
+    toolchain_enforced,
 )
 from .portal import SERVER_OWNED_DELIVERY_KEYS, PortalError, PortalService
 from .persistence import AuditRecord, UnitOfWork
@@ -116,7 +117,7 @@ from .projections.scorecard import all_scorecards, module_scorecard
 from .projections.finops import ci_cost
 from .projections.insights import delivery_insights
 from .store import build_database
-from .toolchain import compare as compare_toolchain, declared as get_declared_toolchain, trivy_db_age
+from .toolchain import compare as compare_toolchain, compare_plugins, declared as get_declared_toolchain, trivy_db_age
 from .store.records import (
     ArtifactFindingRecord,
     ArtifactSbomRecord,
@@ -2935,6 +2936,35 @@ def get_toolchain(principal: Principal = ReadAccess) -> dict[str, Any]:
         "observed": observed_list,
         "drift": drift_items,
         "trivyDb": trivy_db_status,
+        "jenkins": _jenkins_plugin_report(declared_spec),
+    }
+
+
+def _jenkins_plugin_report(declared_spec: dict[str, Any]) -> dict[str, Any]:
+    """Each controller's plugin set against the declared one, read now (ADR-059). A
+    controller whose list cannot be read is reported as such -- builds refuse it too."""
+
+    jenkins = declared_spec.get("jenkins") or {}
+    controllers: list[dict[str, Any]] = []
+    adapters = getattr(platform.ci_launcher, "adapters", None) or {}
+    for controller_id, adapter in sorted(adapters.items()):
+        probe = getattr(adapter, "installed_plugins", None)
+        if probe is None:
+            continue
+        try:
+            installed = probe()
+        except Exception as exc:  # noqa: BLE001 - reported per controller
+            controllers.append({"controllerId": controller_id, "readable": False,
+                                "error": f"{type(exc).__name__}: {exc}"[:300], "pluginCount": None, "drift": []})
+            continue
+        controllers.append({"controllerId": controller_id, "readable": True, "error": None,
+                            "pluginCount": len(installed), "drift": compare_plugins(installed, declared_spec)})
+    return {
+        "controller": jenkins.get("controller"),
+        "plugins": jenkins.get("plugins") or {},
+        "requires": jenkins.get("requires") or [],
+        "controllers": controllers,
+        "enforced": toolchain_enforced(),
     }
 
 

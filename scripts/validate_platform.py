@@ -34,7 +34,7 @@ for controller in ('a', 'b'):
 
 plugins = (ROOT / 'jenkins/plugins.txt').read_text(encoding='utf-8').splitlines()
 for line in plugins:
-    if line.strip() and ':' not in line:
+    if line.strip() and not line.startswith('#') and ':' not in line:
         errors.append(f'unpinned Jenkins plugin: {line}')
 
 chart = ROOT / 'deploy/helm/sample-kubernetes-app'

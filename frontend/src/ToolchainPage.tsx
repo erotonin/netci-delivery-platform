@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { AlertTriangle, CheckCircle2, RefreshCw } from 'lucide-react'
-import { getToolchain, type ToolchainStatus } from './api/netciClient'
+import { getToolchain, type ToolchainJenkins, type ToolchainStatus } from './api/netciClient'
 import { PageHeader } from './PortalShell'
 
 type LoadState = 'loading' | 'ready' | 'error'
@@ -348,8 +348,89 @@ export function ToolchainPage() {
               </tbody>
             </table>
           </div>
+          {data.jenkins && <JenkinsPluginsPanel jenkins={data.jenkins} />}
         </>
       )}
     </section>
+  )
+}
+
+const DRIFT_KIND: Record<string, string> = { version: 'khác phiên bản', missing: 'thiếu', undeclared: 'không khai báo' }
+
+/** netCI decides the controller image and every plugin; a controller that differs, or whose
+ *  plugin list cannot be read, takes no build while enforcement is on (ADR-059). */
+function JenkinsPluginsPanel({ jenkins }: { jenkins: ToolchainJenkins }) {
+  const [showAll, setShowAll] = useState(false)
+  const plugins = Object.entries(jenkins.plugins)
+  return (
+    <div className="panel table-panel" data-testid="jenkins-plugins" style={{ marginTop: '24px' }}>
+      <div style={{ padding: '14px 16px', borderBottom: '1px solid var(--border)' }}>
+        <strong>Jenkins controller &amp; plugin (ADR-059)</strong>
+        <p style={{ margin: '6px 0 0', fontSize: '13px', color: 'var(--muted)' }}>
+          netCI quyết định image controller và phiên bản của từng plugin (kể cả phụ thuộc) trong toolchain/versions.yaml.
+          {jenkins.enforced
+            ? ' Controller lệch khai báo, hoặc không đọc được danh sách plugin, sẽ không nhận build.'
+            : ' Đang ở chế độ warn: lệch được ghi nhận nhưng build vẫn chạy.'}
+        </p>
+        {jenkins.controller && (
+          <p style={{ margin: '6px 0 0', fontSize: '13px' }}>
+            Image: <code className="mono">{jenkins.controller.image}:{jenkins.controller.tag}</code> · base{' '}
+            <code className="mono">{jenkins.controller.base.split('@')[0]}</code> · {plugins.length} plugin
+          </p>
+        )}
+      </div>
+      <table className="data-table" style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
+        <thead>
+          <tr className="table-head">
+            <th style={{ padding: '10px 14px' }}>Controller</th>
+            <th style={{ padding: '10px 14px' }}>Trạng thái</th>
+            <th style={{ padding: '10px 14px' }}>Chi tiết</th>
+          </tr>
+        </thead>
+        <tbody>
+          {jenkins.controllers.length === 0 && (
+            <tr><td colSpan={3} style={{ padding: '24px', textAlign: 'center', color: 'var(--muted)' }}>Chưa cấu hình Jenkins controller nào (NETCI_CI_MODE khác jenkins)</td></tr>
+          )}
+          {jenkins.controllers.map((c) => (
+            <tr key={c.controllerId} style={{ borderBottom: '1px solid var(--border)', fontSize: '13px', verticalAlign: 'top' }}>
+              <td style={{ padding: '10px 14px' }}><strong>{c.controllerId}</strong></td>
+              <td style={{ padding: '10px 14px' }}>
+                {!c.readable
+                  ? <span style={{ color: 'var(--red)', fontWeight: 700 }}><AlertTriangle size={14} /> Không đọc được</span>
+                  : c.drift.length
+                    ? <span style={{ color: 'var(--red)', fontWeight: 700 }}><AlertTriangle size={14} /> Lệch {c.drift.length} plugin</span>
+                    : <span style={{ color: 'var(--green)', fontWeight: 700 }}><CheckCircle2 size={14} /> Khớp ({c.pluginCount} plugin)</span>}
+              </td>
+              <td style={{ padding: '10px 14px' }}>
+                {!c.readable && <span style={{ color: 'var(--muted)' }}>{c.error} — cần quyền Overall/SystemRead cho tài khoản netCI</span>}
+                {c.drift.length > 0 && (
+                  <ul style={{ margin: 0, paddingLeft: '18px' }}>
+                    {c.drift.map((d) => (
+                      <li key={d.plugin}>
+                        <code className="mono">{d.plugin}</code> {DRIFT_KIND[d.kind] ?? d.kind}: đang chạy {d.observed ?? '—'}, khai báo {d.declared ?? '—'}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <div style={{ padding: '10px 16px' }}>
+        <button type="button" className="secondary-button" onClick={() => setShowAll((v) => !v)}>
+          {showAll ? 'Ẩn danh sách plugin khai báo' : `Xem ${plugins.length} plugin khai báo`}
+        </button>
+        {showAll && (
+          <div style={{ columns: '3 240px', marginTop: '10px', fontSize: '12px' }}>
+            {plugins.map(([name, version]) => (
+              <div key={name}>
+                <code className="mono">{name}</code> {version}{jenkins.requires.includes(name) ? ' ★' : ''}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
   )
 }

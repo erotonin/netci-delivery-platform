@@ -252,6 +252,14 @@ class JenkinsCiLauncher:
                 self.router.mark_unavailable(controller.controller_id)
                 continue
             attempted.append(controller.controller_id)
+            refusal = self._plugin_refusal(controller.controller_id, adapter)
+            if refusal:
+                # Not this controller, maybe another: its builds would run on plugins
+                # nobody declared. It is healthy again at the next probe once rolled out.
+                last_error = CiLaunchError(refusal)
+                attempted[-1] = f"{controller.controller_id} ({refusal})"
+                self.router.mark_unavailable(controller.controller_id)
+                continue
             try:
                 job_name = adapter.create_or_update_job(request.application_id, request.pipeline_template)
                 run = adapter.trigger_ci_run(job_name, request, callback_token)
@@ -266,6 +274,32 @@ class JenkinsCiLauncher:
                 external_run_id=run.run_id,
                 console_url=run.console_url,
             )
+
+    @staticmethod
+    def _plugin_refusal(controller_id: str, adapter: object) -> str | None:
+        """Why this controller may not take a build because of its plugins, or None (ADR-059)."""
+
+        probe = getattr(adapter, "installed_plugins", None)
+        if probe is None:
+            return None
+        from ..policy.rules import toolchain_enforced
+        from ..toolchain import compare_plugins
+
+        try:
+            drift = compare_plugins(probe())
+        except Exception as exc:  # noqa: BLE001 - unreadable is not "matches"
+            reason = f"plugin set unreadable: {type(exc).__name__}: {exc}"[:300]
+        else:
+            if not drift:
+                return None
+            shown = ", ".join(
+                f"{d['plugin']} {d['kind']} ({d['observed'] or '-'} != {d['declared'] or '-'})" for d in drift[:5]
+            )
+            reason = f"JENKINS_PLUGIN_DRIFT: {len(drift)} plugin(s) differ from toolchain/versions.yaml: {shown}"
+        if toolchain_enforced():
+            return reason
+        logger.warning("controller %s: %s; allowed with NETCI_TOOLCHAIN_ENFORCE=warn", controller_id, reason)
+        return None
 
     def abort(self, jenkins_run_id: str) -> None:
         controller_id, _, external_run_id = jenkins_run_id.partition(":")

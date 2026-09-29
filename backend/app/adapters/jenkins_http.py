@@ -496,6 +496,28 @@ class JenkinsHttpAdapter:
             "jobs": jobs,
         }
 
+    def installed_plugins(self) -> dict[str, str]:
+        """Active plugins and their versions, as this controller reports them (ADR-059).
+
+        Needs Overall/SystemRead (or Administer). Raises instead of answering empty: an
+        empty set read as "nothing installed" would be reported as every plugin missing,
+        and an unreadable one must not pass for a matching one.
+        """
+
+        status, _, body = self._request(
+            "GET", "/pluginManager/api/json?depth=1&tree=plugins%5BshortName,version,active%5D", use_crumb=False
+        )
+        if not 200 <= status < 300:
+            raise JenkinsHttpError(status, f"plugin list returned {status}")
+        plugins = json.loads(body or b"{}").get("plugins")
+        if not isinstance(plugins, list) or not plugins:
+            raise JenkinsHttpError(status, "plugin list was empty")
+        return {
+            str(item["shortName"]): str(item["version"])
+            for item in plugins
+            if isinstance(item, dict) and item.get("active", True)
+        }
+
     def reload_configuration(self) -> None:
         """Make the controller re-read its JCasC sources (files and /run/secrets).
 

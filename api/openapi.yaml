@@ -5442,6 +5442,45 @@ components:
           type: array
           items: { $ref: '#/components/schemas/ToolchainDriftItem' }
         trivyDb: { $ref: '#/components/schemas/ToolchainTrivyDbStatus' }
+        jenkins: { $ref: '#/components/schemas/ToolchainJenkins' }
+    ToolchainJenkins:
+      type: object
+      description: >-
+        The Jenkins controller image and every plugin netCI declares (ADR-059), and what each
+        configured controller runs, read at request time. A controller that differs, or whose
+        plugin list cannot be read, takes no build while enforcement is on.
+      required: [controller, plugins, requires, controllers, enforced]
+      properties:
+        controller:
+          type: object
+          nullable: true
+          properties:
+            base: { type: string, description: Base image pinned by digest }
+            image: { type: string }
+            tag: { type: string }
+        plugins: { type: object, additionalProperties: { type: string } }
+        requires: { type: array, items: { type: string } }
+        enforced: { type: boolean }
+        controllers:
+          type: array
+          items:
+            type: object
+            required: [controllerId, readable, error, pluginCount, drift]
+            properties:
+              controllerId: { type: string }
+              readable: { type: boolean }
+              error: { type: string, nullable: true }
+              pluginCount: { type: integer, nullable: true }
+              drift:
+                type: array
+                items:
+                  type: object
+                  required: [plugin, declared, observed, kind]
+                  properties:
+                    plugin: { type: string }
+                    declared: { type: string, nullable: true }
+                    observed: { type: string, nullable: true }
+                    kind: { type: string, enum: [version, missing, undeclared] }
     ModulePipelineResponse:
       type: object
       required: [moduleId, template, stages, catalog, repository]

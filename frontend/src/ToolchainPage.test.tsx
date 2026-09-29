@@ -206,4 +206,30 @@ describe('ToolchainPage', () => {
 
     expect(getToolchain).toHaveBeenCalledTimes(2)
   })
+
+  it("shows each controller's plugin drift against the declared set, and an unreadable one", async () => {
+    vi.mocked(getToolchain).mockResolvedValueOnce({
+      ...mockToolchainData,
+      jenkins: {
+        controller: { base: 'jenkins/jenkins:2.555.3-lts-jdk21@sha256:abc', image: 'netci/jenkins-controller', tag: '2.555.3-netci1' },
+        plugins: { git: '5.10.1', 'credentials-binding': '728.v902a_273b_8947' },
+        requires: ['git'],
+        enforced: true,
+        controllers: [
+          { controllerId: 'jenkins-corp', readable: true, error: null, pluginCount: 2,
+            drift: [{ plugin: 'credentials-binding', declared: '728.v902a_273b_8947', observed: '719.v80e905ef14eb_', kind: 'version' }] },
+          { controllerId: 'jenkins-b', readable: false, error: 'JenkinsHttpError: plugin list returned 403', pluginCount: null, drift: [] },
+        ],
+      },
+    })
+    render(<ToolchainPage />)
+    const panel = await screen.findByTestId('jenkins-plugins')
+    expect(within(panel).getByText('netci/jenkins-controller:2.555.3-netci1')).toBeTruthy()
+    expect(within(panel).getByText(/Lệch 1 plugin/)).toBeTruthy()
+    expect(within(panel).getByText(/đang chạy 719.v80e905ef14eb_, khai báo 728.v902a_273b_8947/)).toBeTruthy()
+    expect(within(panel).getByText(/Không đọc được/)).toBeTruthy()
+    expect(within(panel).getByText(/sẽ không nhận build/)).toBeTruthy()
+    fireEvent.click(within(panel).getByRole('button', { name: /Xem 2 plugin khai báo/ }))
+    expect(within(panel).getAllByText('credentials-binding')).toHaveLength(2)
+  })
 })
