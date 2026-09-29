@@ -136,7 +136,7 @@ export function PipelinesPage({ moduleId, navigate }: { moduleId?: string; navig
               .map(id => res.builtins.find(b => b.id === id))
               .filter((b): b is typeof res.builtins[0] => b !== undefined && b.required)
               .map(b => b.block)
-              .join('\n\n')
+              .join('\n')
             setDesignerScript(prefill ? prefill + '\n' : '')
           }
         }
@@ -254,7 +254,7 @@ export function PipelinesPage({ moduleId, navigate }: { moduleId?: string; navig
       <div className="pl-container">
         <PageHeader 
           title="Pipelines" 
-          description="pipelines là CI dùng chung (test, build, SBOM, scan, sign, publish); CD (deploy) do netCI/Temporal thực hiện theo module; module chọn pipeline theo tên."
+          description="Pipeline là phần CI dùng chung (test, build, SBOM, scan, ký, publish), được duyệt bởi người thứ hai. CD (deploy) do netCI/Temporal thực hiện theo từng module. Module chọn pipeline theo tên."
         />
         {moduleId && (
           <div className="pl-card" style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>

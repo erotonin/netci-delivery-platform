@@ -117,9 +117,13 @@ function PortalApp({ session, onLogout }: { session: AuthSession; onLogout: () =
     }
   }, [])
 
+  // Counts navigations: a page with views of its own (Pipelines: list, designer, detail)
+  // is keyed on it, so choosing it in the sidebar again returns to its first view.
+  const [visit, setVisit] = useState(0)
   const moveTo = (next: RouteState) => {
     window.history.pushState(null, '', `#${routePath(next)}`)
     setRoute(next)
+    setVisit((n) => n + 1)
     window.scrollTo({ top: 0, behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' })
   }
 
@@ -182,7 +186,7 @@ function PortalApp({ session, onLogout }: { session: AuthSession; onLogout: () =
       {page === 'scorecards' && <ScorecardsPage navigate={navigate} />}
       {page === 'release-plan' && <ReleasePlanPage />}
       {page === 'stage-catalog' && <StageCatalogPage session={session} />}
-      {page === 'pipelines' && <PipelinesPage moduleId={moduleId} navigate={navigate} />}
+      {page === 'pipelines' && <PipelinesPage key={visit} moduleId={moduleId} navigate={navigate} />}
       {page === 'ci-cost' && <CiCostPage />}
       {page === 'toolchain' && <ToolchainPage />}
       {page === 'architecture' && <ArchitectureRoadmapPage />}
