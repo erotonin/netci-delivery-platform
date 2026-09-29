@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import {
   AlertTriangle, BookOpen, Box, CheckCircle2, ChevronRight, Clock,
   Code2, Compass, Cpu, Database, ExternalLink, GitBranch, GitCommit,
-  GitFork, Layers, Network, Play, Plus, RefreshCw, Server, Shield,
+  GitFork, Info, Layers, Network, Play, Plus, RefreshCw, Server, Shield,
   ShieldAlert, ShieldCheck, Terminal, Trash2, X, XCircle, Zap,
 } from 'lucide-react'
 import {
@@ -33,8 +33,19 @@ import { Modal, PageHeader, StatusPill } from './PortalShell'
 import { usePortalFeedback } from './PortalFeedback'
 import type { AuthSession } from './LoginPage'
 import type { Navigate } from './PortalShell'
+import './catalog.css'
 
 type CatalogTab = 'services' | 'templates' | 'previews' | 'resources'
+
+const INTRO_HIDDEN_STORAGE_KEY = 'netci.catalog.introHidden'
+
+function getInitialIntroHidden(): boolean {
+  try {
+    return window.localStorage.getItem(INTRO_HIDDEN_STORAGE_KEY) === 'true'
+  } catch {
+    return false
+  }
+}
 
 const tierLabels: Record<string, { label: string; tone: string }> = {
   'tier-1': { label: 'Tier 1 · Mission Critical', tone: 'red' },
@@ -75,6 +86,19 @@ export function CatalogPage({
   const feedback = usePortalFeedback()
   const [tab, setTab] = useState<CatalogTab>('services')
   const [loading, setLoading] = useState(false)
+  const [introHidden, setIntroHidden] = useState<boolean>(getInitialIntroHidden)
+
+  const toggleIntro = () => {
+    setIntroHidden((prev) => {
+      const next = !prev
+      try {
+        window.localStorage.setItem(INTRO_HIDDEN_STORAGE_KEY, String(next))
+      } catch {
+        // Storage might be unavailable
+      }
+      return next
+    })
+  }
 
   // Services state
   const [services, setServices] = useState<CatalogService[]>([])
@@ -457,6 +481,104 @@ export function CatalogPage({
         }
       />
 
+      {/* Collapsible intro panel */}
+      <section className="cat-intro-panel" aria-label="Giới thiệu Service Catalog">
+        <div className="cat-intro-header">
+          <div className="cat-intro-title-wrap">
+            <h2 className="cat-intro-title">Giới thiệu Service Catalog</h2>
+            {introHidden && (
+              <span className="cat-intro-collapsed-hint">
+                Danh bạ dịch vụ, Golden Paths, môi trường preview và tài nguyên self-service.
+              </span>
+            )}
+          </div>
+          <button
+            type="button"
+            className="cat-intro-toggle"
+            onClick={toggleIntro}
+            aria-expanded={!introHidden}
+          >
+            {introHidden ? 'Xem giải thích' : 'Ẩn giải thích'}
+          </button>
+        </div>
+        {!introHidden && (
+          <div className="cat-intro-body">
+            <p className="cat-intro-lead">
+              Service Catalog là danh bạ của mọi service/module: ai sở hữu, mức độ quan trọng (tier), vòng đời, phụ thuộc giữa các service. Nó là nguồn sự thật cho câu hỏi &ldquo;service này của ai, gọi tới ai, có được deploy không&rdquo;.
+            </p>
+            <div className="cat-cards-grid">
+              <article className="cat-card">
+                <div className="cat-card-header">
+                  <h3 className="cat-card-title">
+                    <Compass size={16} /> Services
+                  </h3>
+                  <p className="cat-card-desc">
+                    Danh bạ định danh mọi service/module: quản lý team sở hữu (owner), mức độ quan trọng (tier) và trạng thái vòng đời (lifecycle). Quản lý đồ thị phụ thuộc gọi dịch vụ upstream/downstream và phát hiện chu trình.
+                  </p>
+                </div>
+                <div className="cat-card-demo">
+                  <span className="cat-card-demo-label">Demo được gì:</span>
+                  <span className="cat-card-demo-text">
+                    Xem owner/tier/lifecycle, đồ thị phụ thuộc; đăng ký service mới; thêm/xoá dependency; kiểm tra cảnh báo chu trình phụ thuộc.
+                  </span>
+                </div>
+              </article>
+
+              <article className="cat-card">
+                <div className="cat-card-header">
+                  <h3 className="cat-card-title">
+                    <Zap size={16} /> Templates (Golden paths)
+                  </h3>
+                  <p className="cat-card-desc">
+                    Mẫu dựng service mới theo chuẩn công ty (repo + pipeline + cấu hình), chuẩn hoá runtime, quy trình CI/CD và các tham số khởi tạo ứng dụng.
+                  </p>
+                </div>
+                <div className="cat-card-demo">
+                  <span className="cat-card-demo-label">Demo được gì:</span>
+                  <span className="cat-card-demo-text">
+                    Khám phá template; tạo module từ template chỉ với một cú bấm và sinh kế hoạch cấu hình; admin có thể đăng ký hoặc tạo version mới.
+                  </span>
+                </div>
+              </article>
+
+              <article className="cat-card">
+                <div className="cat-card-header">
+                  <h3 className="cat-card-title">
+                    <GitBranch size={16} /> Previews
+                  </h3>
+                  <p className="cat-card-desc">
+                    Môi trường preview tạm thời và cô lập cho một merge request / pull request, phục vụ kiểm thử tính năng trước khi hợp nhất.
+                  </p>
+                </div>
+                <div className="cat-card-demo">
+                  <span className="cat-card-demo-label">Demo được gì:</span>
+                  <span className="cat-card-demo-text">
+                    Tạo môi trường preview theo PR và commit SHA; cấu hình thời gian sống (TTL) để tự huỷ khi hết hạn; kiểm tra URL endpoint và chủ động huỷ sớm.
+                  </span>
+                </div>
+              </article>
+
+              <article className="cat-card">
+                <div className="cat-card-header">
+                  <h3 className="cat-card-title">
+                    <Database size={16} /> Resources
+                  </h3>
+                  <p className="cat-card-desc">
+                    Cổng tự phục vụ yêu cầu tài nguyên đám mây (DB, Redis, S3, IAM role) có kiểm soát phê duyệt kép (dual-control governance) cho staging/production.
+                  </p>
+                </div>
+                <div className="cat-card-demo">
+                  <span className="cat-card-demo-label">Demo được gì:</span>
+                  <span className="cat-card-demo-text">
+                    Gửi yêu cầu tài nguyên qua JSON spec; phê duyệt (Approve); thu hồi (Deprovision); provider chưa cấu hình thì trạng thái fail-closed chứ không giả lập.
+                  </span>
+                </div>
+              </article>
+            </div>
+          </div>
+        )}
+      </section>
+
       {/* Tabs Navigation */}
       <div
         role="tablist"
@@ -558,7 +680,14 @@ export function CatalogPage({
 
       {/* TAB 1: Services & Dependency Graph */}
       {tab === 'services' && (
-        <div style={{ display: 'grid', gridTemplateColumns: selectedService ? '1fr 1fr' : '1fr', gap: '1.5rem' }}>
+        <div>
+          <div className="cat-tab-hint">
+            <Info size={16} className="cat-tab-hint-icon" />
+            <span className="cat-tab-hint-text">
+              Services: xem owner/tier/lifecycle, đồ thị phụ thuộc, đánh dấu deprecated và kiểm tra chu trình phụ thuộc.
+            </span>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: selectedService ? '1fr 1fr' : '1fr', gap: '1.5rem' }}>
           <div>
             <div style={{ display: 'flex', gap: '1rem', marginBottom: '1rem' }}>
               <input
@@ -766,12 +895,19 @@ export function CatalogPage({
               )}
             </div>
           )}
+          </div>
         </div>
       )}
 
       {/* TAB 2: Golden Path Templates */}
       {tab === 'templates' && (
         <div>
+          <div className="cat-tab-hint">
+            <Info size={16} className="cat-tab-hint-icon" />
+            <span className="cat-tab-hint-text">
+              Templates (Golden paths): mẫu dựng service mới theo chuẩn công ty (repo + pipeline + cấu hình), tạo module từ template.
+            </span>
+          </div>
           <div style={{ display: 'flex', gap: '1rem', marginBottom: '1.5rem' }}>
             <input
               type="text"
@@ -846,6 +982,12 @@ export function CatalogPage({
       {/* TAB 3: Ephemeral Preview Environments */}
       {tab === 'previews' && (
         <div>
+          <div className="cat-tab-hint">
+            <Info size={16} className="cat-tab-hint-icon" />
+            <span className="cat-tab-hint-text">
+              Previews: môi trường preview tạm thời cho một merge request, tự huỷ khi hết hạn.
+            </span>
+          </div>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
             <div style={{ display: 'flex', gap: '0.5rem' }}>
               {(['all', 'active', 'expired', 'destroyed'] as const).map((status) => (
@@ -952,6 +1094,12 @@ export function CatalogPage({
       {/* TAB 4: Self-Service Resources */}
       {tab === 'resources' && (
         <div>
+          <div className="cat-tab-hint">
+            <Info size={16} className="cat-tab-hint-icon" />
+            <span className="cat-tab-hint-text">
+              Resources: yêu cầu tài nguyên (DB, bucket…) qua phê duyệt; provider chưa cấu hình thì trạng thái &ldquo;fail-closed&rdquo; chứ không giả lập.
+            </span>
+          </div>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
             <div style={{ display: 'flex', gap: '0.5rem' }}>
               {(['all', 'pending_approval', 'provisioned', 'provider_not_configured', 'failed', 'deprovisioned'] as const).map((st) => (

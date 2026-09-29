@@ -1,0 +1,175 @@
+.pl-container {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.pl-card {
+  border: 1px solid var(--border, #e5e7eb);
+  border-radius: 10px;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+  background: var(--bg-card, #fff);
+  padding: 1rem;
+}
+
+.pl-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 1rem;
+}
+
+.pl-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 12px;
+  font-size: 0.75rem;
+  font-weight: 500;
+  margin-right: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+
+.pl-chip-builtin {
+  background: #eff6ff;
+  color: #1d4ed8;
+  border: 1px solid #bfdbfe;
+}
+
+.pl-chip-custom {
+  background: #f5f3ff;
+  color: #6d28d9;
+  border: 1px solid #ddd6fe;
+}
+
+.pl-designer {
+  display: grid;
+  grid-template-columns: minmax(260px, 320px) 1fr;
+  gap: 1.5rem;
+  align-items: start;
+}
+@media (max-width: 900px) {
+  .pl-designer {
+    grid-template-columns: 1fr;
+  }
+}
+
+.pl-editor-col {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.pl-textarea {
+  width: 100%;
+  min-height: 480px;
+  background: #0f172a;
+  color: #f8fafc;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 13px;
+  line-height: 1.5;
+  padding: 1rem;
+  border-radius: 6px;
+  border: 1px solid #334155;
+  resize: vertical;
+}
+.pl-textarea:focus {
+  outline: 2px solid #3b82f6;
+  outline-offset: -2px;
+}
+
+.pl-blocks-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.pl-block-item {
+  border: 1px solid var(--border, #e5e7eb);
+  border-radius: 6px;
+  padding: 0.75rem;
+  background: #fff;
+  text-align: left;
+  cursor: pointer;
+}
+.pl-block-item:hover:not(:disabled) {
+  background: #f9fafb;
+}
+.pl-block-item:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  background: #f3f4f6;
+}
+
+.pl-preview-list {
+  list-style: decimal inside;
+  margin: 0;
+  padding: 0;
+  font-size: 0.875rem;
+  color: #4b5563;
+}
+.pl-preview-list li {
+  margin-bottom: 4px;
+}
+
+.pl-hints {
+  margin-top: 1rem;
+  padding: 0.75rem;
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  color: #991b1b;
+  border-radius: 6px;
+  font-size: 0.875rem;
+}
+
+.pl-history-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.875rem;
+}
+.pl-history-table th, .pl-history-table td {
+  padding: 0.75rem;
+  text-align: left;
+  border-bottom: 1px solid var(--border, #e5e7eb);
+}
+.pl-history-table th {
+  font-weight: 600;
+  color: #4b5563;
+}
+
+.pl-diff-pre {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  padding: 1rem;
+  border-radius: 6px;
+  overflow-x: auto;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.pl-diff-added {
+  color: #166534;
+  background: #dcfce7;
+}
+.pl-diff-removed {
+  color: #991b1b;
+  background: #fee2e2;
+}
+
+.pl-inline-form {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+.pl-inline-form input {
+  flex: 1;
+  padding: 0.25rem 0.5rem;
+  border: 1px solid var(--border, #e5e7eb);
+  border-radius: 4px;
+  font-size: 0.875rem;
+}
+
+.pl-input {
+  width: 100%;
+  padding: 0.5rem;
+  border: 1px solid var(--border, #e5e7eb);
+  border-radius: 6px;
+}

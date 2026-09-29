@@ -229,23 +229,19 @@ test.describe.serial('Comprehensive Real-User Experience & Zero-Mock Platform Au
   })
 
   test('Workflow 5: Complete Audit of All Enterprise Governance & Operations Screens', async ({ page }) => {
-    console.log('[Workflow 5] Auditing Release Plan, Stage Catalog, CI Cost, Calendar, Vulnerabilities, Scorecards, Servers...')
+    console.log('[Workflow 5] Auditing Release Plan, Stage Catalog, CI Cost, Calendar, Scorecards, Servers...')
     await ssoLogin(page, 'pat')
 
-    // 1. Pipelines & Designer (ADR-057)
+    // 1. Shared pipelines & designer (ADR-058)
     await page.getByRole('button', { name: /^Pipelines$/ }).click()
     await expect(page.locator('h1')).toHaveText('Pipelines')
     await page.waitForTimeout(300)
     await page.screenshot({ path: path.join(ARTIFACT_DIR, 'user_audit_12_pipelines_list.png') })
 
-    // Open first module designer
-    const designBtn = page.locator('table[data-testid="pipelines-table"] button:has-text("Thiết kế")').first()
-    if (await designBtn.isVisible()) {
-      await designBtn.click()
-      await expect(page.locator('text=Catalog Stages')).toBeVisible({ timeout: 10_000 })
-      await page.waitForTimeout(500)
-      await page.screenshot({ path: path.join(ARTIFACT_DIR, 'user_audit_13_pipeline_designer.png') })
-    }
+    await page.getByRole('button', { name: 'New pipeline' }).click()
+    await expect(page.getByLabel('Pipeline script')).toBeVisible({ timeout: 10_000 })
+    await page.waitForTimeout(300)
+    await page.screenshot({ path: path.join(ARTIFACT_DIR, 'user_audit_13_pipeline_designer.png') })
 
     // 2. Toolchain Management (ADR-056)
     await page.click('button:has-text("Toolchain")')
@@ -258,12 +254,6 @@ test.describe.serial('Comprehensive Real-User Experience & Zero-Mock Platform Au
     await expect(page.locator('h1, h2')).toContainText(/Release Calendar/i)
     await page.waitForTimeout(300)
     await page.screenshot({ path: path.join(ARTIFACT_DIR, 'user_audit_15_release_calendar_freeze.png') })
-
-    // 4. Vulnerabilities & SBOM Exposure
-    await page.click('button:has-text("Vulnerabilities")')
-    await expect(page.locator('h1, h2')).toContainText(/Vulnerabilities/i)
-    await page.waitForTimeout(300)
-    await page.screenshot({ path: path.join(ARTIFACT_DIR, 'user_audit_16_vulnerabilities_cve.png') })
 
     // 5. Servers Fleet (Deployment Targets & Inventory from NetBox)
     await page.click('button:has-text("Servers")')

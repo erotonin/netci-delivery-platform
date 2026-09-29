@@ -1,0 +1,155 @@
+/* Classes prefixed cat- per task specification */
+
+.cat-intro-panel {
+  background-color: #f0f7ff;
+  border: 1px solid #bfdbfe;
+  border-radius: 10px;
+  padding: 1.25rem;
+  margin-bottom: 1.5rem;
+}
+
+.cat-intro-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1rem;
+}
+
+.cat-intro-title-wrap {
+  flex: 1;
+}
+
+.cat-intro-title {
+  margin: 0 0 0.5rem;
+  font-size: 1.15rem;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.cat-intro-lead {
+  margin: 0;
+  font-size: 0.9rem;
+  color: #334155;
+  line-height: 1.55;
+}
+
+.cat-intro-collapsed-hint {
+  display: block;
+  font-size: 0.85rem;
+  color: #64748b;
+  margin-top: 0.25rem;
+}
+
+.cat-intro-toggle {
+  background-color: #ffffff;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  padding: 0.4rem 0.85rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #334155;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.15s ease;
+  flex-shrink: 0;
+}
+
+.cat-intro-toggle:hover {
+  background-color: #f1f5f9;
+  border-color: #94a3b8;
+  color: #0f172a;
+}
+
+.cat-intro-body {
+  margin-top: 1rem;
+}
+
+.cat-cards-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 1rem;
+  margin-top: 1rem;
+}
+
+@media (max-width: 900px) {
+  .cat-cards-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.cat-card {
+  background-color: #ffffff;
+  border: 1px solid #dbeafe;
+  border-radius: 8px;
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  box-shadow: 0 1px 3px rgba(37, 99, 235, 0.04);
+}
+
+.cat-card-header {
+  margin-bottom: 0.75rem;
+}
+
+.cat-card-title {
+  margin: 0 0 0.5rem;
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: #1e293b;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.cat-card-desc {
+  margin: 0;
+  font-size: 0.825rem;
+  color: #475569;
+  line-height: 1.45;
+}
+
+.cat-card-demo {
+  background-color: #f8fafc;
+  border-radius: 6px;
+  padding: 0.6rem 0.75rem;
+  font-size: 0.8rem;
+  line-height: 1.4;
+  color: #334155;
+  border-left: 3px solid #2563eb;
+  margin-top: 0.75rem;
+}
+
+.cat-card-demo-label {
+  font-weight: 600;
+  color: #1d4ed8;
+  margin-right: 0.35rem;
+}
+
+.cat-card-demo-text {
+  color: #334155;
+}
+
+.cat-tab-hint {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  background-color: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-left: 3px solid #2563eb;
+  border-radius: 6px;
+  padding: 0.65rem 0.85rem;
+  margin-bottom: 1.25rem;
+  font-size: 0.85rem;
+  color: #334155;
+  line-height: 1.4;
+}
+
+.cat-tab-hint-icon {
+  color: #2563eb;
+  flex-shrink: 0;
+}
+
+.cat-tab-hint-text {
+  color: #334155;
+}

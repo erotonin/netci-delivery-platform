@@ -1,12 +1,29 @@
 import { useEffect, useState } from 'react'
 import {
-  ArrowLeft, ArrowRight, Box, Check, CheckCircle2, ChevronRight, Code2, Container,
-  FileCode2, GitBranch, Globe2, HardDrive,
+  ArrowLeft, ArrowRight, Box, Check, CheckCircle2, ChevronRight, Container,
+  GitBranch, Globe2, HardDrive,
   Layers3, Plus, Server, Settings2, X, Zap,
 } from 'lucide-react'
 import { Modal } from './PortalShell'
 import { usePortalFeedback } from './PortalFeedback'
-import { getStageCatalog, listDcimModules, listDcimServers, autoProvisionDcimTargets, getGitInfo, listSampleApps, type DcimModule, type StageDefinition, type DeploymentEnvironmentConfig, type Environment, type GitInfo, type GitSample, type SampleApps, type ModulePipelineConfig, type ModulePipelineTabConfig, type Runtime, type RuntimeSettings } from './api/netciClient'
+import {
+  listDcimModules,
+  listDcimServers,
+  autoProvisionDcimTargets,
+  getGitInfo,
+  listSampleApps,
+  listSharedPipelines,
+  type DcimModule,
+  type DeploymentEnvironmentConfig,
+  type Environment,
+  type GitInfo,
+  type GitSample,
+  type SampleApps,
+  type ModulePipelineConfig,
+  type Runtime,
+  type RuntimeSettings,
+  type SharedPipeline,
+} from './api/netciClient'
 
 
 type DeploymentEnvironment = 'Dev' | 'Staging' | 'Production'
@@ -14,7 +31,15 @@ type DeploymentTarget = 'Systemd' | 'Docker' | 'Kubernetes'
 type EnvironmentConfig = { name: string; environment: DeploymentEnvironment; target: DeploymentTarget; servers: string[]; kubeconfigRef?: string; namespace?: string; runtimeSettings?: RuntimeSettings }
 type EnvironmentDraft = Pick<EnvironmentConfig, 'name' | 'environment' | 'target'>
 type PortalInformation = { displayName: string; moduleType: string; description: string }
-type ModuleWizardSubmission = PortalInformation & { runtime: Runtime; defaultEnvironment: Environment; deploymentEnvironments: DeploymentEnvironmentConfig[]; stages: string[]; pipelineConfig: ModulePipelineConfig; ownerTeam?: string }
+export type ModuleWizardSubmission = PortalInformation & {
+  runtime: Runtime
+  defaultEnvironment: Environment
+  deploymentEnvironments: DeploymentEnvironmentConfig[]
+  stages: string[]
+  pipelineConfig: ModulePipelineConfig
+  ownerTeam?: string
+  pipeline: string
+}
 
 const environmentNames: Record<DeploymentEnvironment, string> = {
   Dev: 'Development',
@@ -43,17 +68,6 @@ const defaultPipelineConfig: ModulePipelineConfig = {
     stages: [...defaultPipelineStages],
   }])),
 }
-const stageLabels: Record<string, string> = {
-  checkout: 'Checkout',
-  'unit-test': 'Unit test',
-  build: 'Build',
-  sbom: 'Generate SBOM',
-  'vulnerability-scan': 'Vulnerability scan',
-  sign: 'Sign artifact',
-  publish: 'Publish artifact',
-  deploy: 'Deploy',
-  'health-check': 'Health check',
-}
 
 const kubernetesDefaults = (environment: DeploymentEnvironment) => ({
   kubeconfigRef: `netci-${environment.toLowerCase()}-kubeconfig`,
@@ -73,7 +87,7 @@ const apiEnvironment: Record<DeploymentEnvironment, Environment> = {
 }
 
 function WizardSteps({ step }: { step: number }) {
-  return <div className="wizard-steps">{[['1', 'General'], ['2', 'CI / CD'], ['3', 'Deployment']].map(([number, label], index) => <div className={step === index + 1 ? 'active' : step > index + 1 ? 'done' : ''} key={number}><span>{step > index + 1 ? <Check size={14} /> : number}</span><strong>{label}</strong>{index < 2 && <i />}</div>)}</div>
+  return <div className="wizard-steps">{[['1', 'General'], ['2', 'Pipeline (CI)'], ['3', 'Deployment (CD)']].map(([number, label], index) => <div className={step === index + 1 ? 'active' : step > index + 1 ? 'done' : ''} key={number}><span>{step > index + 1 ? <Check size={14} /> : number}</span><strong>{label}</strong>{index < 2 && <i />}</div>)}</div>
 }
 
 function GeneralStep({
@@ -283,65 +297,277 @@ function GeneralStep({
   </div>
 }
 
-function PipelineDesigner({ initialConfig, onCancel, onSave }: { initialConfig: ModulePipelineConfig; onCancel: () => void; onSave: (config: ModulePipelineConfig) => void }) {
-  const [tab, setTab] = useState(Object.keys(initialConfig.pipelines)[0] ?? 'CD Dev')
-  const [mode, setMode] = useState<'visual' | 'code'>('visual')
-  const [config, setConfig] = useState<ModulePipelineConfig>(() => ({ ...initialConfig, pipelines: Object.fromEntries(Object.entries(initialConfig.pipelines).map(([key, value]) => [key, { ...value, stages: [...value.stages] }])) }))
-  const [validated, setValidated] = useState(false)
-  // The catalog is the source of what a pipeline may contain: names, which stages are
-  // required, and the custom stages an administrator has approved.
-  const [catalog, setCatalog] = useState<StageDefinition[]>([])
-  const [picking, setPicking] = useState(false)
-  useEffect(() => { getStageCatalog().then((c) => setCatalog(c.stages)).catch(() => setCatalog([])) }, [])
-  const catalogById = Object.fromEntries(catalog.map((s) => [s.id, s]))
-  const current = config.pipelines[tab]
-  const updateCurrent = (changes: Partial<ModulePipelineTabConfig>) => setConfig({ ...config, pipelines: { ...config.pipelines, [tab]: { ...current, ...changes } } })
-  const addable = catalog.filter((s) => s.kind === 'custom' && s.status === 'active' && !current.stages.includes(s.id) && current.stages.includes(s.afterStage ?? ''))
-  const addCustom = (stage: StageDefinition) => {
-    const anchorIndex = current.stages.indexOf(stage.afterStage ?? '')
-    const next = [...current.stages]
-    next.splice(anchorIndex + 1, 0, stage.id)
-    updateCurrent({ stages: next })
-    setPicking(false)
-  }
-  const yaml = ['pipeline:', `  name: ${tab.toLowerCase().replace(/\s+/g, '-')}`, `  runner: ${config.runner}`, `  strategy: ${config.strategy.toLowerCase()}`, '  branches:', `    - ${current.branch}`, ...(current.coverageReportPath ? [`  coverageReportPath: ${current.coverageReportPath}`] : []), '  stages:', ...current.stages.map((stage) => `    - ${stage}`)].join('\n')
-  const valid = Boolean(config.runner.trim() && current.branch.trim() && current.stages.length)
-  return <div className="pipeline-designer">
-    <div className="designer-top">
-      <button className="back-button" onClick={onCancel}><ArrowLeft size={16} />Back to CI / CD</button>
-      <div className="segmented compact"><button className={mode === 'visual' ? 'active' : ''} onClick={() => setMode('visual')}>Visual</button><button className={mode === 'code' ? 'active' : ''} onClick={() => setMode('code')}>As code</button></div>
-    </div>
-    <div className="settings-pipeline-tabs">{Object.keys(config.pipelines).map((item) => <button className={tab === item ? 'active' : ''} onClick={() => { setTab(item); setValidated(false) }} key={item}>{item}</button>)}</div>
-    {mode === 'visual' ? <>
-      <div className="form-grid designer-form">
-        <label className="field"><span>Runner routing label</span><input value={config.runner} onChange={(event) => setConfig({ ...config, runner: event.target.value })} placeholder="docker-linux" /><small>The configured CI engine resolves this label.</small></label>
-        <label className="field"><span>Nhánh mặc định cho {tab}</span><input value={current.branch} onChange={(event) => updateCurrent({ branch: event.target.value })} placeholder="main" /><small>Nhánh được đề xuất khi bấm "Chạy"; commit thực tế được chọn lúc chạy.</small></label>
-        <label className="field full"><span>Coverage report path <em className="muted">(tuỳ chọn)</em></span><input value={current.coverageReportPath ?? ''} onChange={(event) => updateCurrent({ coverageReportPath: event.target.value })} placeholder="coverage/lcov.info" /></label>
-      </div>
-      <div className="stage-list">
-        <div className="section-heading"><h3>Các bước của pipeline (chung cho mọi môi trường)</h3><button className="secondary-button" disabled={!addable.length} title={addable.length ? 'Add an approved custom stage from the catalog' : 'No approved custom stage fits this pipeline (register one in Module Settings → Pipeline stages)'} onClick={() => setPicking(true)}><Plus size={15} />Add custom stage</button></div>
-        {picking && addable.length > 0 && <div className="panel" style={{ padding: 8, marginBottom: 8, display: 'grid', gap: 6 }}>{addable.map((stage) => <button key={stage.id} className="secondary-button" onClick={() => addCustom(stage)}>{stage.name} <code className="mono">{stage.script}</code> · after {stage.afterStage}</button>)}</div>}
-        {current.stages.map((stage, index) => {
-          const def = catalogById[stage]
-          const label = def?.name ?? stageLabels[stage] ?? stage
-          const required = Boolean(def?.required)
-          return <div key={`${stage}-${index}`}><span className="drag-handle">⠿</span><span className="stage-number">{index + 1}</span><strong>{label}</strong><small>{def?.kind === 'custom' ? `custom · ${def.script}` : required ? 'required by policy' : 'Catalog stage'}</small><button aria-label={`Configure ${label}`} disabled title="Parameters are set per module in Module Settings → Pipeline stages"><Settings2 size={15} /></button><button aria-label={`Remove ${label}`} disabled={required} title={required ? 'Required: an artifact without this stage cannot be deployed' : undefined} onClick={() => updateCurrent({ stages: current.stages.filter((_, itemIndex) => itemIndex !== index && catalogById[current.stages[itemIndex]]?.afterStage !== stage) })}><X size={15} /></button></div>
-        })}
-      </div>
-    </> : <div className="code-editor"><div><span>pipeline.yml · read-only projection</span><button onClick={() => setValidated(valid)}><Code2 size={15} />Validate</button>{validated && <small role="status">Required catalog fields are present</small>}</div><pre>{yaml}</pre></div>}
-    <div className="designer-footer"><button className="primary-button" disabled={!valid} onClick={() => onSave({ ...config, pipelines: Object.fromEntries(Object.entries(config.pipelines).map(([name, item]) => [name, { ...item, stages: [...current.stages] }])) })}><Check size={16} />Save configuration</button></div>
-  </div>
-}
+export function PipelineStep({
+  value,
+  onChange,
+  onManagePipelines,
+}: {
+  value: string
+  onChange: (name: string) => void
+  onManagePipelines?: () => void
+}) {
+  const [pipelines, setPipelines] = useState<SharedPipeline[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
 
-function CicdStep({ config, onConfigChange }: { config: ModulePipelineConfig; onConfigChange: (config: ModulePipelineConfig) => void }) {
-  const [designer, setDesigner] = useState(false)
-  if (designer) return <PipelineDesigner initialConfig={config} onCancel={() => setDesigner(false)} onSave={(nextConfig) => { onConfigChange(nextConfig); setDesigner(false) }} />
-  return <div className="wizard-content">
-    <div className="wizard-section-title"><span><Server size={18} /></span><div><h2>Runner routing label</h2><p>This label is sent to the configured CI adapter. Availability is verified by the CI engine when the run starts.</p></div></div>
-    <label className="field runner-label"><span>Runner label</span><input value={config.runner} onChange={(event) => onConfigChange({ ...config, runner: event.target.value })} placeholder="docker-linux" /></label>
-    <div className="wizard-section-title spaced"><div><h2>Pipelines theo môi trường</h2><p>Mỗi môi trường một pipeline: build commit đã chọn → ký & quét → triển khai. Các bước là chung; nhánh mặc định có thể khác nhau.</p></div><button className="secondary-button" onClick={() => setDesigner(true)}><Settings2 size={15} />Open pipeline designer</button></div>
-    <div className="pipeline-card-grid">{Object.entries(config.pipelines).map(([name, item]) => <article className="panel pipeline-card" key={name}><div className="pipeline-card-header"><div><h3>{name}</h3><small>Branch: {item.branch}</small></div><span className="stage-count">{item.stages.length} stages</span></div><ol className="pipeline-stage-pills">{item.stages.map((stage) => <li key={stage}>{stageLabels[stage] ?? stage}</li>)}</ol></article>)}</div>
-  </div>
+  useEffect(() => {
+    let active = true
+    setLoading(true)
+    setError(null)
+    listSharedPipelines()
+      .then((items) => {
+        if (!active) return
+        setPipelines(items)
+        setLoading(false)
+      })
+      .catch((err) => {
+        if (!active) return
+        setError(err instanceof Error ? err.message : 'Không thể tải danh sách pipelines')
+        setLoading(false)
+      })
+    return () => {
+      active = false
+    }
+  }, [])
+
+  const activePipelines = pipelines.filter((p) => p.activeVersion !== null)
+  const unapprovedPipelines = pipelines.filter((p) => p.activeVersion === null)
+
+  return (
+    <div className="wizard-content">
+      <div className="wizard-section-title">
+        <span><GitBranch size={18} /></span>
+        <div>
+          <h2>Chọn pipeline CI chia sẻ</h2>
+          <p>Pipeline này chỉ thực hiện quy trình CI (build, test, scan); việc triển khai (CD) sẽ được cấu hình ở bước tiếp theo.</p>
+        </div>
+        <button type="button" className="secondary-button" onClick={() => onManagePipelines?.()}>
+          Quản lý pipelines
+        </button>
+      </div>
+
+      {loading && (
+        <div className="panel empty-table" role="status">
+          Đang tải danh sách pipelines…
+        </div>
+      )}
+
+      {error && (
+        <div className="inline-error" role="alert">
+          Không thể tải danh sách pipelines: {error}
+        </div>
+      )}
+
+      {!loading && !error && (
+        <>
+          {activePipelines.length === 0 && (
+            <div className="inline-empty" role="status" style={{ marginBottom: '16px', padding: '24px' }}>
+              <GitBranch size={24} />
+              <span>Chưa có pipeline nào được duyệt. Quản trị viên cần tạo và phê duyệt pipeline trên trang Pipelines.</span>
+            </div>
+          )}
+
+          <div
+            role="radiogroup"
+            aria-label="Pipelines"
+            className="pipeline-card-grid"
+            style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '14px' }}
+          >
+            {activePipelines.map((pipeline) => {
+              const isSelected = value === pipeline.name
+              return (
+                <div
+                  key={pipeline.name}
+                  role="radio"
+                  aria-checked={isSelected}
+                  tabIndex={0}
+                  onClick={() => onChange(pipeline.name)}
+                  onKeyDown={(e) => {
+                    if (e.key === ' ' || e.key === 'Enter') {
+                      e.preventDefault()
+                      onChange(pipeline.name)
+                    }
+                  }}
+                  className={`panel pipeline-card selectable ${isSelected ? 'selected' : ''}`}
+                  style={{
+                    cursor: 'pointer',
+                    padding: '16px',
+                    border: isSelected ? '2px solid var(--accent, #3b82f6)' : '1px solid var(--border)',
+                    borderRadius: '8px',
+                    background: isSelected ? 'rgba(59, 130, 246, 0.05)' : 'var(--surface, #fff)',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '10px',
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '8px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <span
+                        className="radio"
+                        style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          width: '16px',
+                          height: '16px',
+                          borderRadius: '50%',
+                          border: isSelected ? '2px solid #3b82f6' : '1px solid #ccd0d6',
+                          flexShrink: 0,
+                        }}
+                      >
+                        {isSelected && (
+                          <i
+                            style={{
+                              display: 'block',
+                              width: '8px',
+                              height: '8px',
+                              borderRadius: '50%',
+                              background: '#3b82f6',
+                            }}
+                          />
+                        )}
+                      </span>
+                      <strong style={{ fontSize: '1rem', color: isSelected ? '#2563eb' : 'inherit' }}>
+                        {pipeline.name}
+                      </strong>
+                    </div>
+                    <span
+                      style={{
+                        fontSize: '0.75rem',
+                        fontWeight: 600,
+                        padding: '2px 8px',
+                        borderRadius: '12px',
+                        background: 'rgba(59, 130, 246, 0.12)',
+                        color: '#2563eb',
+                        whiteSpace: 'nowrap',
+                      }}
+                    >
+                      v{pipeline.activeVersion}
+                    </span>
+                  </div>
+
+                  {pipeline.description && (
+                    <p style={{ margin: 0, fontSize: '0.82rem', color: 'var(--muted)', lineHeight: 1.4 }}>
+                      {pipeline.description}
+                    </p>
+                  )}
+
+                  {pipeline.stages && pipeline.stages.length > 0 && (
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginTop: 'auto' }}>
+                      {pipeline.stages.map((st) => (
+                        <span
+                          key={st.id}
+                          className="stage-chip"
+                          style={{
+                            fontSize: '0.72rem',
+                            padding: '2px 6px',
+                            borderRadius: '4px',
+                            background: 'rgba(255,255,255,0.06)',
+                            border: '1px solid var(--border)',
+                          }}
+                        >
+                          {st.name}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+
+                  <div style={{ fontSize: '0.76rem', color: 'var(--muted)', marginTop: '4px' }}>
+                    dùng bởi {pipeline.usedBy?.length ?? 0} module
+                  </div>
+                </div>
+              )
+            })}
+
+            {unapprovedPipelines.map((pipeline) => (
+              <div
+                key={pipeline.name}
+                role="radio"
+                aria-checked={false}
+                aria-disabled="true"
+                tabIndex={-1}
+                className="panel pipeline-card disabled"
+                style={{
+                  cursor: 'not-allowed',
+                  opacity: 0.6,
+                  padding: '16px',
+                  border: '1px dashed var(--border)',
+                  borderRadius: '8px',
+                  background: 'var(--surface-alt, #fafbfc)',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '10px',
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '8px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <span
+                      className="radio"
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        width: '16px',
+                        height: '16px',
+                        borderRadius: '50%',
+                        border: '1px solid #ccd0d6',
+                        opacity: 0.5,
+                        flexShrink: 0,
+                      }}
+                    />
+                    <strong style={{ fontSize: '1rem' }}>{pipeline.name}</strong>
+                  </div>
+                  <span
+                    style={{
+                      fontSize: '0.75rem',
+                      fontWeight: 600,
+                      padding: '2px 8px',
+                      borderRadius: '12px',
+                      background: 'rgba(239, 68, 68, 0.1)',
+                      color: '#dc2626',
+                      whiteSpace: 'nowrap',
+                    }}
+                  >
+                    chưa được duyệt
+                  </span>
+                </div>
+
+                {pipeline.description && (
+                  <p style={{ margin: 0, fontSize: '0.82rem', color: 'var(--muted)', lineHeight: 1.4 }}>
+                    {pipeline.description}
+                  </p>
+                )}
+
+                {pipeline.stages && pipeline.stages.length > 0 && (
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginTop: 'auto' }}>
+                    {pipeline.stages.map((st) => (
+                      <span
+                        key={st.id}
+                        className="stage-chip"
+                        style={{
+                          fontSize: '0.72rem',
+                          padding: '2px 6px',
+                          borderRadius: '4px',
+                          background: 'rgba(255,255,255,0.06)',
+                          border: '1px solid var(--border)',
+                        }}
+                      >
+                        {st.name}
+                      </span>
+                    ))}
+                  </div>
+                )}
+
+                <div style={{ fontSize: '0.76rem', color: 'var(--muted)', marginTop: '4px' }}>
+                  dùng bởi {pipeline.usedBy?.length ?? 0} module
+                </div>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  )
 }
 
 function TargetConfiguration({ current, targetServers = [], updateCurrent, onSelectServers }: { current: EnvironmentConfig; targetServers?: TargetServer[]; updateCurrent: (changes: Partial<EnvironmentConfig>) => void; onSelectServers: () => void }) {
@@ -564,12 +790,26 @@ function DeploymentStep({ systemId, moduleId, initialTarget = 'Docker', targetSe
   return <div className="deployment-builder"><aside><div><h3>Environments</h3><button aria-label="Add environment" disabled={!availableEnvironment} title={availableEnvironment ? undefined : 'Dev, Staging and Production are already configured'} onClick={openAddEnvironment}><Plus size={16} /></button></div>{environments.map((environment, index) => <button className={active === index ? 'active' : ''} onClick={() => setActive(index)} key={`${environment.name}-${index}`}><span className={`env-dot env-${environment.environment.toLowerCase()}`} /><span><strong>{environment.name}</strong><small>{environment.target}</small></span><ChevronRight size={16} /></button>)}{!environments.length && <div className="empty-environments"><Globe2 size={24} /><p>No environments yet</p><button onClick={openAddEnvironment}>Add environment</button></div>}</aside><main>{inventoryNotice && <div className="inline-error" role="status" style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}><div>{inventoryNotice}</div>{inventoryStatus === 'not_registered' && <div><button type="button" className="primary-button" style={{ padding: '5px 12px', fontSize: '0.85rem' }} disabled={provisioning} onClick={handleAutoProvision}><Zap size={14} style={{ marginRight: '6px' }} />{provisioning ? 'Đang tạo NetBox Targets…' : '⚡ Auto-provision NetBox Tenant & Targets'}</button></div>}</div>}{current ? <><div className="panel" style={{ marginBottom: '16px', padding: '12px 16px' }}><div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '8px' }}><div><h3 style={{ margin: 0, fontSize: '0.95rem' }}>Target Runtime Environment</h3><p style={{ margin: '2px 0 0', fontSize: '0.8rem', color: 'var(--text-muted)' }}>Select deployment runtime target for ({current.name}):</p></div><div className="segmented compact">{deploymentTargets.map(({ label, icon: TargetIcon }) => <button key={label} type="button" className={current.target === label ? 'active' : ''} onClick={() => setEnvironments((items) => items.map((item) => ({ ...item, target: label, servers: label === 'Kubernetes' ? [] : item.servers, ...(label === 'Kubernetes' ? kubernetesDefaults(item.environment) : { kubeconfigRef: undefined, namespace: undefined }) })))}><TargetIcon size={14} style={{ marginRight: '6px' }} />{label}</button>)}</div></div></div><div className="environment-title"><div><h2>{current.name}</h2><p>{current.environment} · {current.target} deployment target</p></div><button className="secondary-button" onClick={openEditEnvironment}><Settings2 size={15} />Edit</button></div><TargetConfiguration current={current} targetServers={targetServers} updateCurrent={updateCurrent} onSelectServers={openServerPicker} /><section className="deployment-section panel"><div className="section-heading"><div><h3>Managed Deployment Adapter</h3><p>The checked-in {current.target} playbook manages the task order, immutable artifact deployment, health gate, and rollback behavior. Target selection above is the runtime routing control exposed here.</p></div></div></section></> : <div className="deployment-empty"><Globe2 size={34} /><h2>Configure deployment environments</h2><p>Add Dev, Staging or Production and bind its runtime target.</p><button className="primary-button" onClick={openAddEnvironment}><Plus size={16} />Add environment</button></div>}</main>
 
     {addEnv && <Modal title={editingEnvironment === null ? 'Add environment' : 'Edit environment'} description="Create a deployment target for this module." onClose={closeEnvironmentModal} footer={<><button className="secondary-button" onClick={closeEnvironmentModal}>Cancel</button><button className="primary-button" disabled={!environmentDraft.name.trim() || duplicateEnvironment} onClick={saveEnvironment}>{editingEnvironment === null ? 'Add environment' : 'Save changes'}</button></>}><div className="form-grid"><label className="field full"><span>Name</span><input value={environmentDraft.name} onChange={(event) => setEnvironmentDraft({ ...environmentDraft, name: event.target.value })} /></label><label className="field full"><span>Environment</span><select value={environmentDraft.environment} onChange={(event) => setEnvironmentDraft({ ...environmentDraft, environment: event.target.value as DeploymentEnvironment, name: environmentNames[event.target.value as DeploymentEnvironment] })}>{(['Dev', 'Staging', 'Production'] as DeploymentEnvironment[]).map((environment) => <option disabled={environments.some((item, index) => item.environment === environment && index !== editingEnvironment)} key={environment}>{environment}</option>)}</select></label>{duplicateEnvironment && <div className="inline-error full" role="alert">This environment is already configured.</div>}<div className="field full"><span>Deployment target</span><div className="target-options">{deploymentTargets.map(({ label, icon: TargetIcon, execution }) => <button className={environmentDraft.target === label ? 'selected' : ''} disabled={Boolean(lockedTarget && label !== lockedTarget)} title={lockedTarget && label !== lockedTarget ? `Application runtime is already ${lockedTarget}` : undefined} onClick={() => setEnvironmentDraft({ ...environmentDraft, target: label })} key={label}><TargetIcon size={18} /><span><strong>{label}</strong><small>{execution}</small></span></button>)}</div>{lockedTarget && <small className="target-policy-hint">Application runtime is shared by all deployment environments.</small>}</div></div></Modal>}
-    {selectServers && <Modal title="Select target servers" description={`DCIM servers assigned to ${current.name}.`} onClose={() => setSelectServers(false)} footer={<><button className="secondary-button" onClick={() => setSelectServers(false)}>Cancel</button><button className="primary-button" disabled={!serverDraft.length} onClick={() => { updateCurrent({ servers: serverDraft }); setSelectServers(false) }}>Add selected servers</button></>}><div className="server-picker">{pickerCandidates.map(({ name, ip, status }) => <label key={name}><input type="checkbox" checked={serverDraft.includes(name)} onChange={(event) => setServerDraft((items) => event.target.checked ? [...items, name] : items.filter((item) => item !== name))} /><Server size={17} /><span><strong>{name}</strong><small>{ip || 'No IP in NetBox'} · NetBox: {status}</small></span></label>)}{!pickerCandidates.length && <div className="inline-empty"><Server size={23} /><span>{inventoryStatus === 'ready' ? `NetBox has no devices for tenant "${systemId}" at site "${siteSlug}".` : inventoryNotice}</span></div>}</div>{(inventoryStatus !== 'ready' || !pickerCandidates.length) && <div className="form-grid"><label className="field full"><span>Hostname (Manual Target Server)</span><input value={manualServer} placeholder="e.g. banking-core-docker-dev or localhost" onChange={(event) => setManualServer(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && manualServer.trim()) { setServerDraft((items) => items.includes(manualServer.trim()) ? items : [...items, manualServer.trim()]); setManualServer('') } }} /><small>Press Enter to add. Configured: {serverDraft.join(', ') || 'None'}</small></label></div>}</Modal>}
+    {selectServers && <Modal title="Select target servers" description={`DCIM servers assigned to ${current.name}.`} onClose={() => setSelectServers(false)} footer={<><button className="secondary-button" onClick={() => setSelectServers(false)}>Cancel</button><button className="primary-button" disabled={!serverDraft.length} onClick={() => { updateCurrent({ servers: serverDraft }); setSelectServers(false) }}>Add selected servers</button></>}><div className="server-picker">{pickerCandidates.map(({ name, ip, status }) => <label key={name}><input type="checkbox" checked={serverDraft.includes(name)} onChange={(event) => setServerDraft((items) => event.target.checked ? [...items, name] : items.filter((item) => item !== name))} /><Server size={17} /><span><strong>{name}</strong><small>{ip || 'No IP in NetBox'} · NetBox: {status}</small></span></label>)}{!pickerCandidates.length && <div className="inline-empty"><Server size={23} /><span>{inventoryStatus === 'ready' ? `NetBox has no devices for tenant "${systemId}" at site "${siteSlug}".` : inventoryNotice}</span></div>}</div>{(inventoryStatus !== 'ready' || !pickerCandidates.length) && <div className="form-grid"><label className="field full"><span>Hostname (Manual Target Server)</span><input value={manualServer} placeholder="e.g. payments-api-docker-dev or localhost" onChange={(event) => setManualServer(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && manualServer.trim()) { setServerDraft((items) => items.includes(manualServer.trim()) ? items : [...items, manualServer.trim()]); setManualServer('') } }} /><small>Press Enter to add. Configured: {serverDraft.join(', ') || 'None'}</small></label></div>}</Modal>}
 
   </div>
 }
 
-export function NewModuleWizard({ systemId, ownerTeams = [], canOwnAnyTeam = false, onCancel, onCreate }: { systemId: string; ownerTeams?: string[]; canOwnAnyTeam?: boolean; onCancel: () => void; onCreate: (module: DcimModule, configuration: ModuleWizardSubmission) => Promise<void> | void }) {
+export function NewModuleWizard({
+  systemId,
+  ownerTeams = [],
+  canOwnAnyTeam = false,
+  onCancel,
+  onCreate,
+  onManagePipelines,
+}: {
+  systemId: string
+  ownerTeams?: string[]
+  canOwnAnyTeam?: boolean
+  onCancel: () => void
+  onCreate: (module: DcimModule, configuration: ModuleWizardSubmission) => Promise<void> | void
+  onManagePipelines?: () => void
+}) {
   const { notify } = usePortalFeedback()
   const [step, setStep] = useState(1)
   const [selected, setSelected] = useState('')
@@ -591,7 +831,7 @@ export function NewModuleWizard({ systemId, ownerTeams = [], canOwnAnyTeam = fal
   })
   const [ownerTeam, setOwnerTeam] = useState(ownerTeams[0] ?? '')
   const [portalInformation, setPortalInformation] = useState<PortalInformation>({ displayName: '', moduleType: 'Backend', description: '' })
-  const [pipelineConfig, setPipelineConfig] = useState<ModulePipelineConfig>(defaultPipelineConfig)
+  const [selectedPipeline, setSelectedPipeline] = useState('')
   const [deploymentReady, setDeploymentReady] = useState(false)
   const [deploymentConfig, setDeploymentConfig] = useState<DeploymentEnvironmentConfig[]>([])
   const [creating, setCreating] = useState(false)
@@ -682,9 +922,10 @@ export function NewModuleWizard({ systemId, ownerTeams = [], canOwnAnyTeam = fal
         runtime: defaultConfig.runtime,
         defaultEnvironment: defaultConfig.environment,
         deploymentEnvironments: deploymentConfig,
-        stages: pipelineConfig.pipelines['CD Dev']?.stages || defaultPipelineStages,
-        pipelineConfig,
+        stages: defaultPipelineStages,
+        pipelineConfig: defaultPipelineConfig,
         ownerTeam: ownerTeam || undefined,
+        pipeline: selectedPipeline,
       })
       notify('Module đã được tạo thành công và sẵn sàng nhận pipeline run.')
     } catch (error) {
@@ -695,5 +936,5 @@ export function NewModuleWizard({ systemId, ownerTeams = [], canOwnAnyTeam = fal
   }
   return <div className="new-module-page"><div className="wizard-header"><button className="back-button" onClick={onCancel}><ArrowLeft size={16} />Back to System</button><div><h1>New Module</h1><p>Add a module and configure its delivery lifecycle.</p></div><WizardSteps step={step} /></div><section className="wizard-shell">{step === 1 && <><GeneralStep systemId={systemId} modules={dcimModules} integrationStatus={dcimStatus} selected={selected} onSelect={selectModule} information={portalInformation} onInformationChange={setPortalInformation} source={moduleSource} onSourceChange={changeSource} customModule={customModule} onCustomModuleChange={setCustomModule} gitInfo={gitInfo} sampleApps={sampleApps} onSelectSample={handleSelectSample} />{(ownerTeams.length > 0 || canOwnAnyTeam) && <div className="wizard-content"><label className="field"><span>Owning team</span>{canOwnAnyTeam
   ? <><input list="owner-teams" value={ownerTeam} onChange={(event) => setOwnerTeam(event.target.value)} placeholder="vd. team-payments" /><datalist id="owner-teams">{ownerTeams.map((team) => <option key={team} value={team} />)}</datalist><small>Platform-admin có thể giao module cho bất kỳ team nào (tên group trong identity provider). Chỉ thành viên team đó xem được module; thay đổi prod cần một thành viên khác của team phê duyệt.</small></>
-  : <><select value={ownerTeam} onChange={(event) => setOwnerTeam(event.target.value)}>{ownerTeams.map((team) => <option key={team}>{team}</option>)}</select><small>Only members of this verified identity team can access the module.</small></>}</label></div>}</>}{step === 2 && <CicdStep config={pipelineConfig} onConfigChange={setPipelineConfig} />}{step === 3 && <DeploymentStep systemId={systemId} moduleId={selected} initialTarget={selectedTarget} onValidityChange={setDeploymentReady} onConfigurationChange={setDeploymentConfig} />}</section><footer className="wizard-footer"><button className="secondary-button" disabled={creating} onClick={step === 1 ? onCancel : () => setStep(step - 1)}>{step === 1 ? 'Cancel' : 'Back'}</button>{step < 3 ? <button className="primary-button" disabled={step === 1 && (!selected || !portalInformation.displayName.trim() || !portalInformation.moduleType || !(customModule.repositoryUrl ?? '').trim() || ownerTeams.length > 0 && !ownerTeam) || step === 2 && !pipelineConfig.runner.trim()} onClick={() => setStep(step + 1)}>Next <ArrowRight size={16} /></button> : <button className="primary-button" disabled={!deploymentReady || creating} title={deploymentReady ? undefined : 'Complete an environment and its target connection'} onClick={finish}><Check size={16} />{creating ? 'Creating…' : 'Create Module'}</button>}</footer></div>
+  : <><select value={ownerTeam} onChange={(event) => setOwnerTeam(event.target.value)}>{ownerTeams.map((team) => <option key={team}>{team}</option>)}</select><small>Only members of this verified identity team can access the module.</small></>}</label></div>}</>}{step === 2 && <PipelineStep value={selectedPipeline} onChange={setSelectedPipeline} onManagePipelines={onManagePipelines} />}{step === 3 && <DeploymentStep systemId={systemId} moduleId={selected} initialTarget={selectedTarget} onValidityChange={setDeploymentReady} onConfigurationChange={setDeploymentConfig} />}</section><footer className="wizard-footer"><button className="secondary-button" disabled={creating} onClick={step === 1 ? onCancel : () => setStep(step - 1)}>{step === 1 ? 'Cancel' : 'Back'}</button>{step < 3 ? <button className="primary-button" disabled={(step === 1 && (!selected || !portalInformation.displayName.trim() || !portalInformation.moduleType || !(customModule.repositoryUrl ?? '').trim() || (ownerTeams.length > 0 && !ownerTeam))) || (step === 2 && !selectedPipeline)} onClick={() => setStep(step + 1)}>Next <ArrowRight size={16} /></button> : <button className="primary-button" disabled={!deploymentReady || creating} title={deploymentReady ? undefined : 'Complete an environment and its target connection'} onClick={finish}><Check size={16} />{creating ? 'Creating…' : 'Create Module'}</button>}</footer></div>
 }

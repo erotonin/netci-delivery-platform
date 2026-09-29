@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 
 vi.mock('./api/netciClient', async (importOriginal) => {
@@ -292,4 +292,122 @@ describe('a new version of a Golden Path template', () => {
     expect(screen.queryByTestId('catalog-new-version-fastapi-service')).toBeNull()
   })
 })
+
+describe('Catalog explanations, intro panel and contextual hints', () => {
+  beforeEach(() => {
+    try {
+      window.localStorage.clear()
+    } catch {
+      // ignore
+    }
+  })
+
+  it('renders collapsible intro panel explaining the service catalog and the four tabs', async () => {
+    render(
+      <PortalFeedbackProvider>
+        <CatalogPage />
+      </PortalFeedbackProvider>
+    )
+
+    // Intro panel header & lead paragraph
+    expect(await screen.findByRole('heading', { level: 2, name: /Giới thiệu Service Catalog/i })).toBeTruthy()
+    expect(
+      screen.getByText(/Service Catalog là danh bạ của mọi service\/module: ai sở hữu, mức độ quan trọng \(tier\), vòng đời, phụ thuộc giữa các service/i)
+    ).toBeTruthy()
+    expect(
+      screen.getByText(/Nó là nguồn sự thật cho câu hỏi “service này của ai, gọi tới ai, có được deploy không”/i)
+    ).toBeTruthy()
+
+    // 4 tab explanation cards
+    expect(screen.getByRole('heading', { level: 3, name: /^Services$/i })).toBeTruthy()
+    expect(screen.getByText(/Danh bạ định danh mọi service\/module: quản lý team sở hữu/i)).toBeTruthy()
+
+    expect(screen.getByRole('heading', { level: 3, name: /Templates \(Golden paths\)/i })).toBeTruthy()
+    expect(screen.getByText(/Mẫu dựng service mới theo chuẩn công ty \(repo \+ pipeline \+ cấu hình\)/i)).toBeTruthy()
+
+    expect(screen.getByRole('heading', { level: 3, name: /^Previews$/i })).toBeTruthy()
+    expect(screen.getByText(/Môi trường preview tạm thời và cô lập cho một merge request/i)).toBeTruthy()
+
+    expect(screen.getByRole('heading', { level: 3, name: /^Resources$/i })).toBeTruthy()
+    expect(screen.getByText(/Cổng tự phục vụ yêu cầu tài nguyên đám mây/i)).toBeTruthy()
+
+    // Each card specifies what a user can try right now ("Demo được gì")
+    const demoLabels = screen.getAllByText('Demo được gì:')
+    expect(demoLabels.length).toBe(4)
+  })
+
+  it('toggles collapsible intro panel, hides/shows explanation and updates localStorage', async () => {
+    render(
+      <PortalFeedbackProvider>
+        <CatalogPage />
+      </PortalFeedbackProvider>
+    )
+
+    // Initially open by default
+    const toggleButton = await screen.findByRole('button', { name: 'Ẩn giải thích' })
+    expect(toggleButton).toBeTruthy()
+    expect(screen.getByText(/Service Catalog là danh bạ của mọi service\/module/i)).toBeTruthy()
+
+    // Click toggle to collapse
+    fireEvent.click(toggleButton)
+
+    // Button label switches and content is hidden
+    expect(screen.getByRole('button', { name: 'Xem giải thích' })).toBeTruthy()
+    expect(screen.queryByText(/Service Catalog là danh bạ của mọi service\/module/i)).toBeNull()
+    expect(screen.queryByText(/Mẫu dựng service mới theo chuẩn công ty/i)).toBeNull()
+    expect(window.localStorage.getItem('netci.catalog.introHidden')).toBe('true')
+
+    // Click toggle again to expand
+    fireEvent.click(screen.getByRole('button', { name: 'Xem giải thích' }))
+    expect(screen.getByRole('button', { name: 'Ẩn giải thích' })).toBeTruthy()
+    expect(screen.getByText(/Service Catalog là danh bạ của mọi service\/module/i)).toBeTruthy()
+    expect(screen.getByText(/Mẫu dựng service mới theo chuẩn công ty/i)).toBeTruthy()
+    expect(window.localStorage.getItem('netci.catalog.introHidden')).toBe('false')
+  })
+
+  it('respects initial introHidden state stored in localStorage', async () => {
+    window.localStorage.setItem('netci.catalog.introHidden', 'true')
+    render(
+      <PortalFeedbackProvider>
+        <CatalogPage />
+      </PortalFeedbackProvider>
+    )
+
+    // Should start collapsed
+    expect(await screen.findByRole('button', { name: 'Xem giải thích' })).toBeTruthy()
+    expect(screen.queryByText(/Service Catalog là danh bạ của mọi service\/module/i)).toBeNull()
+  })
+
+  it('shows contextual hint on each tab above its content', async () => {
+    render(
+      <PortalFeedbackProvider>
+        <CatalogPage />
+      </PortalFeedbackProvider>
+    )
+
+    // Tab 1: Services (active by default)
+    expect(
+      await screen.findByText(/Services: xem owner\/tier\/lifecycle, đồ thị phụ thuộc, đánh dấu deprecated và kiểm tra chu trình phụ thuộc\./i)
+    ).toBeTruthy()
+
+    // Tab 2: Templates
+    fireEvent.click(screen.getByRole('tab', { name: /Golden Path Templates/i }))
+    expect(
+      await screen.findByText(/Templates \(Golden paths\): mẫu dựng service mới theo chuẩn công ty \(repo \+ pipeline \+ cấu hình\), tạo module từ template\./i)
+    ).toBeTruthy()
+
+    // Tab 3: Previews
+    fireEvent.click(screen.getByRole('tab', { name: /Ephemeral Preview Environments/i }))
+    expect(
+      await screen.findByText(/Previews: môi trường preview tạm thời cho một merge request, tự huỷ khi hết hạn\./i)
+    ).toBeTruthy()
+
+    // Tab 4: Resources
+    fireEvent.click(screen.getByRole('tab', { name: /Self-Service Resources/i }))
+    expect(
+      await screen.findByText(/Resources: yêu cầu tài nguyên \(DB, bucket…\) qua phê duyệt; provider chưa cấu hình thì trạng thái.*fail-closed.*chứ không giả lập\./i)
+    ).toBeTruthy()
+  })
+})
+
 

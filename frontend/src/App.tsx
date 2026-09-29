@@ -20,7 +20,6 @@ import { ReleasePlanPage } from './ReleasePlanPage'
 import { StageCatalogPage } from './StageCatalogPage'
 import { ToolchainPage } from './ToolchainPage'
 import { PipelinesPage } from './PipelinesPage'
-import { VulnerabilitiesPage } from './VulnerabilitiesPage'
 import type { PageId } from './portalTypes'
 import './styles.css'
 
@@ -62,7 +61,6 @@ function readRoute(): RouteState {
   if (parts[0] === 'requests' || parts[0] === 'production-requests') return { page: 'requests', systemId: '', moduleId: '', settingsOpen: false }
   if (parts[0] === 'catalog') return { page: 'catalog', systemId: '', moduleId: '', settingsOpen: false }
   if (parts[0] === 'calendar') return { page: 'calendar', systemId: '', moduleId: '', settingsOpen: false }
-  if (parts[0] === 'vulnerabilities') return { page: 'vulnerabilities', systemId: '', moduleId: '', settingsOpen: false }
   if (parts[0] === 'scorecards') return { page: 'scorecards', systemId: '', moduleId: '', settingsOpen: false }
   if (parts[0] === 'release-plan') return { page: 'release-plan', systemId: '', moduleId: '', settingsOpen: false }
   if (parts[0] === 'stage-catalog') return { page: 'stage-catalog', systemId: '', moduleId: '', settingsOpen: false }
@@ -79,7 +77,6 @@ function routePath(route: RouteState): string {
   if (route.page === 'systems') return '/systems'
   if (route.page === 'catalog') return '/catalog'
   if (route.page === 'calendar') return '/calendar'
-  if (route.page === 'vulnerabilities') return '/vulnerabilities'
   if (route.page === 'scorecards') return '/scorecards'
   if (route.page === 'release-plan') return '/release-plan'
   if (route.page === 'stage-catalog') return '/stage-catalog'
@@ -182,7 +179,6 @@ function PortalApp({ session, onLogout }: { session: AuthSession; onLogout: () =
       {page === 'catalog' && <CatalogPage session={session} navigate={navigate} />}
       {page === 'servers' && <ServersPage />}
       {page === 'calendar' && <ReleaseCalendarPage />}
-      {page === 'vulnerabilities' && <VulnerabilitiesPage />}
       {page === 'scorecards' && <ScorecardsPage navigate={navigate} />}
       {page === 'release-plan' && <ReleasePlanPage />}
       {page === 'stage-catalog' && <StageCatalogPage session={session} />}
@@ -193,7 +189,7 @@ function PortalApp({ session, onLogout }: { session: AuthSession; onLogout: () =
       {page === 'system' && <SystemPage systemId={systemId} navigate={navigate} />}
       {page === 'requests' && <ProductionRequestsPage systemId={systemId} />}
       {page === 'module' && <ModulePage moduleId={moduleId} onSettings={() => moveTo({ ...route, settingsOpen: true })} />}
-      {page === 'new-module' && <NewModuleWizard systemId={systemId} ownerTeams={session.identity.principal.teams} canOwnAnyTeam={session.identity.principal.roles.includes('platform-admin')} onCancel={() => navigate('system', { systemId })} onCreate={async (selected, configuration) => {
+      {page === 'new-module' && <NewModuleWizard systemId={systemId} ownerTeams={session.identity.principal.teams} canOwnAnyTeam={session.identity.principal.roles.includes('platform-admin')} onCancel={() => navigate('system', { systemId })} onManagePipelines={() => navigate('pipelines')} onCreate={async (selected, configuration) => {
         await createModule(systemId, {
           name: selected.id,
           displayName: configuration.displayName,
@@ -207,6 +203,7 @@ function PortalApp({ session, onLogout }: { session: AuthSession; onLogout: () =
           stages: configuration.stages,
           pipelineConfig: configuration.pipelineConfig,
           ownerTeam: configuration.ownerTeam,
+          pipeline: configuration.pipeline,
         })
         navigate('module', { systemId, moduleId: selected.id })
       }} />}

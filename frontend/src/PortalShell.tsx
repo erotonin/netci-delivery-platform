@@ -108,7 +108,6 @@ function Sidebar({ page, systemId, moduleId, moduleLinks, navigationSystems, ses
         <button aria-current={page === 'catalog' ? 'page' : undefined} className={page === 'catalog' ? 'nav-item active' : 'nav-item'} onClick={() => navigate('catalog')}><Compass size={17} />Service Catalog</button>
 
         <span className="nav-label nav-label-spaced">Platform & Governance</span>
-        <button aria-current={page === 'vulnerabilities' ? 'page' : undefined} className={page === 'vulnerabilities' ? 'nav-item active' : 'nav-item'} onClick={() => navigate('vulnerabilities')}><ShieldAlert size={17} />Vulnerabilities</button>
         <button aria-current={page === 'calendar' ? 'page' : undefined} className={page === 'calendar' ? 'nav-item active' : 'nav-item'} onClick={() => navigate('calendar')}><CalendarDays size={17} />Release Calendar</button>
         <button aria-current={page === 'servers' ? 'page' : undefined} className={page === 'servers' ? 'nav-item active' : 'nav-item'} onClick={() => navigate('servers')}><Server size={17} />Servers</button>
         <button aria-current={page === 'toolchain' ? 'page' : undefined} className={page === 'toolchain' ? 'nav-item active' : 'nav-item'} onClick={() => navigate('toolchain')}><Wrench size={17} />Toolchain</button>
@@ -165,7 +164,7 @@ function TopBar({ page, systemId, moduleId, moduleLinks, navigationSystems, sess
   const [query, setQuery] = useState('')
   const [searchOpen, setSearchOpen] = useState(false)
   const moduleName = moduleLinks.find((item) => item.id === moduleId)?.name ?? navigationSystems.flatMap((system) => system.modules).find((item) => item.id === moduleId)?.name
-  const labels: Partial<Record<PageId, string>> = { dashboard: 'Dashboard', systems: 'All Systems', servers: 'Servers', catalog: 'Service Catalog', calendar: 'Release Calendar', vulnerabilities: 'Vulnerabilities', scorecards: 'Scorecards', 'release-plan': 'Release Plan', 'stage-catalog': 'Stage Catalog', 'ci-cost': 'CI Cost', architecture: 'Architecture & IDP 2026 Roadmap', system: 'Overview', requests: 'Production Requests', module: moduleName, 'new-module': 'New Module', toolchain: 'Toolchain', pipelines: 'Pipelines' }
+  const labels: Partial<Record<PageId, string>> = { dashboard: 'Dashboard', systems: 'All Systems', servers: 'Servers', catalog: 'Service Catalog', calendar: 'Release Calendar', scorecards: 'Scorecards', 'release-plan': 'Release Plan', 'stage-catalog': 'Stage Catalog', 'ci-cost': 'CI Cost', architecture: 'Architecture & IDP 2026 Roadmap', system: 'Overview', requests: 'Production Requests', module: moduleName, 'new-module': 'New Module', toolchain: 'Toolchain', pipelines: 'Pipelines' }
   const crumbs = ['system', 'requests', 'module', 'new-module'].includes(page) ? ['Systems', systemId, labels[page]] : (page === 'pipelines' && moduleId ? ['Pipelines', moduleId] : [labels[page]])
   const searchItems = [
     { key: 'dashboard', label: 'Dashboard', detail: 'General', action: () => navigate('dashboard') },
@@ -175,7 +174,6 @@ function TopBar({ page, systemId, moduleId, moduleLinks, navigationSystems, sess
     { key: 'servers', label: 'Servers', detail: 'Infrastructure', action: () => navigate('servers') },
     { key: 'toolchain', label: 'Toolchain', detail: 'Platform & Governance', action: () => navigate('toolchain') },
     { key: 'calendar', label: 'Release Calendar', detail: 'Planning', action: () => navigate('calendar') },
-    { key: 'vulnerabilities', label: 'Vulnerabilities', detail: 'Security', action: () => navigate('vulnerabilities') },
     { key: 'scorecards', label: 'Scorecards', detail: 'Quality', action: () => navigate('scorecards') },
     { key: 'release-plan', label: 'Release Plan', detail: 'Planning', action: () => navigate('release-plan') },
     { key: 'stage-catalog', label: 'Stage Catalog', detail: 'Pipeline stages', action: () => navigate('stage-catalog') },

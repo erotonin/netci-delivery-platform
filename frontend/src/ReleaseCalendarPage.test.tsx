@@ -31,7 +31,13 @@ vi.mock('./api/netciClient', async (importOriginal) => {
   }
 })
 
-import { ReleaseCalendarPage, calendarWarnings } from './ReleaseCalendarPage'
+import { ReleaseCalendarPage, calendarWarnings, dayOf } from './ReleaseCalendarPage'
+
+describe('dayOf helper', () => {
+  it('extracts local calendar date as YYYY-MM-DD', () => {
+    expect(dayOf('2026-10-15T09:00:00+07:00')).toBe('2026-10-15')
+  })
+})
 
 describe('release calendar warnings, from records netCI holds', () => {
   const now = new Date('2026-09-23T12:00:00+07:00')
@@ -190,5 +196,119 @@ describe('ReleaseCalendarPage', () => {
     expect(alert).toBeTruthy()
     expect(alert.textContent).toContain('Reviewer permission required')
   })
-})
 
+  it('month grid renders the right number of cells for a fixed now (Monday-first)', async () => {
+    render(<ReleaseCalendarPage now={new Date('2026-10-15T12:00:00+07:00')} />)
+    expect(await screen.findByTestId('calendar-summary')).toBeTruthy()
+    expect(screen.getByText('Tháng 10, 2026')).toBeTruthy()
+    expect(screen.getByRole('grid', { name: /lịch phát hành theo tháng/i })).toBeTruthy()
+
+    // 7 columns Monday-first
+    const headers = screen.getAllByRole('columnheader').map((el) => el.textContent)
+    expect(headers).toEqual(['T2', 'T3', 'T4', 'T5', 'T6', 'T7', 'CN'])
+
+    // October 2026 has 5 complete weeks = 35 cells
+    const cells = screen.getAllByRole('gridcell')
+    expect(cells).toHaveLength(35)
+    // First cell is Monday 2026-09-28
+    expect(cells[0].getAttribute('aria-label')).toBe('2026-09-28')
+    // Last cell is Sunday 2026-11-01
+    expect(cells[34].getAttribute('aria-label')).toBe('2026-11-01')
+  })
+
+  it('an event appears in its day cell', async () => {
+    render(<ReleaseCalendarPage now={new Date('2026-09-23T12:00:00+07:00')} />)
+    expect(await screen.findByTestId('calendar-summary')).toBeTruthy()
+
+    const day25 = screen.getByTestId('calendar-day-2026-09-25')
+    expect(day25.textContent).toContain('shop-api')
+    expect(day25.textContent).toContain('v1.0.0')
+
+    const day24 = screen.getByTestId('calendar-day-2026-09-24')
+    expect(day24.textContent).toContain('payments-api')
+  })
+
+  it('next and prev month buttons change the title and reset with Hôm nay', async () => {
+    render(<ReleaseCalendarPage now={new Date('2026-09-23T12:00:00+07:00')} />)
+    expect(await screen.findByTestId('calendar-summary')).toBeTruthy()
+    expect(screen.getByText('Tháng 9, 2026')).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Tháng sau' }))
+    expect(screen.getByText('Tháng 10, 2026')).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Tháng trước' }))
+    expect(screen.getByText('Tháng 9, 2026')).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Tháng trước' }))
+    expect(screen.getByText('Tháng 8, 2026')).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Hôm nay' }))
+    expect(screen.getByText('Tháng 9, 2026')).toBeTruthy()
+  })
+
+  it('marks days covered by a freeze', async () => {
+    const { listChangeFreezes } = await import('./api/netciClient')
+    const freeze: ChangeFreeze = {
+      id: 'freeze-sep',
+      name: 'Network Maintenance',
+      startsAt: '2026-09-24T08:00:00+07:00',
+      endsAt: '2026-09-25T18:00:00+07:00',
+      environments: ['prod'],
+      systemId: null,
+      moduleId: null,
+      reason: 'Router firmware update',
+      createdBy: 'admin',
+      createdAt: '2026-09-20T00:00:00Z',
+      cancelledAt: null,
+      cancelledBy: null,
+    }
+    vi.mocked(listChangeFreezes).mockResolvedValueOnce([freeze])
+
+    render(<ReleaseCalendarPage now={new Date('2026-09-23T12:00:00+07:00')} />)
+    expect(await screen.findByTestId('calendar-summary')).toBeTruthy()
+
+    const day1 = screen.getByTestId('calendar-day-2026-09-24')
+    const day2 = screen.getByTestId('calendar-day-2026-09-25')
+
+    expect(day1.querySelector('.cal-freeze-band')).toBeTruthy()
+    expect(day2.querySelector('.cal-freeze-band')).toBeTruthy()
+    expect(day1.textContent).toContain('Network Maintenance')
+    expect(day2.textContent).toContain('Network Maintenance')
+  })
+
+  it('clicking an event opens the side panel with its details', async () => {
+    render(<ReleaseCalendarPage now={new Date('2026-09-23T12:00:00+07:00')} />)
+    expect(await screen.findByTestId('calendar-summary')).toBeTruthy()
+
+    const day25 = screen.getByTestId('calendar-day-2026-09-25')
+    const eventBtn = day25.querySelector('.cal-chip')!
+    fireEvent.click(eventBtn)
+
+    const panel = await screen.findByTestId('calendar-side-panel')
+    expect(panel).toBeTruthy()
+    expect(panel.textContent).toContain('shop-api')
+    expect(panel.textContent).toContain('v1.0.0')
+    expect(panel.textContent).toContain('dana')
+    expect(panel.textContent).toContain('approved')
+    expect(panel.textContent).toContain('shop-prod-01')
+    expect(panel.textContent).toContain('shop-prod-01 is in maintenance now (disk replacement)')
+
+    // Close side panel
+    fireEvent.click(screen.getByRole('button', { name: 'Đóng' }))
+    expect(screen.queryByTestId('calendar-side-panel')).toBeNull()
+  })
+
+  it('agenda view lists upcoming items', async () => {
+    render(<ReleaseCalendarPage now={new Date('2026-09-23T12:00:00+07:00')} />)
+    expect(await screen.findByTestId('calendar-summary')).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Danh sách' }))
+
+    const agenda = await screen.findByTestId('calendar-agenda-view')
+    expect(agenda).toBeTruthy()
+    expect(screen.getByTestId('agenda-day-2026-09-24')).toBeTruthy()
+    expect(screen.getByTestId('agenda-day-2026-09-25')).toBeTruthy()
+    expect(agenda.textContent).toContain('payments-api')
+    expect(agenda.textContent).toContain('shop-api')
+  })
+})
