@@ -206,7 +206,7 @@ export function PipelinesPage({ moduleId, navigate }: { moduleId?: string; navig
   const [designerError, setDesignerError] = useState('')
   const [designerSubmitError, setDesignerSubmitError] = useState('')
   const [designerSubmitting, setDesignerSubmitting] = useState(false)
-  const [editorTab, setEditorTab] = useState<EditorTab>('script')
+  const [editorTab, setEditorTab] = useState<EditorTab>('jenkinsfile')
   const [copiedScript, setCopiedScript] = useState(false)
   const [copiedJenkinsfile, setCopiedJenkinsfile] = useState(false)
 
@@ -217,7 +217,7 @@ export function PipelinesPage({ moduleId, navigate }: { moduleId?: string; navig
   const [rejectReason, setRejectReason] = useState('')
   const [rejectingVersion, setRejectingVersion] = useState<number | null>(null)
   const [viewScriptVersion, setViewScriptVersion] = useState<number | null>(null)
-  const [detailTab, setDetailTab] = useState<'script' | 'jenkinsfile'>('script')
+  const [detailTab, setDetailTab] = useState<'script' | 'jenkinsfile'>('jenkinsfile')
 
   useEffect(() => {
     if (view.type === 'list') {
@@ -685,19 +685,19 @@ export function PipelinesPage({ moduleId, navigate }: { moduleId?: string; navig
               <div className="pl-editor-tabs">
                 <button 
                   type="button" 
+                  className={`pl-tab-button ${editorTab === 'jenkinsfile' ? 'active' : ''}`}
+                  onClick={() => setEditorTab('jenkinsfile')}
+                >
+                  <Sliders size={15} />
+                  <span>Jenkinsfile (Declarative Pipeline)</span>
+                </button>
+                <button 
+                  type="button" 
                   className={`pl-tab-button ${editorTab === 'script' ? 'active' : ''}`}
                   onClick={() => setEditorTab('script')}
                 >
                   <FileCode size={15} />
                   <span>pipeline.sh (CI Script Thực Thi)</span>
-                </button>
-                <button 
-                  type="button" 
-                  className={`pl-tab-button ${editorTab === 'jenkinsfile' ? 'active' : ''}`}
-                  onClick={() => setEditorTab('jenkinsfile')}
-                >
-                  <Sliders size={15} />
-                  <span>Jenkinsfile (Declarative Pipeline Preview)</span>
                 </button>
                 <button 
                   type="button" 
@@ -713,18 +713,18 @@ export function PipelinesPage({ moduleId, navigate }: { moduleId?: string; navig
               <div className="pl-editor-shell">
                 <div className="pl-editor-header">
                   <div className="pl-editor-title">
-                    {editorTab === 'script' && (
-                      <>
-                        <FileCode size={14} color="#60a5fa" />
-                        <span>pipeline.sh</span>
-                        <span className="file-badge">BASH / NETCI RUNNER</span>
-                      </>
-                    )}
                     {editorTab === 'jenkinsfile' && (
                       <>
                         <Sliders size={14} color="#a78bfa" />
                         <span>Jenkinsfile</span>
                         <span className="file-badge" style={{ background: '#7c3aed' }}>DECLARATIVE GROOVY</span>
+                      </>
+                    )}
+                    {editorTab === 'script' && (
+                      <>
+                        <FileCode size={14} color="#60a5fa" />
+                        <span>pipeline.sh</span>
+                        <span className="file-badge">BASH / NETCI RUNNER</span>
                       </>
                     )}
                     {editorTab === 'compliance' && (
@@ -736,6 +736,17 @@ export function PipelinesPage({ moduleId, navigate }: { moduleId?: string; navig
                   </div>
 
                   <div className="pl-editor-actions">
+                    {editorTab === 'jenkinsfile' && (
+                      <>
+                        <span style={{ fontSize: '11px', color: '#a78bfa', marginRight: '6px' }}>
+                          ⚡ Sinh tự động từ các stages được chọn
+                        </span>
+                        <button type="button" className="pl-editor-btn" onClick={handleCopyJenkinsfile}>
+                          {copiedJenkinsfile ? <Check size={12} color="#10b981" /> : <Copy size={12} />}
+                          {copiedJenkinsfile ? 'Đã chép Jenkinsfile' : 'Sao chép Jenkinsfile'}
+                        </button>
+                      </>
+                    )}
                     {editorTab === 'script' && (
                       <>
                         <span style={{ fontSize: '11px', color: '#94a3b8' }}>
@@ -750,26 +761,19 @@ export function PipelinesPage({ moduleId, navigate }: { moduleId?: string; navig
                         </button>
                       </>
                     )}
-                    {editorTab === 'jenkinsfile' && (
-                      <button type="button" className="pl-editor-btn" onClick={handleCopyJenkinsfile}>
-                        {copiedJenkinsfile ? <Check size={12} color="#10b981" /> : <Copy size={12} />}
-                        {copiedJenkinsfile ? 'Đã chép Jenkinsfile' : 'Sao chép Jenkinsfile'}
-                      </button>
-                    )}
                   </div>
                 </div>
 
-                {editorTab === 'script' && (
-                  <textarea 
-                    className="pl-textarea" 
-                    aria-label="Pipeline script" 
-                    spellCheck={false}
-                    value={designerScript}
-                    onChange={e => setDesignerScript(e.target.value)}
-                    onKeyDown={handleKeyDown}
-                    placeholder="# Kịch bản pipeline CI thực thi trên runner..."
-                  />
-                )}
+                <textarea 
+                  className="pl-textarea" 
+                  aria-label="Pipeline script" 
+                  spellCheck={false}
+                  value={designerScript}
+                  onChange={e => setDesignerScript(e.target.value)}
+                  onKeyDown={handleKeyDown}
+                  placeholder="# Kịch bản pipeline CI thực thi trên runner..."
+                  style={{ display: editorTab === 'script' ? 'block' : 'none' }}
+                />
 
                 {editorTab === 'jenkinsfile' && (
                   <pre className="pl-jenkinsfile-pre">
