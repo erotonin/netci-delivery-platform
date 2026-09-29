@@ -16,7 +16,7 @@ global:
 
 image:
   registry: 172.17.0.1:8930/netci
-  tag: 0.3.0-corp3               # built from a clean worktree of HEAD, pushed to Harbor
+  tag: 0.3.0-corp4               # built from a clean worktree of HEAD, pushed to Harbor
 
 existingSecret: netci-app
 
