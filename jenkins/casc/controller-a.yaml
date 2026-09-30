@@ -1,9 +1,0 @@
-jenkins:
-  systemMessage: "netCI Jenkins controller A managed by JCasC"
-  globalNodeProperties:
-    - envVars:
-        env:
-          - key: NETCI_MANAGED
-            value: "true"
-          - key: NETCI_CONTROLLER_ID
-            value: "jenkins-a"

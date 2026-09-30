@@ -1,4 +1,0 @@
-# Temporal dynamic config for the lab server (temporalio/auto-setup). Empty on purpose:
-# the defaults are the production ones. Mounted so a setting can be changed without
-# recreating the container; auto-setup expects the file to exist.
-{}

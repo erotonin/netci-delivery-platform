@@ -6,7 +6,6 @@ node_modules/
 dist/
 .env
 .env.*
-!.env.example
 *.log
 *.pem
 *.key
@@ -15,11 +14,10 @@ dist/
 .idea/
 .vscode/
 
-# Gate working directory: build outputs, generated signing keys, deployed release
-# trees and downloaded Ansible collections. Evidence files under evidence/ are
-# deliberately committed; the material they were produced from is not.
+# Lab secrets, VM disks and generated keys: never committed.
 .netci-gate/
-sample-apps/*/dist/
+lab/.state/
+bin/
 
 # Runtime data
 postgres-data/

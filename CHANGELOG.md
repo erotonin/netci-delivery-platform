@@ -5,6 +5,13 @@ Changelog and releases use Semantic Versioning once the project reaches 1.0.0.
 
 ## [Unreleased]
 
+### Changed - 2026-10-01: re-architecture to Jenkins HA and an agent fabric (ADR-060..062)
+- netCI becomes a high-availability layer and an agent fabric around the organisation's own
+  open-source Jenkins, which keeps doing CI and CD. Services are rewritten in Go.
+- Removed: the portal, the Python backend, Temporal CD and deployment runtimes, the service
+  catalog, Backstage integration, sample apps, the kind-based corp lab and the old evidence.
+  They remain at the tag `netci-0.3-cd-portal`. Guides for them moved to `docs/archive/`.
+
 ### Changed - 2026-09-29: shared pipelines, toolchain governance, portal
 - **Shared CI pipelines (ADR-058, amended 2026-09-29):** one script per pipeline, cut into stages by
   `# @stage` markers; built-in blocks run the library's code with scoped credentials, author blocks

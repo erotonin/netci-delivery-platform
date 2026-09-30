@@ -1,6 +1,0 @@
----
-collections:
-  - name: community.docker
-    version: 5.2.1
-  - name: kubernetes.core
-    version: 6.4.0

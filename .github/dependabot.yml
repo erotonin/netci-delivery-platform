@@ -1,21 +1,12 @@
 version: 2
 updates:
-  - package-ecosystem: pip
-    directory: /backend
+  - package-ecosystem: gomod
+    directory: /
     schedule:
       interval: weekly
     groups:
-      python-runtime:
+      go-modules:
         patterns: ["*"]
-  - package-ecosystem: npm
-    directory: /frontend
-    schedule:
-      interval: weekly
-    groups:
-      frontend-runtime:
-        dependency-type: production
-      frontend-tooling:
-        dependency-type: development
   - package-ecosystem: github-actions
     directory: /
     schedule:
@@ -23,18 +14,8 @@ updates:
     groups:
       actions:
         patterns: ["*"]
-  - package-ecosystem: docker
-    directory: /backend
-    schedule:
-      interval: weekly
-  - package-ecosystem: docker
-    directory: /frontend
-    schedule:
-      interval: weekly
-  - package-ecosystem: docker
-    directory: /jenkins
-    schedule:
-      interval: weekly
+  # The controller image is not updated by a bot: its base and every plugin are declared in
+  # toolchain/versions.yaml and generated (scripts/toolchain_sync.py, ADR-059).
   - package-ecosystem: docker
     directory: /jenkins/agent-toolbox
     schedule:

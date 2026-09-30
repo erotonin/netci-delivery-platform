@@ -1,6 +1,0 @@
-# Python libraries the Ansible collections in requirements.yml depend on.
-# community.docker needs docker+requests; kubernetes.core needs kubernetes.
-# Install into the same interpreter ansible-playbook runs under.
-docker==7.1.0
-requests==2.32.3
-kubernetes==31.0.0
