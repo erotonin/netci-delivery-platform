@@ -1,0 +1,17 @@
+{
+  "scenario": "queue",
+  "failure": "pod-delete",
+  "queuedBefore": [
+    "queue-probe"
+  ],
+  "controllerNodeBefore": "netci-lab-2",
+  "queuedAfter": [
+    "queue-probe"
+  ],
+  "queueSurvived": true,
+  "timings_s": {
+    "jenkinsUp": 18.4
+  },
+  "startedAt": "20261001T020033",
+  "jenkinsVersion": "2.555.3"
+}

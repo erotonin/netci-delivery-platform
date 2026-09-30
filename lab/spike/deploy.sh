@@ -6,6 +6,13 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 STATE="${ROOT}/.netci-gate/lab"
 CORP="${ROOT}/.netci-gate/corp"
 export KUBECONFIG="${STATE}/kubeconfig"
+# One manifest, several cells: CELL names the namespace, STORAGE_CLASS the JENKINS_HOME volume
+# (longhorn-sync or longhorn, to measure what synchronous writes cost), NODE_PORT its address.
+CELL="${CELL:-cell-a}"
+STORAGE_CLASS="${STORAGE_CLASS:-longhorn-sync}"
+NODE_PORT="${NODE_PORT:-30080}"
+render() { sed -e "s/cell-a/${CELL}/g" -e "s/storageClassName: longhorn-sync/storageClassName: ${STORAGE_CLASS}/" \
+  -e "s/nodePort: 30080/nodePort: ${NODE_PORT}/" "${ROOT}/lab/spike/cell.yaml"; }
 ( umask 077
   [[ -s "${STATE}/cell-admin-password" ]] || openssl rand -base64 24 | tr -d '\n' > "${STATE}/cell-admin-password"
   python3 - "${CORP}" "${STATE}/harbor-pull.json" <<'EOF'
@@ -17,11 +24,12 @@ auth = base64.b64encode(f"{user}:{secret}".encode()).decode()
 json.dump({"auths": {"172.17.0.1:8930": {"auth": auth}}}, open(out, "w"))
 EOF
 )
-kubectl apply -f "${ROOT}/lab/spike/cell.yaml" >/dev/null
-kubectl -n cell-a create secret generic harbor-pull --type kubernetes.io/dockerconfigjson \
+kubectl apply -f "${ROOT}/lab/spike/storageclass-sync.yaml" >/dev/null
+render | kubectl apply -f - >/dev/null
+kubectl -n "${CELL}" create secret generic harbor-pull --type kubernetes.io/dockerconfigjson \
   --from-file=.dockerconfigjson="${STATE}/harbor-pull.json" --dry-run=client -o yaml | kubectl apply -f - >/dev/null
-kubectl -n cell-a create secret generic jenkins-cell \
+kubectl -n "${CELL}" create secret generic jenkins-cell \
   --from-file=admin-password="${STATE}/cell-admin-password" --dry-run=client -o yaml | kubectl apply -f - >/dev/null
-kubectl -n cell-a create configmap agent-supervisor --from-file="${ROOT}/lab/spike/agent-supervisor.sh" \
+kubectl -n "${CELL}" create configmap agent-supervisor --from-file="${ROOT}/lab/spike/agent-supervisor.sh" \
   --dry-run=client -o yaml | kubectl apply -f - >/dev/null
-kubectl -n cell-a rollout status statefulset/jenkins --timeout=600s
+kubectl -n "${CELL}" rollout status statefulset/jenkins --timeout=600s

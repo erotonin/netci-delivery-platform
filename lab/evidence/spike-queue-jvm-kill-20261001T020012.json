@@ -1,0 +1,15 @@
+{
+  "scenario": "queue",
+  "failure": "jvm-kill",
+  "queuedBefore": [
+    "queue-probe"
+  ],
+  "controllerNodeBefore": "netci-lab-2",
+  "queuedAfter": [],
+  "queueSurvived": false,
+  "timings_s": {
+    "jenkinsUp": 10.5
+  },
+  "startedAt": "20261001T020012",
+  "jenkinsVersion": "2.555.3"
+}

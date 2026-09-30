@@ -102,11 +102,31 @@ data:
               }
             }
           }
-          pipelineJob('queue-probe') {
+          pipelineJob('io-probe') {
             definition {
               cps {
                 sandbox(true)
-                script("node('no-such-label') { echo 'never runs' }")
+                script('''
+                  pipeline {
+                    agent { label 'spike-ws' }
+                    options { durabilityHint('MAX_SURVIVABILITY') }
+                    stages {
+                      stage('steps') { steps { script { for (int i = 0; i < 200; i++) { echo "step ^${i}" } } } }
+                      stage('log') { steps { sh 'seq 1 20000 | sed "s/^/line /"' } }
+                    }
+                  }
+                ''')
+              }
+            }
+          }
+          // A true queue item: the quiet period keeps it queued, not started, for 5 minutes
+          // -- what JENKINS-30909 says a crash loses.
+          pipelineJob('queue-probe') {
+            quietPeriod(300)
+            definition {
+              cps {
+                sandbox(true)
+                script("echo 'left the queue'")
               }
             }
           }
@@ -140,6 +160,10 @@ spec:
           env:
             - {name: CASC_JENKINS_CONFIG, value: /var/jenkins_config/jenkins.yaml}
             - {name: JAVA_OPTS, value: "-Xms1g -Xmx1536m -Djenkins.install.runSetupWizard=false"}
+            # The WAR and the exploded plugins come from the image; they are not state. On the
+            # pod's local disk they cost nothing on the replicated, synchronously written
+            # JENKINS_HOME (the first start with them there took ~12 min).
+            - {name: JENKINS_OPTS, value: "--webroot=/var/cache/jenkins/war --pluginroot=/var/cache/jenkins/plugins"}
           ports: [{containerPort: 8080}, {containerPort: 50000}]
           readinessProbe:
             httpGet: {path: /login, port: 8080}
@@ -151,9 +175,11 @@ spec:
           volumeMounts:
             - {name: home, mountPath: /var/jenkins_home}
             - {name: casc, mountPath: /var/jenkins_config}
+            - {name: cache, mountPath: /var/cache/jenkins}
             - {name: secrets, mountPath: /run/secrets/cell, readOnly: true}
       volumes:
         - {name: casc, configMap: {name: jenkins-casc}}
+        - {name: cache, emptyDir: {}}
         - {name: secrets, secret: {secretName: jenkins-cell}}
   volumeClaimTemplates:
     - metadata: {name: home}

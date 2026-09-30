@@ -29,7 +29,8 @@ ROOT = Path(__file__).resolve().parents[2]
 STATE = ROOT / ".netci-gate" / "lab"
 EVIDENCE = ROOT / "lab" / "evidence"
 NODES = {"netci-lab-1": "192.168.122.211", "netci-lab-2": "192.168.122.212", "netci-lab-3": "192.168.122.213"}
-NS = "cell-a"
+NS = os.environ.get("NETCI_CELL", "cell-a")
+PORT = int(os.environ.get("NETCI_CELL_PORT", "30080"))
 os.environ["KUBECONFIG"] = str(STATE / "kubeconfig")
 
 
@@ -61,7 +62,7 @@ class Jenkins:
         auth = base64.b64encode(f"admin:{self.password}".encode()).decode()
         last: Exception | None = None
         for ip in NODES.values():
-            req = urllib.request.Request(f"http://{ip}:30080{path}", data=data, method="POST" if data is not None else "GET")
+            req = urllib.request.Request(f"http://{ip}:{PORT}{path}", data=data, method="POST" if data is not None else "GET")
             req.add_header("Authorization", f"Basic {auth}")
             if data is not None and self.crumb:
                 req.add_header(*self.crumb)
@@ -234,6 +235,21 @@ def scenario_queue(args) -> dict:
     return facts
 
 
+def scenario_bench(args) -> dict:
+    """What synchronous JENKINS_HOME writes cost a build: per-stage durations of io-probe
+    (200 flow-node writes, then 20,000 log lines), median of N runs."""
+    j = Jenkins()
+    runs = []
+    for _ in range(args.runs):
+        number = j.trigger("io-probe")
+        wait("io-probe to finish", lambda: (b := j.build("io-probe", number)) and not b["building"] and b, 900, 2)
+        describe = j.get_json(f"/job/io-probe/{number}/wfapi/describe")
+        runs.append({s["name"]: s["durationMillis"] for s in describe["stages"]} | {"total": describe["durationMillis"]})
+    med = {k: sorted(r[k] for r in runs)[len(runs) // 2] for k in runs[0]}
+    storage = kubectl("-n", NS, "get", "pvc", "home-jenkins-0", "-o", "jsonpath={.spec.storageClassName}")
+    return {"scenario": "bench", "failure": storage, "storageClass": storage, "runs": runs, "median_ms": med}
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -242,13 +258,15 @@ def main() -> int:
     r.add_argument("--seconds", type=int, default=240)
     q = sub.add_parser("queue")
     q.add_argument("--failure", required=True, choices=["jvm-kill", "pod-delete", "node-poweroff"])
+    b = sub.add_parser("bench")
+    b.add_argument("--runs", type=int, default=3)
     args = parser.parse_args()
     started = time.strftime("%Y%m%dT%H%M%S")
-    facts = scenario_resume(args) if args.cmd == "resume" else scenario_queue(args)
+    facts = {"resume": scenario_resume, "queue": scenario_queue, "bench": scenario_bench}[args.cmd](args)
     facts["startedAt"] = started
     facts["jenkinsVersion"] = Jenkins().get_json("/api/json?tree=mode") and "2.555.3"
     EVIDENCE.mkdir(parents=True, exist_ok=True)
-    out = EVIDENCE / f"spike-{args.cmd}-{args.failure}-{started}.json"
+    out = EVIDENCE / f"spike-{args.cmd}-{facts['failure']}-{started}.json"
     out.write_text(json.dumps(facts, indent=2) + "\n")
     print(json.dumps({k: v for k, v in facts.items() if k != "consoleTail"}, indent=2))
     print(f"evidence: {out.relative_to(ROOT)}")
