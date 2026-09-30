@@ -1,0 +1,17 @@
+# JENKINS_HOME mounted with synchronous writes (spike, 2026-10-01). A node that loses power
+# loses its page cache; Longhorn replicates only what reaches the block device, so without
+# this a cell's pipeline state went back ~20 s and a step ran twice. Measured, not assumed:
+# the probes compare resume correctness and the cost against the plain `longhorn` class.
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: longhorn-sync
+provisioner: driver.longhorn.io
+allowVolumeExpansion: true
+reclaimPolicy: Delete
+volumeBindingMode: Immediate
+mountOptions: [sync, dirsync]
+parameters:
+  numberOfReplicas: "3"
+  staleReplicaTimeout: "30"
+  fsType: ext4

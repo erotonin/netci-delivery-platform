@@ -1,0 +1,259 @@
+#!/usr/bin/env python3
+"""Spike probes for ADR-060: does a running Pipeline build survive the loss of its controller,
+and how long does each phase of a takeover take?
+
+    lab/spike/probe.py resume --failure jvm-kill|pod-delete|node-poweroff [--seconds 240]
+    lab/spike/probe.py queue  --failure jvm-kill
+
+Every run writes lab/evidence/spike-<scenario>-<timestamp>.json with the timings and the
+facts observed; nothing is inferred that was not read back from Jenkins or the cluster.
+"""
+
+from __future__ import annotations
+
+import argparse
+import base64
+import http.cookiejar
+import json
+import os
+import re
+import subprocess
+import sys
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[2]
+STATE = ROOT / ".netci-gate" / "lab"
+EVIDENCE = ROOT / "lab" / "evidence"
+NODES = {"netci-lab-1": "192.168.122.211", "netci-lab-2": "192.168.122.212", "netci-lab-3": "192.168.122.213"}
+NS = "cell-a"
+os.environ["KUBECONFIG"] = str(STATE / "kubeconfig")
+
+
+def now() -> float:
+    return time.monotonic()
+
+
+def kubectl(*args: str, check: bool = True, timeout: int = 60) -> str:
+    out = subprocess.run(["kubectl", *args], capture_output=True, text=True, timeout=timeout)
+    if check and out.returncode != 0:
+        raise RuntimeError(f"kubectl {' '.join(args)}: {out.stderr.strip()}")
+    return out.stdout.strip()
+
+
+class Jenkins:
+    """Talks to the cell through any node's NodePort, so it keeps working when the controller
+    moves. A fresh cookie jar and crumb after every restart: the old session is gone."""
+
+    def __init__(self) -> None:
+        self.password = (STATE / "cell-admin-password").read_text().strip()
+        self._reset()
+
+    def _reset(self) -> None:
+        self.jar = http.cookiejar.CookieJar()
+        self.opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(self.jar))
+        self.crumb: tuple[str, str] | None = None
+
+    def _request(self, path: str, data: bytes | None = None, timeout: float = 5) -> bytes:
+        auth = base64.b64encode(f"admin:{self.password}".encode()).decode()
+        last: Exception | None = None
+        for ip in NODES.values():
+            req = urllib.request.Request(f"http://{ip}:30080{path}", data=data, method="POST" if data is not None else "GET")
+            req.add_header("Authorization", f"Basic {auth}")
+            if data is not None and self.crumb:
+                req.add_header(*self.crumb)
+            try:
+                with self.opener.open(req, timeout=timeout) as resp:
+                    return resp.read()
+            except urllib.error.HTTPError:
+                raise
+            except OSError as exc:  # that node is gone; try the next one
+                last = exc
+        raise ConnectionError(str(last))
+
+    def get_json(self, path: str) -> dict:
+        return json.loads(self._request(path))
+
+    def up(self) -> bool:
+        try:
+            self.get_json("/api/json?tree=mode")
+            return True
+        except Exception:  # noqa: BLE001 - any failure is "not up yet"
+            return False
+
+    def post(self, path: str, form: dict[str, str] | None = None) -> None:
+        if self.crumb is None:
+            c = self.get_json("/crumbIssuer/api/json")
+            self.crumb = (c["crumbRequestField"], c["crumb"])
+        self._request(path, data=urllib.parse.urlencode(form or {}).encode())
+
+    def after_restart(self) -> None:
+        self._reset()
+
+    def trigger(self, job: str, params: dict[str, str] | None = None) -> int:
+        before = self.get_json(f"/job/{job}/api/json?tree=nextBuildNumber")["nextBuildNumber"]
+        self.post(f"/job/{job}/buildWithParameters" if params else f"/job/{job}/build", params)
+        return before
+
+    def build(self, job: str, number: int) -> dict:
+        return self.get_json(f"/job/{job}/{number}/api/json?tree=building,result,duration")
+
+    def console(self, job: str, number: int) -> str:
+        return self._request(f"/job/{job}/{number}/consoleText", timeout=10).decode(errors="replace")
+
+    def queue(self) -> list[dict]:
+        return self.get_json("/queue/api/json?tree=items[id,task[name],why]")["items"]
+
+
+def wait(what: str, predicate, timeout: float, interval: float = 0.5):
+    deadline = now() + timeout
+    while now() < deadline:
+        try:
+            value = predicate()
+        except Exception:  # noqa: BLE001 - keep polling through restarts
+            value = None
+        if value:
+            return value
+        time.sleep(interval)
+    raise TimeoutError(f"timed out waiting for {what}")
+
+
+def controller_node() -> str:
+    return kubectl("-n", NS, "get", "pod", "jenkins-0", "-o", "jsonpath={.spec.nodeName}")
+
+
+def fail(kind: str, facts: dict) -> dict[str, float]:
+    """Cause the failure; return timestamps of what the operator (later: the supervisor) did."""
+    t: dict[str, float] = {"failure": now()}
+    node = controller_node()
+    facts["controllerNodeBefore"] = node
+    if kind == "jvm-kill":
+        pid = kubectl("-n", NS, "exec", "jenkins-0", "-c", "jenkins", "--", "sh", "-c", "pgrep -f jenkins.war | head -1")
+        kubectl("-n", NS, "exec", "jenkins-0", "-c", "jenkins", "--", "kill", "-9", pid, check=False)
+    elif kind == "pod-delete":
+        kubectl("-n", NS, "delete", "pod", "jenkins-0", "--wait=false")
+    elif kind == "node-poweroff":
+        subprocess.run(["virsh", "-c", "qemu:///system", "destroy", node], check=True, capture_output=True)
+        wait("node NotReady", lambda: kubectl("get", "node", node, "-o",
+             "jsonpath={.status.conditions[?(@.type=='Ready')].status}") != "True", 180, 1)
+        t["detected"] = now()
+        # Fencing: the guest is confirmed off before the taint says so -- the taint's own rule.
+        state = subprocess.run(["virsh", "-c", "qemu:///system", "domstate", node], capture_output=True, text=True).stdout.strip()
+        if state != "shut off":
+            raise RuntimeError(f"{node} is '{state}', not off: refusing to fence")
+        kubectl("taint", "node", node, "node.kubernetes.io/out-of-service=nodeshutdown:NoExecute", "--overwrite")
+        t["fenced"] = now()
+    else:
+        raise ValueError(kind)
+    return t
+
+
+def restore(kind: str, facts: dict) -> None:
+    if kind == "node-poweroff":
+        node = facts["controllerNodeBefore"]
+        subprocess.run(["virsh", "-c", "qemu:///system", "start", node], check=False, capture_output=True)
+        wait("node Ready", lambda: kubectl("get", "node", node, "-o",
+             "jsonpath={.status.conditions[?(@.type=='Ready')].status}") == "True", 300, 2)
+        kubectl("taint", "node", node, "node.kubernetes.io/out-of-service-", check=False)
+
+
+def ticks(text: str) -> list[int]:
+    return [int(m) for m in re.findall(r"^tick (\d+) ", text, re.M)]
+
+
+def scenario_resume(args) -> dict:
+    j = Jenkins()
+    facts: dict = {"scenario": "resume", "failure": args.failure, "seconds": args.seconds}
+    number = j.trigger("resume-probe", {"DURATION": str(args.seconds)})
+    facts["build"] = number
+    wait("build to tick 20", lambda: len(ticks(j.console("resume-probe", number))) >= 20, 300, 1)
+    facts["ticksBeforeFailure"] = len(ticks(j.console("resume-probe", number)))
+    # An agent on the controller's own node dies with it, and no takeover can resume a build
+    # whose process is gone: record where it ran so the result is read correctly.
+    facts["agentNode"] = kubectl("-n", NS, "get", "pods", "-o",
+                                 "jsonpath={range .items[?(@.metadata.name!='jenkins-0')]}{.spec.nodeName}{end}")
+    agent = kubectl("-n", NS, "get", "pods", "-o",
+                    "jsonpath={range .items[?(@.metadata.name!='jenkins-0')]}{.metadata.name}{end}")
+    facts["agentPod"] = agent
+    EVIDENCE.mkdir(parents=True, exist_ok=True)
+    agent_log = EVIDENCE / f"agent-{agent}.log"
+    # Followed from now until the pod goes: what the agent did while its controller was gone.
+    subprocess.Popen(["kubectl", "-n", NS, "logs", "-f", agent], stdout=agent_log.open("w"), stderr=subprocess.STDOUT)
+    facts["agentLog"] = str(agent_log.relative_to(ROOT))
+    t = fail(args.failure, facts)
+    j.after_restart()
+    wait("Jenkins down", lambda: not j.up(), 60, 0.2) if args.failure != "node-poweroff" else None
+    t["jenkinsUp"] = wait("Jenkins up", lambda: j.up() and now(), 900, 0.5)
+    j.after_restart()
+    facts["controllerNodeAfter"] = controller_node()
+    base = len(ticks(j.console("resume-probe", number)))
+    try:
+        t["resumed"] = wait("new ticks after restart",
+                            lambda: len(ticks(j.console("resume-probe", number))) > base and now(), 420, 1)
+    except TimeoutError:
+        facts["resumed"] = False
+    final = wait("build to finish", lambda: (b := j.build("resume-probe", number)) and not b["building"] and b,
+                 args.seconds + 900, 2)
+    text = j.console("resume-probe", number)
+    seen = ticks(text)
+    facts.update({
+        "result": final["result"],
+        "reachedStageAfter": "reached the stage after the long step" in text,
+        "ticksSeen": len(seen),
+        "ticksMissing": sorted(set(range(1, args.seconds + 1)) - set(seen))[:20],
+        "resumed": facts.get("resumed", True),
+        "consoleTail": text.strip().splitlines()[-12:],
+    })
+    start = t["failure"]
+    facts["timings_s"] = {k: round(v - start, 1) for k, v in t.items() if k != "failure"}
+    restore(args.failure, facts)
+    return facts
+
+
+def scenario_queue(args) -> dict:
+    j = Jenkins()
+    facts: dict = {"scenario": "queue", "failure": args.failure}
+    j.trigger("queue-probe")
+    wait("item in queue", lambda: any(i["task"]["name"] == "queue-probe" for i in j.queue()), 60, 1)
+    facts["queuedBefore"] = [i["task"]["name"] for i in j.queue()]
+    t = fail(args.failure, facts)
+    j.after_restart()
+    if args.failure != "node-poweroff":
+        wait("Jenkins down", lambda: not j.up(), 60, 0.2)
+    t["jenkinsUp"] = wait("Jenkins up", lambda: j.up() and now(), 900, 0.5)
+    time.sleep(10)  # let the queue be reloaded if it is going to be
+    facts["queuedAfter"] = [i["task"]["name"] for i in j.queue()]
+    facts["queueSurvived"] = "queue-probe" in facts["queuedAfter"]
+    facts["timings_s"] = {k: round(v - t["failure"], 1) for k, v in t.items() if k != "failure"}
+    for item in j.get_json("/queue/api/json?tree=items[id]")["items"]:
+        j.post(f"/queue/cancelItem?id={item['id']}")
+    restore(args.failure, facts)
+    return facts
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    sub = parser.add_subparsers(dest="cmd", required=True)
+    r = sub.add_parser("resume")
+    r.add_argument("--failure", required=True, choices=["jvm-kill", "pod-delete", "node-poweroff"])
+    r.add_argument("--seconds", type=int, default=240)
+    q = sub.add_parser("queue")
+    q.add_argument("--failure", required=True, choices=["jvm-kill", "pod-delete", "node-poweroff"])
+    args = parser.parse_args()
+    started = time.strftime("%Y%m%dT%H%M%S")
+    facts = scenario_resume(args) if args.cmd == "resume" else scenario_queue(args)
+    facts["startedAt"] = started
+    facts["jenkinsVersion"] = Jenkins().get_json("/api/json?tree=mode") and "2.555.3"
+    EVIDENCE.mkdir(parents=True, exist_ok=True)
+    out = EVIDENCE / f"spike-{args.cmd}-{args.failure}-{started}.json"
+    out.write_text(json.dumps(facts, indent=2) + "\n")
+    print(json.dumps({k: v for k, v in facts.items() if k != "consoleTail"}, indent=2))
+    print(f"evidence: {out.relative_to(ROOT)}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

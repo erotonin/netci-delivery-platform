@@ -1,0 +1,34 @@
+{
+  "scenario": "resume",
+  "failure": "jvm-kill",
+  "seconds": 180,
+  "build": 3,
+  "ticksBeforeFailure": 21,
+  "controllerNodeBefore": "netci-lab-3",
+  "controllerNodeAfter": "netci-lab-3",
+  "result": "SUCCESS",
+  "reachedStageAfter": true,
+  "ticksSeen": 180,
+  "ticksMissing": [],
+  "resumed": true,
+  "consoleTail": [
+    "[Pipeline] }",
+    "[Pipeline] // stage",
+    "[Pipeline] stage",
+    "[Pipeline] { (after)",
+    "[Pipeline] echo",
+    "reached the stage after the long step",
+    "[Pipeline] }",
+    "[Pipeline] // stage",
+    "[Pipeline] }",
+    "[Pipeline] // node",
+    "[Pipeline] End of Pipeline",
+    "Finished: SUCCESS"
+  ],
+  "timings_s": {
+    "jenkinsUp": 12.5,
+    "resumed": 14.0
+  },
+  "startedAt": "20261001T004137",
+  "jenkinsVersion": "2.555.3"
+}

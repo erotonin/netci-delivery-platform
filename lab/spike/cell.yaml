@@ -1,0 +1,173 @@
+# Spike cell (ADR-060): one Jenkins controller whose JENKINS_HOME is a Longhorn volume
+# replicated to all three nodes. Used to measure what the design assumes -- Pipeline resume,
+# agent reconnection, queue loss on a crash, start time -- before anything is built on it.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: cell-a
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata: {name: jenkins, namespace: cell-a}
+---
+# The Kubernetes plugin creates agent pods in this namespace and nothing else.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: {name: jenkins-agents, namespace: cell-a}
+rules:
+  - apiGroups: [""]
+    resources: [pods, pods/exec, pods/log, events, secrets]
+    verbs: [get, list, watch, create, delete, patch, update]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: {name: jenkins-agents, namespace: cell-a}
+subjects: [{kind: ServiceAccount, name: jenkins, namespace: cell-a}]
+roleRef: {kind: Role, name: jenkins-agents, apiGroup: rbac.authorization.k8s.io}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: jenkins-casc, namespace: cell-a}
+data:
+  jenkins.yaml: |
+    jenkins:
+      systemMessage: "netCI spike cell-a"
+      numExecutors: 0
+      mode: EXCLUSIVE
+      securityRealm:
+        local:
+          allowsSignup: false
+          users:
+            - id: admin
+              password: "${readFile:/run/secrets/cell/admin-password}"
+      authorizationStrategy: loggedInUsersCanDoAnything
+      clouds:
+        - kubernetes:
+            name: k8s
+            namespace: cell-a
+            jenkinsUrl: "http://jenkins.cell-a.svc.cluster.local:8080"
+            webSocket: true
+            containerCapStr: "10"
+            templates:
+              - name: spike-ws
+                label: spike-ws
+                namespace: cell-a
+                idleMinutes: 0
+                containers:
+                  - name: jnlp
+                    image: "172.17.0.1:8930/mirror/jenkins/inbound-agent:3386.v353e57a_1b_ea_0-1-jdk21"
+                    # The agent reconnects when its controller is replaced (agent-supervisor.sh).
+                    command: "/bin/bash"
+                    args: "/netci/agent-supervisor.sh"
+                    resourceRequestCpu: 100m
+                    resourceRequestMemory: 256Mi
+                volumes:
+                  - configMapVolume:
+                      configMapName: agent-supervisor
+                      mountPath: /netci
+                imagePullSecrets:
+                  - name: harbor-pull
+                # Never on the controller's node: an agent that dies with its controller takes
+                # the build's process with it, and nothing can resume that (ADR-061: agents run
+                # on their own pool).
+                yaml: |
+                  spec:
+                    affinity:
+                      podAntiAffinity:
+                        requiredDuringSchedulingIgnoredDuringExecution:
+                          - labelSelector: {matchLabels: {app: jenkins}}
+                            topologyKey: kubernetes.io/hostname
+    unclassified:
+      location:
+        url: "http://jenkins.cell-a.svc.cluster.local:8080/"
+    jobs:
+      - script: |
+          pipelineJob('resume-probe') {
+            parameters { stringParam('DURATION', '240', 'how long the sh step runs, in seconds') }
+            definition {
+              cps {
+                sandbox(true)
+                script('''
+                  pipeline {
+                    agent { label 'spike-ws' }
+                    options { durabilityHint('MAX_SURVIVABILITY') }
+                    stages {
+                      stage('long sh') {
+                        steps { sh 'for i in $(seq 1 ^${DURATION}); do echo "tick $i $(date +%T)"; sleep 1; done' }
+                      }
+                      stage('after') { steps { echo 'reached the stage after the long step' } }
+                    }
+                  }
+                ''')
+              }
+            }
+          }
+          pipelineJob('queue-probe') {
+            definition {
+              cps {
+                sandbox(true)
+                script("node('no-such-label') { echo 'never runs' }")
+              }
+            }
+          }
+---
+apiVersion: v1
+kind: Service
+metadata: {name: jenkins, namespace: cell-a}
+spec:
+  selector: {app: jenkins}
+  ports:
+    - {name: http, port: 8080, targetPort: 8080}
+    - {name: agent, port: 50000, targetPort: 50000}
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata: {name: jenkins, namespace: cell-a}
+spec:
+  serviceName: jenkins
+  replicas: 1
+  selector: {matchLabels: {app: jenkins}}
+  template:
+    metadata: {labels: {app: jenkins}}
+    spec:
+      serviceAccountName: jenkins
+      imagePullSecrets: [{name: harbor-pull}]
+      securityContext: {runAsUser: 1000, runAsGroup: 1000, fsGroup: 1000}
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: jenkins
+          image: 172.17.0.1:8930/netci/jenkins-controller:2.555.3-netci1
+          env:
+            - {name: CASC_JENKINS_CONFIG, value: /var/jenkins_config/jenkins.yaml}
+            - {name: JAVA_OPTS, value: "-Xms1g -Xmx1536m -Djenkins.install.runSetupWizard=false"}
+          ports: [{containerPort: 8080}, {containerPort: 50000}]
+          readinessProbe:
+            httpGet: {path: /login, port: 8080}
+            periodSeconds: 2
+            failureThreshold: 3
+          resources:
+            requests: {cpu: "1", memory: 2Gi}
+            limits: {memory: 2560Mi}
+          volumeMounts:
+            - {name: home, mountPath: /var/jenkins_home}
+            - {name: casc, mountPath: /var/jenkins_config}
+            - {name: secrets, mountPath: /run/secrets/cell, readOnly: true}
+      volumes:
+        - {name: casc, configMap: {name: jenkins-casc}}
+        - {name: secrets, secret: {secretName: jenkins-cell}}
+  volumeClaimTemplates:
+    - metadata: {name: home}
+      spec:
+        accessModes: [ReadWriteOnce]
+        storageClassName: longhorn-sync
+        resources: {requests: {storage: 10Gi}}
+---
+# Reachable from the host on every node, whichever node the controller runs on: the probes
+# keep measuring across a takeover instead of losing a port-forward with the old pod.
+apiVersion: v1
+kind: Service
+metadata: {name: jenkins-np, namespace: cell-a}
+spec:
+  type: NodePort
+  selector: {app: jenkins}
+  ports: [{name: http, port: 8080, targetPort: 8080, nodePort: 30080}]

@@ -1,0 +1,39 @@
+{
+  "scenario": "resume",
+  "failure": "node-poweroff",
+  "seconds": 240,
+  "build": 6,
+  "ticksBeforeFailure": 20,
+  "agentNode": "netci-lab-3",
+  "agentPod": "spike-ws-87sq1",
+  "agentLog": "lab/evidence/agent-spike-ws-87sq1.log",
+  "controllerNodeBefore": "netci-lab-2",
+  "controllerNodeAfter": "netci-lab-1",
+  "result": "ABORTED",
+  "reachedStageAfter": true,
+  "ticksSeen": 240,
+  "ticksMissing": [],
+  "resumed": true,
+  "consoleTail": [
+    "[Pipeline] { (after)",
+    "Stage \"after\" skipped due to earlier failure(s)",
+    "[Pipeline] getContext",
+    "[Pipeline] }",
+    "[Pipeline] // stage",
+    "[Pipeline] }",
+    "[Pipeline] // node",
+    "[Pipeline] // node",
+    "[Pipeline] End of Pipeline",
+    "Timeout waiting for agent to come back",
+    "org.jenkinsci.plugins.workflow.actions.ErrorAction$ErrorId: b9d72598-ecb9-48cb-9c23-3bcc2ef118d3",
+    "Finished: ABORTED"
+  ],
+  "timings_s": {
+    "detected": 48.3,
+    "fenced": 48.4,
+    "jenkinsUp": 86.8,
+    "resumed": 90.4
+  },
+  "startedAt": "20261001T010748",
+  "jenkinsVersion": "2.555.3"
+}
