@@ -1,0 +1,39 @@
+{
+  "scenario": "bench",
+  "failure": "longhorn-commit1",
+  "storageClass": "longhorn-commit1",
+  "runs": [
+    {
+      "steps": 6923,
+      "log": 1213,
+      "total": 16002
+    },
+    {
+      "steps": 7328,
+      "log": 873,
+      "total": 11615
+    },
+    {
+      "steps": 6622,
+      "log": 967,
+      "total": 10793
+    },
+    {
+      "steps": 6148,
+      "log": 887,
+      "total": 37032
+    },
+    {
+      "steps": 5968,
+      "log": 910,
+      "total": 11950
+    }
+  ],
+  "median_ms": {
+    "steps": 6622,
+    "log": 910,
+    "total": 11950
+  },
+  "startedAt": "20261001T021643",
+  "jenkinsVersion": "2.555.3"
+}

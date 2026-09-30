@@ -1,6 +1,6 @@
 # ADR-060: Jenkins cells, a global queue outside Jenkins, and fenced takeover
 
-Status: Proposed (2026-10-01). Supersedes the product scope of ADR-001..059: netCI no longer
+Status: Proposed (2026-10-01); decisions 1 and 5 revised by the spike the same day. Supersedes the product scope of ADR-001..059: netCI no longer
 deploys (the organisation deploys with Jenkins) and no longer ships a portal. Those ADRs stay
 as history; the mechanisms reused from them are named below.
 
@@ -44,10 +44,20 @@ replaced or forked; people keep their Jenkinsfiles and the Jenkins UI.
 
 1. **Cells.** A cell is one Jenkins controller: one JVM, its own `JENKINS_HOME` on a block
    volume replicated synchronously across nodes (Longhorn in the lab; Ceph RBD, vSAN or any
-   CSI volume that survives a node in a company). RPO for history is 0; Velero backups remain
-   for disaster recovery and corruption, not for failover. Several cells run at once; each
-   holds a set of teams or folders (its tenants). A fault, a bad plugin or an upgrade touches
-   one cell.
+   CSI volume that survives a node in a company). Several cells run at once; each holds a set
+   of teams or folders (its tenants). A fault, a bad plugin or an upgrade touches one cell.
+   Velero backups remain for disaster recovery and corruption, not for failover.
+
+   **Replication alone does not make a power loss safe** (spike, below): it replicates what
+   reaches the block device, and Jenkins leaves most of its writes in the page cache. So:
+   - page-cache writeback on controller nodes within ~1 s (`vm.dirty_expire_centisecs=100`,
+     `vm.dirty_writeback_centisecs=100`) and the ext4 journal committed every second
+     (`commit=1`) -- what a power loss can take back is bounded to about a second;
+   - the WAR and the exploded plugins on the pod's local disk (`--webroot`, `--pluginroot`):
+     they come from the image and are not state;
+   - Pipeline durability `MAX_SURVIVABILITY` (the default) everywhere;
+   - for the remaining second, a re-execution guard (decision 6) -- a step whose start was
+     lost must not run twice where running twice is harmful.
 
 2. **Every cell is built from the same sources.** Controller image and all plugins from
    `toolchain/versions.yaml` (ADR-059), configuration from JCasC, jobs from Job DSL in git,
@@ -73,6 +83,11 @@ replaced or forked; people keep their Jenkinsfiles and the Jenkins UI.
 
 5. **Running builds continue.** Pipeline durability plus agents that reconnect to the cell's
    stable address; the agent fabric (ADR-061) never removes an agent holding a paused build.
+   An agent cannot rely on its connection breaking: a machine without power sends no FIN or
+   RST, and Jenkins' channel pinger needs 5 + 4 minutes while a resumed build waits ~5. Every
+   agent therefore runs under a supervisor that watches the cell's `X-Jenkins-Session` (new on
+   every start) and restarts the agent JVM when it changes; the build's processes are
+   durable-task's and live outside that JVM.
    Freestyle builds cannot be resumed by any product; they are re-queued and reported as
    such, never as succeeded.
 
@@ -92,6 +107,26 @@ replaced or forked; people keep their Jenkinsfiles and the Jenkins UI.
    resumed, agent wait, logs lost = 0. A chaos suite kills the JVM, powers nodes off,
    partitions the network, stalls storage and fails PostgreSQL over; every run is recorded
    as evidence.
+
+## Spike results (lab, 2026-10-01; evidence in lab/evidence/spike-*.json)
+
+| Failure | Configuration | Outcome | Takeover |
+|---|---|---|---|
+| Controller JVM killed | any | resumed, 180/180 log lines, SUCCESS | Jenkins 12.5 s, build 14 s |
+| Controller node powered off | plain volume, stock agent | agent never reconnected; FAILURE | Jenkins 99 s |
+| Node powered off | plain volume + agent supervisor | agent back 3.6 s after Jenkins, **but state went back ~20 s: the `sh` step ran a second time in a new workspace while the first kept running** | Jenkins 87 s |
+| Node powered off | `sync,dirsync` volume | step ran once, SUCCESS | Jenkins 92-98 s |
+| Node powered off, 1 s into the step | writeback 1 s + `commit=1` | step ran once, all lines, SUCCESS; < 1 s of controller-side log lost | Jenkins 76-78 s |
+| Queued item (quiet period), JVM killed | any | **queue lost** (JENKINS-30909) | -- |
+| Same, graceful restart | any | queue kept | -- |
+
+Cost per build (io-probe: 200 flow-node steps, 20,000 log lines; median of 5): plain 6.5 s /
+0.98 s, `sync,dirsync` 34.4 s / 14.6 s (about 4x the whole build), writeback 1 s + `commit=1`
+6.6 s / 0.91 s (no measurable cost).
+
+Takeover after a power loss is dominated by detection: ~50 s for the node to be marked
+NotReady. The Cell Supervisor's own lease (decision 4) is what brings it towards the 60 s p95.
+Each figure is one run; the chaos suite repeats them with random failure points.
 
 ## What this reuses from netCI
 

@@ -1,0 +1,17 @@
+# JENKINS_HOME with the ext4 journal committed every second (spike, 2026-10-01). Paired with the
+# nodes' page-cache writeback at 1 s (vm.dirty_expire_centisecs=100), it bounds how far a power
+# loss can take a controller's state back, without making every write synchronous -- which cost
+# 4x per build here (sync,dirsync).
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: longhorn-commit1
+provisioner: driver.longhorn.io
+allowVolumeExpansion: true
+reclaimPolicy: Delete
+volumeBindingMode: Immediate
+mountOptions: [commit=1]
+parameters:
+  numberOfReplicas: "3"
+  staleReplicaTimeout: "30"
+  fsType: ext4

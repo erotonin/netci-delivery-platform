@@ -62,6 +62,10 @@ runcmd:
   # Longhorn and the build sandboxes both need many inotify instances; the default 128
   # crash-loops pods (seen on the corp lab).
   - printf 'fs.inotify.max_user_instances=1024\nfs.inotify.max_user_watches=524288\n' > /etc/sysctl.d/90-netci.conf
+  # Page cache written back within ~1 s: a node that loses power loses at most that much of a
+  # controller's state (spike 2026-10-01: at the 30 s default a pipeline went back ~20 s and a
+  # step ran twice; synchronous mounts fixed it at ~4x the cost per build, this at ~none).
+  - printf 'vm.dirty_expire_centisecs=100\nvm.dirty_writeback_centisecs=100\n' > /etc/sysctl.d/91-netci-writeback.conf
   - sysctl --system
 EOF
   printf 'instance-id: %s\nlocal-hostname: %s\n' "$(name "$i")" "$(name "$i")" > "${dir}/meta-data"

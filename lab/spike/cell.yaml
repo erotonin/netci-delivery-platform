@@ -185,7 +185,7 @@ spec:
     - metadata: {name: home}
       spec:
         accessModes: [ReadWriteOnce]
-        storageClassName: longhorn-sync
+        storageClassName: longhorn-commit1
         resources: {requests: {storage: 10Gi}}
 ---
 # Reachable from the host on every node, whichever node the controller runs on: the probes

@@ -1,0 +1,39 @@
+{
+  "scenario": "bench",
+  "failure": "longhorn-sync",
+  "storageClass": "longhorn-sync",
+  "runs": [
+    {
+      "steps": 34761,
+      "log": 15364,
+      "total": 70105
+    },
+    {
+      "steps": 35675,
+      "log": 14624,
+      "total": 62599
+    },
+    {
+      "steps": 34443,
+      "log": 14412,
+      "total": 61259
+    },
+    {
+      "steps": 34191,
+      "log": 14781,
+      "total": 61194
+    },
+    {
+      "steps": 33749,
+      "log": 14177,
+      "total": 68182
+    }
+  ],
+  "median_ms": {
+    "steps": 34443,
+    "log": 14624,
+    "total": 62599
+  },
+  "startedAt": "20261001T020906",
+  "jenkinsVersion": "2.555.3"
+}

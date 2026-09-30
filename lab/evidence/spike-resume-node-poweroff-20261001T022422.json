@@ -1,0 +1,39 @@
+{
+  "scenario": "resume",
+  "failure": "node-poweroff",
+  "seconds": 120,
+  "build": 2,
+  "ticksBeforeFailure": 1,
+  "agentNode": "netci-lab-3",
+  "agentPod": "spike-ws-dg818",
+  "agentLog": "lab/evidence/agent-spike-ws-dg818.log",
+  "controllerNodeBefore": "netci-lab-2",
+  "controllerNodeAfter": "netci-lab-1",
+  "result": "SUCCESS",
+  "reachedStageAfter": true,
+  "ticksSeen": 120,
+  "ticksMissing": [],
+  "resumed": true,
+  "consoleTail": [
+    "[Pipeline] }",
+    "[Pipeline] // stage",
+    "[Pipeline] stage",
+    "[Pipeline] { (after)",
+    "[Pipeline] echo",
+    "reached the stage after the long step",
+    "[Pipeline] }",
+    "[Pipeline] // stage",
+    "[Pipeline] }",
+    "[Pipeline] // node",
+    "[Pipeline] End of Pipeline",
+    "Finished: SUCCESS"
+  ],
+  "timings_s": {
+    "detected": 44.2,
+    "fenced": 44.2,
+    "jenkinsUp": 75.9,
+    "resumed": 78.9
+  },
+  "startedAt": "20261001T022422",
+  "jenkinsVersion": "2.555.3"
+}

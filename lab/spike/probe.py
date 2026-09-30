@@ -170,7 +170,8 @@ def scenario_resume(args) -> dict:
     facts: dict = {"scenario": "resume", "failure": args.failure, "seconds": args.seconds}
     number = j.trigger("resume-probe", {"DURATION": str(args.seconds)})
     facts["build"] = number
-    wait("build to tick 20", lambda: len(ticks(j.console("resume-probe", number))) >= 20, 300, 1)
+    wait(f"build to tick {args.crash_at_tick}", lambda: len(ticks(j.console("resume-probe", number))) >= args.crash_at_tick,
+         300, 0.2)
     facts["ticksBeforeFailure"] = len(ticks(j.console("resume-probe", number)))
     # An agent on the controller's own node dies with it, and no takeover can resume a build
     # whose process is gone: record where it ran so the result is read correctly.
@@ -256,6 +257,9 @@ def main() -> int:
     r = sub.add_parser("resume")
     r.add_argument("--failure", required=True, choices=["jvm-kill", "pod-delete", "node-poweroff"])
     r.add_argument("--seconds", type=int, default=240)
+    # How far into the step to fail. 1 is the worst case for state written just before: the
+    # step's start may not have reached the disk yet.
+    r.add_argument("--crash-at-tick", type=int, default=20)
     q = sub.add_parser("queue")
     q.add_argument("--failure", required=True, choices=["jvm-kill", "pod-delete", "node-poweroff"])
     b = sub.add_parser("bench")
