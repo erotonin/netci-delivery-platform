@@ -246,7 +246,13 @@ func (a *API) binding(w http.ResponseWriter, r *http.Request) {
 	case Released, Deleted, Failed:
 		problem(w, http.StatusGone, "this sandbox is over")
 		return
-	case Creating, Warm:
+	case Creating:
+		// Answer at once: this answer is what marks the pod ready, and the reconciler makes it
+		// warm only then. Long-polling here would hold a new sandbox out of the pool for the
+		// whole poll.
+		w.WriteHeader(http.StatusNoContent)
+		return
+	case Warm:
 		select {
 		case <-a.Bindings.Wait(sb.ID):
 			// Claimed meanwhile: read the row again for its state.

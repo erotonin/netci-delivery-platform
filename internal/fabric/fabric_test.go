@@ -194,6 +194,19 @@ func TestThePoolIsKeptWarmAndSandboxPodsCarryNoAPICredential(t *testing.T) {
 	}
 }
 
+func TestASandboxStillBeingMadeWarmIsAnsweredAtOnce(t *testing.T) {
+	w := newWorld(t, 1, 3)
+	w.api.LongPoll = 10 * time.Second
+	w.tick()
+	w.start()
+	pod := w.pods()[0]
+	began := time.Now()
+	code, _ := w.req("GET", "/v1/binding", "pod:"+pod.Name+":uid-"+pod.Name, "")
+	if code != http.StatusNoContent || time.Since(began) > 2*time.Second {
+		t.Fatalf("a creating sandbox waited %s for %d: it stays out of the pool that long", time.Since(began), code)
+	}
+}
+
 func TestAClaimBindsAWarmSandboxAndOnlyThatPodGetsTheSecret(t *testing.T) {
 	w := newWorld(t, 1, 3)
 	w.tick()

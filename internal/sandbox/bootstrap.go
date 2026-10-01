@@ -90,7 +90,13 @@ func (b *Bootstrap) waitBinding(ctx context.Context) (Binding, error) {
 			return bd, nil
 		case err == nil && code == http.StatusNoContent:
 			b.ready()
-			continue // still warm: ask again
+			// Still warm (after a long poll) or still being made warm (answered at once).
+			select {
+			case <-ctx.Done():
+				return Binding{}, ctx.Err()
+			case <-time.After(250 * time.Millisecond):
+			}
+			continue
 		case err == nil && code == http.StatusGone:
 			return Binding{}, errOver
 		}
