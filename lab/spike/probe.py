@@ -39,7 +39,10 @@ def now() -> float:
 
 
 def kubectl(*args: str, check: bool = True, timeout: int = 60) -> str:
-    out = subprocess.run(["kubectl", *args], capture_output=True, text=True, timeout=timeout)
+    # A request timeout: one of the API servers behind the Service may be on the machine that
+    # was just powered off, and a call to it otherwise hangs -- which once made this probe see
+    # the supervisor's fencing 40 s after it happened.
+    out = subprocess.run(["kubectl", "--request-timeout=3s", *args], capture_output=True, text=True, timeout=timeout)
     if check and out.returncode != 0:
         raise RuntimeError(f"kubectl {' '.join(args)}: {out.stderr.strip()}")
     return out.stdout.strip()

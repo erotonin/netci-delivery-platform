@@ -24,6 +24,9 @@ rules:
   - apiGroups: [""]
     resources: [nodes]
     verbs: [get, list, update]         # update: the out-of-service taint, after a confirmed power-off
+  - apiGroups: [""]
+    resources: [nodes/status]
+    verbs: [update]                    # Ready=Unknown, after a confirmed power-off
   - apiGroups: [coordination.k8s.io]
     resources: [leases]
     verbs: [get, list, update]         # cell Leases and kubelet heartbeats; update: release a fenced holder
@@ -74,6 +77,14 @@ spec:
           requiredDuringSchedulingIgnoredDuringExecution:
             - labelSelector: {matchLabels: {app: netci-supervisor}}
               topologyKey: kubernetes.io/hostname
+          # Away from cell controllers where possible: a leader that dies with the machine it
+          # should fence adds a leader change to the takeover (seen in the lab).
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector: {matchLabels: {netci.io/cell: "true"}}
+                namespaceSelector: {}
+                topologyKey: kubernetes.io/hostname
       containers:
         - name: supervisor
           image: NETCI_IMAGE

@@ -75,6 +75,13 @@ func newLab(t *testing.T) *lab {
 			return true, nil, errors.New("dial tcp: i/o timeout")
 		}
 		switch {
+		case a.GetVerb() == "update" && a.GetResource().Resource == "nodes" && a.GetSubresource() == "status":
+			n := a.(k8stesting.UpdateAction).GetObject().(*corev1.Node)
+			for _, c := range n.Status.Conditions {
+				if c.Type == corev1.NodeReady && c.Status != corev1.ConditionTrue {
+					l.ops = append(l.ops, "not-ready "+n.Name)
+				}
+			}
 		case a.GetVerb() == "update" && a.GetResource().Resource == "nodes":
 			n := a.(k8stesting.UpdateAction).GetObject().(*corev1.Node)
 			if outOfService(n) != nil {
@@ -333,7 +340,7 @@ func TestAPowerLossIsFencedWithinTheLeaseDurationAndInTheSafeOrder(t *testing.T)
 	if l.has("power-off netci-lab-1") {
 		t.Fatal("powered off a machine that was already off")
 	}
-	l.inOrder("confirmed-off netci-lab-1", "release-lease jenkins", "taint netci-lab-1", "delete-pod jenkins-0")
+	l.inOrder("confirmed-off netci-lab-1", "release-lease jenkins", "taint netci-lab-1", "not-ready netci-lab-1", "delete-pod jenkins-0")
 	got := l.cellLease()
 	if got.Spec.HolderIdentity != nil || got.Annotations[lease.FencedAnnotation] != holder {
 		t.Fatalf("lease not released for the fenced holder: %+v", got)
@@ -343,6 +350,11 @@ func TestAPowerLossIsFencedWithinTheLeaseDurationAndInTheSafeOrder(t *testing.T)
 	}
 	if !l.events.has("Fenced") {
 		t.Fatal("no event recorded")
+	}
+	for _, c := range l.node("netci-lab-1").Status.Conditions {
+		if c.Type == corev1.NodeReady && (c.Status != corev1.ConditionUnknown || c.Reason != "NetciFenced") {
+			t.Fatalf("the fenced node still reads %s", c.Status)
+		}
 	}
 
 	// The StatefulSet's replacement acquires the lease: the supervisor reports the takeover.
@@ -456,8 +468,13 @@ func TestAFencedMachineIsBroughtBackOnlyWhenAsked(t *testing.T) {
 
 	l.until("power-on", 60, func() bool { return l.has("power-on netci-lab-1") })
 	l.mu.Lock()
-	l.alive["netci-lab-1"] = true // it booted and its kubelet is back
+	l.alive["netci-lab-1"] = true // it booted and its kubelet is back, and reports Ready
 	l.mu.Unlock()
+	n := l.node("netci-lab-1")
+	n.Status.Conditions = []corev1.NodeCondition{{Type: corev1.NodeReady, Status: corev1.ConditionTrue}}
+	if _, err := l.kube.CoreV1().Nodes().UpdateStatus(context.Background(), n, metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
 	l.until("unfence", 5, func() bool { return l.has("untaint netci-lab-1") })
 	if n := l.node("netci-lab-1"); outOfService(n) != nil || n.Annotations[FencedByAnnotation] != "" {
 		t.Fatal("still out of service")

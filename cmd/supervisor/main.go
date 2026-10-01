@@ -133,7 +133,8 @@ func run(log *slog.Logger) error {
 	log.Info("supervisor starting", "identity", pod, "interval", interval, "node_stale", cfg.NodeStale,
 		"auto_power_on", cfg.AutoPowerOn, "panic_fraction", cfg.PanicFraction)
 	leaderelection.RunOrDie(ctx, leaderelection.LeaderElectionConfig{
-		Lock: lock, LeaseDuration: 15 * time.Second, RenewDeadline: 10 * time.Second, RetryPeriod: 2 * time.Second,
+		// Short: when the leader dies with a cell's machine, this is added to the takeover.
+		Lock: lock, LeaseDuration: 10 * time.Second, RenewDeadline: 7 * time.Second, RetryPeriod: 2 * time.Second,
 		ReleaseOnCancel: true, Name: "netci-supervisor",
 		Callbacks: leaderelection.LeaderCallbacks{
 			OnStartedLeading: func(ctx context.Context) {

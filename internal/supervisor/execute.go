@@ -137,6 +137,14 @@ func (e *Executor) fenceNode(ctx context.Context, a Action, l *coordinationv1.Le
 	if err := e.taint(ctx, a.Node); err != nil {
 		return fmt.Errorf("taint: %w", err)
 	}
+	// 3b. Say what was proven: the node is not ready. Storage such as Longhorn moves a volume
+	// only once the node reads NotReady, which the node lifecycle controller writes 40-50 s after
+	// the last heartbeat -- longer when its own leader died on the same machine. In the lab that
+	// wait was most of a takeover (45 s of attach). The kubelet writes Ready again when the
+	// machine comes back.
+	if err := e.markNotReady(ctx, a.Node); err != nil {
+		log.Warn("could not mark the node not ready; storage will wait for Kubernetes to", "error", err)
+	}
 	// 4. Delete the pod now rather than wait for the pod garbage collector's next pass. Only the
 	// pod that held the Lease: the UID precondition never touches a replacement.
 	if err := e.deletePod(ctx, a, true); err != nil {
@@ -166,6 +174,36 @@ func (e *Executor) taint(ctx context.Context, node string) error {
 				Effect: corev1.TaintEffectNoExecute, TimeAdded: &now})
 		}
 		_, err = e.Client.CoreV1().Nodes().Update(ctx, n, metav1.UpdateOptions{})
+		return err
+	})
+}
+
+func (e *Executor) markNotReady(ctx context.Context, node string) error {
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		n, err := e.Client.CoreV1().Nodes().Get(ctx, node, metav1.GetOptions{})
+		if err != nil {
+			return err
+		}
+		now := metav1.NewTime(e.Clock.Now())
+		found := false
+		for i := range n.Status.Conditions {
+			c := &n.Status.Conditions[i]
+			if c.Type != corev1.NodeReady {
+				continue
+			}
+			found = true
+			if c.Status == corev1.ConditionTrue {
+				c.LastTransitionTime = now
+			}
+			c.Status, c.Reason, c.LastHeartbeatTime = corev1.ConditionUnknown, "NetciFenced", now
+			c.Message = "netci-supervisor confirmed the machine off with its power controller"
+		}
+		if !found {
+			n.Status.Conditions = append(n.Status.Conditions, corev1.NodeCondition{Type: corev1.NodeReady,
+				Status: corev1.ConditionUnknown, Reason: "NetciFenced", LastTransitionTime: now, LastHeartbeatTime: now,
+				Message: "netci-supervisor confirmed the machine off with its power controller"})
+		}
+		_, err = e.Client.CoreV1().Nodes().UpdateStatus(ctx, n, metav1.UpdateOptions{})
 		return err
 	})
 }
