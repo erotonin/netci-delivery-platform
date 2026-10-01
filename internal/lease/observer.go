@@ -80,3 +80,11 @@ func (o *Observer) Forget(namespace, name string) {
 	delete(o.seen, namespace+"/"+name)
 	o.mu.Unlock()
 }
+
+// EpochOf returns a Lease's epoch (spec.leaseTransitions), 0 if unset.
+func EpochOf(l *coordinationv1.Lease) int32 {
+	if l == nil || l.Spec.LeaseTransitions == nil {
+		return 0
+	}
+	return *l.Spec.LeaseTransitions
+}

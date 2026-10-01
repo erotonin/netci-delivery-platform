@@ -1,0 +1,103 @@
+# The cell supervisor (ADR-060): fences the machine of a cell controller that stops renewing
+# its Lease, so Kubernetes can start the controller elsewhere. Placeholders in capitals are
+# filled in by whoever installs it (lab/supervisor.sh in the lab).
+apiVersion: v1
+kind: Namespace
+metadata: {name: netci-system}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata: {name: netci-supervisor, namespace: netci-system}
+automountServiceAccountToken: true
+---
+# What it reads to decide, and the few things it changes to act. It never reads Secrets.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata: {name: netci-supervisor}
+rules:
+  - apiGroups: [apps]
+    resources: [statefulsets]
+    verbs: [get, list, patch]          # patch: the last-action annotation behind the cooldown
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [get, list, delete]         # delete: only with the UID of the pod that held the Lease
+  - apiGroups: [""]
+    resources: [nodes]
+    verbs: [get, list, update]         # update: the out-of-service taint, after a confirmed power-off
+  - apiGroups: [coordination.k8s.io]
+    resources: [leases]
+    verbs: [get, list, update]         # cell Leases and kubelet heartbeats; update: release a fenced holder
+  - apiGroups: [storage.k8s.io]
+    resources: [volumeattachments]
+    verbs: [list]
+  - apiGroups: [""]
+    resources: [events]
+    verbs: [create]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata: {name: netci-supervisor}
+subjects: [{kind: ServiceAccount, name: netci-supervisor, namespace: netci-system}]
+roleRef: {kind: ClusterRole, name: netci-supervisor, apiGroup: rbac.authorization.k8s.io}
+---
+# Its own leader Lease: of several replicas, one acts.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: {name: netci-supervisor-leader, namespace: netci-system}
+rules:
+  - apiGroups: [coordination.k8s.io]
+    resources: [leases]
+    verbs: [get, create, update]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: {name: netci-supervisor-leader, namespace: netci-system}
+subjects: [{kind: ServiceAccount, name: netci-supervisor, namespace: netci-system}]
+roleRef: {kind: Role, name: netci-supervisor-leader, apiGroup: rbac.authorization.k8s.io}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: netci-supervisor, namespace: netci-system}
+spec:
+  replicas: 2
+  selector: {matchLabels: {app: netci-supervisor}}
+  template:
+    metadata: {labels: {app: netci-supervisor}}
+    spec:
+      serviceAccountName: netci-supervisor
+      imagePullSecrets: [{name: harbor-pull}]
+      securityContext: {runAsNonRoot: true, runAsUser: 65532, runAsGroup: 65532, fsGroup: 65532, seccompProfile: {type: RuntimeDefault}}
+      # Two replicas on different nodes: losing the leader's node costs a leader election
+      # (up to 15 s) on top of the cell's own takeover, not the supervisor.
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector: {matchLabels: {app: netci-supervisor}}
+              topologyKey: kubernetes.io/hostname
+      containers:
+        - name: supervisor
+          image: NETCI_IMAGE
+          command: [/supervisor]
+          env:
+            - {name: POD_NAME, valueFrom: {fieldRef: {fieldPath: metadata.name}}}
+            - {name: POD_NAMESPACE, valueFrom: {fieldRef: {fieldPath: metadata.namespace}}}
+            - {name: NETCI_MACHINES, value: "NETCI_MACHINES_VALUE"}
+            - {name: NETCI_FENCE_ADDR, value: "NETCI_FENCE_ADDR_VALUE"}
+            - {name: NETCI_FENCE_USER, value: "NETCI_FENCE_USER_VALUE"}
+            - {name: NETCI_AUTO_POWER_ON, value: "NETCI_AUTO_POWER_ON_VALUE"}
+          ports: [{name: metrics, containerPort: 9090}]
+          livenessProbe:
+            httpGet: {path: /healthz, port: 9090}
+            periodSeconds: 10
+          resources:
+            requests: {cpu: 50m, memory: 64Mi}
+            limits: {memory: 192Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          volumeMounts: [{name: fence, mountPath: /etc/netci/fence, readOnly: true}]
+      volumes:
+        # id_ed25519: the key bound to the power agent's forced command; host_key.pub: the
+        # power agent's SSH host key, pinned.
+        - {name: fence, secret: {secretName: netci-fence, defaultMode: 0440}}

@@ -116,6 +116,14 @@ func TestTheGateOpensWithTheLeaseAndTheControllerDiesWhenItIsLost(t *testing.T) 
 	if b, _ := os.ReadFile(gate); !strings.Contains(string(b), "epoch=0") {
 		t.Fatalf("gate content %q", b)
 	}
+	first, _ := os.Stat(gate)
+	eventually(t, "gate refreshed by renewals", func() bool {
+		fi, err := os.Stat(gate)
+		return err == nil && fi.ModTime().After(first.ModTime())
+	})
+	if fi, _ := os.Stat(gate); time.Since(fi.ModTime()) > a.Holder.RenewInterval*3 {
+		t.Fatalf("gate mtime %s is not the last renewal", fi.ModTime())
+	}
 	f.start(t, 42, "java -jar jenkins.war")
 
 	api.SetUnreachable(true) // the node is cut off from the API server

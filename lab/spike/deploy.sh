@@ -11,8 +11,10 @@ export KUBECONFIG="${STATE}/kubeconfig"
 CELL="${CELL:-cell-a}"
 STORAGE_CLASS="${STORAGE_CLASS:-longhorn-commit1}"
 NODE_PORT="${NODE_PORT:-30080}"
+# The netCI image carrying the cell agent and its guard (make image, then push it to Harbor).
+: "${NETCI_IMAGE:?set NETCI_IMAGE to the netCI image (a Harbor reference)}"
 render() { sed -e "s/cell-a/${CELL}/g" -e "s/storageClassName: longhorn-commit1/storageClassName: ${STORAGE_CLASS}/" \
-  -e "s/nodePort: 30080/nodePort: ${NODE_PORT}/" "${ROOT}/lab/spike/cell.yaml"; }
+  -e "s/nodePort: 30080/nodePort: ${NODE_PORT}/" -e "s|NETCI_IMAGE|${NETCI_IMAGE}|g" "${ROOT}/lab/spike/cell.yaml"; }
 ( umask 077
   [[ -s "${STATE}/cell-admin-password" ]] || openssl rand -base64 24 | tr -d '\n' > "${STATE}/cell-admin-password"
   python3 - "${CORP}" "${STATE}/harbor-pull.json" <<'EOF'

@@ -25,6 +25,25 @@ metadata: {name: jenkins-agents, namespace: cell-a}
 subjects: [{kind: ServiceAccount, name: jenkins, namespace: cell-a}]
 roleRef: {kind: Role, name: jenkins-agents, apiGroup: rbac.authorization.k8s.io}
 ---
+# The cell agent's Lease, and only it (create cannot be limited by name in RBAC).
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: {name: cell-lease, namespace: cell-a}
+rules:
+  - apiGroups: [coordination.k8s.io]
+    resources: [leases]
+    resourceNames: [jenkins]
+    verbs: [get, update]
+  - apiGroups: [coordination.k8s.io]
+    resources: [leases]
+    verbs: [create]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: {name: cell-lease, namespace: cell-a}
+subjects: [{kind: ServiceAccount, name: jenkins, namespace: cell-a}]
+roleRef: {kind: Role, name: cell-lease, apiGroup: rbac.authorization.k8s.io}
+---
 apiVersion: v1
 kind: ConfigMap
 metadata: {name: jenkins-casc, namespace: cell-a}
@@ -142,22 +161,69 @@ spec:
 ---
 apiVersion: apps/v1
 kind: StatefulSet
-metadata: {name: jenkins, namespace: cell-a}
+# netci.io/cell: the supervisor watches this cell's Lease (named after the StatefulSet) and
+# fences the machine of a controller that stops renewing it.
+metadata: {name: jenkins, namespace: cell-a, labels: {netci.io/cell: "true"}}
 spec:
   serviceName: jenkins
   replicas: 1
   selector: {matchLabels: {app: jenkins}}
   template:
-    metadata: {labels: {app: jenkins}}
+    metadata: {labels: {app: jenkins, netci.io/cell: "true"}}
     spec:
       serviceAccountName: jenkins
       imagePullSecrets: [{name: harbor-pull}]
       securityContext: {runAsUser: 1000, runAsGroup: 1000, fsGroup: 1000}
+      # The cell agent kills the controller's JVM the moment the Lease is lost; it can only
+      # see and signal it in a shared process namespace (same uid, no capability needed).
+      shareProcessNamespace: true
       terminationGracePeriodSeconds: 30
+      initContainers:
+        # Hands the guard to the controller container, whose image has no copy of it.
+        - name: install-guard
+          image: NETCI_IMAGE
+          command: [/cell-agent, install, /netci-bin]
+          securityContext: &restricted
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          volumeMounts: [{name: netci-bin, mountPath: /netci-bin}]
+        # A native sidecar (restartPolicy: Always): started before the controller, and stopped
+        # only after the controller has exited -- so the Lease outlives the JVM on a graceful
+        # stop and the replacement does not have to wait it out.
+        - name: cell-agent
+          image: NETCI_IMAGE
+          command: [/cell-agent]
+          restartPolicy: Always
+          env:
+            - {name: POD_NAME, valueFrom: {fieldRef: {fieldPath: metadata.name}}}
+            - {name: POD_UID, valueFrom: {fieldRef: {fieldPath: metadata.uid}}}
+            - {name: POD_NAMESPACE, valueFrom: {fieldRef: {fieldPath: metadata.namespace}}}
+            - {name: NETCI_LEASE_NAME, value: jenkins}
+            - {name: NETCI_TERMINATION_GRACE, value: 25s}
+          ports: [{name: agent-metrics, containerPort: 9090}]
+          startupProbe:
+            httpGet: {path: /healthz, port: 9090}
+            periodSeconds: 1
+            failureThreshold: 30
+          livenessProbe:
+            httpGet: {path: /healthz, port: 9090}
+            periodSeconds: 5
+          resources:
+            requests: {cpu: 20m, memory: 32Mi}
+            limits: {memory: 96Mi}
+          securityContext: *restricted
+          volumeMounts: [{name: gate, mountPath: /run/netci}]
       containers:
         - name: jenkins
           image: 172.17.0.1:8930/netci/jenkins-controller:2.555.3-netci1
+          # Jenkins starts only once the gate is open and is killed when it closes or goes
+          # stale (internal/cellagent). jenkins.sh is the image's own start script; tini is left
+          # out because the pod's pause container already reaps orphans in a shared namespace.
+          command: [/netci-bin/cell-agent, guard, --, /usr/local/bin/jenkins.sh]
           env:
+            - {name: NETCI_GATE_FILE, value: /run/netci/gate}
+            - {name: NETCI_RENEW_DEADLINE, value: 4s}
             - {name: CASC_JENKINS_CONFIG, value: /var/jenkins_config/jenkins.yaml}
             - {name: JAVA_OPTS, value: "-Xms1g -Xmx1536m -Djenkins.install.runSetupWizard=false"}
             # The WAR and the exploded plugins come from the image; they are not state. On the
@@ -169,6 +235,17 @@ spec:
             httpGet: {path: /login, port: 8080}
             periodSeconds: 2
             failureThreshold: 3
+          # A JVM that hangs while the agent keeps renewing would hold the cell and serve
+          # nothing; liveness restarts the container (and the guard waits for the gate again).
+          startupProbe:
+            httpGet: {path: /login, port: 8080}
+            periodSeconds: 5
+            failureThreshold: 120
+          livenessProbe:
+            httpGet: {path: /login, port: 8080}
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
           resources:
             requests: {cpu: "1", memory: 2Gi}
             limits: {memory: 2560Mi}
@@ -177,7 +254,11 @@ spec:
             - {name: casc, mountPath: /var/jenkins_config}
             - {name: cache, mountPath: /var/cache/jenkins}
             - {name: secrets, mountPath: /run/secrets/cell, readOnly: true}
+            - {name: gate, mountPath: /run/netci, readOnly: true}
+            - {name: netci-bin, mountPath: /netci-bin, readOnly: true}
       volumes:
+        - {name: gate, emptyDir: {medium: Memory, sizeLimit: 1Mi}}
+        - {name: netci-bin, emptyDir: {sizeLimit: 128Mi}}
         - {name: casc, configMap: {name: jenkins-casc}}
         - {name: cache, emptyDir: {}}
         - {name: secrets, secret: {secretName: jenkins-cell}}

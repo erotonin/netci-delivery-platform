@@ -1,8 +1,11 @@
 // Package cellagent is the sidecar that runs next to a cell's Jenkins controller (ADR-060).
 //
 // It holds the cell's Lease and turns holding it into the only way Jenkins can run:
-//   - the controller container waits for the gate file before it starts Jenkins, so a
-//     container restart is gated too;
+//   - the controller container runs Jenkins under Guard, which waits for the gate file before
+//     it starts Jenkins, so a container restart is gated too;
+//   - every successful renewal sets the gate's mtime to when that renewal started; Guard kills
+//     Jenkins once the gate is older than the renew deadline, which covers this agent itself
+//     crashing or hanging;
 //   - when the Lease is lost, the gate is removed and Jenkins is killed at once, and kept dead
 //     for as long as the Lease is not held -- a controller that is cut off from the cluster
 //     stops writing before anyone else may start;
@@ -15,7 +18,9 @@ package cellagent
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -52,6 +57,11 @@ func (a *Agent) Wire() {
 		}
 		a.Metrics.setHolding(true, epoch)
 		a.Log.Info("gate open: the controller may run", "epoch", epoch)
+	}
+	a.Holder.OnRenewed = func(started time.Time) {
+		if err := refreshGate(a.GateFile, started); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			a.Log.Error("cannot refresh the gate; the guard will stop the controller", "error", err)
+		}
 	}
 	a.Holder.OnLost = func(reason string) {
 		a.closeGate()

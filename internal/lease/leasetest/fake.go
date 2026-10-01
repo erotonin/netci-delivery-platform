@@ -22,6 +22,9 @@ type APIServer struct {
 	leases      map[string]*coordinationv1.Lease
 	rv          int
 	unreachable bool
+	// BeforeWrite, if set, runs before every write is applied, outside the lock: a test steps a
+	// fake clock in it to model a call that is slow to reach the server.
+	BeforeWrite func()
 }
 
 // New returns an empty, reachable server.
@@ -70,6 +73,9 @@ func (c *leaseClient) Get(ctx context.Context, name string, _ metav1.GetOptions)
 }
 
 func (c *leaseClient) Create(ctx context.Context, l *coordinationv1.Lease, _ metav1.CreateOptions) (*coordinationv1.Lease, error) {
+	if hook := c.a.BeforeWrite; hook != nil {
+		hook()
+	}
 	c.a.mu.Lock()
 	defer c.a.mu.Unlock()
 	if c.a.unreachable {
@@ -87,6 +93,9 @@ func (c *leaseClient) Create(ctx context.Context, l *coordinationv1.Lease, _ met
 }
 
 func (c *leaseClient) Update(ctx context.Context, l *coordinationv1.Lease, _ metav1.UpdateOptions) (*coordinationv1.Lease, error) {
+	if hook := c.a.BeforeWrite; hook != nil {
+		hook()
+	}
 	c.a.mu.Lock()
 	defer c.a.mu.Unlock()
 	if c.a.unreachable {
@@ -124,4 +133,19 @@ func (unreachableClient) Create(context.Context, *coordinationv1.Lease, metav1.C
 }
 func (unreachableClient) Update(context.Context, *coordinationv1.Lease, metav1.UpdateOptions) (*coordinationv1.Lease, error) {
 	return nil, fmt.Errorf("dial tcp: i/o timeout")
+}
+
+func (c *leaseClient) List(ctx context.Context, _ metav1.ListOptions) (*coordinationv1.LeaseList, error) {
+	c.a.mu.Lock()
+	defer c.a.mu.Unlock()
+	if c.a.unreachable {
+		return nil, fmt.Errorf("dial tcp: i/o timeout")
+	}
+	out := &coordinationv1.LeaseList{}
+	for _, l := range c.a.leases {
+		if l.Namespace == c.ns {
+			out.Items = append(out.Items, *l.DeepCopy())
+		}
+	}
+	return out, nil
 }

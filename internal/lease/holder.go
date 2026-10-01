@@ -38,10 +38,16 @@ type Holder struct {
 
 	OnAcquired func(epoch int32)
 	OnLost     func(reason string)
+	// OnRenewed is called after every successful renewal (and acquisition) with the time the
+	// renewal started -- the latest moment that can be claimed for it, see lastRenew.
+	OnRenewed func(started time.Time)
 
-	mu        sync.Mutex // guards the three fields below, read by other goroutines
-	holding   bool
-	epoch     int32
+	mu      sync.Mutex // guards the three fields below, read by other goroutines
+	holding bool
+	epoch   int32
+	// lastRenew is when the last successful renewal *started*. The API server wrote it at some
+	// moment after that, so every observer saw the write no earlier: counting the deadline from
+	// the start keeps the guarantee whatever the call's latency was.
 	lastRenew time.Time
 }
 
@@ -94,7 +100,8 @@ func (h *Holder) Run(ctx context.Context) {
 
 // Step is one renewal attempt and the deadline check that goes with it.
 func (h *Holder) Step(ctx context.Context) {
-	now := h.Clock.Now()
+	start := h.Clock.Now()
+	now := start
 	timeout := h.RenewInterval
 	h.mu.Lock()
 	holding, lastRenew, current := h.holding, h.lastRenew, h.epoch
@@ -117,7 +124,7 @@ func (h *Holder) Step(ctx context.Context) {
 	now = h.Clock.Now()
 	if err == nil {
 		h.mu.Lock()
-		h.lastRenew = now
+		h.lastRenew = start
 		changed := !holding || epoch != current
 		h.holding, h.epoch = true, epoch
 		h.mu.Unlock()
@@ -126,6 +133,9 @@ func (h *Holder) Step(ctx context.Context) {
 			if h.OnAcquired != nil {
 				h.OnAcquired(epoch)
 			}
+		}
+		if h.OnRenewed != nil {
+			h.OnRenewed(start)
 		}
 		return
 	}

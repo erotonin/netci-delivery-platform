@@ -273,3 +273,34 @@ func TestATransientOutageShorterThanTheDeadlineIsNotALoss(t *testing.T) {
 		t.Fatalf("lost=%v acquired=%v", ev.lost, ev.acquired)
 	}
 }
+
+func TestTheDeadlineCountsFromWhenTheRenewalStartedNotWhenItReturned(t *testing.T) {
+	// Each write reaches the server 900 ms after the call started. Counting the deadline from
+	// the call's return would let the holder run up to one call's latency past the point its
+	// successor's observation began; counting from the start does not.
+	api, clk := leasetest.New(), clocktesting.NewFakeClock(time.Unix(1000, 0))
+	var writtenAt time.Time
+	api.BeforeWrite = func() { clk.Step(900 * time.Millisecond); writtenAt = clk.Now() }
+	a, evA := holder(api, clk, "jenkins-0/a")
+	var started time.Time
+	a.OnRenewed = func(at time.Time) { started = at }
+	ctx := context.Background()
+	run(ctx, clk, 5, a)
+	if !started.Before(writtenAt) {
+		t.Fatalf("OnRenewed reported %s, the write landed at %s", started, writtenAt)
+	}
+	a.Leases = leasetest.Unreachable{}
+	for i := 0; i < 50 && len(evA.lost) == 0; i++ {
+		a.Step(ctx)
+		clk.Step(100 * time.Millisecond)
+	}
+	if len(evA.lost) != 1 {
+		t.Fatal("never lost")
+	}
+	if got := evA.lostAt[0].Sub(started); got > deadline+100*time.Millisecond {
+		t.Fatalf("stopped %s after the last renewal started; the contract is %s", got, deadline)
+	}
+	if margin := writtenAt.Add(duration).Sub(evA.lostAt[0]); margin < duration-deadline {
+		t.Fatalf("only %s between stopping and the earliest takeover", margin)
+	}
+}
