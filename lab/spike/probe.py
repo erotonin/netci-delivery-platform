@@ -38,11 +38,25 @@ def now() -> float:
     return time.monotonic()
 
 
+_server = [0]  # index of the API server that answered last
+
+
 def kubectl(*args: str, check: bool = True, timeout: int = 60) -> str:
-    # A request timeout: one of the API servers behind the Service may be on the machine that
-    # was just powered off, and a call to it otherwise hangs -- which once made this probe see
-    # the supervisor's fencing 40 s after it happened.
-    out = subprocess.run(["kubectl", "--request-timeout=3s", *args], capture_output=True, text=True, timeout=timeout)
+    # Every node runs an API server, and the one this probe uses may be on the machine it just
+    # powered off: try them in turn, each with a short request timeout. With one fixed server
+    # the probe went blind for the whole outage and recorded 58 s for events that took 16-45 s.
+    servers = list(NODES.values())
+    out = None
+    for k in range(len(servers)):
+        i = (_server[0] + k) % len(servers)
+        out = subprocess.run(["kubectl", "--request-timeout=3s", f"--server=https://{servers[i]}:6443", *args],
+                             capture_output=True, text=True, timeout=timeout)
+        unreachable = out.returncode != 0 and any(m in out.stderr for m in (
+            "connect: no route to host", "i/o timeout", "connection refused", "Client.Timeout", "context deadline exceeded",
+            "Unable to connect to the server"))
+        if not unreachable:
+            _server[0] = i
+            break
     if check and out.returncode != 0:
         raise RuntimeError(f"kubectl {' '.join(args)}: {out.stderr.strip()}")
     return out.stdout.strip()

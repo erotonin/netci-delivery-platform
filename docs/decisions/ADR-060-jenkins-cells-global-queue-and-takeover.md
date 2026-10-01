@@ -192,11 +192,12 @@ What the runs found, and what changed:
 | 4 | 30 s* | 61 s | Volume attached 13 s after fencing (was 27-45 s) | — |
 | 5 | 16 s* | 75 s | **A healthy cell on another node lost its Lease and restarted Jenkins:** etcd on the surviving members took 1-3 s per read, and the 4 s renew deadline did not outlast that | Cell Lease 15 s / 10 s, as Kubernetes' own controllers use; renewals retried with short attempts; the supervisor re-enters the election instead of exiting |
 
+| 6 | 16.5 s | 44.5 s (build resumed 42.5 s) | With 15 s / 10 s: the healthy cell on another machine kept its Lease and its Jenkins; the supervisor kept its leadership. Timeline from the build's ticks and the pod's conditions: fenced 16.5 s, pod scheduled 18.5 s, volume attached and Lease held 31.5 s, build resumed 42.5 s | The probe's kubectl now fails over between API servers (pinned to the dead one, it recorded 58 s for all of these) |
+
 \* The supervisor's leader lost its own lease in the same API stall and had to regain it.
 
-**Not verified live yet:**
-- that a healthy cell survives a neighbour's power loss with the 15 s / 10 s Lease;
-- the takeover time with those timings.
+Run 6 is the design working as intended: a power loss is taken over in ~45 s, with no person
+and no lost work. One run is not a p95; the chaos suite repeats it.
 
 ## What this reuses from netCI
 
