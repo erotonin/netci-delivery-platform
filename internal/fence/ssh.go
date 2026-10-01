@@ -65,6 +65,9 @@ func (s *SSH) run(ctx context.Context, verb, machine string) (string, error) {
 		User:            s.User,
 		Auth:            []ssh.AuthMethod{ssh.PublicKeys(s.Signer)},
 		HostKeyCallback: ssh.FixedHostKey(s.HostKey),
+		// Ask for the pinned key's type only: a server with several host keys would otherwise
+		// show the one the client prefers (ECDSA before Ed25519), which is not the pinned one.
+		HostKeyAlgorithms: hostKeyAlgorithms(s.HostKey),
 		Timeout:         timeout,
 	}
 	ctx, cancel := context.WithTimeout(ctx, timeout)
@@ -94,4 +97,13 @@ func (s *SSH) run(ctx context.Context, verb, machine string) (string, error) {
 		return stdout.String(), fmt.Errorf("%s %s: %w: %s", verb, machine, err, strings.TrimSpace(stderr.String()))
 	}
 	return stdout.String(), nil
+}
+
+// hostKeyAlgorithms are the signature algorithms that prove a key of this type. An RSA key is
+// proven with SHA-2 signatures; the SHA-1 "ssh-rsa" algorithm is not offered.
+func hostKeyAlgorithms(k ssh.PublicKey) []string {
+	if k.Type() == ssh.KeyAlgoRSA {
+		return []string{ssh.KeyAlgoRSASHA512, ssh.KeyAlgoRSASHA256}
+	}
+	return []string{k.Type()}
 }

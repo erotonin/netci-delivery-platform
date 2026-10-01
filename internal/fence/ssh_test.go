@@ -2,7 +2,9 @@ package fence
 
 import (
 	"context"
+	"crypto/ecdsa"
 	"crypto/ed25519"
+	"crypto/elliptic"
 	"crypto/rand"
 	"fmt"
 	"net"
@@ -40,6 +42,14 @@ func startPowerAgent(t *testing.T, clientKey ssh.PublicKey) *powerAgent {
 		},
 	}
 	cfg.AddHostKey(hostSigner)
+	// A real sshd has several host keys; the client must ask for the type it pinned, or it may
+	// be shown another one (seen in the lab: "host key mismatch" with an ECDSA key preferred).
+	ecKey, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	ecSigner, err := ssh.NewSignerFromKey(ecKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.AddHostKey(ecSigner)
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
