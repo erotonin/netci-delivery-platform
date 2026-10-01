@@ -1,0 +1,81 @@
+# Longhorn's CSI attacher and managers, tuned for cell takeovers (ADR-066), at admission time.
+#
+# The tuning was first a patch (lab/longhorn-tune.sh). Longhorn's driver deployer recreates the
+# attacher's Deployment with its own defaults every time it starts, so every takeover that took
+# the deployer's machine undid the patch: chaos series 10 ran untuned after the first. These
+# policies apply the same settings to whatever Longhorn writes, whenever it writes it, and never
+# refuse it (failurePolicy: Ignore).
+#
+#   - attacher: retries at most 5 s apart, dead API connections noticed in ~4 s, one per node
+#     (spread per revision);
+#   - managers: dead API connections noticed in ~4 s.
+#
+# Written around a fault of the API server it runs on (k3s 1.36.4, cel-go 0.26.1): a JSON patch
+# whose value is a list of typed objects panics it on every request the policy matches. The
+# spread rule is therefore added as an empty list and then one element; the env entries are an
+# ApplyConfiguration (merged by name); the args are a list of strings. Each variant was tried on
+# a throwaway Deployment first, counting the API server's panics.
+apiVersion: admissionregistration.k8s.io/v1
+kind: MutatingAdmissionPolicy
+metadata: {name: netci-longhorn-csi-attacher}
+spec:
+  matchConstraints:
+    resourceRules:
+      - {apiGroups: [apps], apiVersions: [v1], operations: [CREATE, UPDATE], resources: [deployments]}
+  matchConditions:
+    - name: the-attacher
+      expression: object.metadata.namespace == 'NAMESPACE' && object.metadata.name == 'csi-attacher'
+  failurePolicy: Ignore
+  reinvocationPolicy: IfNeeded
+  mutations:
+    - patchType: JSONPatch
+      jsonPatch:
+        expression: >
+          [JSONPatch{op: "replace", path: "/spec/template/spec/containers/0/args",
+            value: object.spec.template.spec.containers[0].args.filter(a, !a.startsWith("--retry-interval-max=")) + ["--retry-interval-max=5s"]}]
+    - patchType: ApplyConfiguration
+      applyConfiguration:
+        expression: >
+          Object{spec: Object.spec{template: Object.spec.template{spec: Object.spec.template.spec{
+            containers: [Object.spec.template.spec.containers{name: "csi-attacher", env: [
+              Object.spec.template.spec.containers.env{name: "HTTP2_READ_IDLE_TIMEOUT_SECONDS", value: "2"},
+              Object.spec.template.spec.containers.env{name: "HTTP2_PING_TIMEOUT_SECONDS", value: "2"}]}]}}}}
+    - patchType: JSONPatch
+      jsonPatch:
+        expression: >
+          [JSONPatch{op: "add", path: "/spec/template/spec/topologySpreadConstraints", value: []},
+           JSONPatch{op: "add", path: "/spec/template/spec/topologySpreadConstraints/-",
+             value: Object.spec.template.spec.topologySpreadConstraints{maxSkew: 1, topologyKey: "kubernetes.io/hostname",
+               whenUnsatisfiable: "DoNotSchedule", matchLabelKeys: ["pod-template-hash"],
+               labelSelector: Object.spec.template.spec.topologySpreadConstraints.labelSelector{matchLabels: {"app": "csi-attacher"}}}}]
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: MutatingAdmissionPolicyBinding
+metadata: {name: netci-longhorn-csi-attacher}
+spec: {policyName: netci-longhorn-csi-attacher}
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: MutatingAdmissionPolicy
+metadata: {name: netci-longhorn-manager}
+spec:
+  matchConstraints:
+    resourceRules:
+      - {apiGroups: [apps], apiVersions: [v1], operations: [CREATE, UPDATE], resources: [daemonsets]}
+  matchConditions:
+    - name: the-managers
+      expression: object.metadata.namespace == 'NAMESPACE' && object.metadata.name == 'longhorn-manager'
+  failurePolicy: Ignore
+  reinvocationPolicy: IfNeeded
+  mutations:
+    - patchType: ApplyConfiguration
+      applyConfiguration:
+        expression: >
+          Object{spec: Object.spec{template: Object.spec.template{spec: Object.spec.template.spec{
+            containers: [Object.spec.template.spec.containers{name: "longhorn-manager", env: [
+              Object.spec.template.spec.containers.env{name: "HTTP2_READ_IDLE_TIMEOUT_SECONDS", value: "2"},
+              Object.spec.template.spec.containers.env{name: "HTTP2_PING_TIMEOUT_SECONDS", value: "2"}]}]}}}}
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: MutatingAdmissionPolicyBinding
+metadata: {name: netci-longhorn-manager}
+spec: {policyName: netci-longhorn-manager}

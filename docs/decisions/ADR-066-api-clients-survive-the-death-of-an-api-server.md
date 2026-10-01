@@ -39,8 +39,16 @@ supervisor's counters) found this in four places:
    Service's name, which every API server's certificate carries.
 2. **Third-party clients on the takeover path get client-go's HTTP/2 health check at 2 s + 2 s**
    (`HTTP2_READ_IDLE_TIMEOUT_SECONDS`, `HTTP2_PING_TIMEOUT_SECONDS`): Longhorn's managers and
-   CSI attachers (`lab/longhorn-tune.sh`). Attachers run one per node, spread per revision, and
-   retry at most 5 s apart.
+   CSI attachers. Attachers run one per node, spread per revision, and retry at most 5 s apart.
+   These settings are applied as MutatingAdmissionPolicies (`lab/longhorn/tuning-policy.yaml`),
+   not as patches. Longhorn's driver deployer rewrites the attacher's Deployment every time it
+   starts, so a patch was undone by the next takeover of its machine, and chaos series 10 ran
+   mostly untuned. With the policies, the deployer was restarted and the attacher stayed tuned.
+   The policies are shaped around a fault of the API server (k3s 1.36.4, cel-go 0.26.1). A JSON
+   patch whose value is a list of typed objects panics the API server on every request the
+   policy matches. The first version did exactly that to the attacher's Deployment and blocked
+   updates to it until it was removed. Every variant has since been tried on a throwaway object
+   first, while counting panics.
 3. **A machine found off is fenced 3 s after its last renewal**, not at Lease expiry (ADR-060).
    That only helps if the observations around a power loss succeed, which decisions 1 and 2
    make so.
@@ -56,8 +64,10 @@ supervisor's counters) found this in four places:
 - An API server that is slow to start answering the supervisor's lists makes it blind, not
   wrong: it acts on nothing it has not observed. `NETCI_API_ATTEMPT_TIMEOUT` raises the bound,
   and the `NetciSupervisorBlind` alert fires.
-- The Longhorn settings are patches to Longhorn's own objects. An upgrade or a re-applied
-  manifest resets them, so `lab/longhorn-tune.sh` is run again after either.
+- The Longhorn settings are admission policies, so they survive the driver deployer's restarts,
+  Longhorn's upgrades and a re-applied manifest. They are tied to Longhorn's object names, so a
+  release that renames the attacher or the managers needs them updated. `lab/longhorn-tune.sh`
+  fails if the attacher it finds is not tuned.
 
 ## Rejected
 
