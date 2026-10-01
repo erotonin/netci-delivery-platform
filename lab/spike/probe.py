@@ -171,6 +171,7 @@ def fail(kind: str, facts: dict) -> dict[str, float]:
         holder = kubectl("-n", NS, "get", "lease", "jenkins", "-o", "jsonpath={.spec.holderIdentity}")
         facts["leaseHolderBefore"] = holder
         facts["supervisorBefore"] = supervisor_state()
+        facts["leadersBefore"] = leaders()
         subprocess.run(["virsh", "-c", "qemu:///system", "destroy", node], check=True, capture_output=True)
         t["failure"] = now()
         # The wall-clock time too (the timings are monotonic): to line them up with the
@@ -200,6 +201,22 @@ def supervisor_state() -> dict:
             r"^netci_supervisor_(observe_errors_total|observation_resets_total|leading) (\S+)$", metrics, re.M)}
         state[name] = {"node": pod["spec"].get("nodeName"), **counters}
     return state
+
+
+def leaders() -> dict:
+    """The machine of each control-plane and storage leader whose loss delays a takeover: a new
+    pod waits for kube-controller-manager's leader, its placement for kube-scheduler's, its volume
+    for the CSI attacher's."""
+    out: dict = {}
+    for name, ns, lease in (("controller-manager", "kube-system", "kube-controller-manager"),
+                            ("scheduler", "kube-system", "kube-scheduler"),
+                            ("csi-attacher", "longhorn-system", "external-attacher-leader-driver-longhorn-io")):
+        holder = kubectl("-n", ns, "get", "lease", lease, "-o", "jsonpath={.spec.holderIdentity}", check=False)
+        if ns == "kube-system":
+            out[name] = holder.split("_")[0]  # "<node>_<uuid>"
+        else:
+            out[name] = kubectl("-n", ns, "get", "pod", holder, "-o", "jsonpath={.spec.nodeName}", check=False) if holder else ""
+    return out
 
 
 def supervisor_events() -> list[str]:
