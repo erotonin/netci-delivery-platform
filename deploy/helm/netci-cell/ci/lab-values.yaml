@@ -1,5 +1,5 @@
 image:
-  controller: 172.17.0.1:8930/netci/jenkins-controller:2.555.3-netci6
+  controller: 172.17.0.1:8930/netci/jenkins-controller:2.555.3-netci7
 
 netci:
   repository: 172.17.0.1:8930/netci/netci
