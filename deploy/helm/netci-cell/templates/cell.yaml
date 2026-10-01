@@ -120,6 +120,10 @@ spec:
               value: {{ printf "%ds" (sub .Values.terminationGracePeriodSeconds 5) }}
             # A changed JCasC ConfigMap is applied in place, when the cell's Secret has a
             # casc-reload-token; without it, at the next restart.
+            # A JENKINS_HOME that stops taking writes is reported, and the supervisor restarts the
+            # pod so that the volume is mounted again.
+            - name: NETCI_HOME_PROBE_DIR
+              value: /var/jenkins_home/.netci
             - name: NETCI_CASC_FILE
               value: /var/jenkins_config/jenkins.yaml
             - name: NETCI_CASC_RELOAD_TOKEN
@@ -159,6 +163,8 @@ spec:
             - name: casc
               mountPath: /var/jenkins_config
               readOnly: true
+            - name: home
+              mountPath: /var/jenkins_home
       containers:
         - name: jenkins
           image: {{ required "image.controller: the netCI controller image (jenkins/Dockerfile.controller), which carries the netCI plugin" .Values.image.controller | quote }}

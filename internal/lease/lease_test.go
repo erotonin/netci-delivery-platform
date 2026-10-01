@@ -3,6 +3,8 @@ package lease
 import (
 	"context"
 	"errors"
+	"io"
+	"log/slog"
 	"strings"
 	"testing"
 	"time"
@@ -328,5 +330,32 @@ func TestADeadConnectionIsRetriedWithinTheRenewalNotLetRunOutTheDeadline(t *test
 		if !retry && !lost {
 			t.Fatal("without retries the hung calls should have cost the lease; the test does not show the difference")
 		}
+	}
+}
+
+func TestAReportTravelsWithTheRenewalsAndIsRemovedWhenEmpty(t *testing.T) {
+	api, clk := leasetest.New(), clocktesting.NewFakeClock(time.Unix(1000, 0))
+	h := &Holder{Leases: api, Namespace: "cell", Name: "jenkins", Identity: "jenkins-0/uid-1", Duration: 15 * time.Second,
+		RenewInterval: time.Second, RenewDeadline: 10 * time.Second, Clock: clk, Observer: NewObserver(clk),
+		Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	ctx := context.Background()
+	if _, err := h.acquireOrRenew(ctx); err != nil { // acquires
+		t.Fatal(err)
+	}
+	h.Report("netci.io/volume-failed", "jenkins-0/uid-1 broken")
+	if _, err := h.acquireOrRenew(ctx); err != nil {
+		t.Fatal(err)
+	}
+	l, _ := api.Leases("cell").Get(ctx, "jenkins", metav1.GetOptions{})
+	if l.Annotations["netci.io/volume-failed"] != "jenkins-0/uid-1 broken" {
+		t.Fatalf("not reported: %v", l.Annotations)
+	}
+	h.Report("netci.io/volume-failed", "")
+	if _, err := h.acquireOrRenew(ctx); err != nil {
+		t.Fatal(err)
+	}
+	l, _ = api.Leases("cell").Get(ctx, "jenkins", metav1.GetOptions{})
+	if _, ok := l.Annotations["netci.io/volume-failed"]; ok {
+		t.Fatalf("an empty report did not remove the annotation: %v", l.Annotations)
 	}
 }

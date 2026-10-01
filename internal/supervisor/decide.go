@@ -87,6 +87,9 @@ type CellView struct {
 	// UnschedulableFor: how long the scheduler has found no node for the cell's pod; zero when
 	// it is placed or still being considered.
 	UnschedulableFor time.Duration
+	// VolumeFailed: the pod holding the Lease reports that its JENKINS_HOME no longer takes writes
+	// (the report's detail); empty otherwise.
+	VolumeFailed string
 }
 
 // suspect: the Lease names this pod and has gone unrenewed for SuspectAfter, so its machine's
@@ -182,6 +185,8 @@ func Decide(in Input, cfg Config) []Action {
 		actions = append(actions, Action{Kind: Alert, Reason: why})
 	}
 
+	actions = append(actions, failedVolumes(in, cfg)...)
+
 	powerOffDecided := false
 	for _, c := range lost {
 		a, ok := decideCell(c, in, cfg)
@@ -202,6 +207,33 @@ func Decide(in Input, cfg Config) []Action {
 		actions = append(actions, a)
 	}
 	return append(actions, recovery(in, cfg)...)
+}
+
+// failedVolumes restarts the pods whose controller reports that its JENKINS_HOME fails: a new pod
+// mounts the volume afresh. Many at once is a storage problem, which restarting every controller
+// would not fix: then a person is told instead.
+func failedVolumes(in Input, cfg Config) []Action {
+	var failing []CellView
+	for _, c := range in.Cells {
+		if c.VolumeFailed != "" && c.holdsLease() && !c.LeaseExpired && !c.PodDeleting {
+			failing = append(failing, c)
+		}
+	}
+	if len(failing) >= 2 && float64(len(failing)) > cfg.PanicFraction*float64(len(in.Cells)) {
+		return []Action{{Kind: Alert, Reason: fmt.Sprintf("%d of %d cells report that their JENKINS_HOME fails: a storage problem; not restarting them",
+			len(failing), len(in.Cells))}}
+	}
+	var actions []Action
+	for _, c := range failing {
+		a := Action{Namespace: c.Namespace, Cell: c.Name, Pod: c.Pod, PodUID: c.PodUID, Node: c.PodNode, Holder: c.LeaseHolder}
+		if !c.LastAction.IsZero() && in.Now.Sub(c.LastAction) < cfg.Cooldown {
+			a.Kind, a.Reason = Alert, cooldownReason(c, in.Now, cfg)+" (its JENKINS_HOME fails: "+c.VolumeFailed+")"
+		} else {
+			a.Kind, a.Reason = DeletePod, "the controller reports that its JENKINS_HOME fails ("+c.VolumeFailed+"): restarting the pod so that the volume is mounted again"
+		}
+		actions = append(actions, a)
+	}
+	return actions
 }
 
 // panicked reports whether failures look shared rather than independent.

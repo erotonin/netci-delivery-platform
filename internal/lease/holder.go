@@ -48,9 +48,12 @@ type Holder struct {
 	// renewal started -- the latest moment that can be claimed for it, see lastRenew.
 	OnRenewed func(started time.Time)
 
-	mu      sync.Mutex // guards the three fields below, read by other goroutines
+	mu      sync.Mutex // guards the fields below, read by other goroutines
 	holding bool
 	epoch   int32
+	// reports are annotations written with every renewal, for the supervisor to read; an empty
+	// value removes the annotation.
+	reports map[string]string
 	// lastRenew is when the last successful renewal *started*. The API server wrote it at some
 	// moment after that, so every observer saw the write no earlier: counting the deadline from
 	// the start keeps the guarantee whatever the call's latency was.
@@ -66,6 +69,38 @@ var ErrFenced = errors.New("this identity was fenced")
 
 // FencedAnnotation names the identity the supervisor fenced when it released the Lease.
 const FencedAnnotation = "netci.io/fenced-identity"
+
+// VolumeFailedAnnotation is set by the holder (Report) when its JENKINS_HOME stops taking writes:
+// "<holder identity> <time> <detail>". The identity keeps a replacement from being restarted for
+// its predecessor's volume.
+const VolumeFailedAnnotation = "netci.io/volume-failed"
+
+// Report sets an annotation the holder writes with its next renewal and every one after; an
+// empty value removes it. It is how the pod that holds the Lease tells the supervisor something
+// only it can see, with no permission beyond the Lease.
+func (h *Holder) Report(key, value string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.reports == nil {
+		h.reports = map[string]string{}
+	}
+	h.reports[key] = value
+}
+
+func (h *Holder) applyReports(l *coordinationv1.Lease) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for k, v := range h.reports {
+		if v == "" {
+			delete(l.Annotations, k)
+			continue
+		}
+		if l.Annotations == nil {
+			l.Annotations = map[string]string{}
+		}
+		l.Annotations[k] = v
+	}
+}
 
 // Validate checks the timing contract before anything runs on it.
 func (h *Holder) Validate() error {
@@ -209,6 +244,7 @@ func (h *Holder) acquireOrRenew(ctx context.Context) (int32, error) {
 	next := l.DeepCopy()
 	next.Spec.RenewTime = &now
 	next.Spec.LeaseDurationSeconds = &seconds
+	h.applyReports(next)
 	epoch := obs.Epoch
 	switch {
 	case obs.Holder == h.Identity:

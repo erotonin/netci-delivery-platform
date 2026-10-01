@@ -364,3 +364,28 @@ func TestAQuietLeaseFencesOnlyAMachineThatIsOff(t *testing.T) {
 		none(t, Decide(in, cfg()))
 	}
 }
+
+func TestAControllerWhoseVolumeFailsIsRestarted(t *testing.T) {
+	in := world()
+	in.Cells[0].VolumeFailed = "3 writes failed in a row, the last: input/output error"
+	a := only(t, Decide(in, cfg()), DeletePod)
+	if !strings.Contains(a.Reason, "input/output error") {
+		t.Fatalf("the reason does not say why: %q", a.Reason)
+	}
+	in.Cells[0].LastAction = in.Now.Add(-time.Minute) // restarted a minute ago, failing again
+	only(t, Decide(in, cfg()), Alert)
+}
+
+func TestManyFailingVolumesAreAStorageProblemNotRestarted(t *testing.T) {
+	in := world()
+	second := in.Cells[0]
+	second.Namespace, second.LeaseHolder, second.PodUID = "cell-c", "jenkins-0/uid-c", "uid-c"
+	in.Cells = append(in.Cells, second)
+	for i := range in.Cells {
+		in.Cells[i].VolumeFailed = "input/output error"
+	}
+	a := only(t, Decide(in, cfg()), Alert)
+	if !strings.Contains(a.Reason, "storage problem") {
+		t.Fatalf("%q", a.Reason)
+	}
+}

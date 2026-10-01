@@ -30,6 +30,12 @@ if ! kubectl -n longhorn-system get ds longhorn-manager -o jsonpath='{.spec.temp
   kubectl -n longhorn-system rollout restart ds/longhorn-manager >/dev/null
   kubectl -n longhorn-system rollout status ds/longhorn-manager --timeout=600s
 fi
+# Longhorn deletes a pod whose volume it re-attached, judging by start times; a replacement that
+# a fast takeover had started first was deleted too (2 of 6 runs, 35-55 s each). Cells' pods are
+# restarted by netCI instead, from the cell agent's own write probe; StatefulSets are left out of
+# Longhorn's deletions.
+kubectl -n longhorn-system patch settings.longhorn.io blacklist-for-auto-delete-pod-when-volume-detached-unexpectedly \
+  --type merge -p '{"value":"apps/StatefulSet"}' >/dev/null
 kubectl -n longhorn-system get deploy csi-attacher -o jsonpath='{.spec.template.spec.containers[0].args}{"\n"}' | grep -q -- '--retry-interval-max=2s' \
   || { echo "the attacher is not tuned: are the admission policies active?" >&2; exit 1; }
 kubectl -n longhorn-system get pods -l app=csi-attacher -o custom-columns=POD:.metadata.name,NODE:.spec.nodeName

@@ -3,6 +3,7 @@ package supervisor
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -126,6 +127,9 @@ func (c *Collector) Collect(ctx context.Context) (*Snapshot, error) {
 			// A renewal first seen now was made after the last look; the Lease says when.
 			cv.LeaseQuiet = c.quiet.ObserveSince(l, c.lastOK).SinceChange
 			cv.AwaitingTakeover = obs.Holder == "" && l.Annotations[lease.FencedAnnotation] != ""
+			if v := l.Annotations[lease.VolumeFailedAnnotation]; obs.Holder != "" && strings.HasPrefix(v, obs.Holder+" ") {
+				cv.VolumeFailed = strings.TrimPrefix(v, obs.Holder+" ")
+			}
 			snap.Leases[s.Namespace+"/"+s.Name] = l
 		}
 		pod, err := c.Client.CoreV1().Pods(s.Namespace).Get(ctx, cv.Pod, metav1.GetOptions{})

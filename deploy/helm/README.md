@@ -72,3 +72,17 @@ This needs Kubernetes 1.36 or later, where MutatingAdmissionPolicy is GA. Withou
 - the attacher's back-off added up to a minute.
 
 ADR-066 explains both.
+
+Also exclude StatefulSets from Longhorn's own pod deletions:
+
+```bash
+kubectl -n longhorn-system patch settings.longhorn.io \
+  blacklist-for-auto-delete-pod-when-volume-detached-unexpectedly --type merge -p '{"value":"apps/StatefulSet"}'
+```
+
+Longhorn deletes a pod whose volume it had to re-attach, judging by start times. In the lab it
+also deleted a replacement controller that a fast takeover had started first: twice in six
+runs, costing 35-55 s each time. A cell does not need Longhorn for this. Its agent writes to
+`JENKINS_HOME` every 5 s, and when three writes fail in a row the supervisor restarts that pod
+so that the volume is mounted again. The setting applies to every StatefulSet in the cluster:
+those that netCI does not run lose Longhorn's remount on an engine failure.

@@ -311,6 +311,9 @@ spec:
             - {name: NETCI_CASC_FILE, value: /var/jenkins_config/jenkins.yaml}
             - name: NETCI_CASC_RELOAD_TOKEN
               valueFrom: {secretKeyRef: {name: jenkins-cell, key: casc-reload-token, optional: true}}
+            # JENKINS_HOME that stops taking writes is reported, and the supervisor restarts the
+            # pod (internal/cellagent/volume.go).
+            - {name: NETCI_HOME_PROBE_DIR, value: /var/jenkins_home/.netci}
           ports: [{name: agent-metrics, containerPort: 9090}]
           startupProbe:
             httpGet: {path: /healthz, port: 9090}
@@ -326,6 +329,7 @@ spec:
           volumeMounts:
             - {name: gate, mountPath: /run/netci}
             - {name: casc, mountPath: /var/jenkins_config, readOnly: true}
+            - {name: home, mountPath: /var/jenkins_home}
       containers:
         - name: jenkins
           image: 172.17.0.1:8930/netci/jenkins-controller:2.555.3-netci7

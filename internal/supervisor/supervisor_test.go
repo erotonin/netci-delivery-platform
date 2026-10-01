@@ -513,6 +513,36 @@ func TestAnotherCellWhoseHolderStillRenewsIsLeftAlone(t *testing.T) {
 	}
 }
 
+// The controller's JENKINS_HOME stopped taking writes; its agent says so on the Lease. A report
+// left by a predecessor is not this pod's.
+func TestAPodReportingAFailedVolumeIsRestartedAndAPredecessorsReportIgnored(t *testing.T) {
+	l := newLab(t)
+	l.warm()
+	ctx := context.Background()
+	annotate := func(v string) {
+		cur := l.cellLease()
+		if cur.Annotations == nil {
+			cur.Annotations = map[string]string{}
+		}
+		cur.Annotations[lease.VolumeFailedAnnotation] = v
+		if _, err := l.leases.Leases("cell-a").Update(ctx, cur, metav1.UpdateOptions{}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	annotate("jenkins-0/uid-0 2026-10-01T00:00:00Z input/output error") // the pod before this one
+	for i := 0; i < 5; i++ {
+		l.second()
+	}
+	if l.has("delete-pod jenkins-0") {
+		t.Fatal("restarted a pod for its predecessor's volume")
+	}
+	annotate(holder + " 2026-10-01T00:00:00Z 3 writes failed in a row, the last: input/output error")
+	l.until("restart", 3, func() bool { return l.has("delete-pod jenkins-0") })
+	if !l.events.has("PodRestarted") {
+		t.Fatal("not reported")
+	}
+}
+
 func TestAHungMachineIsPoweredOffOnlyOnceItsKubeletIsSilent(t *testing.T) {
 	l := newLab(t)
 	l.warm()

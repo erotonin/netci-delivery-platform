@@ -127,6 +127,20 @@ func run(log *slog.Logger) error {
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer stop()
+	// A JENKINS_HOME that stops taking writes is reported on the Lease, and the supervisor
+	// restarts this pod so that the volume is mounted again (internal/cellagent/volume.go). A
+	// predecessor's report is cleared with the first renewal.
+	holder.Report(cellagent.VolumeFailedAnnotation, "")
+	if dir := os.Getenv("NETCI_HOME_PROBE_DIR"); dir != "" {
+		go (&cellagent.VolumeProbe{Dir: dir, Every: 5 * time.Second, Timeout: 10 * time.Second, Failures: 3, Log: log,
+			Report: func(detail string) {
+				if detail == "" {
+					holder.Report(cellagent.VolumeFailedAnnotation, "")
+					return
+				}
+				holder.Report(cellagent.VolumeFailedAnnotation, holder.Identity+" "+time.Now().UTC().Format(time.RFC3339)+" "+detail)
+			}}).Run(ctx)
+	}
 	// A changed JCasC file is applied to the running controller, not at its next restart.
 	if file, token := os.Getenv("NETCI_CASC_FILE"), os.Getenv("NETCI_CASC_RELOAD_TOKEN"); file != "" && token != "" {
 		go (&cellagent.CascReload{File: file, URL: getenv("NETCI_CONTROLLER_URL", "http://127.0.0.1:8080"), Token: token,
