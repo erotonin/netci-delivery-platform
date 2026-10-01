@@ -5,6 +5,18 @@ Changelog and releases use Semantic Versioning once the project reaches 1.0.0.
 
 ## [Unreleased]
 
+### Added - 2026-10-01: cell agent and Cell Supervisor (ADR-060, decision 4)
+- `cell-agent`, a sidecar: Jenkins runs only while its pod holds the cell's Lease. It is
+  killed within 4 s of losing it, including when the agent itself hangs (`cell-agent guard`).
+  On a graceful stop the Lease is released only after Jenkins has exited. Verified on the lab
+  cluster: `lab/evidence/agent-*.json`.
+- `supervisor`: fences the machine of a controller that stopped renewing its Lease, through a
+  power controller (SSH forced command for libvirt in the lab), then lets Kubernetes start the
+  controller elsewhere. It acts only once the machine is confirmed off. Tested against a fake
+  cluster, with mutation checks; **not yet run against the lab** (`lab/supervisor.sh` changes
+  the host's `authorized_keys`).
+- One image, `netci/netci`, holding both binaries on `scratch`; `make image` refuses a dirty tree.
+
 ### Changed - 2026-10-01: re-architecture to Jenkins HA and an agent fabric (ADR-060..062)
 - netCI becomes a high-availability layer and an agent fabric around the organisation's own
   open-source Jenkins, which keeps doing CI and CD. Services are rewritten in Go.
