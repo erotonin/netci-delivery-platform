@@ -307,6 +307,10 @@ spec:
             - {name: POD_NAMESPACE, valueFrom: {fieldRef: {fieldPath: metadata.namespace}}}
             - {name: NETCI_LEASE_NAME, value: jenkins}
             - {name: NETCI_TERMINATION_GRACE, value: 25s}
+            # A changed JCasC ConfigMap is applied in place (internal/cellagent/cascreload.go).
+            - {name: NETCI_CASC_FILE, value: /var/jenkins_config/jenkins.yaml}
+            - name: NETCI_CASC_RELOAD_TOKEN
+              valueFrom: {secretKeyRef: {name: jenkins-cell, key: casc-reload-token, optional: true}}
           ports: [{name: agent-metrics, containerPort: 9090}]
           startupProbe:
             httpGet: {path: /healthz, port: 9090}
@@ -319,7 +323,9 @@ spec:
             requests: {cpu: 20m, memory: 32Mi}
             limits: {memory: 96Mi}
           securityContext: *restricted
-          volumeMounts: [{name: gate, mountPath: /run/netci}]
+          volumeMounts:
+            - {name: gate, mountPath: /run/netci}
+            - {name: casc, mountPath: /var/jenkins_config, readOnly: true}
       containers:
         - name: jenkins
           image: 172.17.0.1:8930/netci/jenkins-controller:2.555.3-netci7
@@ -331,6 +337,8 @@ spec:
             - {name: NETCI_GATE_FILE, value: /run/netci/gate}
             - {name: NETCI_RENEW_DEADLINE, value: 10s}   # the agent's; see cmd/cell-agent
             - {name: CASC_JENKINS_CONFIG, value: /var/jenkins_config/jenkins.yaml}
+            - name: CASC_RELOAD_TOKEN
+              valueFrom: {secretKeyRef: {name: jenkins-cell, key: casc-reload-token, optional: true}}
             # Jenkins provisions no cloud agent for 100 s after start-up by default, and then
             # only every 10 s: after a takeover, new builds would wait that long for an agent.
             - {name: JAVA_OPTS, value: "-Xms1g -Xmx1536m -Djenkins.install.runSetupWizard=false -Dhudson.slaves.NodeProvisioner.initialDelay=0 -Dhudson.slaves.NodeProvisioner.recurrencePeriod=2000"}

@@ -118,6 +118,16 @@ spec:
               value: {{ .Values.lease.renewDeadline | quote }}
             - name: NETCI_TERMINATION_GRACE
               value: {{ printf "%ds" (sub .Values.terminationGracePeriodSeconds 5) }}
+            # A changed JCasC ConfigMap is applied in place, when the cell's Secret has a
+            # casc-reload-token; without it, at the next restart.
+            - name: NETCI_CASC_FILE
+              value: /var/jenkins_config/jenkins.yaml
+            - name: NETCI_CASC_RELOAD_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.secretName }}
+                  key: casc-reload-token
+                  optional: true
           ports:
             - name: agent-metrics
               containerPort: 9090
@@ -146,6 +156,9 @@ spec:
           volumeMounts:
             - name: gate
               mountPath: /run/netci
+            - name: casc
+              mountPath: /var/jenkins_config
+              readOnly: true
       containers:
         - name: jenkins
           image: {{ required "image.controller: the netCI controller image (jenkins/Dockerfile.controller), which carries the netCI plugin" .Values.image.controller | quote }}
@@ -157,6 +170,12 @@ spec:
               value: {{ .Values.lease.renewDeadline | quote }}
             - name: CASC_JENKINS_CONFIG
               value: /var/jenkins_config/jenkins.yaml
+            - name: CASC_RELOAD_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.secretName }}
+                  key: casc-reload-token
+                  optional: true
             - name: JAVA_OPTS
               value: {{ .Values.javaOpts | quote }}
             - name: JENKINS_OPTS

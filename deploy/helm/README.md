@@ -38,7 +38,11 @@ plugin and the declared plugin set. A stock Jenkins image has neither.
 
 Before installing the `netci-cell` chart, the following must exist:
 - A ConfigMap containing the Jenkins Configuration as Code (JCasC) definition (e.g., `jenkins.yaml`).
-- A Secret containing the cell's secrets (e.g., `admin-password`, `netci-password`, `fabric-token`).
+- A Secret containing the cell's secrets (e.g., `admin-password`, `netci-password`, `fabric-token`,
+  `once-token`). With a `casc-reload-token` key (any random string), a change to the JCasC
+  ConfigMap is applied to the running controller within about a minute (the kubelet's update,
+  then the cell agent's 10 s check), with no restart. Without it, the change applies at the
+  controller's next start.
 
 ### Example Installation
 

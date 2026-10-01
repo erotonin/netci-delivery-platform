@@ -127,6 +127,12 @@ func run(log *slog.Logger) error {
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer stop()
+	// A changed JCasC file is applied to the running controller, not at its next restart.
+	if file, token := os.Getenv("NETCI_CASC_FILE"), os.Getenv("NETCI_CASC_RELOAD_TOKEN"); file != "" && token != "" {
+		go (&cellagent.CascReload{File: file, URL: getenv("NETCI_CONTROLLER_URL", "http://127.0.0.1:8080"), Token: token,
+			Every: 10 * time.Second, HTTP: &http.Client{Timeout: time.Minute}, Log: log,
+			Reloads: cellagent.NewCascReloads(registry)}).Run(ctx)
+	}
 	log.Info("cell-agent starting", "identity", holder.Identity, "lease", ns+"/"+holder.Name,
 		"duration", duration, "interval", interval, "deadline", deadline)
 	agent.Run(ctx) // returns when SIGTERM arrives
