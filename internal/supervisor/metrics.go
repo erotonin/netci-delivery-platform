@@ -14,6 +14,7 @@ type Metrics struct {
 	cells           prometheus.Gauge
 	lost            prometheus.Gauge
 	leading         prometheus.Gauge
+	headroom        *prometheus.GaugeVec
 }
 
 // NewMetrics registers the supervisor's metrics on r.
@@ -37,8 +38,11 @@ func NewMetrics(r prometheus.Registerer) *Metrics {
 		cells:   prometheus.NewGauge(prometheus.GaugeOpts{Name: "netci_supervisor_cells", Help: "Cells observed."}),
 		lost:    prometheus.NewGauge(prometheus.GaugeOpts{Name: "netci_supervisor_cells_lost", Help: "Cells whose pod has stopped renewing its lease."}),
 		leading: prometheus.NewGauge(prometheus.GaugeOpts{Name: "netci_supervisor_leading", Help: "1 while this replica is the one acting."}),
+		headroom: prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: "netci_supervisor_cell_headroom",
+			Help: "0 when no other machine could take the cell's controller if its machine were lost."}, []string{"cell"}),
 	}
-	r.MustRegister(m.actions, m.alerts, m.leaseMoved, m.observeErrors, m.resets, m.fenceSeconds, m.takeoverSeconds, m.cells, m.lost, m.leading)
+	r.MustRegister(m.actions, m.alerts, m.leaseMoved, m.observeErrors, m.resets, m.fenceSeconds, m.takeoverSeconds, m.cells, m.lost, m.leading,
+		m.headroom)
 	return m
 }
 
@@ -49,4 +53,13 @@ func (m *Metrics) SetLeading(on bool) {
 		return
 	}
 	m.leading.Set(0)
+}
+
+// SetHeadroom records whether the cell's controller could be placed elsewhere.
+func (m *Metrics) SetHeadroom(cell string, fits bool) {
+	v := 0.0
+	if fits {
+		v = 1
+	}
+	m.headroom.WithLabelValues(cell).Set(v)
 }

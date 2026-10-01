@@ -55,6 +55,12 @@ spec:
           labels: {severity: warning}
           annotations:
             summary: Takeovers over the last day took more than 2 minutes at p95.
+        - alert: NetciCellWithoutHeadroom
+          expr: min by (cell) (netci_supervisor_cell_headroom) == 0
+          for: 10m
+          labels: {severity: warning}
+          annotations:
+            summary: "If the machine of cell {{ "{{" }} $labels.cell {{ "}}" }} were lost, no other machine could take its controller even with every build evicted: the takeover would fence and then wait. Add capacity or move pods of the same priority."
         - alert: NetciSupervisorBlind
           expr: increase(netci_supervisor_observe_errors_total[5m]) > 30
           labels: {severity: warning}

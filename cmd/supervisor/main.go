@@ -70,6 +70,7 @@ func run(log *slog.Logger) error {
 	// is sent again (internal/kubeclient). Raise it only for an API server that is slow to start
 	// answering the supervisor's lists.
 	apiAttempt := duration("NETCI_API_ATTEMPT_TIMEOUT", 700*time.Millisecond, &errs)
+	headroomEvery := duration("NETCI_HEADROOM_INTERVAL", 30*time.Second, &errs)
 	if err := errors.Join(errs...); err != nil {
 		return err
 	}
@@ -157,6 +158,16 @@ func run(log *slog.Logger) error {
 	var leading atomic.Bool
 	sup.Leading = leading.Load
 	go sup.Run(ctx)
+	// Whether each cell could be taken over if its machine were lost, checked ahead of the
+	// loss: it lists every pod, so on its own client with room for a large cluster's answer.
+	hrCfg := rest.CopyConfig(restCfg)
+	hrCfg.Timeout = 20 * time.Second
+	hrClient, err := kubernetes.NewForConfig(kubeclient.Config(hrCfg, 10*time.Second))
+	if err != nil {
+		return err
+	}
+	go (&supervisor.HeadroomWatch{Client: hrClient, Interval: headroomEvery, Leading: leading.Load,
+		Events: &supervisor.KubeEvents{Client: hrClient, Instance: pod, Log: log}, Metrics: metrics, Log: log}).Run(ctx)
 	for ctx.Err() == nil {
 		runElection(ctx, lock, &leading, metrics, log)
 		if ctx.Err() == nil {
