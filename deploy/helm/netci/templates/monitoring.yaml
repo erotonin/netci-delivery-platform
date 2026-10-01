@@ -1,0 +1,88 @@
+{{- if .Values.monitoring.enabled }}
+# Scraping (prometheus-operator) and the alerts that need a person. Every metric named here is
+# exported by the binaries (internal/*/metrics.go).
+{{- range $app := list "netci-supervisor" "netci-queue" "netci-fabric" }}
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: {{ $app }}
+  namespace: {{ $.Release.Namespace }}
+  labels: {{- toYaml $.Values.monitoring.labels | nindent 4 }}
+spec:
+  selector:
+    matchLabels: {app: {{ $app }}}
+  podMetricsEndpoints:
+    - port: {{ if eq $app "netci-supervisor" }}metrics{{ else }}http{{ end }}
+      path: /metrics
+      interval: 15s
+{{- end }}
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: netci
+  namespace: {{ .Release.Namespace }}
+  labels: {{- toYaml .Values.monitoring.labels | nindent 4 }}
+spec:
+  groups:
+    - name: netci-takeover
+      rules:
+        - alert: NetciSupervisorNotLeading
+          expr: max(netci_supervisor_leading) < 1
+          for: 1m
+          labels: {severity: critical}
+          annotations:
+            summary: No Cell Supervisor replica is leading; a controller that dies now is not taken over.
+        - alert: NetciFenceLeaseMoved
+          expr: increase(netci_supervisor_lease_moved_total[1h]) > 0
+          labels: {severity: critical}
+          annotations:
+            summary: A fencing stopped because a Lease was renewed after its machine was confirmed off. The node-to-machine mapping is wrong; fix it before the next failure.
+        - alert: NetciSupervisorNeedsAPerson
+          expr: increase(netci_supervisor_alerts_total[10m]) > 0
+          labels: {severity: warning}
+          annotations:
+            summary: The supervisor decided not to act on its own (unknown power state, mass failure, cooldown, no quorum); see its events.
+        - alert: NetciCellDown
+          expr: max(netci_supervisor_cells_lost) > 0
+          for: 2m
+          labels: {severity: critical}
+          annotations:
+            summary: A cell's controller has not renewed its Lease for two minutes and has not been taken over.
+        - alert: NetciTakeoverSlow
+          expr: histogram_quantile(0.95, sum(rate(netci_supervisor_takeover_seconds_bucket[1d])) by (le)) > 120
+          labels: {severity: warning}
+          annotations:
+            summary: Takeovers over the last day took more than 2 minutes at p95.
+        - alert: NetciSupervisorBlind
+          expr: increase(netci_supervisor_observe_errors_total[5m]) > 30
+          labels: {severity: warning}
+          annotations:
+            summary: The supervisor cannot observe the cluster; it decides nothing while it cannot.
+    - name: netci-queue
+      rules:
+        - alert: NetciControllerUnreachable
+          expr: sum by (cell) (increase(netci_runs_controller_errors_total[10m])) > 20
+          labels: {severity: warning}
+          annotations:
+            summary: "Runs for cell {{ "{{" }} $labels.cell {{ "}}" }} cannot be handed to its controller; they wait in the queue."
+        - alert: NetciRunsLostWithAController
+          expr: increase(netci_runs_redispatched_total[1h]) > 0
+          labels: {severity: info}
+          annotations:
+            summary: "Runs were dispatched again after cell {{ "{{" }} $labels.cell {{ "}}" }} lost its queue (a controller restart); none were lost."
+    - name: netci-fabric
+      rules:
+        - alert: NetciFabricNoWarmSandbox
+          expr: sum by (pool) (netci_fabric_sandboxes{state="warm"}) == 0
+          for: 10m
+          labels: {severity: warning}
+          annotations:
+            summary: "Pool {{ "{{" }} $labels.pool {{ "}}" }} has had no warm sandbox for 10 minutes; builds wait for cold ones."
+        - alert: NetciFabricSandboxesFailing
+          expr: sum by (pool) (increase(netci_fabric_transitions_total{to="failed"}[30m])) > 5
+          labels: {severity: warning}
+          annotations:
+            summary: "Sandboxes of pool {{ "{{" }} $labels.pool {{ "}}" }} keep failing (image, scheduling, limits)."
+{{- end }}

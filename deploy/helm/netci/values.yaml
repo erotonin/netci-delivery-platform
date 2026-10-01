@@ -57,3 +57,8 @@ fabric:
     secretName: ""
     key: "url"
   config: {}
+
+# prometheus-operator PodMonitors and alert rules (monitoring.coreos.com/v1).
+monitoring:
+  enabled: false
+  labels: {}
