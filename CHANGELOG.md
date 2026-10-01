@@ -5,6 +5,22 @@ Changelog and releases use Semantic Versioning once the project reaches 1.0.0.
 
 ## [Unreleased]
 
+### Added - 2026-10-01: unattended takeover verified; netciOnce (ADR-060, ADR-065)
+- The Cell Supervisor ran in the lab. A VM was powered off under a running build, with no
+  person involved.
+  - **Run 6**: build resumed 42.5 s after the power loss.
+  - Every run: SUCCESS, each step run once, at most 1 log line lost.
+  - Six lab runs found and fixed six faults: see ADR-060's table.
+    - SSH host-key negotiation.
+    - API clients pinned to a dead API server.
+    - The startup check refusing to start during an outage.
+    - Longhorn waiting for NotReady.
+    - Powering a machine on too early.
+    - Cell leases too short for an etcd stall, which killed a healthy neighbour once.
+  - Cell leases are now 15 s / 10 s. The supervisor is a hot standby.
+- `netciOnce(key) { ... }` guards a block that must not run twice across a takeover. Its record
+  is kept in PostgreSQL outside `JENKINS_HOME`. The guard fails closed.
+
 ### Added - 2026-10-01: agent fabric v1 (ADR-064)
 - `netci-fabric` keeps warm sandbox pods and binds each one late to the controller that claims
   it. `netci-sandbox` is the sandbox's entrypoint. The netCI plugin's `netci` cloud provisions
