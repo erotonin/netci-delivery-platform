@@ -26,7 +26,7 @@ test: ## unit tests (race detector on); PostgreSQL tests skip unless NETCI_QUEUE
 check-pg: ## make check, refusing to let the PostgreSQL tests skip
 	@test -n "$$NETCI_QUEUE_TEST_DATABASE_URL" || { echo "NETCI_QUEUE_TEST_DATABASE_URL is not set: the queue's tests would skip"; exit 1; }
 	@$(MAKE) --no-print-directory check
-	@! go test -count=1 -v ./internal/runqueue/ 2>&1 | grep -q -- '--- SKIP' || { echo "a PostgreSQL test skipped"; exit 1; }
+	@! go test -count=1 -v ./internal/runqueue/ ./internal/fabric/ 2>&1 | grep -q -- '--- SKIP' || { echo "a PostgreSQL test skipped"; exit 1; }
 
 plugin: ## build and test the Jenkins plugin (Maven in a container; cache in ~/.cache/netci-m2)
 	@mkdir -p $$HOME/.cache/netci-m2
