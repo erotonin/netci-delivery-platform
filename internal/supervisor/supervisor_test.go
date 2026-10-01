@@ -322,6 +322,17 @@ func (f *fakeEvents) Event(_ ObjectRef, _ bool, reason, _ string) {
 	f.reasons = append(f.reasons, reason)
 	f.mu.Unlock()
 }
+func (f *fakeEvents) count(reason string) int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	n := 0
+	for _, r := range f.reasons {
+		if r == reason {
+			n++
+		}
+	}
+	return n
+}
 func (f *fakeEvents) has(reason string) bool {
 	f.mu.Lock()
 	defer f.mu.Unlock()

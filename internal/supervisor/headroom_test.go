@@ -1,13 +1,21 @@
 package supervisor
 
 import (
+	"context"
+	"io"
+	"log/slog"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/testutil"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/kubernetes/fake"
 )
 
 func machine(name, cpu, mem string) corev1.Node {
@@ -135,5 +143,46 @@ func TestCellsOnOneMachineAreCounted(t *testing.T) {
 	gone.Status.Phase = corev1.PodFailed
 	if n := Sharing([]corev1.Pod{c, gone}); n != 0 {
 		t.Fatalf("a finished pod counted: %d", n)
+	}
+}
+
+// The check reads pods slimmed to what it uses; the verdict must not change.
+func TestASlimPodGivesTheSameVerdict(t *testing.T) {
+	nodes := []corev1.Node{machine("lab-1", "4", "5Gi"), machine("lab-2", "4", "3Gi")}
+	used := []corev1.Pod{workload("platform", "lab-2", "100m", "1Gi", 1000000)}
+	cell := controller("lab-1")
+	full := Headroom(nodes, append(used, cell), []corev1.Pod{cell})
+	var slimmed []corev1.Pod
+	for i := range used {
+		slimmed = append(slimmed, slim(&used[i]))
+	}
+	sc := slim(&cell)
+	if got := Headroom(nodes, append(slimmed, sc), []corev1.Pod{sc}); got[0].Fits != full[0].Fits || got[0].Cell != full[0].Cell {
+		t.Fatalf("slim %+v, full %+v", got, full)
+	}
+}
+
+func TestTheWatchReportsACellWithoutHeadroom(t *testing.T) {
+	cell := controller("lab-1")
+	full := workload("platform", "lab-2", "500m", "3Gi", 1000000)
+	n1, n2 := machine("lab-1", "4", "5Gi"), machine("lab-2", "4", "3Gi")
+	client := fake.NewClientset(&n1, &n2, &cell, &full,
+		&appsv1.StatefulSet{ObjectMeta: metav1.ObjectMeta{Name: "jenkins", Namespace: "cell-b", Labels: map[string]string{CellLabel: "true"}}})
+	events := &fakeEvents{}
+	m := NewMetrics(prometheus.NewRegistry())
+	w := &HeadroomWatch{Client: client, Interval: time.Hour, Leading: func() bool { return true }, Events: events, Metrics: m,
+		Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	if err := w.check(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if v := testutil.ToFloat64(m.headroom.WithLabelValues("cell-b/jenkins")); v != 0 {
+		t.Fatalf("headroom %v, want 0: lab-2 is full", v)
+	}
+	if !events.has("NoTakeoverHeadroom") {
+		t.Fatal("the leader did not report it")
+	}
+	_ = w.check(context.Background())
+	if n := events.count("NoTakeoverHeadroom"); n != 1 {
+		t.Fatalf("reported %d times; once until it changes", n)
 	}
 }

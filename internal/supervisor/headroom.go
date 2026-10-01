@@ -11,7 +11,9 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/tools/pager"
 	"k8s.io/klog/v2"
 )
 
@@ -225,23 +227,32 @@ func (w *HeadroomWatch) check(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	pods, err := w.Client.CoreV1().Pods(metav1.NamespaceAll).List(ctx, metav1.ListOptions{})
+	// Every pod in the cluster, a page at a time, keeping only what the check reads: a large
+	// cluster's full pod list in one answer would weigh on the API server and on this process
+	// every 30 s.
+	cellPods := map[string]bool{}
+	for _, s := range sets.Items {
+		cellPods[s.Namespace+"/"+s.Name+"-0"] = true
+	}
+	var pods, cells []corev1.Pod
+	err = pager.New(func(ctx context.Context, opts metav1.ListOptions) (runtime.Object, error) {
+		return w.Client.CoreV1().Pods(metav1.NamespaceAll).List(ctx, opts)
+	}).EachListItem(ctx, metav1.ListOptions{Limit: 500}, func(obj runtime.Object) error {
+		p := slim(obj.(*corev1.Pod))
+		pods = append(pods, p)
+		if cellPods[p.Namespace+"/"+p.Name] {
+			cells = append(cells, p)
+		}
+		return nil
+	})
 	if err != nil {
 		return err
-	}
-	var cells []corev1.Pod
-	for _, s := range sets.Items {
-		for _, p := range pods.Items {
-			if p.Namespace == s.Namespace && p.Name == s.Name+"-0" {
-				cells = append(cells, p)
-			}
-		}
 	}
 	w.Metrics.SetSharing(Sharing(cells))
 	if w.short == nil {
 		w.short = map[string]bool{}
 	}
-	for _, r := range Headroom(nodes.Items, pods.Items, cells) {
+	for _, r := range Headroom(nodes.Items, pods, cells) {
 		w.Metrics.SetHeadroom(r.Cell, r.Fits)
 		was := w.short[r.Cell]
 		w.short[r.Cell] = !r.Fits
@@ -275,4 +286,22 @@ func Sharing(cells []corev1.Pod) int {
 		}
 	}
 	return n
+}
+
+// slim keeps of a pod what Headroom and Sharing read.
+func slim(p *corev1.Pod) corev1.Pod {
+	out := corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: p.Name, Namespace: p.Namespace, UID: p.UID, OwnerReferences: p.OwnerReferences},
+		Spec: corev1.PodSpec{NodeName: p.Spec.NodeName, Priority: p.Spec.Priority, NodeSelector: p.Spec.NodeSelector,
+			Tolerations: p.Spec.Tolerations, Overhead: p.Spec.Overhead},
+		Status: corev1.PodStatus{Phase: p.Status.Phase},
+	}
+	for _, c := range p.Spec.Containers {
+		out.Spec.Containers = append(out.Spec.Containers, corev1.Container{Resources: corev1.ResourceRequirements{Requests: c.Resources.Requests}})
+	}
+	for _, c := range p.Spec.InitContainers {
+		out.Spec.InitContainers = append(out.Spec.InitContainers, corev1.Container{RestartPolicy: c.RestartPolicy,
+			Resources: corev1.ResourceRequirements{Requests: c.Resources.Requests}})
+	}
+	return out
 }
