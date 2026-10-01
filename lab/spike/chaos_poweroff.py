@@ -46,11 +46,12 @@ def whole() -> bool:
     return True
 
 
-def neighbour() -> tuple[int, str]:
+def neighbour() -> tuple[int, str, str]:
     restarts = int(probe.kubectl("-n", "cell-a", "get", "pod", "jenkins-0", "-o",
                                  "jsonpath={.status.containerStatuses[?(@.name=='jenkins')].restartCount}") or 0)
     uid = probe.kubectl("-n", "cell-a", "get", "pod", "jenkins-0", "-o", "jsonpath={.metadata.uid}")
-    return restarts, uid
+    node = probe.kubectl("-n", "cell-a", "get", "pod", "jenkins-0", "-o", "jsonpath={.spec.nodeName}")
+    return restarts, uid, node
 
 
 def main() -> int:
@@ -78,16 +79,25 @@ def main() -> int:
             "node": d.get("controllerNodeBefore"), "result": d.get("result"), "resumed": d.get("resumed"),
             "ticksMissing": d.get("ticksMissing"), "timings_s": d.get("timings_s"),
             "nodeRestoredBySupervisor": d.get("nodeRestoredBySupervisor"),
+            # A neighbour on the machine that lost power is not a healthy neighbour: it must have
+            # been taken over too. One on another machine must not have noticed anything.
+            "neighbourNode": before[2],
+            "neighbourColocated": before[2] == d.get("controllerNodeBefore"),
             "neighbourJenkinsRestarted": after[1] != before[1] or after[0] != before[0],
             "neighbourLeaseLosses": losses,
+            "neighbourHeldAgain": after[1] != before[1] and "True" in probe.kubectl(
+                "-n", "cell-a", "get", "pod", "jenkins-0", "-o", "jsonpath={.status.conditions[?(@.type=='Ready')].status}", check=False),
         })
         print(json.dumps(runs[-1]), flush=True)
     def series(key):
         return [r["timings_s"][key] for r in runs if r["timings_s"] and key in r["timings_s"]]
     summary = {k: {"values": series(k), "median": statistics.median(series(k)) if series(k) else None,
                    "max": max(series(k)) if series(k) else None} for k in ("fenced", "leaseTaken", "jenkinsUp", "resumed")}
-    ok = all(r["result"] == "SUCCESS" and r["resumed"] and not r["neighbourJenkinsRestarted"] and not r["neighbourLeaseLosses"]
-             and r["nodeRestoredBySupervisor"] for r in runs)
+    def neighbour_ok(r):
+        if r["neighbourColocated"]:
+            return r["neighbourHeldAgain"]
+        return not r["neighbourJenkinsRestarted"] and not r["neighbourLeaseLosses"]
+    ok = all(r["result"] == "SUCCESS" and r["resumed"] and neighbour_ok(r) and r["nodeRestoredBySupervisor"] for r in runs)
     out = {"scenario": "chaos-poweroff", "started": started.isoformat(), "runs": runs, "summary": summary,
            "verdict": "PASS" if ok else "FAIL"}
     path = EVIDENCE / f"chaos-poweroff-{started.strftime('%Y%m%dT%H%M%SZ')}.json"
