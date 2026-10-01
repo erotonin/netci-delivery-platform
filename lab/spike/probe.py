@@ -147,12 +147,42 @@ def fail(kind: str, facts: dict) -> dict[str, float]:
             raise RuntimeError(f"{node} is '{state}', not off: refusing to fence")
         kubectl("taint", "node", node, "node.kubernetes.io/out-of-service=nodeshutdown:NoExecute", "--overwrite")
         t["fenced"] = now()
+    elif kind == "node-poweroff-supervised":
+        # Only the fault. Detection, fencing and takeover are the Cell Supervisor's (ADR-060):
+        # this records when each of its effects became visible, and touches nothing.
+        holder = kubectl("-n", NS, "get", "lease", "jenkins", "-o", "jsonpath={.spec.holderIdentity}")
+        facts["leaseHolderBefore"] = holder
+        subprocess.run(["virsh", "-c", "qemu:///system", "destroy", node], check=True, capture_output=True)
+        t["failure"] = now()
+        t["fenced"] = wait("supervisor fenced the node", lambda: "out-of-service" in kubectl(
+            "get", "node", node, "-o", "jsonpath={.spec.taints[*].key}") and now(), 300, 0.2)
+        t["leaseTaken"] = wait("a new pod holds the cell's lease", lambda: (lambda h: h and h != holder and now())(
+            kubectl("-n", NS, "get", "lease", "jenkins", "-o", "jsonpath={.spec.holderIdentity}")), 300, 0.2)
     else:
         raise ValueError(kind)
     return t
 
 
+def supervisor_events() -> list[str]:
+    out = kubectl("-n", NS, "get", "events", "-o",
+                  "jsonpath={range .items[?(@.source.component=='netci-supervisor')]}{.lastTimestamp} {.reason}: {.message}{'\\n'}{end}", check=False)
+    return [l for l in out.splitlines() if l][-10:]
+
+
 def restore(kind: str, facts: dict) -> None:
+    if kind == "node-poweroff-supervised":
+        node = facts["controllerNodeBefore"]
+        # The supervisor runs with auto power-on in the lab: it starts the machine once nothing
+        # of a cell is left on it, and removes its taint once the node is Ready.
+        try:
+            wait("supervisor brought the node back", lambda: kubectl("get", "node", node, "-o",
+                 "jsonpath={.status.conditions[?(@.type=='Ready')].status}") == "True" and "out-of-service" not in kubectl(
+                 "get", "node", node, "-o", "jsonpath={.spec.taints[*].key}"), 600, 2)
+            facts["nodeRestoredBySupervisor"] = True
+        except TimeoutError:
+            facts["nodeRestoredBySupervisor"] = False
+            kind = "node-poweroff"  # clean up by hand, and say so
+        facts["supervisorEvents"] = supervisor_events()
     if kind == "node-poweroff":
         node = facts["controllerNodeBefore"]
         subprocess.run(["virsh", "-c", "qemu:///system", "start", node], check=False, capture_output=True)
@@ -187,7 +217,7 @@ def scenario_resume(args) -> dict:
     facts["agentLog"] = str(agent_log.relative_to(ROOT))
     t = fail(args.failure, facts)
     j.after_restart()
-    wait("Jenkins down", lambda: not j.up(), 60, 0.2) if args.failure != "node-poweroff" else None
+    wait("Jenkins down", lambda: not j.up(), 60, 0.2) if not args.failure.startswith("node-poweroff") else None
     t["jenkinsUp"] = wait("Jenkins up", lambda: j.up() and now(), 900, 0.5)
     j.after_restart()
     facts["controllerNodeAfter"] = controller_node()
@@ -255,7 +285,7 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     sub = parser.add_subparsers(dest="cmd", required=True)
     r = sub.add_parser("resume")
-    r.add_argument("--failure", required=True, choices=["jvm-kill", "pod-delete", "node-poweroff"])
+    r.add_argument("--failure", required=True, choices=["jvm-kill", "pod-delete", "node-poweroff", "node-poweroff-supervised"])
     r.add_argument("--seconds", type=int, default=240)
     # How far into the step to fail. 1 is the worst case for state written just before: the
     # step's start may not have reached the disk yet.

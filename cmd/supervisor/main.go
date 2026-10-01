@@ -72,7 +72,10 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	restCfg.Timeout = 5 * time.Second // an observation that hangs is a gap, not a slow success
+	// An observation that hangs is a gap, not a slow success. Short: the API server behind the
+	// Service may be the one on the machine that just died (seen in the lab: 5 s timeouts made
+	// the leader miss its own renewals on a healthy node).
+	restCfg.Timeout = 2 * time.Second
 	restCfg.QPS, restCfg.Burst = 50, 100
 	client, err := kubernetes.NewForConfig(restCfg)
 	if err != nil {
@@ -95,8 +98,21 @@ func run(log *slog.Logger) error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer stop()
 
-	if err := supervisor.ValidateMachines(ctx, client, fencer, machines, 5*time.Second); err != nil {
-		return err
+	for {
+		err := supervisor.ValidateMachines(ctx, client, fencer, machines, 3*time.Second, 12*time.Second)
+		var retry supervisor.Retryable
+		if err == nil {
+			break
+		}
+		if !errors.As(err, &retry) || ctx.Err() != nil {
+			return err
+		}
+		log.Warn("startup check could not be completed; acting on nothing until it is", "error", err)
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-time.After(5 * time.Second):
+		}
 	}
 	log.Info("node-to-machine mapping checked against the power controller", "machines", len(machines), "fencer", fencer.Name())
 

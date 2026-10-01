@@ -68,7 +68,7 @@ func (s *SSH) run(ctx context.Context, verb, machine string) (string, error) {
 		// Ask for the pinned key's type only: a server with several host keys would otherwise
 		// show the one the client prefers (ECDSA before Ed25519), which is not the pinned one.
 		HostKeyAlgorithms: hostKeyAlgorithms(s.HostKey),
-		Timeout:         timeout,
+		Timeout:           timeout,
 	}
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
