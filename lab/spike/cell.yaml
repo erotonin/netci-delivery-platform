@@ -111,6 +111,11 @@ data:
     unclassified:
       location:
         url: "http://jenkins.cell-a.svc.cluster.local:8080/"
+      # netciOnce (ADR-065): markers in netci-queue's PostgreSQL, with a token that can do nothing else.
+      netci:
+        queueUrl: "http://netci-queue.netci-system.svc.cluster.local:8080"
+        tokenFile: /run/secrets/cell/once-token
+        retrySeconds: 60
     jobs:
       - script: |
           pipelineJob('resume-probe') {
@@ -125,6 +130,28 @@ data:
                     stages {
                       stage('long sh') {
                         steps { sh 'for i in $(seq 1 ^${DURATION}); do echo "tick $i $(date +%T)"; sleep 1; done' }
+                      }
+                      stage('after') { steps { echo 'reached the stage after the long step' } }
+                    }
+                  }
+                ''')
+              }
+            }
+          }
+          // resume-probe with its long step inside netciOnce: a power loss during the block must
+          // resume it, not refuse it (lab/spike/probe.py --job once-probe).
+          pipelineJob('once-probe') {
+            parameters { stringParam('DURATION', '240', 'how long the sh step runs, in seconds') }
+            definition {
+              cps {
+                sandbox(true)
+                script('''
+                  pipeline {
+                    agent { label 'spike-ws' }
+                    options { durabilityHint('MAX_SURVIVABILITY') }
+                    stages {
+                      stage('long sh') {
+                        steps { netciOnce('deploy') { sh 'for i in $(seq 1 ^${DURATION}); do echo "tick $i $(date +%T)"; sleep 1; done' } }
                       }
                       stage('after') { steps { echo 'reached the stage after the long step' } }
                     }

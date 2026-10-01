@@ -214,12 +214,13 @@ def ticks(text: str) -> list[int]:
 
 def scenario_resume(args) -> dict:
     j = Jenkins()
-    facts: dict = {"scenario": "resume", "failure": args.failure, "seconds": args.seconds}
-    number = j.trigger("resume-probe", {"DURATION": str(args.seconds)})
+    job = args.job
+    facts: dict = {"scenario": "resume", "failure": args.failure, "seconds": args.seconds, "job": job}
+    number = j.trigger(job, {"DURATION": str(args.seconds)})
     facts["build"] = number
-    wait(f"build to tick {args.crash_at_tick}", lambda: len(ticks(j.console("resume-probe", number))) >= args.crash_at_tick,
+    wait(f"build to tick {args.crash_at_tick}", lambda: len(ticks(j.console(job, number))) >= args.crash_at_tick,
          300, 0.2)
-    facts["ticksBeforeFailure"] = len(ticks(j.console("resume-probe", number)))
+    facts["ticksBeforeFailure"] = len(ticks(j.console(job, number)))
     # An agent on the controller's own node dies with it, and no takeover can resume a build
     # whose process is gone: record where it ran so the result is read correctly.
     facts["agentNode"] = kubectl("-n", NS, "get", "pods", "-o",
@@ -238,15 +239,15 @@ def scenario_resume(args) -> dict:
     t["jenkinsUp"] = wait("Jenkins up", lambda: j.up() and now(), 900, 0.5)
     j.after_restart()
     facts["controllerNodeAfter"] = controller_node()
-    base = len(ticks(j.console("resume-probe", number)))
+    base = len(ticks(j.console(job, number)))
     try:
         t["resumed"] = wait("new ticks after restart",
-                            lambda: len(ticks(j.console("resume-probe", number))) > base and now(), 420, 1)
+                            lambda: len(ticks(j.console(job, number))) > base and now(), 420, 1)
     except TimeoutError:
         facts["resumed"] = False
-    final = wait("build to finish", lambda: (b := j.build("resume-probe", number)) and not b["building"] and b,
+    final = wait("build to finish", lambda: (b := j.build(job, number)) and not b["building"] and b,
                  args.seconds + 900, 2)
-    text = j.console("resume-probe", number)
+    text = j.console(job, number)
     seen = ticks(text)
     facts.update({
         "result": final["result"],
@@ -256,6 +257,15 @@ def scenario_resume(args) -> dict:
         "resumed": facts.get("resumed", True),
         "consoleTail": text.strip().splitlines()[-12:],
     })
+    if job == "once-probe":
+        # netciOnce (ADR-065): the block asked once, when it started; the resumed block did not
+        # ask again and was not refused. One marker for this build, with one nonce.
+        markers = kubectl("-n", "netci-system", "exec", "netci-pg-0", "--", "psql", "-U", "netci", "-d", "netci", "-tAc",
+                          f"SELECT count(*) FROM once_markers WHERE client = '{NS}' AND key = 'deploy' "
+                          f"AND scope LIKE '%/once-probe#{number}'")
+        facts["once"] = {"markers": int(markers.strip() or 0),
+                         "firstStarts": text.count("netciOnce('deploy'): first start in this build"),
+                         "refused": "already started in this build" in text}
     start = t["failure"]
     facts["timings_s"] = {k: round(v - start, 1) for k, v in t.items() if k != "failure"}
     restore(args.failure, facts)
@@ -304,6 +314,7 @@ def main() -> int:
     r = sub.add_parser("resume")
     r.add_argument("--failure", required=True, choices=["jvm-kill", "pod-delete", "node-poweroff", "node-poweroff-supervised"])
     r.add_argument("--seconds", type=int, default=240)
+    r.add_argument("--job", default="resume-probe", choices=["resume-probe", "once-probe"])
     # How far into the step to fail. 1 is the worst case for state written just before: the
     # step's start may not have reached the disk yet.
     r.add_argument("--crash-at-tick", type=int, default=20)

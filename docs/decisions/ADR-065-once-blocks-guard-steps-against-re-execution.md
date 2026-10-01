@@ -33,6 +33,9 @@ lost is precisely the record that would.
    the step is started anew, with a new nonce.
 3. **The scope is the build:** the controller's instance identity, the job's full name and the
    build number. It is decided by the plugin, and the server records which client (cell) asked.
+   Each controller has its own netci-queue client with `"once": true` and no `jobs`: the
+   credential on every controller records markers and can start no run, and a webhook or API
+   client cannot record markers (403).
 4. **Fail closed.** If netci-queue cannot be reached, the body does not run. A guarded step
    that might run twice is worse than one that waits; the call is retried for up to a minute,
    then the step fails.

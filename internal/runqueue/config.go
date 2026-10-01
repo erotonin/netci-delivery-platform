@@ -21,7 +21,8 @@ import (
 //
 //	{"cells":   {"cell-b": {"url": "http://jenkins.cell-b.svc:8080", "credentials": "/etc/netci/cells/cell-b", "budget": 50}},
 //	 "routes":  [{"prefix": "payments/", "cell": "cell-b"}],
-//	 "clients": {"gitlab": {"tokenSha256": "<hex>", "jobs": ["payments/"]}}}
+//	 "clients": {"gitlab": {"tokenSha256": "<hex>", "jobs": ["payments/"]},
+//	             "cell-b": {"tokenSha256": "<hex>", "once": true}}}
 type Config struct {
 	Cells   map[string]CellConfig   `json:"cells"`
 	Routes  []Route                 `json:"routes"`
@@ -43,10 +44,13 @@ type Route struct {
 	Cell   string `json:"cell"`
 }
 
-// ClientConfig: a caller of the intake API and the jobs it may trigger (prefixes).
+// ClientConfig: a caller of the intake API, the jobs it may trigger (prefixes), and whether it may
+// record netciOnce markers. A controller needs only the second: a credential on every controller
+// that could also start any job would be more than netciOnce needs.
 type ClientConfig struct {
 	TokenSHA256 string   `json:"tokenSha256"`
-	Jobs        []string `json:"jobs"`
+	Jobs        []string `json:"jobs,omitempty"`
+	Once        bool     `json:"once,omitempty"`
 }
 
 // LoadConfig reads and checks the file; anything doubtful is an error at start.
@@ -103,8 +107,8 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("clients %s and %s share a token", other, name)
 		}
 		hashes[cl.TokenSHA256] = name
-		if len(cl.Jobs) == 0 {
-			return fmt.Errorf("client %s may trigger no job", name)
+		if len(cl.Jobs) == 0 && !cl.Once {
+			return fmt.Errorf("client %s may do nothing: give it jobs, once, or both", name)
 		}
 	}
 	for name, h := range c.Hooks {

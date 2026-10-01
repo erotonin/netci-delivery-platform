@@ -62,21 +62,28 @@ func TestConcurrentAttemptsOfOneBlockLetExactlyOneRun(t *testing.T) {
 func TestTheOnceEndpoint(t *testing.T) {
 	a, _ := newAPI(t)
 	body := `{"scope":"jenkins-x/payments/deploy#42","key":"deploy-prod","nonce":"0123456789abcdef-1"}`
-	if code, r := a.do("POST", "/v1/once", "gitlab-token", body); code != http.StatusOK || r["first"] != true {
+	if code, r := a.do("POST", "/v1/once", "cell-b-token", body); code != http.StatusOK || r["first"] != true {
 		t.Fatalf("%d %v", code, r)
 	}
-	if code, _ := a.do("POST", "/v1/once", "gitlab-token", body); code != http.StatusOK {
+	if code, _ := a.do("POST", "/v1/once", "cell-b-token", body); code != http.StatusOK {
 		t.Fatalf("a retry of the same attempt: %d", code)
 	}
-	if code, r := a.do("POST", "/v1/once", "gitlab-token", `{"scope":"jenkins-x/payments/deploy#42","key":"deploy-prod","nonce":"0123456789abcdef-2"}`); code != http.StatusConflict || r["first"] != false {
+	if code, r := a.do("POST", "/v1/once", "cell-b-token", `{"scope":"jenkins-x/payments/deploy#42","key":"deploy-prod","nonce":"0123456789abcdef-2"}`); code != http.StatusConflict || r["first"] != false {
 		t.Fatalf("a re-execution: %d %v", code, r)
 	}
 	if code, _ := a.do("POST", "/v1/once", "", body); code != http.StatusUnauthorized {
 		t.Fatal(code)
 	}
+	// Each credential does one thing: a webhook client records no marker, a controller starts no run.
+	if code, _ := a.do("POST", "/v1/once", "gitlab-token", body); code != http.StatusForbidden {
+		t.Fatalf("a client without once recorded a marker: %d", code)
+	}
+	if code, _ := a.do("POST", "/v1/runs", "cell-b-token", `{"job":"payments/deploy"}`); code != http.StatusForbidden {
+		t.Fatalf("a once-only client triggered a run: %d", code)
+	}
 	for _, bad := range []string{`{"scope":"","key":"k","nonce":"0123456789abcdef"}`, `{"scope":"s","key":"","nonce":"0123456789abcdef"}`,
 		`{"scope":"s","key":"k","nonce":"short"}`, `not json`} {
-		if code, _ := a.do("POST", "/v1/once", "gitlab-token", bad); code != http.StatusBadRequest {
+		if code, _ := a.do("POST", "/v1/once", "cell-b-token", bad); code != http.StatusBadRequest {
 			t.Errorf("%s: %d", bad, code)
 		}
 	}

@@ -26,6 +26,7 @@ func testConfig() *Config {
 		Clients: map[string]ClientConfig{
 			"gitlab":  {TokenSHA256: hash("gitlab-token"), Jobs: []string{"payments/"}},
 			"release": {TokenSHA256: hash("release-token"), Jobs: []string{""}},
+			"cell-b":  {TokenSHA256: hash("cell-b-token"), Once: true},
 		},
 	}
 }
@@ -148,6 +149,7 @@ func TestConfigIsCheckedAtStart(t *testing.T) {
 			c.Clients["dup"] = ClientConfig{TokenSHA256: hash("gitlab-token"), Jobs: []string{"x"}}
 		},
 		func(c *Config) { c.Clients["short"] = ClientConfig{TokenSHA256: "abcd", Jobs: []string{"x"}} },
+		func(c *Config) { c.Clients["idle"] = ClientConfig{TokenSHA256: hash("idle-token")} },
 		func(c *Config) { c.Cells["cell-b"] = CellConfig{URL: "ftp://x", Credentials: "/x", Budget: 1} },
 		func(c *Config) { c.Cells["cell-b"] = CellConfig{URL: "http://x", Credentials: "/x", Budget: 0} },
 	}

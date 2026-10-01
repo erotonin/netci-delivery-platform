@@ -62,6 +62,10 @@ func (in *Intake) once(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if !in.Config.Clients[client].Once {
+		problem(w, http.StatusForbidden, "this client may not record once markers")
+		return
+	}
 	raw, err := io.ReadAll(io.LimitReader(r.Body, 8<<10))
 	if err != nil {
 		problem(w, http.StatusBadRequest, "unreadable body")

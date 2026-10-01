@@ -57,6 +57,7 @@ def neighbour() -> tuple[int, str, str]:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--runs", type=int, default=3)
+    ap.add_argument("--job", default="resume-probe", choices=["resume-probe", "once-probe"])
     args = ap.parse_args()
     started = dt.datetime.now(dt.timezone.utc)
     runs = []
@@ -67,7 +68,7 @@ def main() -> int:
         tick = random.randint(5, 60)
         t0 = dt.datetime.now(dt.timezone.utc)
         r = subprocess.run([sys.executable, str(Path(__file__).parent / "probe.py"), "resume", "--failure",
-                            "node-poweroff-supervised", "--seconds", "240", "--crash-at-tick", str(tick)],
+                            "node-poweroff-supervised", "--seconds", "240", "--crash-at-tick", str(tick), "--job", args.job],
                            capture_output=True, text=True, timeout=3000)
         evidence = sorted(EVIDENCE.glob("spike-resume-node-poweroff-supervised-*.json"))[-1]
         d = json.loads(evidence.read_text())
@@ -77,7 +78,7 @@ def main() -> int:
         runs.append({
             "run": i + 1, "crashAtTick": tick, "probeExit": r.returncode, "evidence": evidence.name,
             "node": d.get("controllerNodeBefore"), "result": d.get("result"), "resumed": d.get("resumed"),
-            "ticksMissing": d.get("ticksMissing"), "timings_s": d.get("timings_s"),
+            "ticksMissing": d.get("ticksMissing"), "timings_s": d.get("timings_s"), "job": args.job, "once": d.get("once"),
             "nodeRestoredBySupervisor": d.get("nodeRestoredBySupervisor"),
             # A neighbour on the machine that lost power is not a healthy neighbour: it must have
             # been taken over too. One on another machine must not have noticed anything.
@@ -97,7 +98,10 @@ def main() -> int:
         if r["neighbourColocated"]:
             return r["neighbourHeldAgain"]
         return not r["neighbourJenkinsRestarted"] and not r["neighbourLeaseLosses"]
-    ok = all(r["result"] == "SUCCESS" and r["resumed"] and neighbour_ok(r) and r["nodeRestoredBySupervisor"] for r in runs)
+    def once_ok(r):  # once-probe: one marker, one start of the block, nothing refused
+        return r["once"] is None or (r["once"]["markers"] == 1 and r["once"]["firstStarts"] == 1 and not r["once"]["refused"])
+    ok = all(r["result"] == "SUCCESS" and r["resumed"] and neighbour_ok(r) and r["nodeRestoredBySupervisor"] and once_ok(r)
+             for r in runs)
     out = {"scenario": "chaos-poweroff", "started": started.isoformat(), "runs": runs, "summary": summary,
            "verdict": "PASS" if ok else "FAIL"}
     path = EVIDENCE / f"chaos-poweroff-{started.strftime('%Y%m%dT%H%M%SZ')}.json"

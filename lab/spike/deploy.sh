@@ -37,7 +37,8 @@ kubectl -n "${CELL}" create secret generic harbor-pull --type kubernetes.io/dock
 kubectl -n "${CELL}" create secret generic jenkins-cell \
   --from-file=admin-password="${STATE}/cell-admin-password" \
   --from-file=netci-password="${STATE}/cell-netci-password" \
-  $([[ -s "${STATE}/fabric/${CELL}-token" ]] && echo --from-file=fabric-token="${STATE}/fabric/${CELL}-token") --dry-run=client -o yaml | kubectl apply -f - >/dev/null
+  $([[ -s "${STATE}/fabric/${CELL}-token" ]] && echo --from-file=fabric-token="${STATE}/fabric/${CELL}-token") \
+  $([[ -s "${STATE}/queue/once-${CELL}-token" ]] && echo --from-file=once-token="${STATE}/queue/once-${CELL}-token") --dry-run=client -o yaml | kubectl apply -f - >/dev/null
 kubectl -n "${CELL}" create configmap agent-supervisor --from-file="${ROOT}/lab/spike/agent-supervisor.sh" \
   --dry-run=client -o yaml | kubectl apply -f - >/dev/null
 kubectl -n "${CELL}" rollout status statefulset/jenkins --timeout=600s

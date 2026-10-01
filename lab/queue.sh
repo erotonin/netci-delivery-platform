@@ -19,6 +19,9 @@ mkdir -m 700 -p "${Q}"
 ( umask 077
   [[ -s "${Q}/db-password" ]] || openssl rand -hex 24 > "${Q}/db-password"
   [[ -s "${Q}/client-token" ]] || openssl rand -hex 32 > "${Q}/client-token"
+  # Each cell's controller records netciOnce markers (ADR-065) with its own token, which can do
+  # nothing else; lab/spike/deploy.sh puts it in the cell's secret.
+  for cell in cell-a cell-b; do [[ -s "${Q}/once-${cell}-token" ]] || openssl rand -hex 32 > "${Q}/once-${cell}-token"; done
   printf 'postgresql://netci:%s@netci-pg.netci-system.svc:5432/netci?sslmode=disable' "$(cat "${Q}/db-password")" > "${Q}/db-url"
   # The netci user makes its own API token: API tokens are exempt from Jenkins' CSRF crumb,
   # a password is not. Made once; kept with the other secrets.
@@ -41,11 +44,14 @@ PY
 ( umask 077; [[ -s "${Q}/gitlab-hook-secret" ]] || openssl rand -hex 24 > "${Q}/gitlab-hook-secret" )
 hash="$(tr -d '\n' < "${Q}/client-token" | sha256sum | cut -d' ' -f1)"
 hook_hash="$(tr -d '\n' < "${Q}/gitlab-hook-secret" | sha256sum | cut -d' ' -f1)"
+once_a="$(tr -d '\n' < "${Q}/once-cell-a-token" | sha256sum | cut -d' ' -f1)"
+once_b="$(tr -d '\n' < "${Q}/once-cell-b-token" | sha256sum | cut -d' ' -f1)"
 # The lab GitLab's pushes to main of any project start webhook-probe (lab/spike/webhook_probe.py).
 cat > "${Q}/config.json" <<JSON
 {"cells": {"cell-b": {"url": "http://jenkins.cell-b.svc.cluster.local:8080", "credentials": "/etc/netci/cells/cell-b", "budget": 50}},
  "routes": [{"prefix": "", "cell": "cell-b"}],
- "clients": {"lab-probe": {"tokenSha256": "${hash}", "jobs": [""]}},
+ "clients": {"lab-probe": {"tokenSha256": "${hash}", "jobs": [""]},
+             "cell-a": {"tokenSha256": "${once_a}", "once": true}, "cell-b": {"tokenSha256": "${once_b}", "once": true}},
  "hooks": {"lab-gitlab": {"provider": "gitlab", "tokenSha256": "${hook_hash}", "client": "lab-probe",
    "rules": [{"event": "push", "ref": "main", "job": "webhook-probe",
               "parameters": {"GIT_SHA": "{{sha}}", "BRANCH": "{{ref_name}}", "BY": "{{user}}"}}]}}}
