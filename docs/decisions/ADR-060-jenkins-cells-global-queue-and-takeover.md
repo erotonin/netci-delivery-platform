@@ -147,8 +147,11 @@ On a graceful stop the Lease is released only after Jenkins has exited.
 
 **Cell Supervisor** (`cmd/supervisor`, two replicas, leader-elected). It reads the API server
 directly every second (never an informer cache) and forgets what it saw after a gap. It acts
-only on a Lease that names the current pod and has gone unchanged for its duration, and it
-first asks the power controller:
+only on a Lease that names the current pod. Once that Lease has gone unrenewed for 3 s (three
+missed renewals), it asks the machine's power controller at once. A machine that reports **off**
+is fenced then, without waiting for the Lease to expire: nothing runs on a machine that is off,
+and a holder alive elsewhere (a wrong mapping) would have renewed within those 3 s. Otherwise it
+waits for the Lease to go unchanged for its whole duration, then asks the power controller:
 - **off:** fence at once. Six seconds after a power loss the kubelet still looks alive.
 - **running, kubelet silent for 20 s:** power off, unless that would cost the control plane
   its majority.
