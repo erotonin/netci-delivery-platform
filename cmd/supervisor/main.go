@@ -174,8 +174,9 @@ func run(log *slog.Logger) error {
 	go (&supervisor.HeadroomWatch{Client: hrClient, Interval: headroomEvery, Leading: leading.Load,
 		Events: &supervisor.KubeEvents{Client: hrClient, Instance: pod, Log: log}, Metrics: metrics, Log: log}).Run(ctx)
 	// A leader beside a cell's controller hands over to a replica on a machine without one, at
-	// most once in 5 minutes (supervisor.YieldTo).
-	var lastHandOver time.Time
+	// most once in 5 minutes (supervisor.YieldTo); with no replica there but a machine free, it
+	// first has the standby recreated, at most once in 10 minutes (supervisor.Rebalance).
+	var lastHandOver, lastRebalance time.Time
 	handOver := func(ctx context.Context) (string, bool) {
 		if time.Since(lastHandOver) < 5*time.Minute {
 			return "", false
@@ -188,7 +189,24 @@ func run(log *slog.Logger) error {
 		if err != nil {
 			return "", false
 		}
-		return supervisor.YieldTo(pod, sups.Items, cells.Items)
+		if to, ok := supervisor.YieldTo(pod, sups.Items, cells.Items); ok {
+			return to, true
+		}
+		if time.Since(lastRebalance) < 10*time.Minute {
+			return "", false
+		}
+		nodes, err := client.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
+		if err != nil {
+			return "", false
+		}
+		if standby, ok := supervisor.Rebalance(pod, sups.Items, cells.Items, nodes.Items); ok {
+			lastRebalance = time.Now()
+			uid := standby.UID
+			err := client.CoreV1().Pods(ns).Delete(ctx, standby.Name, metav1.DeleteOptions{Preconditions: &metav1.Preconditions{UID: &uid}})
+			log.Info("recreating the standby replica to place it on a machine without a cell", "replica", standby.Name,
+				"node", standby.Spec.NodeName, "error", err)
+		}
+		return "", false
 	}
 	for ctx.Err() == nil {
 		if runElection(ctx, lock, &leading, metrics, log, handOver) {

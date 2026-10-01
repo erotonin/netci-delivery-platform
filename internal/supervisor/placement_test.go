@@ -45,3 +45,37 @@ func TestNothingIsHandedOverWhenItGainsNothing(t *testing.T) {
 		t.Error("a finished cell pod counted as a cell on the machine")
 	}
 }
+
+func machineReady(name string) corev1.Node {
+	return corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: name},
+		Status: corev1.NodeStatus{Conditions: []corev1.NodeCondition{{Type: corev1.NodeReady, Status: corev1.ConditionTrue}}}}
+}
+
+// What chaos series 8 left: both replicas beside cells, lab-1 free.
+func TestAStandbyBesideACellIsMovedWhenAMachineIsFree(t *testing.T) {
+	sups := []corev1.Pod{onNode("sup-a", "lab-2", true), onNode("sup-b", "lab-3", true)}
+	cells := []corev1.Pod{onNode("cell-a", "lab-3", true), onNode("cell-b", "lab-2", true)}
+	nodes := []corev1.Node{machineReady("lab-1"), machineReady("lab-2"), machineReady("lab-3")}
+	if p, ok := Rebalance("sup-a", sups, cells, nodes); !ok || p.Name != "sup-b" {
+		t.Fatalf("%q %v", p.Name, ok)
+	}
+	cordoned := machineReady("lab-1")
+	cordoned.Spec.Unschedulable = true
+	for name, n := range map[string][]corev1.Node{
+		"no free machine":       {machineReady("lab-2"), machineReady("lab-3")},
+		"the free one cordoned": {cordoned, machineReady("lab-2"), machineReady("lab-3")},
+	} {
+		if p, ok := Rebalance("sup-a", sups, cells, n); ok {
+			t.Errorf("%s: moved %s", name, p.Name)
+		}
+	}
+	// A replica already on a free machine: hand over instead, move nothing.
+	ok := []corev1.Pod{onNode("sup-a", "lab-2", true), onNode("sup-b", "lab-1", true)}
+	if p, moved := Rebalance("sup-a", ok, cells, nodes); moved {
+		t.Errorf("moved %s although a hand-over was possible", p.Name)
+	}
+	// The leader on a free machine moves nothing.
+	if p, moved := Rebalance("sup-b", []corev1.Pod{onNode("sup-a", "lab-2", true), onNode("sup-b", "lab-1", true)}, cells, nodes); moved {
+		t.Errorf("moved %s with the leader already clear of cells", p.Name)
+	}
+}
