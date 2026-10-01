@@ -63,6 +63,13 @@ all six in Jenkins' queue (20 s quiet period), the controller's JVM was SIGKILLe
 - the direct trigger was lost and never ran;
 - 34 s passed from the kill to the last build finishing.
 
+Webhooks (lab GitLab 19.4.1, lab/evidence/webhook-gitlab-*.json): a push to `main` was
+accepted as a run 1.2 s after the push, and its Jenkins build (with the pushed SHA as a
+parameter) finished at 8.9 s. GitLab was then asked to resend the delivery. Both deliveries
+reached netCI with the same Idempotency-Key and were answered with the same run, and one run
+exists. Every build of the probe job maps to one real push, including the README commit GitLab
+made when it created the project.
+
 ## Rejected
 
 - **A required `NETCI_RUN_ID` job parameter:** every job would have to change, and jobs without

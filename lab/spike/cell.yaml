@@ -151,7 +151,7 @@ data:
             definition {
               cps {
                 sandbox(true)
-                script("echo \"push of ^${params.GIT_SHA} to ^${params.BRANCH} by ^${params.BY}\"")
+                script('''echo "push of ^${params.GIT_SHA} to ^${params.BRANCH} by ^${params.BY}"''')
               }
             }
           }

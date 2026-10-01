@@ -71,6 +71,13 @@ lab/spike/queue_crash_probe.py --runs 5
 
 The probe crashes the controller under queued runs and checks Jenkins' own build records.
 
+`lab/spike/webhook_probe.py` pushes to `root/netci-webhook-probe` on the lab GitLab and follows
+the delivery into Jenkins. While it runs, it temporarily:
+- port-forwards netci-queue to `172.17.0.1:30091`, which GitLab in Docker can reach;
+- adds that address to GitLab's outbound allowlist.
+
+It then removes the hook, restores the allowlist and records that it did.
+
 **Known Jenkins behaviour:** a job that JCasC's Job DSL creates while the controller starts can
 be overwritten by the concurrent "Loaded all jobs" phase. It is then on disk but absent until
 `/reload`. Jobs belong in a seed job run after start-up, not in JCasC.

@@ -1,0 +1,21 @@
+{
+  "scenario": "webhook-gitlab",
+  "started": "2026-10-01T05:28:47.225682+00:00",
+  "gitlab_version": "19.4.1",
+  "commit": "33d880fd4d62d8f4a12a2b841ddda768a8d5105a",
+  "seconds_push_to_accepted": 1.21,
+  "seconds_push_to_finished": 8.97,
+  "run": {
+    "id": "c6605c5f-1bc2-4191-98be-7eb037987e29",
+    "state": "finished",
+    "build": 1,
+    "result": "SUCCESS"
+  },
+  "jenkins_console_line": "push of 33d880fd4d62d8f4a12a2b841ddda768a8d5105a to main by root",
+  "gitlab_delivery_status": "202",
+  "gitlab_delivery_response": "{\"delivery\":\"d7a431ac-aeaf-4414-a854-0a45eea41c06\",\"runs\":[\"c6605c5f-1bc2-4191-98be-7eb037987e29\"]}\n",
+  "resend": "sent",
+  "runs_for_commit_after_resend": 1,
+  "verdict": "PASS",
+  "gitlab_allowlist_restored": true
+}
