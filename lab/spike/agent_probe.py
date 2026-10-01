@@ -273,9 +273,9 @@ def main() -> int:
     run = {"handover": scenario_handover, "agent-restart": scenario_agent_restart, "agent-hang": scenario_agent_hang, "partition": scenario_partition}[args.scenario]
     started = dt.datetime.now(dt.timezone.utc)
     facts = run(args)
-    record = {"scenario": f"agent-{args.scenario}", "cell": NS, "started": started.isoformat(), **facts}
+    record = {"scenario": args.scenario if args.scenario.startswith("agent-") else f"agent-{args.scenario}", "cell": NS, "started": started.isoformat(), **facts}
     EVIDENCE.mkdir(parents=True, exist_ok=True)
-    path = EVIDENCE / f"agent-{args.scenario}-{started.strftime('%Y%m%dT%H%M%SZ')}.json"
+    path = EVIDENCE / f"{record['scenario']}-{started.strftime('%Y%m%dT%H%M%SZ')}.json"
     path.write_text(json.dumps(record, indent=2) + "\n")
     print(json.dumps(record, indent=2))
     return 0 if facts["verdict"] == "PASS" else 1

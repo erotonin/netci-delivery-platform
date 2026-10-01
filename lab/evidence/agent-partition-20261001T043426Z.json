@@ -1,0 +1,16 @@
+{
+  "scenario": "agent-partition",
+  "cell": "cell-b",
+  "started": "2026-10-01T04:34:26.151537+00:00",
+  "node": "netci-lab-2",
+  "cut_for_seconds": 20.8,
+  "agent_reported_loss": true,
+  "seconds_cut_to_jenkins_killed": 3.2,
+  "jenkins_running_while_cut_off": false,
+  "jenkins_restarts": 1,
+  "holder_after": "jenkins-0/8c5efa5e-57af-46ed-b381-ff27abb72bed",
+  "epoch_before": 3,
+  "epoch_after": 3,
+  "ready_again_at": "2026-10-01T04:34:56.222507+00:00",
+  "verdict": "PASS"
+}

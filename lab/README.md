@@ -29,6 +29,33 @@ lines are missing. `node-poweroff` destroys the guest running the controller, wa
 `NotReady`, confirms the guest is off, applies the `out-of-service` taint (fencing), measures,
 then powers the guest back on and removes the taint.
 
+## Cell agent probes
+
+```bash
+NETCI_CELL=cell-b lab/spike/agent_probe.py handover|agent-restart|agent-hang|partition
+```
+
+Each one exercises one way the cell agent stops a controller that lost its Lease, on the real
+cluster, and writes `lab/evidence/agent-*.json`. `partition` drops the pod's traffic to the API
+server with iptables inside the pod's network namespace (on the node, via SSH), so the kubelet
+keeps working; it removes the rule afterwards.
+
+## Cell Supervisor
+
+```bash
+NETCI_IMAGE=172.17.0.1:8930/netci/netci@sha256:<digest> lab/supervisor.sh
+```
+
+It installs the supervisor in `netci-system` with this host as the power controller. **It
+changes this host:** it adds one line to `~/.ssh/authorized_keys`. That line is for a key
+generated into `.netci-gate/lab/fence/` and is restricted:
+- `restrict`;
+- `from=` the three guests only;
+- a forced command, `~/.local/libexec/netci-fence` (a copy of `lab/fence/netci-fence`), which
+  can only read, stop or start guests named `netci-lab-<n>`.
+
+To revoke it, delete the line ending in `netci-fence`.
+
 ## Requirements
 
 `/dev/kvm` with nested virtualisation (`/sys/module/kvm_intel/parameters/nested` = `Y`) for Kata

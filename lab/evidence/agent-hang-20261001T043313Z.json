@@ -1,0 +1,13 @@
+{
+  "scenario": "agent-hang",
+  "cell": "cell-b",
+  "started": "2026-10-01T04:33:13.549382+00:00",
+  "guard_killed_jenkins": true,
+  "seconds_stop_to_jenkins_killed": 3.51,
+  "jenkins_exit_code": 137,
+  "agent_restarted_by_liveness": true,
+  "holder_after": "jenkins-0/8c5efa5e-57af-46ed-b381-ff27abb72bed",
+  "epoch_after": 3,
+  "ready_again": true,
+  "verdict": "PASS"
+}

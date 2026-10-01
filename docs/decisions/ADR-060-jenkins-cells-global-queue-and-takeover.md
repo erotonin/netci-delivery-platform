@@ -128,6 +128,52 @@ Takeover after a power loss is dominated by detection: ~50 s for the node to be 
 NotReady. The Cell Supervisor's own lease (decision 4) is what brings it towards the 60 s p95.
 Each figure is one run; the chaos suite repeats them with random failure points.
 
+## Cell agent and Cell Supervisor (built 2026-10-01)
+
+**Cell agent** (`cmd/cell-agent`, a native sidecar of the controller pod). It holds the cell's
+Lease as `<pod>/<uid>` (6 s duration, renewed every second, 4 s renew deadline). Expiry is
+judged only on the observer's own monotonic clock (unchanged for the whole duration), never
+from timestamps another machine wrote. The deadline counts from when a renewal *started*, so
+a holder stops at least `duration - deadline` before anyone else may start, whatever the
+latency of its calls. Three layers stop a controller that lost its Lease:
+1. the agent SIGKILLs the JVM at the deadline (shared process namespace);
+2. `cell-agent guard`, the controller container's command, kills it when the gate file's
+   mtime -- set to the start of each renewal -- is older than the deadline. That covers the
+   agent itself hanging or dying;
+3. Jenkins starts only behind an open gate, so a restarted container is gated too.
+
+On a graceful stop the Lease is released only after Jenkins has exited.
+
+**Cell Supervisor** (`cmd/supervisor`, two replicas, leader-elected). It reads the API server
+directly every second (never an informer cache) and forgets what it saw after a gap. It acts
+only on a Lease that names the current pod and has gone unchanged for its duration, and it
+first asks the power controller:
+- **off:** fence at once. Six seconds after a power loss the kubelet still looks alive.
+- **running, kubelet silent for 20 s:** power off, unless that would cost the control plane
+  its majority.
+- **running, kubelet alive:** wait, then restart the pod after 30 s.
+- **unknown:** alert. It never fences on a guess.
+
+When most cells or nodes fail together, it powers nothing off. The order of a fencing is the
+safety argument: confirm the machine off, then release the Lease conditionally on the version
+the decision saw, then taint `out-of-service`, then delete the pod by UID. A conflict at the
+release means something renewed a Lease whose machine is off, so the node-to-machine mapping
+is wrong and fencing stops before anything lets a successor start. Startup refuses a mapping
+that contradicts what it sees. Each of these rules has a test that turns red when the rule is
+removed.
+
+Lab evidence for the agent (cell-b, `lab/evidence/agent-*.json`, one run each):
+
+| Probe | Result |
+|---|---|
+| Pod deleted | Lease released 0.07 s after "Jenkins stopped"; new pod held it at epoch+1 7.8 s after the delete; Ready at 22 s |
+| Agent SIGKILLed (restarted at once) | Jenkins not interrupted; same holder and epoch |
+| Agent SIGSTOPped (hung) | guard killed Jenkins 3.5 s after the stop (exit 137); liveness restarted the agent; Ready again |
+| Pod cut off from the API server for 20 s (iptables in its network namespace) | Jenkins killed 3.2 s after the cut; no JVM of the pod while cut off; back after the cut healed |
+
+**Not yet verified live:** the supervisor's takeover after a power loss. It needs the host's
+power agent reachable from the cluster (`lab/supervisor.sh`).
+
 ## What this reuses from netCI
 
 The Jenkins REST client and controller router (ADR-009), admission budget and supersession

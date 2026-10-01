@@ -1,0 +1,12 @@
+{
+  "scenario": "agent-restart",
+  "cell": "cell-b",
+  "started": "2026-10-01T04:32:54.303061+00:00",
+  "agent_restarted": 1,
+  "jenkins_restarts": 0,
+  "holder_unchanged": true,
+  "epoch_before": 3,
+  "epoch_after": 3,
+  "ready": true,
+  "verdict": "PASS"
+}
