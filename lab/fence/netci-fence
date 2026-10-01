@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# The lab's power agent (ADR-060). It is the forced command of one SSH key in the lab host's
+# authorized_keys: whoever holds that key can read and switch the power of the lab's guests,
+# and do nothing else on this machine.
+#
+#   state <guest>   prints running | off
+#   off <guest>     hard power-off (virsh destroy), not a shutdown request
+#   on <guest>      start a guest that is off
+#
+# Only guests named netci-lab-<n> are accepted.
+set -euo pipefail
+read -r verb guest extra <<<"${SSH_ORIGINAL_COMMAND:-}"
+[[ -z "${extra:-}" && "${guest:-}" =~ ^netci-lab-[0-9]{1,2}$ ]] || { echo "refused" >&2; exit 2; }
+virsh=(virsh -q -c qemu:///system)
+case "${verb}" in
+  state)
+    s=$("${virsh[@]}" domstate "${guest}" 2>/dev/null) || { echo "unknown guest" >&2; exit 3; }
+    case "${s}" in running|paused|"in shutdown"|blocked|pmsuspended) echo running ;; "shut off"|crashed) echo off ;; *) echo "unknown" ;; esac
+    ;;
+  off)
+    # Destroy of a guest that is already off is an error in virsh; it is not one here.
+    [[ "$("${virsh[@]}" domstate "${guest}")" == "shut off" ]] || "${virsh[@]}" destroy "${guest}" >/dev/null
+    ;;
+  on)
+    [[ "$("${virsh[@]}" domstate "${guest}")" == "running" ]] || "${virsh[@]}" start "${guest}" >/dev/null
+    ;;
+  *) echo "refused" >&2; exit 2 ;;
+esac
