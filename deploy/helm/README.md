@@ -55,3 +55,20 @@ helm install cell-a ./netci-cell -n cell-a \
   --set secrets.secretName=jenkins-cell \
   --set storage.className=my-storage-class
 ```
+
+## Storage: Longhorn
+
+If the cells' `JENKINS_HOME` volumes are on Longhorn, apply
+`deploy/longhorn/tuning-policy.yaml`, with `NAMESPACE` replaced by Longhorn's namespace, and
+update Longhorn's CSI attacher once so that the policy applies to it:
+
+```bash
+sed 's/NAMESPACE/longhorn-system/' deploy/longhorn/tuning-policy.yaml | kubectl apply -f -
+kubectl -n longhorn-system rollout restart deploy/csi-attacher ds/longhorn-manager
+```
+
+This needs Kubernetes 1.36 or later, where MutatingAdmissionPolicy is GA. Without the policy:
+- a takeover in the lab waited up to 45 s for Longhorn to notice that an API server was gone;
+- the attacher's back-off added up to a minute.
+
+ADR-066 explains both.

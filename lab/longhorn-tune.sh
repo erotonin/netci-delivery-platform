@@ -12,7 +12,7 @@
 # So: one attacher per node, retries at most 5 s apart, and dead connections noticed in ~4 s by
 # the attacher and every manager (client-go reads two environment variables).
 #
-# Applied as admission policies (lab/longhorn/tuning-policy.yaml), not as a patch: Longhorn's
+# Applied as admission policies (deploy/longhorn/tuning-policy.yaml), not as a patch: Longhorn's
 # driver deployer rewrites the attacher's Deployment every time it starts -- after any takeover
 # of its machine -- and a patch was undone by the next one. The policies tune whatever Longhorn
 # writes. An update is made here so that what exists now is tuned too.
@@ -22,7 +22,7 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 export KUBECONFIG="${ROOT}/.netci-gate/lab/kubeconfig"
-sed 's/NAMESPACE/longhorn-system/' "${ROOT}/lab/longhorn/tuning-policy.yaml" | kubectl apply -f - >/dev/null
+sed 's/NAMESPACE/longhorn-system/' "${ROOT}/deploy/longhorn/tuning-policy.yaml" | kubectl apply -f - >/dev/null
 sleep 5 # the API servers load the policies
 kubectl -n longhorn-system rollout restart deploy/csi-attacher >/dev/null
 kubectl -n longhorn-system rollout status deploy/csi-attacher --timeout=300s

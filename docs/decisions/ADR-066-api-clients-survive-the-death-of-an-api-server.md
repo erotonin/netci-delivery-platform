@@ -40,7 +40,7 @@ supervisor's counters) found this in four places:
 2. **Third-party clients on the takeover path get client-go's HTTP/2 health check at 2 s + 2 s**
    (`HTTP2_READ_IDLE_TIMEOUT_SECONDS`, `HTTP2_PING_TIMEOUT_SECONDS`): Longhorn's managers and
    CSI attachers. Attachers run one per node, spread per revision, and retry at most 5 s apart.
-   These settings are applied as MutatingAdmissionPolicies (`lab/longhorn/tuning-policy.yaml`),
+   These settings are applied as MutatingAdmissionPolicies (`deploy/longhorn/tuning-policy.yaml`),
    not as patches. Longhorn's driver deployer rewrites the attacher's Deployment every time it
    starts, so a patch was undone by the next takeover of its machine, and chaos series 10 ran
    mostly untuned. With the policies, the deployer was restarted and the attacher stayed tuned.
