@@ -140,11 +140,15 @@ reclaim() {
   export KUBECONFIG="${STATE}/kubeconfig"
   for i in $(seq 1 "${NODES}"); do
     local n; n=$(name "$i")
-    if ! "${VIRSH[@]}" dumpxml --inactive "$n" | grep -q "discard='unmap'"; then
-      "${VIRSH[@]}" dumpxml --inactive "$n" \
-        | sed "s|<driver name='qemu' type='qcow2'/>|<driver name='qemu' type='qcow2' discard='unmap' detect_zeroes='unmap'/>|" \
-        > "${STATE}/$n.xml"
-      "${VIRSH[@]}" define "${STATE}/$n.xml" >/dev/null
+    # The running definition decides: a guest defined with discard but not yet restarted (an
+    # interrupted run) still writes without it.
+    if ! "${VIRSH[@]}" dumpxml "$n" | grep -q "discard='unmap'"; then
+      if ! "${VIRSH[@]}" dumpxml --inactive "$n" | grep -q "discard='unmap'"; then
+        "${VIRSH[@]}" dumpxml --inactive "$n" \
+          | sed "s|<driver name='qemu' type='qcow2'/>|<driver name='qemu' type='qcow2' discard='unmap' detect_zeroes='unmap'/>|" \
+          > "${STATE}/$n.xml"
+        "${VIRSH[@]}" define "${STATE}/$n.xml" >/dev/null
+      fi
       log "$n: drain"
       # --force: sandbox pods have no controller (netci-fabric owns them through its database),
       # and the fabric replaces one that disappears.
