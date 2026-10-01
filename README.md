@@ -23,6 +23,7 @@ against real Jenkins, with the evidence file named; "tested" means automated tes
 | History and logs readable during a takeover | Build records in PostgreSQL, logs to OpenSearch | Not built |
 | A step that started in the last second is not re-run | `netciOnce(key) { ... }` records the block's start in PostgreSQL, outside `JENKINS_HOME`; a block started before under a lost state is refused, and the guard fails closed (ADR-065) | **Lab**: 15 power-offs under a running `netciOnce` block, each resumed with one marker and never refused; a second attempt with another nonce got 409 from the live queue. **Tested**: JenkinsRule |
 | A takeover is never stuck for want of room | Controllers outrank builds (priority classes); a cell no node can take does not hold its fenced machine off; the supervisor reports, before any loss, a cell no other machine could take | **Lab**: a takeover stranded for 22 min was found, and the fixed supervisor recovered it in 41 s; the headroom check runs every 30 s |
+| A controller whose `JENKINS_HOME` fails is restarted | The cell agent writes to `JENKINS_HOME` every 5 s; three failures in a row are reported on the Lease and the supervisor restarts that pod, so that the volume is mounted again, on any storage (ADR-067) | **Lab**: `JENKINS_HOME` made unwritable under a running controller; reported after 12 s, pod restarted 1 s later |
 | Configuration changes need no restart | The cell agent applies a changed JCasC ConfigMap to the running controller; jobs new in JCasC exist from the first start | **Lab**: applied in 81 s with the same pod and no restart; a job declared only in JCasC was there after a restart, with no reload |
 
 ## Builds on the agent fabric
@@ -64,6 +65,7 @@ make image                       # the scratch image with every Go binary (clean
 - [ADR-064 — agent fabric v1](docs/decisions/ADR-064-agent-fabric-v1-warm-sandboxes-late-binding.md)
 - [ADR-065 — netciOnce](docs/decisions/ADR-065-once-blocks-guard-steps-against-re-execution.md)
 - [ADR-066 — API clients survive the death of an API server](docs/decisions/ADR-066-api-clients-survive-the-death-of-an-api-server.md)
+- [ADR-067 — netCI restarts a cell whose JENKINS_HOME fails](docs/decisions/ADR-067-netci-restarts-a-cell-whose-jenkins-home-fails.md)
 
 Operating it: [the runbook](docs/RUNBOOK.md) (every alert, what to check, what to do) and
 [deploy/helm](deploy/helm/README.md).
