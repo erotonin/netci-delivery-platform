@@ -58,8 +58,16 @@ released.
 - no API credentials.
 
 **One active fabric replica.** Bindings live in memory, so the API and the reconciler run only
-in the replica holding the fabric's leader lease. Its readiness reports leadership, so the
-Service routes only to it. A failover loses unbound claims; Jenkins provisions again.
+in the replica holding the fabric's leader lease. The Service has no selector; the leader writes
+the Service's EndpointSlice to point at itself (RBAC allows updating that one slice only).
+A standby replica is an ordinary ready pod, so rollouts complete. A failover loses unbound
+claims, and Jenkins provisions again.
+
+**Controllers provision at once.** By default Jenkins provisions no cloud agent for 100 s after
+it starts (`NodeProvisioner.initialDelay`) and then only every 10 s. After a takeover, that
+would make new builds wait over a minute and a half, whatever is warm. Cells run with
+`-Dhudson.slaves.NodeProvisioner.initialDelay=0` and a 2 s `recurrencePeriod`. In the plugin's
+tests a build on a sandbox went from about 115 s to about 7 s, Jenkins' own start included.
 
 ## Rejected
 

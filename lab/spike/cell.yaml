@@ -64,6 +64,15 @@ data:
               password: "${readFile:/run/secrets/cell/netci-password}"
       authorizationStrategy: loggedInUsersCanDoAnything
       clouds:
+        # Warm sandboxes from netci-fabric (ADR-064). The token stays in the mounted secret.
+        - netci:
+            name: fabric
+            fabricUrl: "http://netci-fabric.netci-system.svc.cluster.local:8080"
+            tokenFile: /run/secrets/cell/fabric-token
+            controllerUrl: "http://jenkins.cell-a.svc.cluster.local:8080/"
+            pools:
+              - pool: standard
+                labels: netci-standard
         - kubernetes:
             name: k8s
             namespace: cell-a
@@ -138,6 +147,24 @@ data:
                     }
                   }
                 ''')
+              }
+            }
+          }
+          // The same trivial build on a fabric sandbox and on a Kubernetes-plugin pod: what an
+          // agent costs a build (fabric_probe.py).
+          pipelineJob('fabric-probe') {
+            definition {
+              cps {
+                sandbox(true)
+                script('''node('netci-standard') { sh 'echo "on $NODE_NAME: $(id -u) $(uname -r)"; cat /proc/self/uid_map' }''')
+              }
+            }
+          }
+          pipelineJob('k8s-probe') {
+            definition {
+              cps {
+                sandbox(true)
+                script('''node('spike-ws') { sh 'echo "on $NODE_NAME"' }''')
               }
             }
           }
@@ -253,7 +280,9 @@ spec:
             - {name: NETCI_GATE_FILE, value: /run/netci/gate}
             - {name: NETCI_RENEW_DEADLINE, value: 4s}
             - {name: CASC_JENKINS_CONFIG, value: /var/jenkins_config/jenkins.yaml}
-            - {name: JAVA_OPTS, value: "-Xms1g -Xmx1536m -Djenkins.install.runSetupWizard=false"}
+            # Jenkins provisions no cloud agent for 100 s after start-up by default, and then
+            # only every 10 s: after a takeover, new builds would wait that long for an agent.
+            - {name: JAVA_OPTS, value: "-Xms1g -Xmx1536m -Djenkins.install.runSetupWizard=false -Dhudson.slaves.NodeProvisioner.initialDelay=0 -Dhudson.slaves.NodeProvisioner.recurrencePeriod=2000"}
             # The WAR and the exploded plugins come from the image; they are not state. On the
             # pod's local disk they cost nothing on the replicated, synchronously written
             # JENKINS_HOME (the first start with them there took ~12 min).

@@ -1,6 +1,6 @@
 // Command netci-fabric keeps warm build sandboxes and binds them to the controllers that claim
 // them (ADR-064). Several replicas may run; the one holding the leader lease serves and
-// reconciles, and only it reports ready, so the Service routes to it alone.
+// reconciles, and points the Service's EndpointSlice at itself, so traffic reaches it alone.
 package main
 
 import (
@@ -38,9 +38,9 @@ func main() {
 }
 
 func run(log *slog.Logger) error {
-	pod, ns, dsn := os.Getenv("POD_NAME"), os.Getenv("POD_NAMESPACE"), os.Getenv("DATABASE_URL")
-	if pod == "" || ns == "" || dsn == "" {
-		return errors.New("POD_NAME, POD_NAMESPACE and DATABASE_URL are required")
+	pod, ns, ip, dsn := os.Getenv("POD_NAME"), os.Getenv("POD_NAMESPACE"), os.Getenv("POD_IP"), os.Getenv("DATABASE_URL")
+	if pod == "" || ns == "" || ip == "" || dsn == "" {
+		return errors.New("POD_NAME, POD_NAMESPACE, POD_IP and DATABASE_URL are required")
 	}
 	cfg, err := fabric.LoadConfig(getenv("NETCI_FABRIC_CONFIG", "/etc/netci/fabric/config.json"))
 	if err != nil {
@@ -87,13 +87,7 @@ func run(log *slog.Logger) error {
 		apiHandler.ServeHTTP(w, r)
 	}))
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
-	mux.HandleFunc("GET /readyz", func(w http.ResponseWriter, _ *http.Request) {
-		if !leading.Load() {
-			http.Error(w, "standby", http.StatusServiceUnavailable)
-			return
-		}
-		w.WriteHeader(http.StatusOK)
-	})
+	mux.HandleFunc("GET /readyz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
 	mux.Handle("GET /metrics", promhttp.HandlerFor(registry, promhttp.HandlerOpts{}))
 	server := &http.Server{Addr: getenv("NETCI_HTTP_ADDR", ":8080"), Handler: mux, ReadHeaderTimeout: 5 * time.Second}
 	go func() {
@@ -111,6 +105,10 @@ func run(log *slog.Logger) error {
 		Callbacks: leaderelection.LeaderCallbacks{
 			OnStartedLeading: func(ctx context.Context) {
 				leading.Store(true)
+				if err := fabric.PublishLeader(ctx, client, ns, ip); err != nil {
+					log.Error("cannot route the Service to this replica; giving up leadership", "error", err)
+					return
+				}
 				log.Info("leading: reconciling sandboxes", "pools", len(cfg.Pools))
 				t := time.NewTicker(time.Second)
 				defer t.Stop()

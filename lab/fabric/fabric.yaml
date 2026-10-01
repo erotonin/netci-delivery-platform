@@ -1,0 +1,122 @@
+# The agent fabric in the lab (ADR-064): netci-fabric in netci-system, sandboxes in netci-agents.
+# Placeholders in capitals are filled by lab/fabric.sh.
+apiVersion: v1
+kind: Namespace
+metadata: {name: netci-agents}
+---
+# The sandboxes' identity: a token with audience netci-fabric, and no permission at all.
+apiVersion: v1
+kind: ServiceAccount
+metadata: {name: netci-sandbox, namespace: netci-agents}
+automountServiceAccountToken: false
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata: {name: netci-fabric, namespace: netci-system}
+---
+# Pods in the sandbox namespace and nothing else.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: {name: netci-fabric, namespace: netci-agents}
+rules:
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [get, list, create, delete]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: {name: netci-fabric, namespace: netci-agents}
+subjects: [{kind: ServiceAccount, name: netci-fabric, namespace: netci-system}]
+roleRef: {kind: Role, name: netci-fabric, apiGroup: rbac.authorization.k8s.io}
+---
+# TokenReview, to know which pod a sandbox token belongs to.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata: {name: netci-fabric-tokenreview}
+rules:
+  - apiGroups: [authentication.k8s.io]
+    resources: [tokenreviews]
+    verbs: [create]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata: {name: netci-fabric-tokenreview}
+subjects: [{kind: ServiceAccount, name: netci-fabric, namespace: netci-system}]
+roleRef: {kind: ClusterRole, name: netci-fabric-tokenreview, apiGroup: rbac.authorization.k8s.io}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: {name: netci-fabric-leader, namespace: netci-system}
+rules:
+  - apiGroups: [coordination.k8s.io]
+    resources: [leases]
+    verbs: [get, create, update]
+  # Only its own Service's slice: the leader routes the Service to itself.
+  - apiGroups: [discovery.k8s.io]
+    resources: [endpointslices]
+    resourceNames: [netci-fabric-leader]
+    verbs: [get, update]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: {name: netci-fabric-leader, namespace: netci-system}
+subjects: [{kind: ServiceAccount, name: netci-fabric, namespace: netci-system}]
+roleRef: {kind: Role, name: netci-fabric-leader, apiGroup: rbac.authorization.k8s.io}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: netci-fabric, namespace: netci-system}
+spec:
+  replicas: 2
+  selector: {matchLabels: {app: netci-fabric}}
+  template:
+    metadata: {labels: {app: netci-fabric}}
+    spec:
+      serviceAccountName: netci-fabric
+      imagePullSecrets: [{name: harbor-pull}]
+      securityContext: {runAsNonRoot: true, runAsUser: 65532, runAsGroup: 65532, seccompProfile: {type: RuntimeDefault}}
+      containers:
+        - name: netci-fabric
+          image: NETCI_IMAGE
+          command: [/netci-fabric]
+          env:
+            - {name: POD_NAME, valueFrom: {fieldRef: {fieldPath: metadata.name}}}
+            - {name: POD_NAMESPACE, valueFrom: {fieldRef: {fieldPath: metadata.namespace}}}
+            - {name: POD_IP, valueFrom: {fieldRef: {fieldPath: status.podIP}}}
+            - name: DATABASE_URL
+              valueFrom: {secretKeyRef: {name: netci-queue-db, key: url}}
+            - {name: NETCI_FABRIC_CONFIG, value: /etc/netci/fabric/config.json}
+          ports: [{name: http, containerPort: 8080}]
+          readinessProbe:
+            httpGet: {path: /readyz, port: 8080}
+            periodSeconds: 2
+          livenessProbe:
+            httpGet: {path: /healthz, port: 8080}
+            periodSeconds: 10
+          resources:
+            requests: {cpu: 50m, memory: 64Mi}
+            limits: {memory: 256Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          volumeMounts: [{name: config, mountPath: /etc/netci/fabric, readOnly: true}]
+      volumes:
+        - {name: config, configMap: {name: netci-fabric}}
+---
+# No selector: the leader writes the endpoints (internal/fabric/leader.go).
+apiVersion: v1
+kind: Service
+metadata: {name: netci-fabric, namespace: netci-system}
+spec:
+  ports: [{name: http, port: 8080, targetPort: 8080}]
+---
+apiVersion: discovery.k8s.io/v1
+kind: EndpointSlice
+metadata:
+  name: netci-fabric-leader
+  namespace: netci-system
+  labels: {kubernetes.io/service-name: netci-fabric}
+addressType: IPv4
+endpoints: []
+ports: [{name: http, port: 8080, protocol: TCP}]

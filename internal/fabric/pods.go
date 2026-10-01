@@ -57,6 +57,7 @@ type PodSettings struct {
 	BootstrapImage string // the netCI image, which carries netci-sandbox
 	FabricURL      string
 	Audience       string
+	PullSecrets    []string // image pull secrets in the sandbox namespace
 }
 
 const (
@@ -97,6 +98,7 @@ func (ps PodSettings) pod(sb *Sandbox, p Pool) *corev1.Pod {
 			AutomountServiceAccountToken:  &no,
 			EnableServiceLinks:            &no,
 			TerminationGracePeriodSeconds: ptr(int64(10)),
+			ImagePullSecrets:              pullSecrets(ps.PullSecrets),
 			NodeSelector:                  p.NodeSelector,
 			SecurityContext: &corev1.PodSecurityContext{
 				RunAsNonRoot: &yes, RunAsUser: &uid, RunAsGroup: &uid, FSGroup: &uid,
@@ -155,3 +157,11 @@ func (ps PodSettings) pod(sb *Sandbox, p Pool) *corev1.Pod {
 }
 
 func ptr[T any](v T) *T { return &v }
+
+func pullSecrets(names []string) []corev1.LocalObjectReference {
+	var out []corev1.LocalObjectReference
+	for _, n := range names {
+		out = append(out, corev1.LocalObjectReference{Name: n})
+	}
+	return out
+}

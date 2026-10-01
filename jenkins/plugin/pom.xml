@@ -38,6 +38,11 @@
   </dependencyManagement>
 
   <dependencies>
+    <!-- OnceRetentionStrategy: one build per sandbox agent. -->
+    <dependency>
+      <groupId>org.jenkins-ci.plugins</groupId>
+      <artifactId>durable-task</artifactId>
+    </dependency>
     <dependency>
       <groupId>org.jenkins-ci.plugins.workflow</groupId>
       <artifactId>workflow-job</artifactId>
@@ -54,6 +59,21 @@
       <scope>test</scope>
     </dependency>
   </dependencies>
+
+  <build>
+    <plugins>
+      <plugin>
+        <artifactId>maven-surefire-plugin</artifactId>
+        <configuration>
+          <!-- As on netCI's controllers: provision at once, not 100 s after start-up. -->
+          <systemPropertyVariables>
+            <hudson.slaves.NodeProvisioner.initialDelay>0</hudson.slaves.NodeProvisioner.initialDelay>
+            <hudson.slaves.NodeProvisioner.recurrencePeriod>1000</hudson.slaves.NodeProvisioner.recurrencePeriod>
+          </systemPropertyVariables>
+        </configuration>
+      </plugin>
+    </plugins>
+  </build>
 
   <repositories>
     <repository>
