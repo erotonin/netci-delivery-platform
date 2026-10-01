@@ -20,7 +20,9 @@ RUN for f in /usr/share/jenkins/ref/plugins/*.jpi; do \
     && rm /tmp/installed /tmp/declared
 
 # netCI's own plugin (ADR-063), built from this repository at the same commit (make plugin);
-# outside the check above, which is about the plugins Jenkins publishes.
-COPY plugin/target/netci.hpi /usr/share/jenkins/ref/plugins/netci.jpi
+# outside the check above, which is about the plugins Jenkins publishes. ".override": the image's
+# start script copies a plugin over an existing JENKINS_HOME only when its version is newer, and
+# this plugin belongs to the image, whatever its version says.
+COPY plugin/target/netci.hpi /usr/share/jenkins/ref/plugins/netci.jpi.override
 
 USER jenkins
