@@ -25,6 +25,28 @@ type APIServer struct {
 	// BeforeWrite, if set, runs before every write is applied, outside the lock: a test steps a
 	// fake clock in it to model a call that is slow to reach the server.
 	BeforeWrite func()
+	// Hang: the next this-many calls block until their context ends, as a call on a connection
+	// to a dead API server does.
+	hang int
+}
+
+// HangNext makes the next n calls hang until their context ends.
+func (a *APIServer) HangNext(n int) {
+	a.mu.Lock()
+	a.hang = n
+	a.mu.Unlock()
+}
+
+func (a *APIServer) hung(ctx context.Context) error {
+	a.mu.Lock()
+	if a.hang == 0 {
+		a.mu.Unlock()
+		return nil
+	}
+	a.hang--
+	a.mu.Unlock()
+	<-ctx.Done()
+	return ctx.Err()
 }
 
 // New returns an empty, reachable server.
@@ -60,6 +82,9 @@ type leaseClient struct {
 }
 
 func (c *leaseClient) Get(ctx context.Context, name string, _ metav1.GetOptions) (*coordinationv1.Lease, error) {
+	if err := c.a.hung(ctx); err != nil {
+		return nil, err
+	}
 	c.a.mu.Lock()
 	defer c.a.mu.Unlock()
 	if c.a.unreachable {
@@ -73,6 +98,9 @@ func (c *leaseClient) Get(ctx context.Context, name string, _ metav1.GetOptions)
 }
 
 func (c *leaseClient) Create(ctx context.Context, l *coordinationv1.Lease, _ metav1.CreateOptions) (*coordinationv1.Lease, error) {
+	if err := c.a.hung(ctx); err != nil {
+		return nil, err
+	}
 	if hook := c.a.BeforeWrite; hook != nil {
 		hook()
 	}
@@ -93,6 +121,9 @@ func (c *leaseClient) Create(ctx context.Context, l *coordinationv1.Lease, _ met
 }
 
 func (c *leaseClient) Update(ctx context.Context, l *coordinationv1.Lease, _ metav1.UpdateOptions) (*coordinationv1.Lease, error) {
+	if err := c.a.hung(ctx); err != nil {
+		return nil, err
+	}
 	if hook := c.a.BeforeWrite; hook != nil {
 		hook()
 	}

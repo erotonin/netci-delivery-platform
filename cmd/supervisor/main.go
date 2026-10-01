@@ -76,6 +76,10 @@ func run(log *slog.Logger) error {
 	// Service may be the one on the machine that just died (seen in the lab: 5 s timeouts made
 	// the leader miss its own renewals on a healthy node).
 	restCfg.Timeout = 2 * time.Second
+	// HTTP/1.1: a timed-out request closes its connection, so the next one can reach a live API
+	// server. In the lab every call of the leader failed for 7 s on one pinned HTTP/2
+	// connection to the API server of the machine that had just been powered off.
+	restCfg.TLSClientConfig.NextProtos = []string{"http/1.1"}
 	restCfg.QPS, restCfg.Burst = 50, 100
 	client, err := kubernetes.NewForConfig(restCfg)
 	if err != nil {
@@ -125,16 +129,24 @@ func run(log *slog.Logger) error {
 		Clock: clock.RealClock{}, Log: log, Metrics: metrics,
 	}
 
+	// Its own client for the leader lease: short calls, retried every second, so that losing a
+	// connection does not cost the leadership at the moment the supervisor is needed.
+	leCfg := rest.CopyConfig(restCfg)
+	leCfg.Timeout = time.Second
+	leClient, err := kubernetes.NewForConfig(leCfg)
+	if err != nil {
+		return err
+	}
 	lock := &resourcelock.LeaseLock{
 		LeaseMeta:  metav1.ObjectMeta{Namespace: ns, Name: getenv("NETCI_SUPERVISOR_LEASE", "netci-supervisor")},
-		Client:     client.CoordinationV1(),
+		Client:     leClient.CoordinationV1(),
 		LockConfig: resourcelock.ResourceLockConfig{Identity: pod},
 	}
 	log.Info("supervisor starting", "identity", pod, "interval", interval, "node_stale", cfg.NodeStale,
 		"auto_power_on", cfg.AutoPowerOn, "panic_fraction", cfg.PanicFraction)
 	leaderelection.RunOrDie(ctx, leaderelection.LeaderElectionConfig{
 		// Short: when the leader dies with a cell's machine, this is added to the takeover.
-		Lock: lock, LeaseDuration: 10 * time.Second, RenewDeadline: 7 * time.Second, RetryPeriod: 2 * time.Second,
+		Lock: lock, LeaseDuration: 10 * time.Second, RenewDeadline: 7 * time.Second, RetryPeriod: time.Second,
 		ReleaseOnCancel: true, Name: "netci-supervisor",
 		Callbacks: leaderelection.LeaderCallbacks{
 			OnStartedLeading: func(ctx context.Context) {

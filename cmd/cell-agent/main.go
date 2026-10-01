@@ -77,6 +77,10 @@ func run(log *slog.Logger) error {
 	// A renewal that waits on a dead connection must not outlast the renew deadline; the holder
 	// also bounds each call, this bounds the transport underneath it.
 	cfg.Timeout = interval
+	// HTTP/1.1: a request that times out closes its connection, and the next one is balanced
+	// afresh. One HTTP/2 connection to an API server on a dead machine would carry every
+	// renewal into the void until its health check notices (45 s by default).
+	cfg.TLSClientConfig.NextProtos = []string{"http/1.1"}
 	client, err := kubernetes.NewForConfig(cfg)
 	if err != nil {
 		return err
@@ -86,7 +90,8 @@ func run(log *slog.Logger) error {
 	holder := &lease.Holder{
 		Leases: client.CoordinationV1(), Namespace: ns, Name: getenv("NETCI_LEASE_NAME", "netci-cell"),
 		Identity: pod + "/" + uid, Duration: duration, RenewInterval: interval, RenewDeadline: deadline,
-		Clock: clock.RealClock{}, Observer: lease.NewObserver(nil), Log: log,
+		AttemptTimeout: 300 * time.Millisecond,
+		Clock:          clock.RealClock{}, Observer: lease.NewObserver(nil), Log: log,
 	}
 	if err := holder.Validate(); err != nil {
 		return err

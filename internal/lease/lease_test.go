@@ -304,3 +304,29 @@ func TestTheDeadlineCountsFromWhenTheRenewalStartedNotWhenItReturned(t *testing.
 		t.Fatalf("only %s between stopping and the earliest takeover", margin)
 	}
 }
+
+func TestADeadConnectionIsRetriedWithinTheRenewalNotLetRunOutTheDeadline(t *testing.T) {
+	for _, retry := range []bool{false, true} {
+		api, clk := leasetest.New(), clocktesting.NewFakeClock(time.Unix(1000, 0))
+		h, ev := holder(api, clk, "jenkins-0/a")
+		h.RenewInterval = 300 * time.Millisecond
+		if retry {
+			h.AttemptTimeout = 40 * time.Millisecond
+		}
+		h.Step(context.Background())
+		// The next calls hang (the connection is to an API server that just died); the deadline
+		// passes in steps while they do.
+		api.HangNext(3)
+		for i := 0; i < 5; i++ {
+			clk.Step(time.Second)
+			h.Step(context.Background())
+		}
+		lost := len(ev.lost) > 0
+		if retry && lost {
+			t.Fatalf("lost the lease to three hung calls despite retrying: %v", ev.lost)
+		}
+		if !retry && !lost {
+			t.Fatal("without retries the hung calls should have cost the lease; the test does not show the difference")
+		}
+	}
+}

@@ -32,9 +32,15 @@ type Holder struct {
 	Duration      time.Duration
 	RenewInterval time.Duration
 	RenewDeadline time.Duration
-	Clock         clock.PassiveClock
-	Observer      *Observer
-	Log           *slog.Logger
+	// AttemptTimeout bounds one call; a step retries until its budget is spent. A connection
+	// to an API server on a machine that just died hangs until the timeout, and every new
+	// connection may land on a live one: several short attempts renew where one long one would
+	// not (in the lab every call of a 7 s window failed on one pinned connection). 0: one
+	// attempt with the whole budget.
+	AttemptTimeout time.Duration
+	Clock          clock.PassiveClock
+	Observer       *Observer
+	Log            *slog.Logger
 
 	OnAcquired func(epoch int32)
 	OnLost     func(reason string)
@@ -115,9 +121,29 @@ func (h *Holder) Step(ctx context.Context) {
 	var err error
 	var epoch int32
 	if timeout > 0 {
-		callCtx, cancel := context.WithTimeout(ctx, timeout)
-		epoch, err = h.acquireOrRenew(callCtx)
-		cancel()
+		budget, cancelBudget := context.WithTimeout(ctx, timeout)
+		for {
+			attempt := budget
+			cancel := context.CancelFunc(func() {})
+			if h.AttemptTimeout > 0 {
+				attempt, cancel = context.WithTimeout(budget, h.AttemptTimeout)
+			}
+			epoch, err = h.acquireOrRenew(attempt)
+			cancel()
+			if h.AttemptTimeout <= 0 || err == nil || errors.Is(err, ErrHeld) || errors.Is(err, ErrFenced) || apierrors.IsConflict(err) {
+				break
+			}
+			// A short pause: an error that comes back at once (connection refused) must not
+			// turn the step into a busy loop.
+			select {
+			case <-budget.Done():
+			case <-time.After(20 * time.Millisecond):
+			}
+			if budget.Err() != nil {
+				break
+			}
+		}
+		cancelBudget()
 	} else {
 		err = context.DeadlineExceeded
 	}

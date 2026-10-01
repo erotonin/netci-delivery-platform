@@ -51,6 +51,7 @@ func run(log *slog.Logger) error {
 		return err
 	}
 	restCfg.Timeout = 10 * time.Second
+	restCfg.TLSClientConfig.NextProtos = []string{"http/1.1"} // see cmd/supervisor: no pinned HTTP/2 connection
 	client, err := kubernetes.NewForConfig(restCfg)
 	if err != nil {
 		return err
