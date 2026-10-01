@@ -300,7 +300,7 @@ spec:
           volumeMounts: [{name: gate, mountPath: /run/netci}]
       containers:
         - name: jenkins
-          image: 172.17.0.1:8930/netci/jenkins-controller:2.555.3-netci5
+          image: 172.17.0.1:8930/netci/jenkins-controller:2.555.3-netci6
           # Jenkins starts only once the gate is open and is killed when it closes or goes
           # stale (internal/cellagent). jenkins.sh is the image's own start script; tini is left
           # out because the pod's pause container already reaps orphans in a shared namespace.
