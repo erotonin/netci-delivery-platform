@@ -69,6 +69,24 @@ supervisor's counters) found this in four places:
   release that renames the attacher or the managers needs them updated. `lab/longhorn-tune.sh`
   fails if the attacher it finds is not tuned.
 
+## What the traces found beyond netCI's reach
+
+The traces after the last series broke the volume move into its waits. Each one comes from the
+machine that lost power also running part of the control plane, or the storage's services:
+- **kube-controller-manager and kube-scheduler** hold 15 s leader leases in k3s. When their
+  leader was on the lost machine, the replacement pod was created 8-11 s late and scheduled up
+  to 9.5 s late.
+- **etcd's leader** waits 5 s before elections in k3s. Until a new one is elected, no API server
+  answers anyone, so fencing itself was delayed to 8-12 s.
+- **Longhorn's admission webhooks** are served by its managers, with a 10 s timeout and
+  `failurePolicy: Fail`. Until the lost machine's manager was gone from the Service, an update to
+  the cell's volume could wait the whole 10 s on it, and the volume controller lost a 10 s round.
+  Fencing removes that endpoint: when fencing is late, the webhook calls are slow.
+
+A control plane on machines without cells has none of the first two. `lab/k3s-timings.sh
+upstream` sets etcd's elections and the two controllers' leases to upstream values, so the lab
+can measure roughly what that layout gives.
+
 ## Rejected
 
 - **Waiting for the dead API server's endpoint to leave the Service**: that is up to 15 s plus
