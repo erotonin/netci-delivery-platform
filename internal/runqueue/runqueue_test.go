@@ -32,7 +32,7 @@ func testStore(t *testing.T) *Store {
 	if err := Migrate(ctx, pool); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, `TRUNCATE run_events, runs`); err != nil {
+	if _, err := pool.Exec(ctx, `TRUNCATE run_events, runs, once_markers`); err != nil {
 		t.Fatal(err)
 	}
 	return &Store{Pool: pool}

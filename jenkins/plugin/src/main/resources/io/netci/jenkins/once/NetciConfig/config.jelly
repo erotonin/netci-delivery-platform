@@ -1,0 +1,8 @@
+<?jelly escape-by-default='true'?>
+<j:jelly xmlns:j="jelly:core" xmlns:f="/lib/form">
+  <f:section title="netCI">
+    <f:entry title="netci-queue URL" field="queueUrl"><f:textbox/></f:entry>
+    <f:entry title="Token file" field="tokenFile"><f:textbox/></f:entry>
+    <f:entry title="Wait for netci-queue (seconds)" field="retrySeconds"><f:number/></f:entry>
+  </f:section>
+</j:jelly>

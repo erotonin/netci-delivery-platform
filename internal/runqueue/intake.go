@@ -18,6 +18,7 @@ import (
 //	POST /v1/runs        {"job", "parameters", "idempotencyKey"}  -> 202 (new) / 200 (same key)
 //	GET  /v1/runs/{id}                                            -> the run and its history
 //	POST /v1/hooks/{name}  a GitLab or GitHub webhook; see Hook
+//	POST /v1/once          a block that must not run twice records itself first (ADR-065)
 //
 // The caller is decided from its bearer token, the cell from the job; a request that names
 // either (or any other field the server owns) is answered 422, never quietly ignored.
@@ -44,6 +45,7 @@ func (in *Intake) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/runs", in.create)
 	mux.HandleFunc("GET /v1/runs/{id}", in.get)
 	mux.HandleFunc("POST /v1/hooks/{name}", in.hook)
+	mux.HandleFunc("POST /v1/once", in.once)
 	return mux
 }
 

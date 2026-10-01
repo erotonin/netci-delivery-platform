@@ -38,6 +38,17 @@
   </dependencyManagement>
 
   <dependencies>
+    <!-- netciOnce, a Pipeline block step (ADR-065). -->
+    <dependency>
+      <groupId>org.jenkins-ci.plugins.workflow</groupId>
+      <artifactId>workflow-step-api</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.jenkins-ci.plugins.workflow</groupId>
+      <artifactId>workflow-support</artifactId>
+      <classifier>tests</classifier>
+      <scope>test</scope>
+    </dependency>
     <!-- OnceRetentionStrategy: one build per sandbox agent. -->
     <dependency>
       <groupId>org.jenkins-ci.plugins</groupId>
