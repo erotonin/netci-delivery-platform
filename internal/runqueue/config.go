@@ -26,6 +26,7 @@ type Config struct {
 	Cells   map[string]CellConfig   `json:"cells"`
 	Routes  []Route                 `json:"routes"`
 	Clients map[string]ClientConfig `json:"clients"`
+	Hooks   map[string]*Hook        `json:"hooks,omitempty"`
 }
 
 // CellConfig: where a cell's controller is and the service account netCI uses there (files
@@ -104,6 +105,14 @@ func (c *Config) Validate() error {
 		hashes[cl.TokenSHA256] = name
 		if len(cl.Jobs) == 0 {
 			return fmt.Errorf("client %s may trigger no job", name)
+		}
+	}
+	for name, h := range c.Hooks {
+		if h == nil {
+			return fmt.Errorf("hook %s is empty", name)
+		}
+		if err := h.validate(name, c); err != nil {
+			return err
 		}
 	}
 	return nil

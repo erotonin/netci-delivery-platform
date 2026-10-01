@@ -17,6 +17,7 @@ import (
 //
 //	POST /v1/runs        {"job", "parameters", "idempotencyKey"}  -> 202 (new) / 200 (same key)
 //	GET  /v1/runs/{id}                                            -> the run and its history
+//	POST /v1/hooks/{name}  a GitLab or GitHub webhook; see Hook
 //
 // The caller is decided from its bearer token, the cell from the job; a request that names
 // either (or any other field the server owns) is answered 422, never quietly ignored.
@@ -42,6 +43,7 @@ func (in *Intake) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /v1/runs", in.create)
 	mux.HandleFunc("GET /v1/runs/{id}", in.get)
+	mux.HandleFunc("POST /v1/hooks/{name}", in.hook)
 	return mux
 }
 
