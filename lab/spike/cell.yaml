@@ -160,6 +160,16 @@ data:
               }
             }
           }
+          // Declared here and nowhere else: present as soon as Jenkins is up, without a reload,
+          // shows that a job new in JCasC survives the start that declares it (netCI plugin).
+          pipelineJob('startup-probe') {
+            definition {
+              cps {
+                sandbox(true)
+                script("echo 'declared in JCasC'")
+              }
+            }
+          }
           pipelineJob('io-probe') {
             definition {
               cps {
@@ -258,6 +268,17 @@ spec:
       serviceAccountName: jenkins
       priorityClassName: netci-cell
       imagePullSecrets: [{name: harbor-pull}]
+      # Cells on different machines where possible, so that one machine lost takes as few
+      # controllers as possible (the lab found both cells on one). Preferred, not required: a
+      # takeover onto the last machine with room must not be refused for it.
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector: {matchLabels: {netci.io/cell: "true"}}
+                namespaceSelector: {}
+                topologyKey: kubernetes.io/hostname
       securityContext: {runAsUser: 1000, runAsGroup: 1000, fsGroup: 1000}
       # The cell agent kills the controller's JVM the moment the Lease is lost; it can only
       # see and signal it in a shared process namespace (same uid, no capability needed).

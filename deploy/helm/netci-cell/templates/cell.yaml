@@ -58,6 +58,19 @@ spec:
       {{- with .Values.priorityClassName }}
       priorityClassName: {{ . }}
       {{- end }}
+      # Cells on different machines where possible: one machine lost takes as few controllers as
+      # possible. Preferred, not required: a takeover onto the last machine with room must not be
+      # refused for it.
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    netci.io/cell: "true"
+                namespaceSelector: {}
+                topologyKey: kubernetes.io/hostname
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
