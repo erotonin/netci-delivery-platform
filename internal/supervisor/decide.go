@@ -68,6 +68,13 @@ type CellView struct {
 	// unbroken run of observations.
 	LeaseExpired   bool
 	LeaseUnchanged time.Duration
+	// LeaseQuiet: how long the Lease has had the same resourceVersion, across gaps in the
+	// observations too -- reads are quorum reads, so a version seen again was not renewed in
+	// between. It only prompts asking the machine's power state; nothing is fenced on it unless
+	// the power controller says the machine is off. LeaseUnchanged, reset by a gap, still
+	// decides expiry and everything done on a guess. (After a power loss the observations failed
+	// for a few seconds while etcd elected a leader, and the reset added 4 s to fencing.)
+	LeaseQuiet time.Duration
 
 	PodExists   bool
 	PodUID      string
@@ -85,7 +92,7 @@ type CellView struct {
 // suspect: the Lease names this pod and has gone unrenewed for SuspectAfter, so its machine's
 // power is worth asking about now.
 func (c CellView) suspect(cfg Config) bool {
-	return c.holdsLease() && (c.LeaseExpired || (cfg.SuspectAfter > 0 && c.LeaseUnchanged >= cfg.SuspectAfter))
+	return c.holdsLease() && (c.LeaseExpired || (cfg.SuspectAfter > 0 && max(c.LeaseUnchanged, c.LeaseQuiet) >= cfg.SuspectAfter))
 }
 
 // holdsLease: the Lease names this exact pod. A Lease left by an earlier pod of the same name

@@ -146,7 +146,13 @@ latency of its calls. Three layers stop a controller that lost its Lease:
 On a graceful stop the Lease is released only after Jenkins has exited.
 
 **Cell Supervisor** (`cmd/supervisor`, two replicas, leader-elected). It reads the API server
-directly every second (never an informer cache) and forgets what it saw after a gap. It acts
+directly every second (never an informer cache) and forgets what it saw after a gap. The one
+exception is when to ask for a machine's power state. A Lease whose version has not changed
+across a gap was not renewed during it, because the reads are quorum reads, so it still
+prompts the question. A machine is fenced on that basis only if it reports off. Expiry, and
+anything done on a guess, still need an unbroken run of observations. When a lab machine that
+was also an etcd member lost power, observations failed for a few seconds while etcd elected a
+leader, and the reset added 4 s to the fencing. It acts
 only on a Lease that names the current pod. Once that Lease has gone unrenewed for 3 s (three
 missed renewals), it asks the machine's power controller at once. A machine that reports **off**
 is fenced then, without waiting for the Lease to expire: nothing runs on a machine that is off,

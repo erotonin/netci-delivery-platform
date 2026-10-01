@@ -385,6 +385,34 @@ func TestAPowerLossIsFencedWithinTheLeaseDurationAndInTheSafeOrder(t *testing.T)
 	}
 }
 
+// What the lab saw: the machine that lost power was an etcd member, and the observations
+// failed for a few seconds while etcd elected a leader. The supervisor forgets its timings
+// after such a gap, but the Lease's version, unchanged across it, still says no renewal came:
+// the power controller is asked as soon as the API answers, and the machine is fenced then.
+func TestAPowerLossDuringAnAPIStallIsFencedAsSoonAsTheAPIAnswers(t *testing.T) {
+	l := newLab(t)
+	l.warm()
+	l.kill("netci-lab-1")
+	l.power.set("netci-lab-1", fence.Off)
+	l.mu.Lock()
+	l.apiDown = true
+	l.mu.Unlock()
+	for i := 0; i < 5; i++ {
+		l.second()
+	}
+	l.mu.Lock()
+	l.apiDown = false
+	l.mu.Unlock()
+	took := l.until("fencing", 30, func() bool { return l.has("delete-pod jenkins-0") })
+	if took > 1 {
+		t.Fatalf("fenced %d s after the API answered again; the Lease had not changed for 6 s", took)
+	}
+	if testutil.ToFloat64(l.metrics.resets) < 2 { // the start, and the gap
+		t.Fatal("the stall did not reset the observations: the test does not exercise the gap")
+	}
+	l.inOrder("confirmed-off netci-lab-1", "release-lease jenkins", "taint netci-lab-1", "delete-pod jenkins-0")
+}
+
 func TestAHungMachineIsPoweredOffOnlyOnceItsKubeletIsSilent(t *testing.T) {
 	l := newLab(t)
 	l.warm()

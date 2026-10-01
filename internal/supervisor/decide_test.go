@@ -351,3 +351,16 @@ func TestAMachineFoundOffIsFencedBeforeItsLeaseExpires(t *testing.T) {
 	node(in, "netci-lab-1", func(n *NodeView) { n.MachineState = fence.Off })
 	none(t, Decide(in, cfg()))
 }
+
+// A gap in the observations reset LeaseUnchanged; LeaseQuiet still asks for the power state and
+// fences a machine that is off -- and only that.
+func TestAQuietLeaseFencesOnlyAMachineThatIsOff(t *testing.T) {
+	in := world()
+	in.Cells[0].LeaseUnchanged, in.Cells[0].LeaseQuiet = time.Second, 6*time.Second
+	node(in, "netci-lab-1", func(n *NodeView) { n.MachineState = fence.Off })
+	only(t, Decide(in, cfg()), FenceNode)
+	for _, state := range []fence.State{fence.Running, fence.Unknown} {
+		node(in, "netci-lab-1", func(n *NodeView) { n.MachineState = state })
+		none(t, Decide(in, cfg()))
+	}
+}

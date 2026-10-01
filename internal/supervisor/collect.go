@@ -59,6 +59,7 @@ type Collector struct {
 
 	cells  *lease.Observer
 	beats  *lease.Observer
+	quiet  *lease.Observer // cells' Leases, never forgotten after a gap (CellView.LeaseQuiet)
 	lastOK time.Time
 }
 
@@ -75,6 +76,9 @@ type Snapshot struct {
 func (c *Collector) Collect(ctx context.Context) (*Snapshot, error) {
 	start := c.Clock.Now()
 	snap := &Snapshot{Leases: map[string]*coordinationv1.Lease{}}
+	if c.quiet == nil {
+		c.quiet = lease.NewObserver(c.Clock)
+	}
 	if c.cells == nil || c.lastOK.IsZero() || start.Sub(c.lastOK) > c.MaxGap {
 		c.cells, c.beats = lease.NewObserver(c.Clock), lease.NewObserver(c.Clock)
 		snap.Reset = true
@@ -111,6 +115,7 @@ func (c *Collector) Collect(ctx context.Context) (*Snapshot, error) {
 		switch {
 		case apierrors.IsNotFound(err):
 			c.cells.Forget(s.Namespace, leaseName) // never held yet: nothing to lose
+			c.quiet.Forget(s.Namespace, leaseName)
 		case err != nil:
 			return nil, fmt.Errorf("lease of %s/%s: %w", s.Namespace, s.Name, err)
 		default:
@@ -118,6 +123,7 @@ func (c *Collector) Collect(ctx context.Context) (*Snapshot, error) {
 			cv.LeaseHolder, cv.LeaseEpoch = obs.Holder, obs.Epoch
 			cv.LeaseExpired = obs.Holder != "" && obs.Expired
 			cv.LeaseUnchanged = obs.SinceChange
+			cv.LeaseQuiet = c.quiet.Observe(l).SinceChange
 			cv.AwaitingTakeover = obs.Holder == "" && l.Annotations[lease.FencedAnnotation] != ""
 			snap.Leases[s.Namespace+"/"+s.Name] = l
 		}
