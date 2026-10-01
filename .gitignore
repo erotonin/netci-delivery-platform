@@ -42,3 +42,4 @@ frontend/e2e/.explore/
 # scratch/, which reads like a test suite and is not one -- the 2026-09-15 audit left
 # "keep or drop" open. They stay on disk and out of the repository until someone decides.
 scratch/
+jenkins/plugin/target/

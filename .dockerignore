@@ -3,3 +3,4 @@
 *
 !bin/linux-amd64/cell-agent
 !bin/linux-amd64/supervisor
+!bin/linux-amd64/netci-queue
