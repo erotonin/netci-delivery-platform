@@ -33,8 +33,11 @@ in `lab/evidence/`, and every row below names its source in ADR-060, 063 or 064.
 
 | Measured | Result |
 |---|---|
-| Power cut under a running 240 s Pipeline build, no person involved | Build resumed and finished SUCCESS every time (14 runs). Steps were never re-run; at most 1 log line was lost. |
-| Time from power loss to the build continuing | 71-84 s over 4 repeated runs (machine confirmed off and fenced at 14.5-23 s), 42.5 s at best. The rest is the storage attaching the volume elsewhere (13-34 s) and Jenkins starting (~15 s). |
+| Power cut under a running 240 s Pipeline build, no person involved | Build resumed and finished SUCCESS every time (43 runs). Steps were never re-run; at most 1 log line was lost. |
+| Time from power loss to the build continuing | 49-69 s over the latest 6 runs. The machine was confirmed off and fenced at 2.9-9.3 s: ~3 s, or 8-9 s when the lost machine led etcd and the API answered nothing until a new leader was elected. The rest is the storage moving the volume (21-40 s) and Jenkins starting (~10-15 s). |
+| Both cells on the machine that lost power | Both taken over, every time (4 of the latest 6 runs). |
+| A deploy step (`netciOnce`) running when the power went | Resumed and finished, never run twice and never refused (15 runs). Each run left one marker in PostgreSQL. |
+| A takeover with nowhere to run the controller | Found by a power-off: the replacement had no node with room. Now controllers outrank builds, the supervisor powers the fenced machine back on, and it reports a cell without headroom before any loss. |
 | A healthy cell on another machine during the failure | Kept its Jenkins, after the Lease timings were fixed (a 4 s deadline did not outlast an etcd stall) |
 | Controller JVM killed with 6 builds queued | The 5 netCI runs each ran once; the 1 direct trigger was lost |
 | Real GitLab push, then GitLab resending the same delivery | One run and one build, 8.9 s from push to the build finishing |
@@ -44,6 +47,9 @@ in `lab/evidence/`, and every row below names its source in ADR-060, 063 or 064.
 
 - **Production scale:** many cells, hundreds of builds at once, and the organisation's
   hypervisor and storage. The lab is three VMs on one host.
+- **The control plane's own recovery.** In the lab every machine is also a control-plane node,
+  and k3s's etcd waits 5 s before electing a new leader. A control plane on separate machines
+  would make fencing a steady ~3 s, but this has not been measured.
 - **Faster builds:** on an idle lab the fabric is not faster than the Kubernetes plugin.
 - **Logs and history readable during a takeover:** not built (planned on OpenSearch).
 - **Fleet autoscaling and host recycling:** not built.

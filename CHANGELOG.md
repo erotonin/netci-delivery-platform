@@ -5,6 +5,33 @@ Changelog and releases use Semantic Versioning once the project reaches 1.0.0.
 
 ## [Unreleased]
 
+### Changed - 2026-10-02: takeover in under a minute, and nothing left for a person (ADR-060, ADR-066)
+- **Lab:** the latest series of 6 unattended power-offs passed. Fencing took 2.9-9.3 s and the
+  build resumed at 49-69 s; before, those figures were 14.5-23 s and 71-84 s. Every build
+  finished, every `netciOnce` block ran once, and no log line was lost. 43 power-offs have been
+  run in all.
+- **Fencing.** A machine found off is fenced 3 s after its last renewal, not at Lease expiry.
+  The supervisor dials the API servers directly and avoids one that failed. A gap in its
+  observations no longer delays the power query.
+- **Leader placement.** A leader that shares a machine with a cell hands its leadership over,
+  and the replicas are re-placed as the cells move.
+- **API clients** (`internal/kubeclient`) bound each attempt and drop their connections when
+  one fails, so a dead API server costs one attempt, not a client's timeout.
+- **Longhorn.** Its managers and CSI attachers notice a dead API server in ~4 s
+  (`lab/longhorn-tune.sh`); before, they took 45 s.
+- **No stuck takeovers.**
+  - Controllers outrank builds through priority classes.
+  - A cell with nowhere to go no longer holds its fenced machine off.
+  - The supervisor reports, before any loss, a cell its machine's loss could not take over,
+    and cells that share a machine.
+- **Configuration.** A changed JCasC ConfigMap is applied to the running controller. A job new
+  in JCasC is there from the first start: Jenkins had dropped it until a reload.
+- **Fabric.** Warm sandboxes may be taken by node autoscalers; claimed ones may not.
+- **Credentials.** netci-queue clients have separate permissions to trigger runs and to record
+  `netciOnce` markers.
+- **Operations.** `docs/RUNBOOK.md` covers every alert. The supervisor is rolled out one
+  replica at a time; with a machine fenced, the rollout had waited forever.
+
 ### Added - 2026-10-01: unattended takeover verified; netciOnce (ADR-060, ADR-065)
 - The Cell Supervisor ran in the lab. A VM was powered off under a running build, with no
   person involved.

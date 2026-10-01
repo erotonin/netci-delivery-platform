@@ -214,11 +214,24 @@ and no lost work.
 |---|---|---|---|---|---|---|
 | Before the hot standby | 4 | 4/4 SUCCESS, 1 line lost once | 27.5-37.9 s | 61.5-75.1 s | 81.2-93.9 s | Never lost its Lease when on another machine; taken over when on the same one |
 | Hot standby (every replica observes) | 4 | 4/4 SUCCESS, 1 line lost once | 14.5-23.1 s | 52.4-63.1 s | 71.1-83.7 s | The same |
+| Supervisor deletes every pod on the fenced node | 4 | 4/4 SUCCESS | 15.9-23.7 s | 57.6-65.9 s | 74.7-83.5 s | The same |
+| One CSI attacher per node; attacher health check 2 s + 2 s | 4 | 4/4 SUCCESS, 1 line lost once | 20.5-22.9 s | 31.4-75.9 s | 49.6-93.9 s | The same |
+| Longhorn managers' health check 2 s + 2 s; a machine found off is fenced 3 s after its last renewal | 2 (host shut down) | 2/2 SUCCESS | 17.4 s | 29.5-34.1 s | 47.3-55.7 s | The same |
+| netCI's API clients bound each attempt (ADR-066) | 1 | 1/1 SUCCESS | 2.7 s | 19.8 s | 33.5 s | Run 2 found a deadlock: the cell had no node with room, and the supervisor would not power the fenced machine on while the cell awaited its takeover. Fixed, with priority classes |
+| `netciOnce` blocks; probe evidence includes the supervisor's counters | 3 | 3/3 SUCCESS, one `netciOnce` marker each | 10.1-20.3 s | 23.8-46.4 s | 42.8-66.5 s | The leader lost observations to the dead API server (fixed: direct API server dialling), or died with the machine (fixed: leader hand-over) |
+| Direct dialling, hand-over | 2 | 2/2 SUCCESS | 10.3-19.0 s | 37.5-41.8 s | 55.8-60.5 s | A gap in observations restarted the count (fixed: LeaseQuiet); the replicas had drifted beside the cells (fixed: rebalancing) |
+| LeaseQuiet, rebalancing | 3 | 3/3 SUCCESS | 3.6-8.2 s | 30.2-46.9 s | 48.0-77.7 s | A renewal just before the stall was counted from its first sight (fixed: renewTime within the gap) |
+| **Every fix** (`chaos-poweroff-20261001T182441Z.json`) | 6 | **6/6 SUCCESS**, one `netciOnce` marker each, no line lost | **2.9-9.3 s** | 30.2-49.3 s | **49.0-68.7 s** | In 4 of 6 runs both cells were on the lost machine; both were taken over |
 
-With the hot standby, fencing is at the cell Lease's duration. The largest remaining part is
-between fencing and the new pod holding the Lease: Longhorn attaching the volume took 34 s in
-one run against 13 s in run 6. The storage layer's failover is the next thing to measure and
-tune; a volume that attaches as fast as run 6's would bring the takeover to ~45 s.
+Fencing is ~3 s after a power loss, or 8-9 s when the lost machine held etcd's leadership. The
+lab's k3s sets etcd's election timeout to 5 s, and until a new leader is elected no API server
+answers anyone, so the supervisor has nothing to act through. A control plane on machines that
+run no cells, or etcd with its 1 s default, removes that difference.
+
+What remains is the storage moving the volume (21-40 s from fencing to the Lease held, longer
+when two volumes move at once) and Jenkins starting (~10 s, longer when two start on one
+machine). The traces (`lab/spike/trace_takeover.sh`) found and removed two blind spots on the
+storage's side (ADR-066). The volume move itself is the next thing to measure.
 
 ## What this reuses from netCI
 

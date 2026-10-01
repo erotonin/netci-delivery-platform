@@ -14,14 +14,16 @@ against real Jenkins, with the evidence file named; "tested" means automated tes
 
 | Guarantee | How | Status |
 |---|---|---|
-| The controller is taken over without a person | Each cell holds a Lease; the Cell Supervisor confirms the machine off through its power controller (SSH agent for libvirt, Redfish for servers), releases the Lease, takes the node out of service, and Kubernetes starts the controller elsewhere on the replicated `JENKINS_HOME` | **Lab**: 8 repeated power-offs, every build resumed; fenced 14.5-23 s and build resumed 71-84 s with the hot-standby supervisor, 42.5 s at best (`chaos-poweroff-*.json`) |
+| The controller is taken over without a person | Each cell holds a Lease. When it goes unrenewed for 3 s, the Cell Supervisor asks the machine's power controller (SSH agent for libvirt, Redfish for servers). Once the machine is confirmed off, it releases the Lease and takes the node out of service, and Kubernetes starts the controller elsewhere on the replicated `JENKINS_HOME` | **Lab**: 43 unattended power-offs, every build resumed and finished SUCCESS, at most 1 log line lost. Latest series of 6: fenced 2.9-9.3 s, build resumed 49-69 s, both cells taken over when they shared the machine (`chaos-poweroff-20261001T182441Z.json`, ADR-060) |
 | Running Pipeline builds continue, each step once | Pipeline durability, bounded writeback (≤ 1 s), agents that reconnect to the new controller | **Lab**: 240 s builds finished SUCCESS after every power-off, steps not re-run, at most 1 of 240 log lines lost |
 | A failure never takes down a healthy cell | Lease timings that outlast a control-plane stall (15 s / 10 s), renewals retried on fresh connections | **Lab**: the neighbouring cell kept its Lease and its Jenkins (run 6); found and fixed after run 5 broke it |
 | Two controllers never write one `JENKINS_HOME` | The agent kills Jenkins within 10 s of losing the Lease; a guard kills it if the agent itself hangs; the supervisor releases a Lease only after confirming the machine off, conditionally on its version | **Lab**: agent hang 3.5 s, API partition 3.2 s (4 s deadline then); **tested**: every rule has a test that fails when the rule is removed |
 | Queued builds are not lost | Runs live in PostgreSQL; the netCI plugin dispatches idempotently under Jenkins' queue lock | **Lab**: JVM killed under 6 queued items — 5 netCI runs each ran once, the direct trigger was lost (`queue-crash-*.json`) |
 | Webhooks are not lost or doubled | GitLab/GitHub deliveries authenticated and keyed by their delivery id | **Lab**: real GitLab push → Jenkins in 8.9 s; a resent delivery made no second run (`webhook-gitlab-*.json`) |
 | History and logs readable during a takeover | Build records in PostgreSQL, logs to OpenSearch | Not built |
-| A step that started in the last second is not re-run | Re-execution guard | Not built |
+| A step that started in the last second is not re-run | `netciOnce(key) { ... }` records the block's start in PostgreSQL, outside `JENKINS_HOME`; a block started before under a lost state is refused, and the guard fails closed (ADR-065) | **Lab**: 15 power-offs under a running `netciOnce` block, each resumed with one marker and never refused; a second attempt with another nonce got 409 from the live queue. **Tested**: JenkinsRule |
+| A takeover is never stuck for want of room | Controllers outrank builds (priority classes); a cell no node can take does not hold its fenced machine off; the supervisor reports, before any loss, a cell no other machine could take | **Lab**: a takeover stranded for 22 min was found, and the fixed supervisor recovered it in 41 s; the headroom check runs every 30 s |
+| Configuration changes need no restart | The cell agent applies a changed JCasC ConfigMap to the running controller; jobs new in JCasC exist from the first start | **Lab**: applied in 81 s with the same pod and no restart; a job declared only in JCasC was there after a restart, with no reload |
 
 ## Builds on the agent fabric
 
@@ -38,7 +40,7 @@ against real Jenkins, with the evidence file named; "tested" means automated tes
 cmd/            Go binaries: cell-agent, supervisor, netci-queue, netci-fabric, netci-sandbox
 internal/       lease, cellagent, fence (SSH, Redfish), supervisor, runqueue, fabric, sandbox
 jenkins/plugin/ the netCI Jenkins plugin (Java): idempotent dispatch, fabric cloud
-deploy/         manifests for the supervisor
+deploy/         Helm charts (platform, cell) and the supervisor's manifest
 lab/            KVM + k3s + Longhorn lab, probes and chaos runs; evidence in lab/evidence/
 jenkins/        controller image; plugins.txt generated from toolchain/versions.yaml
 docs/decisions/ ADRs; 060-064 define this architecture, 001-059 are history
@@ -60,5 +62,10 @@ make image                       # the scratch image with every Go binary (clean
 - [ADR-062 — repository rebuilt in Go](docs/decisions/ADR-062-repository-rebuilt-in-go-around-jenkins-ha.md)
 - [ADR-063 — durable run queue, idempotent dispatch](docs/decisions/ADR-063-durable-run-queue-and-idempotent-dispatch.md)
 - [ADR-064 — agent fabric v1](docs/decisions/ADR-064-agent-fabric-v1-warm-sandboxes-late-binding.md)
+- [ADR-065 — netciOnce](docs/decisions/ADR-065-once-blocks-guard-steps-against-re-execution.md)
+- [ADR-066 — API clients survive the death of an API server](docs/decisions/ADR-066-api-clients-survive-the-death-of-an-api-server.md)
+
+Operating it: [the runbook](docs/RUNBOOK.md) (every alert, what to check, what to do) and
+[deploy/helm](deploy/helm/README.md).
 
 Apache-2.0. See [CONTRIBUTING.md](CONTRIBUTING.md) and [SECURITY.md](SECURITY.md).
