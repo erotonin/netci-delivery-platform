@@ -301,3 +301,22 @@ func TestAFencedMachineStaysOffUntilEveryCellIsHeldAgain(t *testing.T) {
 	in.Cells[0].PodUID = "uid-new"
 	only(t, Decide(in, c), PowerOn)
 }
+
+func TestAMachineFoundOffIsFencedBeforeItsLeaseExpires(t *testing.T) {
+	in := world()
+	in.Cells[0].LeaseUnchanged = 4 * time.Second // three renewals missed; not expired (15 s)
+	node(in, "netci-lab-1", func(n *NodeView) { n.MachineState = fence.Off })
+	a := only(t, Decide(in, cfg()), FenceNode)
+	if a.PowerOff {
+		t.Fatal("a machine that is off is not powered off again")
+	}
+	// Running, or unknown: nothing until the Lease expires.
+	for _, st := range []fence.State{fence.Running, fence.Unknown} {
+		node(in, "netci-lab-1", func(n *NodeView) { n.MachineState = st; n.KubeletFresh = false })
+		none(t, Decide(in, cfg()))
+	}
+	// Renewed recently: not even a suspect, whatever the power controller says.
+	in.Cells[0].LeaseUnchanged = time.Second
+	node(in, "netci-lab-1", func(n *NodeView) { n.MachineState = fence.Off })
+	none(t, Decide(in, cfg()))
+}

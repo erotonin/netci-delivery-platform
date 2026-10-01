@@ -339,8 +339,8 @@ func TestAPowerLossIsFencedWithinTheLeaseDurationAndInTheSafeOrder(t *testing.T)
 	l.power.set("netci-lab-1", fence.Off)
 
 	took := l.until("fencing", 30, func() bool { return l.has("delete-pod jenkins-0") })
-	if took > 7 {
-		t.Fatalf("fenced %d s after the power loss; the lease duration is 6 s", took)
+	if took > 4 {
+		t.Fatalf("fenced %d s after the power loss; a machine found off is fenced %s after the last renewal", took, l.sup.Config.SuspectAfter)
 	}
 	if l.has("power-off netci-lab-1") {
 		t.Fatal("powered off a machine that was already off")

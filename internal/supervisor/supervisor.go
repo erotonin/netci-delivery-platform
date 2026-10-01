@@ -107,8 +107,10 @@ func (s *Supervisor) track(in Input) {
 	var lost int
 	for _, c := range in.Cells {
 		key := c.Namespace + "/" + c.Name
-		if c.holdsLease() && c.LeaseExpired {
-			lost++
+		if c.suspect(s.Config) {
+			if c.LeaseExpired {
+				lost++
+			}
 			if _, ok := s.takeovers[key]; !ok {
 				s.takeovers[key] = takeover{lastRenewal: in.Now.Add(-c.LeaseUnchanged), epoch: c.LeaseEpoch, holder: c.LeaseHolder}
 			}

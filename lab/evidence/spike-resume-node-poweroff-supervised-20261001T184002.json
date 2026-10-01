@@ -1,0 +1,53 @@
+{
+  "scenario": "resume",
+  "failure": "node-poweroff-supervised",
+  "seconds": 240,
+  "build": 19,
+  "ticksBeforeFailure": 12,
+  "agentNode": "netci-lab-1",
+  "agentPod": "spike-ws-p2c7v",
+  "agentLog": "lab/evidence/agent-spike-ws-p2c7v.log",
+  "controllerNodeBefore": "netci-lab-3",
+  "leaseHolderBefore": "jenkins-0/fe91b868-6306-4d5a-bdaf-9a88d700cb4a",
+  "controllerNodeAfter": "netci-lab-2",
+  "result": "SUCCESS",
+  "reachedStageAfter": true,
+  "ticksSeen": 240,
+  "ticksMissing": [],
+  "resumed": true,
+  "consoleTail": [
+    "[Pipeline] }",
+    "[Pipeline] // stage",
+    "[Pipeline] stage",
+    "[Pipeline] { (after)",
+    "[Pipeline] echo",
+    "reached the stage after the long step",
+    "[Pipeline] }",
+    "[Pipeline] // stage",
+    "[Pipeline] }",
+    "[Pipeline] // node",
+    "[Pipeline] End of Pipeline",
+    "Finished: SUCCESS"
+  ],
+  "timings_s": {
+    "fenced": 23.2,
+    "leaseTaken": 60.1,
+    "jenkinsUp": 78.1,
+    "resumed": 80.5
+  },
+  "nodeRestoredBySupervisor": true,
+  "supervisorEvents": [
+    "2026-10-01T10:41:31Z TakeoverComplete: jenkins-0/509c0d3c-ec84-41e5-a50b-98a266320a8d holds the lease (epoch 26) 56.4s after the last renewal by jenkins-0/c6260405-a018-4ce6-bf38-724950114d8c",
+    "2026-10-01T09:56:04Z TakeoverComplete: jenkins-0/434a6843-2333-4cdc-97e0-a1638fb293b6 holds the lease (epoch 14) 61.9s after the last renewal by jenkins-0/3dc7316a-6731-450f-ac43-d5c2ce6f80e1",
+    "2026-10-01T09:32:43Z TakeoverComplete: jenkins-0/640e92f7-6b08-431a-a149-fdcf3b97b30e holds the lease (epoch 11) 56.9s after the last renewal by jenkins-0/7630d5db-e705-4c2a-a54e-46692c041e3d",
+    "2026-10-01T10:40:51Z Fenced: machine netci-lab-1 confirmed off in 130ms; lease released, node netci-lab-1 out of service, pod deleted (167ms in all)",
+    "2026-10-01T10:36:18Z TakeoverComplete: jenkins-0/c6260405-a018-4ce6-bf38-724950114d8c holds the lease (epoch 25) 57.0s after the last renewal by jenkins-0/96be81d9-34c9-42d3-9ad8-cd4d73019ec2",
+    "2026-10-01T10:16:39Z TakeoverComplete: jenkins-0/aaf5131f-53e3-450a-bc28-c9fd019f806a holds the lease (epoch 21) 44.0s after the last renewal by jenkins-0/8f93da6a-b5ed-4d6e-8df1-5ab7ae50b903",
+    "2026-10-01T10:25:12Z Fenced: machine netci-lab-1 confirmed off in 127ms; lease released, node netci-lab-1 out of service, pod deleted (176ms in all)",
+    "2026-10-01T09:39:41Z Fenced: machine netci-lab-3 confirmed off in 137ms; lease released, node netci-lab-3 out of service, pod deleted (366ms in all)",
+    "2026-10-01T10:02:20Z TakeoverComplete: jenkins-0/6ea06854-e33f-4b7f-a721-d68cb97c9827 holds the lease (epoch 17) 51.0s after the last renewal by jenkins-0/e8dcfe99-539c-4ffb-bbc9-c8e53251d553",
+    "2026-10-01T11:40:50Z Fenced: machine netci-lab-3 confirmed off in 135ms; lease released, node netci-lab-3 out of service, pod deleted (176ms in all)"
+  ],
+  "startedAt": "20261001T184002",
+  "jenkinsVersion": "2.555.3"
+}

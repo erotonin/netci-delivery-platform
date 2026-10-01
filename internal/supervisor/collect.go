@@ -171,7 +171,7 @@ func (c *Collector) Collect(ctx context.Context) (*Snapshot, error) {
 	// for nothing.
 	ask := map[string]bool{}
 	for _, cv := range in.Cells {
-		if cv.holdsLease() && cv.LeaseExpired {
+		if cv.suspect(c.Config) {
 			ask[cv.PodNode] = true
 		}
 	}

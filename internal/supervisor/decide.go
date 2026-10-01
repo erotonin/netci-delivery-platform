@@ -42,12 +42,18 @@ type Config struct {
 	AutoPowerOn bool
 	// PowerOnAfter: minimum time a machine stays fenced before an automatic power-on.
 	PowerOnAfter time.Duration
+	// SuspectAfter: a Lease its pod has not renewed for this long (several renewal intervals)
+	// gets its machine's power state asked at once. A machine that reports off is fenced then,
+	// without waiting for the Lease to expire: nothing runs on a machine that is off, and a holder
+	// alive elsewhere (a wrong mapping) would have renewed meanwhile. Power losses -- the commonest
+	// failure -- are taken over seconds sooner; a hung or cut-off machine still waits for expiry.
+	SuspectAfter time.Duration
 }
 
 // DefaultConfig is the production default.
 func DefaultConfig() Config {
 	return Config{NodeStale: 20 * time.Second, StuckPodAfter: 30 * time.Second, Cooldown: 2 * time.Minute,
-		PanicFraction: 0.5, PowerOnAfter: 30 * time.Second}
+		PanicFraction: 0.5, PowerOnAfter: 30 * time.Second, SuspectAfter: 3 * time.Second}
 }
 
 // CellView is what was observed of one cell.
@@ -71,6 +77,12 @@ type CellView struct {
 	// AwaitingTakeover: the supervisor released this cell's Lease for a fenced holder and no pod
 	// holds it again yet -- its volume may still be on its way to the new node.
 	AwaitingTakeover bool
+}
+
+// suspect: the Lease names this pod and has gone unrenewed for SuspectAfter, so its machine's
+// power is worth asking about now.
+func (c CellView) suspect(cfg Config) bool {
+	return c.holdsLease() && (c.LeaseExpired || (cfg.SuspectAfter > 0 && c.LeaseUnchanged >= cfg.SuspectAfter))
 }
 
 // holdsLease: the Lease names this exact pod. A Lease left by an earlier pod of the same name
@@ -143,7 +155,11 @@ func Decide(in Input, cfg Config) []Action {
 
 	var lost []CellView // cells whose own pod stopped renewing
 	for _, c := range in.Cells {
-		if c.holdsLease() && c.LeaseExpired {
+		switch {
+		case c.holdsLease() && c.LeaseExpired:
+			lost = append(lost, c)
+		case c.suspect(cfg) && in.Nodes[c.PodNode].MachineState == fence.Off && !in.Nodes[c.PodNode].Fenced:
+			// Not expired yet, but its machine is off: that is the answer the expiry waits for.
 			lost = append(lost, c)
 		}
 	}
