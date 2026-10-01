@@ -222,8 +222,14 @@ and no lost work.
 | Direct dialling, hand-over | 2 | 2/2 SUCCESS | 10.3-19.0 s | 37.5-41.8 s | 55.8-60.5 s | A gap in observations restarted the count (fixed: LeaseQuiet); the replicas had drifted beside the cells (fixed: rebalancing) |
 | LeaseQuiet, rebalancing | 3 | 3/3 SUCCESS | 3.6-8.2 s | 30.2-46.9 s | 48.0-77.7 s | A renewal just before the stall was counted from its first sight (fixed: renewTime within the gap) |
 | **Every fix** (`chaos-poweroff-20261001T182441Z.json`) | 6 | **6/6 SUCCESS**, one `netciOnce` marker each, no line lost | **2.9-9.3 s** | 30.2-49.3 s | **49.0-68.7 s** | In 4 of 6 runs both cells were on the lost machine; both were taken over |
+| Longhorn tuning as admission policies (it had been undone mid-series) | 6 | 6/6 SUCCESS, one marker each | 2.6-9.6 s | 28.2-86.2 s | 43.3-105.0 s | One attach took 70 s (unexplained; logs lost) |
+| Attacher leader lease 10 s; probe records the leaders | 6 | 6/6 SUCCESS, one marker each | 3.1-7.4 s | 25.6-64.4 s | 42.5-83.4 s | Every run lost a leader of kube-controller-manager, kube-scheduler or the attacher |
+| **Control-plane timings at upstream values** (`lab/k3s-timings.sh upstream`; `chaos-poweroff-20261001T201806Z.json`) | 6 | **6/6 SUCCESS**, one marker each, 1 line lost once | **2.5-3.5 s** | 19.1-47.4 s (median 23.2) | **37.4-64.8 s (median 40.9)** | Slowest: both cells and all three leaders on the lost machine |
 
-Fencing is ~3 s after a power loss, or 8-9 s when the lost machine held etcd's leadership. The
+With the lab's control plane at upstream timings, standing in for a control plane on machines
+without cells, a power loss is fenced in 2.5-3.5 s and the build continues after ~40 s
+(median). With k3s's own timings, fencing takes ~3 s, or 8-9 s when the lost machine held etcd's
+leadership. The
 lab's k3s sets etcd's election timeout to 5 s, and until a new leader is elected no API server
 answers anyone, so the supervisor has nothing to act through. A control plane on machines that
 run no cells, or etcd with its 1 s default, removes that difference.

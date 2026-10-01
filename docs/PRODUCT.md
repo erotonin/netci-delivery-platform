@@ -34,7 +34,7 @@ in `lab/evidence/`, and every row below names its source in ADR-060, 063 or 064.
 | Measured | Result |
 |---|---|
 | Power cut under a running 240 s Pipeline build, no person involved | Build resumed and finished SUCCESS every time (43 runs). Steps were never re-run; at most 1 log line was lost. |
-| Time from power loss to the build continuing | 49-69 s over the latest 6 runs. The machine was confirmed off and fenced at 2.9-9.3 s: ~3 s, or 8-9 s when the lost machine led etcd and the API answered nothing until a new leader was elected. The rest is the storage moving the volume (21-40 s) and Jenkins starting (~10-15 s). |
+| Time from power loss to the build continuing | Median 41 s (37-65 s over 6 runs) with the control plane's failover at upstream timings, as on machines apart from the cells. The machine was confirmed off and fenced at 2.5-3.5 s. The rest is the storage moving the volume (16-44 s) and Jenkins starting (~10-15 s). With k3s's own timings on machines that are all control-plane nodes, the build continued after 42-83 s. |
 | Both cells on the machine that lost power | Both taken over, every time (4 of the latest 6 runs). |
 | A deploy step (`netciOnce`) running when the power went | Resumed and finished, never run twice and never refused (15 runs). Each run left one marker in PostgreSQL. |
 | A takeover with nowhere to run the controller | Found by a power-off: the replacement had no node with room. Now controllers outrank builds, the supervisor powers the fenced machine back on, and it reports a cell without headroom before any loss. |
