@@ -24,7 +24,7 @@ func TestAChangeFirstSeenAfterAGapIsPlacedWithinTheGap(t *testing.T) {
 		renewed time.Time
 		want    time.Duration
 	}{
-		"renewed during the gap":                   {now.Add(-5 * time.Second), 5 * time.Second},
+		"renewed during the gap":                    {now.Add(-5 * time.Second), 5 * time.Second},
 		"a holder clock behind: not before the gap": {now.Add(-60 * time.Second), 6 * time.Second},
 		"a holder clock ahead: not after now":       {now.Add(30 * time.Second), 0},
 	} {
