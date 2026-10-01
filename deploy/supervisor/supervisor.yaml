@@ -81,6 +81,10 @@ spec:
           env:
             - {name: POD_NAME, valueFrom: {fieldRef: {fieldPath: metadata.name}}}
             - {name: POD_NAMESPACE, valueFrom: {fieldRef: {fieldPath: metadata.namespace}}}
+            # Bare metal: replace the four lab variables below with
+            #   - {name: NETCI_FENCE_CONFIG, value: /etc/netci/fence/fence.json}
+            # one Redfish BMC (or other controller) per node, credentials in the same Secret;
+            # format in internal/fence/config.go.
             - {name: NETCI_MACHINES, value: "NETCI_MACHINES_VALUE"}
             - {name: NETCI_FENCE_ADDR, value: "NETCI_FENCE_ADDR_VALUE"}
             - {name: NETCI_FENCE_USER, value: "NETCI_FENCE_USER_VALUE"}

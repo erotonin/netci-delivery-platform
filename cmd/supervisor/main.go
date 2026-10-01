@@ -44,11 +44,7 @@ func run(log *slog.Logger) error {
 	if pod == "" || ns == "" {
 		return errors.New("POD_NAME and POD_NAMESPACE must come from the downward API")
 	}
-	machines, err := supervisor.ParseMachines(os.Getenv("NETCI_MACHINES"))
-	if err != nil {
-		return err
-	}
-	fencer, err := sshFencer()
+	fencer, machines, err := powerControllers()
 	if err != nil {
 		return err
 	}
@@ -144,6 +140,23 @@ func run(log *slog.Logger) error {
 		return errors.New("lost the leader lease")
 	}
 	return nil
+}
+
+// powerControllers reads NETCI_FENCE_CONFIG (one power controller per node: Redfish BMCs, the
+// lab's SSH agent; see internal/fence.Config) or, for the lab, NETCI_MACHINES with one SSH agent.
+func powerControllers() (fence.Fencer, map[string]string, error) {
+	if path := os.Getenv("NETCI_FENCE_CONFIG"); path != "" {
+		return fence.LoadConfig(path)
+	}
+	machines, err := supervisor.ParseMachines(os.Getenv("NETCI_MACHINES"))
+	if err != nil {
+		return nil, nil, err
+	}
+	f, err := sshFencer()
+	if err != nil {
+		return nil, nil, err
+	}
+	return f, machines, nil
 }
 
 // sshFencer builds the power controller client. The key and the host key come from files
