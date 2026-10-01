@@ -146,7 +146,9 @@ reclaim() {
         > "${STATE}/$n.xml"
       "${VIRSH[@]}" define "${STATE}/$n.xml" >/dev/null
       log "$n: drain"
-      kubectl drain "$n" --ignore-daemonsets --delete-emptydir-data --timeout=600s >/dev/null
+      # --force: sandbox pods have no controller (netci-fabric owns them through its database),
+      # and the fabric replaces one that disappears.
+      kubectl drain "$n" --ignore-daemonsets --delete-emptydir-data --force --timeout=600s >/dev/null
       "${VIRSH[@]}" shutdown "$n" >/dev/null
       until [[ "$("${VIRSH[@]}" domstate "$n")" == "shut off" ]]; do sleep 2; done
       "${VIRSH[@]}" start "$n" >/dev/null
