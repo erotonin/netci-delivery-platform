@@ -64,6 +64,10 @@ metadata: {name: netci-supervisor, namespace: netci-system}
 spec:
   replicas: 2
   selector: {matchLabels: {app: netci-supervisor}}
+  # One replica per machine (anti-affinity below): a surge pod has no machine to go to while one
+  # is fenced, and the rollout would wait for it forever (seen in the lab). Replacing one at a
+  # time leaves the other leading or ready to.
+  strategy: {type: RollingUpdate, rollingUpdate: {maxSurge: 0, maxUnavailable: 1}}
   template:
     metadata: {labels: {app: netci-supervisor}}
     spec:

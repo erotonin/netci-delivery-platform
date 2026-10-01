@@ -88,6 +88,11 @@ metadata:
   namespace: {{ .Release.Namespace }}
 spec:
   replicas: {{ .Values.supervisor.replicas }}
+  # One replica per machine: a surge pod has no machine to go to while one is fenced, and the
+  # rollout would wait forever. Replacing one at a time leaves the other leading or ready to.
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: {maxSurge: 0, maxUnavailable: 1}
   selector:
     matchLabels:
       app: netci-supervisor
