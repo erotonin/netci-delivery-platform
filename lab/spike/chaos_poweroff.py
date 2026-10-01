@@ -3,7 +3,8 @@
 
     lab/spike/chaos_poweroff.py [--runs 3]
 
-Each run waits until the cluster is whole (every node Ready and untainted, both cells Ready),
+Each run waits until the cluster is whole (every node Ready and untainted, every Longhorn volume
+healthy, both cells Ready),
 then powers off the machine running cell-b's controller under a 240 s build, at a random tick
 between 5 and 60, and lets the Cell Supervisor do everything else (probe.py
 node-poweroff-supervised). It also records whether the other cell -- on a machine that kept its
@@ -39,6 +40,12 @@ def whole() -> bool:
         tainted = any(t["key"] == "node.kubernetes.io/out-of-service" for t in n["spec"].get("taints") or [])
         if not ready or tainted:
             return False
+    # A volume still rebuilding a replica has fewer copies than it will have: a power-off then
+    # could take the last good one, which is a different experiment from this one.
+    robustness = probe.kubectl("-n", "longhorn-system", "get", "volumes.longhorn.io", "-o",
+                               "jsonpath={.items[*].status.robustness}", check=False).split()
+    if not robustness or any(r != "healthy" for r in robustness):
+        return False
     for cell in ("cell-a", "cell-b"):
         if "True" not in probe.kubectl("-n", cell, "get", "pod", "jenkins-0", "-o",
                                        "jsonpath={.status.conditions[?(@.type=='Ready')].status}", check=False):
