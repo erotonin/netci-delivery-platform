@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -147,8 +148,13 @@ func run(log *slog.Logger) error {
 	// Losing the leader lease (an API stall can cause it) puts the replica back into the
 	// election instead of exiting: a restart cost 13 s in the lab. The supervisor's
 	// observations start over in either case, so nothing seen before the loss is acted on.
+	// Every replica observes; the leader acts. The observation runs for the process's whole life,
+	// so a replica that becomes leader already knows how long each Lease has been unchanged.
+	var leading atomic.Bool
+	sup.Leading = leading.Load
+	go sup.Run(ctx)
 	for ctx.Err() == nil {
-		runElection(ctx, lock, sup, metrics, log)
+		runElection(ctx, lock, &leading, metrics, log)
 		if ctx.Err() == nil {
 			log.Warn("lost the leader lease; standing for election again")
 			time.Sleep(time.Second)
@@ -160,21 +166,22 @@ func run(log *slog.Logger) error {
 	return nil
 }
 
-func runElection(ctx context.Context, lock resourcelock.Interface, sup *supervisor.Supervisor, metrics *supervisor.Metrics, log *slog.Logger) {
-	sup.Restart()
+func runElection(ctx context.Context, lock resourcelock.Interface, leading *atomic.Bool, metrics *supervisor.Metrics, log *slog.Logger) {
 	leaderelection.RunOrDie(ctx, leaderelection.LeaderElectionConfig{
 		// Short: when the leader dies with a cell's machine, this is added to the takeover.
 		Lock: lock, LeaseDuration: 10 * time.Second, RenewDeadline: 7 * time.Second, RetryPeriod: time.Second,
 		ReleaseOnCancel: true, Name: "netci-supervisor",
 		Callbacks: leaderelection.LeaderCallbacks{
 			OnStartedLeading: func(ctx context.Context) {
+				leading.Store(true)
 				metrics.SetLeading(true)
-				log.Info("leading: observing cells")
-				sup.Run(ctx)
+				log.Info("leading: acting on what this replica has been observing")
+				<-ctx.Done()
 			},
 			OnStoppedLeading: func() {
+				leading.Store(false)
 				metrics.SetLeading(false)
-				log.Info("no longer leading")
+				log.Info("no longer leading: observing only")
 			},
 		},
 	})

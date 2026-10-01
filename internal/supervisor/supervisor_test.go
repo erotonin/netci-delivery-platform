@@ -517,3 +517,24 @@ func TestATaintTheSupervisorDidNotAddIsLeftAlone(t *testing.T) {
 		t.Fatal("removed an operator's taint")
 	}
 }
+
+func TestAStandbyObservesButDoesNotActAndActsAtOnceWhenItLeads(t *testing.T) {
+	l := newLab(t)
+	var leading bool
+	l.sup.Leading = func() bool { return leading }
+	l.warm()
+	l.kill("netci-lab-1")
+	l.power.set("netci-lab-1", fence.Off)
+	for i := 0; i < 20; i++ {
+		l.second()
+	}
+	if l.has("delete-pod jenkins-0") || l.has("taint netci-lab-1") {
+		t.Fatalf("a standby acted: %v", l.opsCopy())
+	}
+	// It becomes the leader: its observations are already old enough to act on, at once.
+	leading = true
+	l.second()
+	if !l.has("delete-pod jenkins-0") {
+		t.Fatalf("the new leader waited to observe again: %v", l.opsCopy())
+	}
+}

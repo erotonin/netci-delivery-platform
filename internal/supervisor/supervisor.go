@@ -23,6 +23,10 @@ type Supervisor struct {
 	Clock      clock.PassiveClock
 	Log        *slog.Logger
 	Metrics    *Metrics
+	// Leading says whether this replica may act. Every replica observes all the time -- a hot
+	// standby: when it takes over, its observations are already a full lease duration long,
+	// instead of starting over (15 s more on a takeover in the lab). nil: always leading.
+	Leading func() bool
 
 	alerted   map[string]time.Time
 	takeovers map[string]takeover
@@ -34,13 +38,6 @@ type takeover struct {
 	lastRenewal time.Time // the last change the supervisor saw before the Lease went quiet
 	epoch       int32
 	holder      string
-}
-
-// Restart forgets everything observed, as after a loss of leadership: the next tick starts its
-// observations over and acts on nothing until it has watched for a full lease duration.
-func (s *Supervisor) Restart() {
-	s.Collector.ForgetAll()
-	s.alerted, s.takeovers = nil, nil
 }
 
 // Run ticks until ctx is done.
@@ -80,6 +77,9 @@ func (s *Supervisor) Tick(ctx context.Context) {
 		s.Log.Info("observation (re)started: nothing is called expired until watched for a full lease duration")
 	}
 	s.track(snap.Input)
+	if s.Leading != nil && !s.Leading() {
+		return // observe only
+	}
 
 	for _, a := range Decide(snap.Input, s.Config) {
 		if a.Kind == Alert && !s.shouldAlert(a, snap.Input.Now) {
@@ -127,6 +127,9 @@ func (s *Supervisor) track(in Input) {
 		s.Metrics.takeoverSeconds.Observe(took.Seconds())
 		s.Log.Warn("takeover complete", "cell", key, "seconds", fmt.Sprintf("%.1f", took.Seconds()),
 			"from", t.holder, "to", c.LeaseHolder, "epoch", c.LeaseEpoch)
+		if s.Leading != nil && !s.Leading() {
+			continue
+		}
 		s.Executor.Events.Event(ObjectRef{Kind: "StatefulSet", Namespace: c.Namespace, Name: c.Name}, false, "TakeoverComplete",
 			fmt.Sprintf("%s holds the lease (epoch %d) %.1fs after the last renewal by %s", c.LeaseHolder, c.LeaseEpoch, took.Seconds(), t.holder))
 	}
