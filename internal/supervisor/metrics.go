@@ -15,6 +15,7 @@ type Metrics struct {
 	lost            prometheus.Gauge
 	leading         prometheus.Gauge
 	headroom        *prometheus.GaugeVec
+	sharing         prometheus.Gauge
 }
 
 // NewMetrics registers the supervisor's metrics on r.
@@ -40,9 +41,11 @@ func NewMetrics(r prometheus.Registerer) *Metrics {
 		leading: prometheus.NewGauge(prometheus.GaugeOpts{Name: "netci_supervisor_leading", Help: "1 while this replica is the one acting."}),
 		headroom: prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: "netci_supervisor_cell_headroom",
 			Help: "0 when no other machine could take the cell's controller if its machine were lost."}, []string{"cell"}),
+		sharing: prometheus.NewGauge(prometheus.GaugeOpts{Name: "netci_supervisor_cells_sharing_a_machine",
+			Help: "Cells whose controller shares its machine with another cell's: lost together with it."}),
 	}
 	r.MustRegister(m.actions, m.alerts, m.leaseMoved, m.observeErrors, m.resets, m.fenceSeconds, m.takeoverSeconds, m.cells, m.lost, m.leading,
-		m.headroom)
+		m.headroom, m.sharing)
 	return m
 }
 
@@ -63,3 +66,6 @@ func (m *Metrics) SetHeadroom(cell string, fits bool) {
 	}
 	m.headroom.WithLabelValues(cell).Set(v)
 }
+
+// SetSharing records how many cells share a machine with another cell.
+func (m *Metrics) SetSharing(n int) { m.sharing.Set(float64(n)) }

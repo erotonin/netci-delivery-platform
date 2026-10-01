@@ -237,6 +237,7 @@ func (w *HeadroomWatch) check(ctx context.Context) error {
 			}
 		}
 	}
+	w.Metrics.SetSharing(Sharing(cells))
 	if w.short == nil {
 		w.short = map[string]bool{}
 	}
@@ -252,4 +253,26 @@ func (w *HeadroomWatch) check(ctx context.Context) error {
 		w.Events.Event(ObjectRef{Kind: "StatefulSet", Namespace: ns, Name: name}, true, "NoTakeoverHeadroom", r.Reason)
 	}
 	return nil
+}
+
+// Sharing counts the cells whose controller shares its machine with another cell's: the cells
+// one machine's loss would take together. Cells spread by a preferred rule, not a required one
+// (a takeover onto the last machine with room must not be refused), so takeovers can leave
+// them together; the lab found both of its cells on one machine after a series of power-offs.
+// Moving one back is a restart of its controller, which is an operator's call, not the
+// supervisor's.
+func Sharing(cells []corev1.Pod) int {
+	per := map[string]int{}
+	for _, c := range cells {
+		if c.Spec.NodeName != "" && c.Status.Phase != corev1.PodSucceeded && c.Status.Phase != corev1.PodFailed {
+			per[c.Spec.NodeName]++
+		}
+	}
+	n := 0
+	for _, k := range per {
+		if k > 1 {
+			n += k
+		}
+	}
+	return n
 }

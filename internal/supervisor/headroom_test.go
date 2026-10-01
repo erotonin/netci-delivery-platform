@@ -122,3 +122,18 @@ func TestAControllerWithNoMachineYetIsCheckedAgainstAll(t *testing.T) {
 		t.Fatalf("%+v", r)
 	}
 }
+
+func TestCellsOnOneMachineAreCounted(t *testing.T) {
+	a, b, c := controller("lab-3"), controller("lab-3"), controller("lab-1")
+	if n := Sharing([]corev1.Pod{a, b, c}); n != 2 {
+		t.Fatalf("%d cells sharing, want the two on lab-3", n)
+	}
+	if n := Sharing([]corev1.Pod{a, c}); n != 0 {
+		t.Fatalf("%d", n)
+	}
+	gone := controller("lab-1")
+	gone.Status.Phase = corev1.PodFailed
+	if n := Sharing([]corev1.Pod{c, gone}); n != 0 {
+		t.Fatalf("a finished pod counted: %d", n)
+	}
+}

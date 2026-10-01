@@ -61,6 +61,12 @@ spec:
           labels: {severity: warning}
           annotations:
             summary: "If the machine of cell {{ "{{" }} $labels.cell {{ "}}" }} were lost, no other machine could take its controller even with every build evicted: the takeover would fence and then wait. Add capacity or move pods of the same priority."
+        - alert: NetciCellsShareAMachine
+          expr: max(netci_supervisor_cells_sharing_a_machine) > 0
+          for: 30m
+          labels: {severity: info}
+          annotations:
+            summary: "{{ "{{" }} $value {{ "}}" }} cells' controllers share a machine and would be lost together with it. Moving one restarts its controller: do it at a quiet time (delete its pod; it prefers a machine without a cell)."
         - alert: NetciSupervisorBlind
           expr: increase(netci_supervisor_observe_errors_total[5m]) > 30
           labels: {severity: warning}
