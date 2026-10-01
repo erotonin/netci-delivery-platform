@@ -19,4 +19,8 @@ RUN for f in /usr/share/jenkins/ref/plugins/*.jpi; do \
     && diff -u /tmp/declared /tmp/installed \
     && rm /tmp/installed /tmp/declared
 
+# netCI's own plugin (ADR-063), built from this repository at the same commit (make plugin);
+# outside the check above, which is about the plugins Jenkins publishes.
+COPY plugin/target/netci.hpi /usr/share/jenkins/ref/plugins/netci.jpi
+
 USER jenkins

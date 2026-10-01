@@ -18,6 +18,7 @@ render() { sed -e "s/\bcell-a\b/${CELL}/g" -e "s/storageClassName: longhorn-comm
   -e "s/nodePort: 30080/nodePort: ${NODE_PORT}/" -e "s|NETCI_IMAGE|${NETCI_IMAGE}|g" "${ROOT}/lab/spike/cell.yaml"; }
 ( umask 077
   [[ -s "${STATE}/cell-admin-password" ]] || openssl rand -base64 24 | tr -d '\n' > "${STATE}/cell-admin-password"
+  [[ -s "${STATE}/cell-netci-password" ]] || openssl rand -base64 24 | tr -d '\n' > "${STATE}/cell-netci-password"
   python3 - "${CORP}" "${STATE}/harbor-pull.json" <<'EOF'
 import base64, json, sys
 corp, out = sys.argv[1:]
@@ -34,7 +35,8 @@ kubectl apply -f - <<<"${rendered}" >/dev/null
 kubectl -n "${CELL}" create secret generic harbor-pull --type kubernetes.io/dockerconfigjson \
   --from-file=.dockerconfigjson="${STATE}/harbor-pull.json" --dry-run=client -o yaml | kubectl apply -f - >/dev/null
 kubectl -n "${CELL}" create secret generic jenkins-cell \
-  --from-file=admin-password="${STATE}/cell-admin-password" --dry-run=client -o yaml | kubectl apply -f - >/dev/null
+  --from-file=admin-password="${STATE}/cell-admin-password" \
+  --from-file=netci-password="${STATE}/cell-netci-password" --dry-run=client -o yaml | kubectl apply -f - >/dev/null
 kubectl -n "${CELL}" create configmap agent-supervisor --from-file="${ROOT}/lab/spike/agent-supervisor.sh" \
   --dry-run=client -o yaml | kubectl apply -f - >/dev/null
 kubectl -n "${CELL}" rollout status statefulset/jenkins --timeout=600s

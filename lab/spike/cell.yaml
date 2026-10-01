@@ -59,6 +59,9 @@ data:
           users:
             - id: admin
               password: "${readFile:/run/secrets/cell/admin-password}"
+            # netCI's dispatcher (ADR-063); it uses an API token generated with this password.
+            - id: netci
+              password: "${readFile:/run/secrets/cell/netci-password}"
       authorizationStrategy: loggedInUsersCanDoAnything
       clouds:
         - kubernetes:
@@ -135,6 +138,17 @@ data:
                     }
                   }
                 ''')
+              }
+            }
+          }
+          // The same, queued for 20 s: long enough to crash the controller under it, short
+          // enough for a probe to wait for the builds afterwards.
+          pipelineJob('queue-probe-short') {
+            quietPeriod(20)
+            definition {
+              cps {
+                sandbox(true)
+                script("echo 'left the queue'")
               }
             }
           }
@@ -216,7 +230,7 @@ spec:
           volumeMounts: [{name: gate, mountPath: /run/netci}]
       containers:
         - name: jenkins
-          image: 172.17.0.1:8930/netci/jenkins-controller:2.555.3-netci1
+          image: 172.17.0.1:8930/netci/jenkins-controller:2.555.3-netci2
           # Jenkins starts only once the gate is open and is killed when it closes or goes
           # stale (internal/cellagent). jenkins.sh is the image's own start script; tini is left
           # out because the pod's pause container already reaps orphans in a shared namespace.

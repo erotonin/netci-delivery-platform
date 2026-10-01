@@ -1,0 +1,115 @@
+# The run queue in the lab (ADR-063): PostgreSQL and netci-queue in netci-system.
+# PostgreSQL here is one instance on a replicated Longhorn volume: enough to show the queue
+# surviving a controller crash, not the HA database production needs (CloudNativePG or the
+# organisation's own PostgreSQL cluster). Placeholders in capitals are filled by lab/queue.sh.
+apiVersion: v1
+kind: Namespace
+metadata: {name: netci-system}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: netci-pg, namespace: netci-system}
+spec:
+  selector: {app: netci-pg}
+  ports: [{port: 5432}]
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata: {name: netci-pg, namespace: netci-system}
+spec:
+  serviceName: netci-pg
+  replicas: 1
+  selector: {matchLabels: {app: netci-pg}}
+  template:
+    metadata: {labels: {app: netci-pg}}
+    spec:
+      imagePullSecrets: [{name: harbor-pull}]
+      securityContext: {runAsUser: 70, runAsGroup: 70, fsGroup: 70}
+      containers:
+        - name: postgres
+          image: PG_IMAGE
+          env:
+            - {name: POSTGRES_DB, value: netci}
+            - {name: POSTGRES_USER, value: netci}
+            - {name: POSTGRES_PASSWORD_FILE, value: /run/secrets/db/password}
+            - {name: PGDATA, value: /var/lib/postgresql/data/pgdata}
+          ports: [{containerPort: 5432}]
+          readinessProbe:
+            exec: {command: [pg_isready, -U, netci, -d, netci]}
+            periodSeconds: 2
+          resources:
+            requests: {cpu: 100m, memory: 256Mi}
+            limits: {memory: 512Mi}
+          volumeMounts:
+            - {name: data, mountPath: /var/lib/postgresql/data}
+            - {name: db, mountPath: /run/secrets/db, readOnly: true}
+      volumes:
+        - {name: db, secret: {secretName: netci-queue-db, defaultMode: 0440}}
+  volumeClaimTemplates:
+    - metadata: {name: data}
+      spec:
+        accessModes: [ReadWriteOnce]
+        storageClassName: longhorn
+        resources: {requests: {storage: 5Gi}}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: netci-queue, namespace: netci-system}
+spec:
+  replicas: 2   # both dispatch: claims skip each other, dispatch is idempotent
+  selector: {matchLabels: {app: netci-queue}}
+  template:
+    metadata: {labels: {app: netci-queue}}
+    spec:
+      imagePullSecrets: [{name: harbor-pull}]
+      securityContext: {runAsNonRoot: true, runAsUser: 65532, runAsGroup: 65532, fsGroup: 65532, seccompProfile: {type: RuntimeDefault}}
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector: {matchLabels: {app: netci-queue}}
+                topologyKey: kubernetes.io/hostname
+      containers:
+        - name: netci-queue
+          image: NETCI_IMAGE
+          command: [/netci-queue]
+          env:
+            - name: DATABASE_URL
+              valueFrom: {secretKeyRef: {name: netci-queue-db, key: url}}
+            - {name: NETCI_QUEUE_CONFIG, value: /etc/netci/queue/config.json}
+          ports: [{name: http, containerPort: 8080}]
+          readinessProbe:
+            httpGet: {path: /readyz, port: 8080}
+            periodSeconds: 2
+          livenessProbe:
+            httpGet: {path: /healthz, port: 8080}
+            periodSeconds: 10
+          resources:
+            requests: {cpu: 50m, memory: 64Mi}
+            limits: {memory: 256Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          volumeMounts:
+            - {name: config, mountPath: /etc/netci/queue, readOnly: true}
+            - {name: cells, mountPath: /etc/netci/cells, readOnly: true}
+      volumes:
+        - {name: config, configMap: {name: netci-queue}}
+        - name: cells
+          secret:
+            secretName: netci-queue-cells
+            defaultMode: 0440
+            items:
+              - {key: cell-b-user, path: cell-b/user}
+              - {key: cell-b-token, path: cell-b/token}
+---
+# Reachable from the host on every node: probes and clients outside the cluster.
+apiVersion: v1
+kind: Service
+metadata: {name: netci-queue, namespace: netci-system}
+spec:
+  type: NodePort
+  selector: {app: netci-queue}
+  ports: [{name: http, port: 8080, targetPort: 8080, nodePort: 30090}]
