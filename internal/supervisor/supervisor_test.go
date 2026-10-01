@@ -57,6 +57,11 @@ func newLab(t *testing.T) *lab {
 		&appsv1.StatefulSet{ObjectMeta: metav1.ObjectMeta{Name: "jenkins", Namespace: "cell-a", Labels: map[string]string{CellLabel: "true"}}},
 		&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "jenkins-0", Namespace: "cell-a", UID: "uid-1", Labels: map[string]string{CellLabel: "true"}},
 			Spec: corev1.PodSpec{NodeName: "netci-lab-1"}},
+		// Storage's own pod on the same machine, and one on another machine.
+		&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "longhorn-manager-a", Namespace: "longhorn-system", UID: "uid-lh-a"},
+			Spec: corev1.PodSpec{NodeName: "netci-lab-1"}},
+		&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "longhorn-manager-b", Namespace: "longhorn-system", UID: "uid-lh-b"},
+			Spec: corev1.PodSpec{NodeName: "netci-lab-2"}},
 	}
 	for name := range l.alive {
 		l.power.states[name] = fence.Running
@@ -340,7 +345,11 @@ func TestAPowerLossIsFencedWithinTheLeaseDurationAndInTheSafeOrder(t *testing.T)
 	if l.has("power-off netci-lab-1") {
 		t.Fatal("powered off a machine that was already off")
 	}
-	l.inOrder("confirmed-off netci-lab-1", "release-lease jenkins", "taint netci-lab-1", "not-ready netci-lab-1", "delete-pod jenkins-0")
+	l.inOrder("confirmed-off netci-lab-1", "release-lease jenkins", "taint netci-lab-1", "not-ready netci-lab-1", "delete-pod jenkins-0",
+		"delete-pod longhorn-manager-a")
+	if l.has("delete-pod longhorn-manager-b") {
+		t.Fatal("deleted a pod on a machine that is running")
+	}
 	got := l.cellLease()
 	if got.Spec.HolderIdentity != nil || got.Annotations[lease.FencedAnnotation] != holder {
 		t.Fatalf("lease not released for the fenced holder: %+v", got)

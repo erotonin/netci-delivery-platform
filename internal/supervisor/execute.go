@@ -150,12 +150,47 @@ func (e *Executor) fenceNode(ctx context.Context, a Action, l *coordinationv1.Le
 	if err := e.deletePod(ctx, a, true); err != nil {
 		return err
 	}
+	// 5. And every other pod on the machine: Kubernetes force-deletes them too once the node is
+	// out of service, but only on the pod garbage collector's next pass (every 20 s). The storage
+	// waits for that: Longhorn moves a volume only once the dead node's own longhorn-manager pod
+	// is gone (in the lab, 30 s of a takeover). The machine is off; nothing on it is running.
+	if n, err := e.deletePodsOn(ctx, a.Node); err != nil {
+		log.Warn("could not delete the other pods of the fenced node; the pod garbage collector will", "error", err)
+	} else if n > 0 {
+		log.Info("deleted the pods left on the fenced node", "pods", n)
+	}
 	done := e.Clock.Now()
 	e.Metrics.fenceSeconds.Observe(done.Sub(began).Seconds())
 	e.Events.Event(cellRef, true, "Fenced", fmt.Sprintf("machine %s confirmed off in %s; lease released, node %s out of service, pod deleted (%s in all)",
 		a.Machine, offAt.Sub(began).Round(time.Millisecond), a.Node, done.Sub(began).Round(time.Millisecond)))
 	log.Warn("cell fenced", "machine_off_after", offAt.Sub(began), "total", done.Sub(began), "epoch", lease.EpochOf(l))
 	return nil
+}
+
+// deletePodsOn force-deletes every pod bound to node. Only after its machine is confirmed off.
+func (e *Executor) deletePodsOn(ctx context.Context, node string) (int, error) {
+	pods, err := e.Client.CoreV1().Pods(metav1.NamespaceAll).List(ctx, metav1.ListOptions{FieldSelector: "spec.nodeName=" + node})
+	if err != nil {
+		return 0, err
+	}
+	zero := int64(0)
+	n := 0
+	for _, p := range pods.Items {
+		// The field selector already says so; checked again, because deleting a pod on a machine
+		// that runs is the one thing this must never do.
+		if p.Spec.NodeName != node {
+			continue
+		}
+		uid := p.UID
+		err := e.Client.CoreV1().Pods(p.Namespace).Delete(ctx, p.Name, metav1.DeleteOptions{
+			GracePeriodSeconds: &zero, Preconditions: &metav1.Preconditions{UID: &uid}})
+		if err == nil {
+			n++
+		} else if !apierrors.IsNotFound(err) && !apierrors.IsConflict(err) {
+			return n, err
+		}
+	}
+	return n, nil
 }
 
 func (e *Executor) taint(ctx context.Context, node string) error {
