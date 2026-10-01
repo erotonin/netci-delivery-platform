@@ -1,0 +1,221 @@
+{{- if .Values.fabric.enabled }}
+{{- if .Values.fabric.createSandboxNamespace }}
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ .Values.fabric.sandboxNamespace }}
+---
+{{- end }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: netci-sandbox
+  namespace: {{ .Values.fabric.sandboxNamespace }}
+automountServiceAccountToken: false
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: netci-fabric
+  namespace: {{ .Release.Namespace }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: netci-fabric
+  namespace: {{ .Values.fabric.sandboxNamespace }}
+rules:
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [get, list, create, delete]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: netci-fabric
+  namespace: {{ .Values.fabric.sandboxNamespace }}
+subjects:
+  - kind: ServiceAccount
+    name: netci-fabric
+    namespace: {{ .Release.Namespace }}
+roleRef:
+  kind: Role
+  name: netci-fabric
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: netci-fabric-tokenreview
+rules:
+  - apiGroups: [authentication.k8s.io]
+    resources: [tokenreviews]
+    verbs: [create]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: netci-fabric-tokenreview
+subjects:
+  - kind: ServiceAccount
+    name: netci-fabric
+    namespace: {{ .Release.Namespace }}
+roleRef:
+  kind: ClusterRole
+  name: netci-fabric-tokenreview
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: netci-fabric-leader
+  namespace: {{ .Release.Namespace }}
+rules:
+  - apiGroups: [coordination.k8s.io]
+    resources: [leases]
+    verbs: [get, create, update]
+  - apiGroups: [discovery.k8s.io]
+    resources: [endpointslices]
+    resourceNames: [netci-fabric-leader]
+    verbs: [get, update]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: netci-fabric-leader
+  namespace: {{ .Release.Namespace }}
+subjects:
+  - kind: ServiceAccount
+    name: netci-fabric
+    namespace: {{ .Release.Namespace }}
+roleRef:
+  kind: Role
+  name: netci-fabric-leader
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: netci-fabric
+  namespace: {{ .Release.Namespace }}
+data:
+  config.json: |
+    {{- /* The chart decides these; whatever the user sets for them is overwritten. */}}
+    {{- $config := mergeOverwrite (deepCopy .Values.fabric.config) (dict "namespace" .Values.fabric.sandboxNamespace "serviceAccount" "netci-sandbox" "audience" "netci-fabric" "bootstrapImage" (include "netci.image" .) "fabricUrl" (printf "http://netci-fabric.%s.svc.cluster.local:8080" .Release.Namespace)) }}
+    {{- $config | toJson | nindent 4 }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: netci-fabric
+  namespace: {{ .Release.Namespace }}
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app: netci-fabric
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: netci-fabric
+  namespace: {{ .Release.Namespace }}
+spec:
+  replicas: {{ .Values.fabric.replicas }}
+  selector:
+    matchLabels:
+      app: netci-fabric
+  template:
+    metadata:
+      labels:
+        app: netci-fabric
+    spec:
+      serviceAccountName: netci-fabric
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: netci-fabric
+          image: {{ include "netci.image" . | quote }}
+          command: [/netci-fabric]
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "fabric.database.secretName: a Secret holding the PostgreSQL URL" .Values.fabric.database.secretName }}
+                  key: {{ .Values.fabric.database.key }}
+            - name: NETCI_FABRIC_CONFIG
+              value: /etc/netci/fabric/config.json
+          ports:
+            - name: http
+              containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: 8080
+            periodSeconds: 2
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.fabric.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: config
+              mountPath: /etc/netci/fabric
+              readOnly: true
+      volumes:
+        - name: config
+          configMap:
+            name: netci-fabric
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: netci-fabric
+  namespace: {{ .Release.Namespace }}
+spec:
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+---
+apiVersion: discovery.k8s.io/v1
+kind: EndpointSlice
+metadata:
+  name: netci-fabric-leader
+  namespace: {{ .Release.Namespace }}
+  labels:
+    kubernetes.io/service-name: netci-fabric
+addressType: IPv4
+endpoints: []
+ports:
+  - name: http
+    port: 8080
+    protocol: TCP
+{{- end }}

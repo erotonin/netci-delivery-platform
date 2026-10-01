@@ -1,0 +1,230 @@
+{{- if not (regexMatch "^sha256:[0-9a-f]{64}$" (.Values.netci.digest | default "")) -}}
+{{- fail "netci.digest is required and must be sha256: followed by 64 hex digits (images are pinned by digest)" -}}
+{{- end -}}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: jenkins
+  namespace: {{ .Release.Namespace }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: cell-lease
+  namespace: {{ .Release.Namespace }}
+rules:
+  - apiGroups: [coordination.k8s.io]
+    resources: [leases]
+    resourceNames: [jenkins]
+    verbs: [get, update]
+  - apiGroups: [coordination.k8s.io]
+    resources: [leases]
+    verbs: [create]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: cell-lease
+  namespace: {{ .Release.Namespace }}
+subjects:
+  - kind: ServiceAccount
+    name: jenkins
+    namespace: {{ .Release.Namespace }}
+roleRef:
+  kind: Role
+  name: cell-lease
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: jenkins
+  namespace: {{ .Release.Namespace }}
+  labels:
+    netci.io/cell: "true"
+spec:
+  serviceName: jenkins
+  replicas: 1
+  selector:
+    matchLabels:
+      app: jenkins
+  template:
+    metadata:
+      labels:
+        app: jenkins
+        netci.io/cell: "true"
+    spec:
+      serviceAccountName: jenkins
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+      shareProcessNamespace: true
+      terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
+      initContainers:
+        - name: install-guard
+          image: {{ .Values.netci.repository }}@{{ .Values.netci.digest }}
+          command: [/cell-agent, install, /netci-bin]
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: netci-bin
+              mountPath: /netci-bin
+        - name: cell-agent
+          image: {{ .Values.netci.repository }}@{{ .Values.netci.digest }}
+          command: [/cell-agent]
+          restartPolicy: Always
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_UID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.uid
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: NETCI_LEASE_NAME
+              value: jenkins
+            - name: NETCI_LEASE_DURATION
+              value: {{ .Values.lease.duration | quote }}
+            - name: NETCI_RENEW_DEADLINE
+              value: {{ .Values.lease.renewDeadline | quote }}
+            - name: NETCI_TERMINATION_GRACE
+              value: {{ printf "%ds" (sub .Values.terminationGracePeriodSeconds 5) }}
+          ports:
+            - name: agent-metrics
+              containerPort: 9090
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: 9090
+            periodSeconds: 1
+            failureThreshold: 30
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 9090
+            periodSeconds: 5
+          resources:
+            requests:
+              cpu: 20m
+              memory: 32Mi
+            limits:
+              memory: 96Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: gate
+              mountPath: /run/netci
+      containers:
+        - name: jenkins
+          image: {{ required "image.controller: the netCI controller image (jenkins/Dockerfile.controller), which carries the netCI plugin" .Values.image.controller | quote }}
+          command: [/netci-bin/cell-agent, guard, --, /usr/local/bin/jenkins.sh]
+          env:
+            - name: NETCI_GATE_FILE
+              value: /run/netci/gate
+            - name: NETCI_RENEW_DEADLINE
+              value: {{ .Values.lease.renewDeadline | quote }}
+            - name: CASC_JENKINS_CONFIG
+              value: /var/jenkins_config/jenkins.yaml
+            - name: JAVA_OPTS
+              value: {{ .Values.javaOpts | quote }}
+            - name: JENKINS_OPTS
+              value: {{ .Values.jenkinsOpts | quote }}
+          ports:
+            - containerPort: 8080
+            - containerPort: 50000
+          readinessProbe:
+            httpGet:
+              path: /login
+              port: 8080
+            periodSeconds: 2
+            failureThreshold: 3
+          startupProbe:
+            httpGet:
+              path: /login
+              port: 8080
+            periodSeconds: 5
+            failureThreshold: 120
+          livenessProbe:
+            httpGet:
+              path: /login
+              port: 8080
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - name: home
+              mountPath: /var/jenkins_home
+            - name: casc
+              mountPath: /var/jenkins_config
+            - name: cache
+              mountPath: /var/cache/jenkins
+            - name: secrets
+              mountPath: /run/secrets/cell
+              readOnly: true
+            - name: gate
+              mountPath: /run/netci
+              readOnly: true
+            - name: netci-bin
+              mountPath: /netci-bin
+              readOnly: true
+      volumes:
+        - name: gate
+          emptyDir:
+            medium: Memory
+            sizeLimit: 1Mi
+        - name: netci-bin
+          emptyDir:
+            sizeLimit: 128Mi
+        - name: casc
+          configMap:
+            name: {{ required "casc.configMapName: the ConfigMap with the cell's jenkins.yaml" .Values.casc.configMapName }}
+        - name: cache
+          emptyDir: {}
+        - name: secrets
+          secret:
+            secretName: {{ required "secrets.secretName: the Secret mounted at /run/secrets/cell" .Values.secrets.secretName }}
+  volumeClaimTemplates:
+    - metadata:
+        name: home
+      spec:
+        accessModes: [ReadWriteOnce]
+        {{- if .Values.storage.className }}
+        storageClassName: {{ .Values.storage.className }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.storage.size }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: jenkins
+  namespace: {{ .Release.Namespace }}
+spec:
+  selector:
+    app: jenkins
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+    - name: agent
+      port: 50000
+      targetPort: 50000

@@ -1,0 +1,47 @@
+# The lab's values (lab/supervisor.sh, lab/queue.sh, lab/fabric.sh), used for linting.
+image:
+  repository: 172.17.0.1:8930/netci/netci
+  digest: sha256:0000000000000000000000000000000000000000000000000000000000000000
+
+imagePullSecrets:
+  - name: harbor-pull
+
+supervisor:
+  machines: "netci-lab-1=netci-lab-1,netci-lab-2=netci-lab-2,netci-lab-3=netci-lab-3"
+  fence:
+    addr: "192.168.122.1:22"
+    user: "deployer"
+    secretName: netci-fence
+  autoPowerOn: true
+
+queue:
+  database:
+    secretName: netci-queue-db
+  config:
+    cells:
+      cell-b: {url: "http://jenkins.cell-b.svc.cluster.local:8080", credentials: /etc/netci/cells/cell-b, budget: 50}
+    routes:
+      - {prefix: "", cell: cell-b}
+    clients:
+      lab-probe:
+        tokenSha256: "0000000000000000000000000000000000000000000000000000000000000000"
+        jobs: [""]
+  cellCredentials:
+    secretName: netci-queue-cells
+    items:
+      - {key: cell-b-user, path: cell-b/user}
+      - {key: cell-b-token, path: cell-b/token}
+  service:
+    type: NodePort
+    nodePort: 30090
+
+fabric:
+  database:
+    secretName: netci-queue-db
+  config:
+    pullSecrets: [harbor-pull]
+    pools:
+      - {name: standard, labels: [netci-standard], image: "172.17.0.1:8930/mirror/jenkins/inbound-agent:3386.v353e57a_1b_ea_0-1-jdk21",
+         warm: 2, max: 6, cpu: "1", memory: 1Gi, disk: 4Gi, userNamespace: true}
+    cells:
+      cell-b: "0000000000000000000000000000000000000000000000000000000000000000"

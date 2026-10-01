@@ -1,0 +1,59 @@
+image:
+  repository: ""
+  digest: ""
+
+imagePullSecrets: []
+
+supervisor:
+  enabled: true
+  replicas: 2
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      memory: 192Mi
+  machines: ""
+  fence:
+    addr: ""
+    user: ""
+    secretName: ""
+    # configSecretName: ""
+  autoPowerOn: false
+  panicFraction: 0.5
+
+queue:
+  enabled: true
+  replicas: 2
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      memory: 256Mi
+  database:
+    secretName: ""
+    key: "url"
+  config: {}
+  cellCredentials:
+    secretName: ""
+    items: []
+  service:
+    type: ClusterIP
+    # nodePort: 30090
+
+fabric:
+  enabled: true
+  replicas: 2
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      memory: 256Mi
+  sandboxNamespace: netci-agents
+  createSandboxNamespace: true
+  database:
+    secretName: ""
+    key: "url"
+  config: {}

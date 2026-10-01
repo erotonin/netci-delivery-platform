@@ -1,0 +1,19 @@
+image:
+  controller: 172.17.0.1:8930/netci/jenkins-controller:2.555.3-netci5
+
+netci:
+  repository: 172.17.0.1:8930/netci/netci
+  digest: sha256:0000000000000000000000000000000000000000000000000000000000000000
+
+imagePullSecrets:
+  - name: harbor-pull
+
+storage:
+  className: longhorn-commit1
+  size: 10Gi
+
+casc:
+  configMapName: jenkins-casc
+
+secrets:
+  secretName: jenkins-cell

@@ -1,0 +1,125 @@
+{{- if .Values.queue.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: netci-queue
+  namespace: {{ .Release.Namespace }}
+data:
+  config.json: |
+    {{- .Values.queue.config | toJson | nindent 4 }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: netci-queue
+  namespace: {{ .Release.Namespace }}
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app: netci-queue
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: netci-queue
+  namespace: {{ .Release.Namespace }}
+spec:
+  replicas: {{ .Values.queue.replicas }}
+  selector:
+    matchLabels:
+      app: netci-queue
+  template:
+    metadata:
+      labels:
+        app: netci-queue
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app: netci-queue
+                topologyKey: kubernetes.io/hostname
+      containers:
+        - name: netci-queue
+          image: {{ include "netci.image" . | quote }}
+          command: [/netci-queue]
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "queue.database.secretName: a Secret holding the PostgreSQL URL" .Values.queue.database.secretName }}
+                  key: {{ .Values.queue.database.key }}
+            - name: NETCI_QUEUE_CONFIG
+              value: /etc/netci/queue/config.json
+          ports:
+            - name: http
+              containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: 8080
+            periodSeconds: 2
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.queue.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: config
+              mountPath: /etc/netci/queue
+              readOnly: true
+            - name: cells
+              mountPath: /etc/netci/cells
+              readOnly: true
+      volumes:
+        - name: config
+          configMap:
+            name: netci-queue
+        - name: cells
+          secret:
+            secretName: {{ required "queue.cellCredentials.secretName: a Secret holding each cell's user and API token" .Values.queue.cellCredentials.secretName }}
+            defaultMode: 0440
+            {{- if .Values.queue.cellCredentials.items }}
+            items:
+              {{- toYaml .Values.queue.cellCredentials.items | nindent 14 }}
+            {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: netci-queue
+  namespace: {{ .Release.Namespace }}
+spec:
+  type: {{ .Values.queue.service.type }}
+  selector:
+    app: netci-queue
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+      {{- if .Values.queue.service.nodePort }}
+      nodePort: {{ .Values.queue.service.nodePort }}
+      {{- end }}
+{{- end }}

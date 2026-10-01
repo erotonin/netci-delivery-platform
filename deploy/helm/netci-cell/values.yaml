@@ -1,0 +1,34 @@
+image:
+  controller: ""
+
+netci:
+  repository: ""
+  digest: ""
+
+imagePullSecrets: []
+
+storage:
+  className: ""
+  size: 20Gi
+
+resources:
+  requests:
+    cpu: "1"
+    memory: 2Gi
+  limits:
+    memory: 2560Mi
+
+javaOpts: "-Xms1g -Xmx1536m -Djenkins.install.runSetupWizard=false -Dhudson.slaves.NodeProvisioner.initialDelay=0 -Dhudson.slaves.NodeProvisioner.recurrencePeriod=2000"
+jenkinsOpts: "--webroot=/var/cache/jenkins/war --pluginroot=/var/cache/jenkins/plugins"
+
+lease:
+  duration: 15s
+  renewDeadline: 10s
+
+casc:
+  configMapName: ""
+
+secrets:
+  secretName: ""
+
+terminationGracePeriodSeconds: 30

@@ -1,0 +1,178 @@
+{{- if .Values.supervisor.enabled }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: netci-supervisor
+  namespace: {{ .Release.Namespace }}
+automountServiceAccountToken: true
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: netci-supervisor
+rules:
+  - apiGroups: [apps]
+    resources: [statefulsets]
+    verbs: [get, list, patch]
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [get, list, delete]
+  - apiGroups: [""]
+    resources: [nodes]
+    verbs: [get, list, update]
+  - apiGroups: [""]
+    resources: [nodes/status]
+    verbs: [update]
+  - apiGroups: [coordination.k8s.io]
+    resources: [leases]
+    verbs: [get, list, update]
+  - apiGroups: [storage.k8s.io]
+    resources: [volumeattachments]
+    verbs: [list]
+  - apiGroups: [""]
+    resources: [events]
+    verbs: [create]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: netci-supervisor
+subjects:
+  - kind: ServiceAccount
+    name: netci-supervisor
+    namespace: {{ .Release.Namespace }}
+roleRef:
+  kind: ClusterRole
+  name: netci-supervisor
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: netci-supervisor-leader
+  namespace: {{ .Release.Namespace }}
+rules:
+  - apiGroups: [coordination.k8s.io]
+    resources: [leases]
+    verbs: [get, create, update]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: netci-supervisor-leader
+  namespace: {{ .Release.Namespace }}
+subjects:
+  - kind: ServiceAccount
+    name: netci-supervisor
+    namespace: {{ .Release.Namespace }}
+roleRef:
+  kind: Role
+  name: netci-supervisor-leader
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: netci-supervisor
+  namespace: {{ .Release.Namespace }}
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app: netci-supervisor
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: netci-supervisor
+  namespace: {{ .Release.Namespace }}
+spec:
+  replicas: {{ .Values.supervisor.replicas }}
+  selector:
+    matchLabels:
+      app: netci-supervisor
+  template:
+    metadata:
+      labels:
+        app: netci-supervisor
+    spec:
+      serviceAccountName: netci-supervisor
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels:
+                  app: netci-supervisor
+              topologyKey: kubernetes.io/hostname
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    netci.io/cell: "true"
+                namespaceSelector: {}
+                topologyKey: kubernetes.io/hostname
+      containers:
+        - name: supervisor
+          image: {{ include "netci.image" . | quote }}
+          command: [/supervisor]
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            {{- if .Values.supervisor.fence.configSecretName }}
+            - name: NETCI_FENCE_CONFIG
+              value: /etc/netci/fence/fence.json
+            {{- else }}
+            - name: NETCI_MACHINES
+              value: {{ .Values.supervisor.machines | quote }}
+            - name: NETCI_FENCE_ADDR
+              value: {{ .Values.supervisor.fence.addr | quote }}
+            - name: NETCI_FENCE_USER
+              value: {{ .Values.supervisor.fence.user | quote }}
+            {{- end }}
+            - name: NETCI_AUTO_POWER_ON
+              value: {{ .Values.supervisor.autoPowerOn | quote }}
+            - name: NETCI_PANIC_FRACTION
+              value: {{ .Values.supervisor.panicFraction | quote }}
+          ports:
+            - name: metrics
+              containerPort: 9090
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 9090
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.supervisor.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: fence
+              mountPath: /etc/netci/fence
+              readOnly: true
+      volumes:
+        - name: fence
+          secret:
+            secretName: {{ if .Values.supervisor.fence.configSecretName }}{{ .Values.supervisor.fence.configSecretName }}{{ else }}{{ required "supervisor.fence.secretName (or fence.configSecretName): without a power controller nothing can be fenced" .Values.supervisor.fence.secretName }}{{ end }}
+            defaultMode: 0440
+{{- end }}

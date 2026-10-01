@@ -113,9 +113,16 @@ func run(log *slog.Logger) error {
 				log.Info("leading: reconciling sandboxes", "pools", len(cfg.Pools))
 				t := time.NewTicker(time.Second)
 				defer t.Stop()
-				for {
+				for i := 1; ; i++ {
 					if err := recon.Tick(ctx); err != nil && ctx.Err() == nil {
 						log.Error("reconcile", "error", err)
+					}
+					// Again every 15 s: anything that rewrites the slice (a helm upgrade renders it
+					// empty) would otherwise cut the Service off from the leader until it changes.
+					if i%15 == 0 {
+						if err := fabric.PublishLeader(ctx, client, ns, ip); err != nil && ctx.Err() == nil {
+							log.Error("routing the Service to this replica", "error", err)
+						}
 					}
 					select {
 					case <-ctx.Done():

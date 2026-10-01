@@ -1,0 +1,14 @@
+{
+  "$schema": "http://json-schema.org/schema#",
+  "type": "object",
+  "properties": {
+    "netci": {
+      "type": "object",
+      "properties": {
+        "repository": { "type": "string" },
+        "digest": { "type": "string" }
+      },
+      "required": ["repository", "digest"]
+    }
+  }
+}

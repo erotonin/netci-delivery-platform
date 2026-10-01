@@ -1,0 +1,13 @@
+netCI has been installed.
+
+Required external resources:
+{{- if .Values.supervisor.enabled }}
+- Supervisor fence secret: {{ if .Values.supervisor.fence.configSecretName }}{{ .Values.supervisor.fence.configSecretName }} (with fence.json){{ else }}{{ .Values.supervisor.fence.secretName }} (with id_ed25519 and host_key.pub){{ end }}
+{{- end }}
+{{- if .Values.queue.enabled }}
+- Queue database secret: {{ .Values.queue.database.secretName }} (key: {{ .Values.queue.database.key }})
+- Queue cells secret: {{ .Values.queue.cellCredentials.secretName }}
+{{- end }}
+{{- if .Values.fabric.enabled }}
+- Fabric database secret: {{ .Values.fabric.database.secretName }} (key: {{ .Values.fabric.database.key }})
+{{- end }}
