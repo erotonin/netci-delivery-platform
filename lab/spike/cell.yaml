@@ -141,6 +141,20 @@ data:
               }
             }
           }
+          // What a GitLab push becomes through netCI's webhook intake (webhook_probe.py).
+          pipelineJob('webhook-probe') {
+            parameters {
+              stringParam('GIT_SHA', '', 'commit pushed')
+              stringParam('BRANCH', '', 'branch pushed')
+              stringParam('BY', '', 'who pushed')
+            }
+            definition {
+              cps {
+                sandbox(true)
+                script("echo \"push of ^${params.GIT_SHA} to ^${params.BRANCH} by ^${params.BY}\"")
+              }
+            }
+          }
           // The same, queued for 20 s: long enough to crash the controller under it, short
           // enough for a probe to wait for the builds afterwards.
           pipelineJob('queue-probe-short') {

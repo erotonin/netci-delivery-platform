@@ -38,11 +38,17 @@ open(out, "w").write(r["data"]["tokenValue"])
 PY
   fi
 )
+( umask 077; [[ -s "${Q}/gitlab-hook-secret" ]] || openssl rand -hex 24 > "${Q}/gitlab-hook-secret" )
 hash="$(tr -d '\n' < "${Q}/client-token" | sha256sum | cut -d' ' -f1)"
+hook_hash="$(tr -d '\n' < "${Q}/gitlab-hook-secret" | sha256sum | cut -d' ' -f1)"
+# The lab GitLab's pushes to main of any project start webhook-probe (lab/spike/webhook_probe.py).
 cat > "${Q}/config.json" <<JSON
 {"cells": {"cell-b": {"url": "http://jenkins.cell-b.svc.cluster.local:8080", "credentials": "/etc/netci/cells/cell-b", "budget": 50}},
  "routes": [{"prefix": "", "cell": "cell-b"}],
- "clients": {"lab-probe": {"tokenSha256": "${hash}", "jobs": [""]}}}
+ "clients": {"lab-probe": {"tokenSha256": "${hash}", "jobs": [""]}},
+ "hooks": {"lab-gitlab": {"provider": "gitlab", "tokenSha256": "${hook_hash}", "client": "lab-probe",
+   "rules": [{"event": "push", "ref": "main", "job": "webhook-probe",
+              "parameters": {"GIT_SHA": "{{sha}}", "BRANCH": "{{ref_name}}", "BY": "{{user}}"}}]}}}
 JSON
 kubectl create namespace netci-system --dry-run=client -o yaml | kubectl apply -f - >/dev/null
 kubectl -n netci-system create secret generic harbor-pull --type kubernetes.io/dockerconfigjson \
