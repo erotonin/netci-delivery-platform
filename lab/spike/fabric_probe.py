@@ -2,7 +2,7 @@
 """Lab probe for ADR-064: what an agent costs a build, on a warm fabric sandbox and on a pod the
 Kubernetes plugin creates for the build.
 
-    lab/spike/fabric_probe.py [--runs 5]
+    lab/spike/fabric_probe.py [--runs 5] [--burst 0]
 
 Runs fabric-probe and k8s-probe (the same one-line `sh` step) --runs times each, one at a time,
 and records from Jenkins' own records how long each build took from being triggered to
@@ -56,6 +56,7 @@ def sandboxes() -> dict[str, int]:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--runs", type=int, default=5)
+    ap.add_argument("--burst", type=int, default=0, help="then this many builds of each job at once")
     args = ap.parse_args()
     started = dt.datetime.now(dt.timezone.utc)
     j = probe.Jenkins()
@@ -64,6 +65,13 @@ def main() -> int:
         for job in results:
             results[job].append(run_once(j, job))
             time.sleep(3)  # let the warm pool refill, as it would between builds
+    if args.burst:
+        from concurrent.futures import ThreadPoolExecutor
+        for job in list(results):
+            with ThreadPoolExecutor(args.burst) as ex:
+                burst = list(ex.map(lambda _: run_once(probe.Jenkins(), job), range(args.burst)))
+            results[job + " (burst)"] = burst
+            time.sleep(20)
     uid_map = next((l.strip() for l in results["fabric-probe"][0]["console"].splitlines() if l.strip().startswith("0 ")), None)
     time.sleep(10)
     facts = {
