@@ -173,8 +173,29 @@ func run(log *slog.Logger) error {
 	}
 	go (&supervisor.HeadroomWatch{Client: hrClient, Interval: headroomEvery, Leading: leading.Load,
 		Events: &supervisor.KubeEvents{Client: hrClient, Instance: pod, Log: log}, Metrics: metrics, Log: log}).Run(ctx)
+	// A leader beside a cell's controller hands over to a replica on a machine without one, at
+	// most once in 5 minutes (supervisor.YieldTo).
+	var lastHandOver time.Time
+	handOver := func(ctx context.Context) (string, bool) {
+		if time.Since(lastHandOver) < 5*time.Minute {
+			return "", false
+		}
+		sups, err := client.CoreV1().Pods(ns).List(ctx, metav1.ListOptions{LabelSelector: "app=netci-supervisor"})
+		if err != nil {
+			return "", false
+		}
+		cells, err := client.CoreV1().Pods(metav1.NamespaceAll).List(ctx, metav1.ListOptions{LabelSelector: supervisor.CellLabel})
+		if err != nil {
+			return "", false
+		}
+		return supervisor.YieldTo(pod, sups.Items, cells.Items)
+	}
 	for ctx.Err() == nil {
-		runElection(ctx, lock, &leading, metrics, log)
+		if runElection(ctx, lock, &leading, metrics, log, handOver) {
+			lastHandOver = time.Now()
+			time.Sleep(3 * time.Second) // the other replica retries every second
+			continue
+		}
 		if ctx.Err() == nil {
 			log.Warn("lost the leader lease; standing for election again")
 			time.Sleep(time.Second)
@@ -186,8 +207,14 @@ func run(log *slog.Logger) error {
 	return nil
 }
 
-func runElection(ctx context.Context, lock resourcelock.Interface, leading *atomic.Bool, metrics *supervisor.Metrics, log *slog.Logger) {
-	leaderelection.RunOrDie(ctx, leaderelection.LeaderElectionConfig{
+// runElection stands for election and acts while leading; it returns true when this replica
+// handed its leadership over.
+func runElection(ctx context.Context, lock resourcelock.Interface, leading *atomic.Bool, metrics *supervisor.Metrics, log *slog.Logger,
+	handOver func(context.Context) (string, bool)) bool {
+	ectx, release := context.WithCancel(ctx)
+	defer release()
+	var handed atomic.Bool
+	leaderelection.RunOrDie(ectx, leaderelection.LeaderElectionConfig{
 		// Short: when the leader dies with a cell's machine, this is added to the takeover.
 		Lock: lock, LeaseDuration: 10 * time.Second, RenewDeadline: 7 * time.Second, RetryPeriod: time.Second,
 		ReleaseOnCancel: true, Name: "netci-supervisor",
@@ -196,7 +223,21 @@ func runElection(ctx context.Context, lock resourcelock.Interface, leading *atom
 				leading.Store(true)
 				metrics.SetLeading(true)
 				log.Info("leading: acting on what this replica has been observing")
-				<-ctx.Done()
+				t := time.NewTicker(15 * time.Second)
+				defer t.Stop()
+				for {
+					select {
+					case <-ctx.Done():
+						return
+					case <-t.C:
+					}
+					if to, ok := handOver(ctx); ok {
+						log.Info("handing the leadership to a replica on a machine without a cell", "to", to)
+						handed.Store(true)
+						release() // ReleaseOnCancel: the lease is freed for the other replica at once
+						return
+					}
+				}
 			},
 			OnStoppedLeading: func() {
 				leading.Store(false)
@@ -205,6 +246,7 @@ func runElection(ctx context.Context, lock resourcelock.Interface, leading *atom
 			},
 		},
 	})
+	return handed.Load()
 }
 
 // powerControllers reads NETCI_FENCE_CONFIG (one power controller per node: Redfish BMCs, the
