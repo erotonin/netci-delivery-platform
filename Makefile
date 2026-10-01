@@ -16,7 +16,8 @@ test: ## unit tests (race detector on)
 
 vet: ## static checks
 	@if [ -n "$(PKGS)" ]; then go vet ./...; fi
-	@test -z "$$(gofmt -l $$(git ls-files "*.go"))" || { gofmt -l $$(git ls-files "*.go"); echo "gofmt: files above are not formatted"; exit 1; }
+	@unformatted="$$(gofmt -l $$(go list -f '{{.Dir}}' ./... 2>/dev/null) </dev/null)"; \
+	  test -z "$$unformatted" || { echo "$$unformatted"; echo "gofmt: files above are not formatted"; exit 1; }
 
 toolchain: ## regenerate jenkins/plugins.txt and the controller base from toolchain/versions.yaml
 	$(PYTHON) scripts/toolchain_sync.py
