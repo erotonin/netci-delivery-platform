@@ -6,7 +6,8 @@
 # policies apply the same settings to whatever Longhorn writes, whenever it writes it, and never
 # refuse it (failurePolicy: Ignore).
 #
-#   - attacher: retries at most 5 s apart, dead API connections noticed in ~4 s, one per node
+#   - attacher: retries at most 2 s apart (at 5 s, a first attempt that failed cost 4 s more),
+#     dead API connections noticed in ~4 s, one per node
 #     (spread per revision), and a new leader within ~12 s of the old one's machine going, not
 #     ~20 s (the attachers run on the same machines as cells; renewals still outlast the lab's
 #     ~7 s etcd elections);
@@ -37,7 +38,7 @@ spec:
             value: object.spec.template.spec.containers[0].args.filter(a,
                      !a.startsWith("--retry-interval-max=") && !a.startsWith("--leader-election-lease-duration=") &&
                      !a.startsWith("--leader-election-renew-deadline=") && !a.startsWith("--leader-election-retry-period=")) +
-                   ["--retry-interval-max=5s", "--leader-election-lease-duration=10s",
+                   ["--retry-interval-max=2s", "--leader-election-lease-duration=10s",
                     "--leader-election-renew-deadline=8s", "--leader-election-retry-period=2s"]}]
     - patchType: ApplyConfiguration
       applyConfiguration:

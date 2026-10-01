@@ -30,6 +30,6 @@ if ! kubectl -n longhorn-system get ds longhorn-manager -o jsonpath='{.spec.temp
   kubectl -n longhorn-system rollout restart ds/longhorn-manager >/dev/null
   kubectl -n longhorn-system rollout status ds/longhorn-manager --timeout=600s
 fi
-kubectl -n longhorn-system get deploy csi-attacher -o jsonpath='{.spec.template.spec.containers[0].args}{"\n"}' | grep -q -- '--retry-interval-max=5s' \
+kubectl -n longhorn-system get deploy csi-attacher -o jsonpath='{.spec.template.spec.containers[0].args}{"\n"}' | grep -q -- '--retry-interval-max=2s' \
   || { echo "the attacher is not tuned: are the admission policies active?" >&2; exit 1; }
 kubectl -n longhorn-system get pods -l app=csi-attacher -o custom-columns=POD:.metadata.name,NODE:.spec.nodeName
