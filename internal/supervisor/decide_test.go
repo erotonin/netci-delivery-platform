@@ -302,6 +302,37 @@ func TestAFencedMachineStaysOffUntilEveryCellIsHeldAgain(t *testing.T) {
 	only(t, Decide(in, c), PowerOn)
 }
 
+// A replacement no node can take moves no volume, and the fenced machine may be the only room
+// left: waiting for the cell to be held would wait forever (seen in the lab).
+func TestACellWithNowhereToGoDoesNotHoldItsMachineOff(t *testing.T) {
+	in := world()
+	in.Cells[0].LeaseHolder, in.Cells[0].AwaitingTakeover, in.Cells[0].PodNode = "", true, ""
+	node(in, "netci-lab-1", func(n *NodeView) {
+		*n = NodeView{Name: "netci-lab-1", Machine: "netci-lab-1", ControlPlane: true, Fenced: true, FencedFor: time.Hour, MachineState: fence.Off}
+	})
+	c := cfg()
+	c.AutoPowerOn = true
+	kinds := func() map[Kind]int {
+		k := map[Kind]int{}
+		for _, a := range Decide(in, c) {
+			k[a.Kind]++
+		}
+		return k
+	}
+	in.Cells[0].UnschedulableFor = 10 * time.Second // the scheduler may still find room
+	if k := kinds(); k[PowerOn] != 0 || k[Alert] != 0 {
+		t.Fatalf("acted on a pod unschedulable for 10 s: %v", k)
+	}
+	in.Cells[0].UnschedulableFor = time.Minute
+	if k := kinds(); k[PowerOn] != 1 || k[Alert] != 1 {
+		t.Fatalf("a cell with nowhere to go for a minute: %v, want the machine powered on and an alert", k)
+	}
+	c.AutoPowerOn = false
+	if k := kinds(); k[PowerOn] != 0 || k[Alert] != 1 {
+		t.Fatalf("without auto power-on a person must be told: %v", k)
+	}
+}
+
 func TestAMachineFoundOffIsFencedBeforeItsLeaseExpires(t *testing.T) {
 	in := world()
 	in.Cells[0].LeaseUnchanged = 4 * time.Second // three renewals missed; not expired (15 s)

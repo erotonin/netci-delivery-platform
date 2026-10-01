@@ -74,10 +74,20 @@ def main() -> int:
         before = neighbour()
         tick = random.randint(5, 60)
         t0 = dt.datetime.now(dt.timezone.utc)
+        before_files = set(EVIDENCE.glob("spike-resume-node-poweroff-supervised-*.json"))
         r = subprocess.run([sys.executable, str(Path(__file__).parent / "probe.py"), "resume", "--failure",
                             "node-poweroff-supervised", "--seconds", "240", "--crash-at-tick", str(tick), "--job", args.job],
                            capture_output=True, text=True, timeout=3000)
-        evidence = sorted(EVIDENCE.glob("spike-resume-node-poweroff-supervised-*.json"))[-1]
+        # Only this run's evidence: a probe that failed before writing any must not be read as
+        # the previous run's result (series 6 counted run 1 twice that way).
+        new = sorted(set(EVIDENCE.glob("spike-resume-node-poweroff-supervised-*.json")) - before_files)
+        if not new:
+            runs.append({"run": i + 1, "crashAtTick": tick, "probeExit": r.returncode, "evidence": None,
+                         "result": "NO EVIDENCE", "resumed": False, "timings_s": None, "once": None,
+                         "probeOutputTail": (r.stdout + r.stderr).strip().splitlines()[-30:]})
+            print(json.dumps(runs[-1]), flush=True)
+            break  # the cluster is in a state this script did not make; a person looks first
+        evidence = new[-1]
         d = json.loads(evidence.read_text())
         after = neighbour()
         losses = probe.kubectl("-n", "cell-a", "logs", "jenkins-0", "-c", "cell-agent",
@@ -102,6 +112,8 @@ def main() -> int:
     summary = {k: {"values": series(k), "median": statistics.median(series(k)) if series(k) else None,
                    "max": max(series(k)) if series(k) else None} for k in ("fenced", "leaseTaken", "jenkinsUp", "resumed")}
     def neighbour_ok(r):
+        if r["evidence"] is None:
+            return False
         if r["neighbourColocated"]:
             return r["neighbourHeldAgain"]
         return not r["neighbourJenkinsRestarted"] and not r["neighbourLeaseLosses"]

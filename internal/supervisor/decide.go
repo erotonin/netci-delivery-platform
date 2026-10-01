@@ -77,6 +77,9 @@ type CellView struct {
 	// AwaitingTakeover: the supervisor released this cell's Lease for a fenced holder and no pod
 	// holds it again yet -- its volume may still be on its way to the new node.
 	AwaitingTakeover bool
+	// UnschedulableFor: how long the scheduler has found no node for the cell's pod; zero when
+	// it is placed or still being considered.
+	UnschedulableFor time.Duration
 }
 
 // suspect: the Lease names this pod and has gone unrenewed for SuspectAfter, so its machine's
@@ -292,10 +295,22 @@ func cooldownReason(c CellView, now time.Time, cfg Config) string {
 // brought back 30 s after its fencing came up while its cell's volume was still moving; the
 // storage then deleted the replacement pod it had almost started, and the takeover took a
 // second round.
+//
+// A cell whose pod no node can take is not moving a volume, though, and the fenced machine may
+// be the only room left for it: in the lab a cell waited for a node while the supervisor waited
+// for the cell, with its machine off, until a person stepped in. Such a cell does not hold the
+// machines off, and it is reported: the cluster has no headroom for a takeover.
 func recovery(in Input, cfg Config) []Action {
 	settled := true
+	var actions []Action
 	for _, c := range in.Cells {
-		if c.AwaitingTakeover {
+		switch {
+		case !c.AwaitingTakeover:
+		case c.UnschedulableFor >= cfg.PowerOnAfter:
+			actions = append(actions, Action{Kind: Alert, Namespace: c.Namespace, Cell: c.Name, Reason: fmt.Sprintf(
+				"no node has had room for the cell's controller for %s since its takeover: the cluster lacks the headroom a takeover needs",
+				c.UnschedulableFor.Round(time.Second))})
+		default:
 			settled = false
 		}
 	}
@@ -304,7 +319,6 @@ func recovery(in Input, cfg Config) []Action {
 		names = append(names, name)
 	}
 	sort.Strings(names)
-	var actions []Action
 	for _, name := range names {
 		n := in.Nodes[name]
 		if !n.Fenced {

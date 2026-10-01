@@ -129,6 +129,11 @@ func (c *Collector) Collect(ctx context.Context) (*Snapshot, error) {
 		default:
 			cv.PodExists, cv.PodUID, cv.PodNode = true, string(pod.UID), pod.Spec.NodeName
 			cv.PodDeleting = pod.DeletionTimestamp != nil
+			for _, cond := range pod.Status.Conditions {
+				if cond.Type == corev1.PodScheduled && cond.Status == corev1.ConditionFalse && cond.Reason == corev1.PodReasonUnschedulable {
+					cv.UnschedulableFor = max(start.Sub(cond.LastTransitionTime.Time), time.Nanosecond)
+				}
+			}
 		}
 		in.Cells = append(in.Cells, cv)
 	}
