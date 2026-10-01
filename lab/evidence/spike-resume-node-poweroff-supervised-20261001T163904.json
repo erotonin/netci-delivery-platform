@@ -1,0 +1,49 @@
+{
+  "scenario": "resume",
+  "failure": "node-poweroff-supervised",
+  "seconds": 240,
+  "build": 6,
+  "ticksBeforeFailure": 20,
+  "agentNode": "netci-lab-1",
+  "agentPod": "spike-ws-s3tjc",
+  "agentLog": "lab/evidence/agent-spike-ws-s3tjc.log",
+  "controllerNodeBefore": "netci-lab-3",
+  "leaseHolderBefore": "jenkins-0/640e92f7-6b08-431a-a149-fdcf3b97b30e",
+  "controllerNodeAfter": "netci-lab-3",
+  "result": "SUCCESS",
+  "reachedStageAfter": true,
+  "ticksSeen": 240,
+  "ticksMissing": [],
+  "resumed": true,
+  "consoleTail": [
+    "[Pipeline] }",
+    "[Pipeline] // stage",
+    "[Pipeline] stage",
+    "[Pipeline] { (after)",
+    "[Pipeline] echo",
+    "reached the stage after the long step",
+    "[Pipeline] }",
+    "[Pipeline] // stage",
+    "[Pipeline] }",
+    "[Pipeline] // node",
+    "[Pipeline] End of Pipeline",
+    "Finished: SUCCESS"
+  ],
+  "timings_s": {
+    "fenced": 6.6,
+    "leaseTaken": 89.9,
+    "jenkinsUp": 109.3,
+    "resumed": 114.1
+  },
+  "nodeRestoredBySupervisor": true,
+  "supervisorEvents": [
+    "2026-10-01T09:24:43Z Fenced: machine netci-lab-2 confirmed off in 130ms; lease released, node netci-lab-2 out of service, pod deleted (159ms in all)",
+    "2026-10-01T09:41:05Z TakeoverComplete: jenkins-0/a9c605c1-1d8b-4a49-b809-d8d8de509b1f holds the lease (epoch 12) 89.9s after the last renewal by jenkins-0/640e92f7-6b08-431a-a149-fdcf3b97b30e",
+    "2026-10-01T09:31:52Z Fenced: machine netci-lab-1 confirmed off in 134ms; lease released, node netci-lab-1 out of service, pod deleted (166ms in all)",
+    "2026-10-01T09:25:13Z TakeoverComplete: jenkins-0/7630d5db-e705-4c2a-a54e-46692c041e3d holds the lease (epoch 10) 38.0s after the last renewal by jenkins-0/7857008e-1a1c-4a20-aa0a-487ea03a2653",
+    "2026-10-01T09:32:43Z TakeoverComplete: jenkins-0/640e92f7-6b08-431a-a149-fdcf3b97b30e holds the lease (epoch 11) 56.9s after the last renewal by jenkins-0/7630d5db-e705-4c2a-a54e-46692c041e3d",
+    "2026-10-01T09:39:41Z Fenced: machine netci-lab-3 confirmed off in 137ms; lease released, node netci-lab-3 out of service, pod deleted (366ms in all)"
+  ],
+  "startedAt": "20261001T163904",
+  "jenkinsVersion": "2.555.3"
+}

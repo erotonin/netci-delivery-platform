@@ -465,6 +465,27 @@ func TestAFencedMachineIsBroughtBackOnlyWhenAsked(t *testing.T) {
 	l.power.set("netci-lab-1", fence.Off)
 	l.until("fencing", 10, func() bool { return l.has("delete-pod jenkins-0") })
 	_ = l.kube.CoreV1().Pods("cell-a").Delete(context.Background(), "jenkins-0", metav1.DeleteOptions{})
+	for i := 0; i < 60; i++ {
+		l.second()
+	}
+	if l.has("power-on netci-lab-1") {
+		t.Fatal("powered the machine on while its cell was not held by anyone yet")
+	}
+	// The StatefulSet's replacement starts elsewhere and takes the lease.
+	if _, err := l.kube.CoreV1().Pods("cell-a").Create(context.Background(), &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "jenkins-0", Namespace: "cell-a", UID: "uid-2", Labels: map[string]string{CellLabel: "true"}},
+		Spec:       corev1.PodSpec{NodeName: "netci-lab-2"}}, metav1.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	cur := l.cellLease()
+	next, one := "jenkins-0/uid-2", int32(1)
+	cur.Spec.HolderIdentity, cur.Spec.LeaseTransitions = &next, &one
+	if _, err := l.leases.Leases("cell-a").Update(context.Background(), cur, metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	l.mu.Lock()
+	l.cellAlive = true // the new holder renews
+	l.mu.Unlock()
 
 	l.until("power-on", 60, func() bool { return l.has("power-on netci-lab-1") })
 	l.mu.Lock()

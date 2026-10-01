@@ -68,6 +68,9 @@ type CellView struct {
 	PodNode     string
 	PodDeleting bool
 	LastAction  time.Time // the supervisor last powered off or deleted for this cell; zero if never
+	// AwaitingTakeover: the supervisor released this cell's Lease for a fenced holder and no pod
+	// holds it again yet -- its volume may still be on its way to the new node.
+	AwaitingTakeover bool
 }
 
 // holdsLease: the Lease names this exact pod. A Lease left by an earlier pod of the same name
@@ -268,7 +271,18 @@ func cooldownReason(c CellView, now time.Time, cfg Config) string {
 }
 
 // recovery finishes fencing that was interrupted, and brings fenced machines back.
+//
+// A fenced machine is powered on only once every cell is held again. In the lab, a machine
+// brought back 30 s after its fencing came up while its cell's volume was still moving; the
+// storage then deleted the replacement pod it had almost started, and the takeover took a
+// second round.
 func recovery(in Input, cfg Config) []Action {
+	settled := true
+	for _, c := range in.Cells {
+		if c.AwaitingTakeover {
+			settled = false
+		}
+	}
 	names := make([]string, 0, len(in.Nodes))
 	for name := range in.Nodes {
 		names = append(names, name)
@@ -286,7 +300,7 @@ func recovery(in Input, cfg Config) []Action {
 			a.Kind, a.Reason = ForceDeletePods, "the node is fenced and its machine off, but cell pods are still bound to it"
 		case n.MachineState == fence.Running && n.Ready && n.KubeletFresh:
 			a.Kind, a.Reason = Unfence, "the machine is running again and its node is Ready"
-		case cfg.AutoPowerOn && n.MachineState == fence.Off && n.CellPods == 0 && n.Attachments == 0 && n.FencedFor >= cfg.PowerOnAfter:
+		case cfg.AutoPowerOn && settled && n.MachineState == fence.Off && n.CellPods == 0 && n.Attachments == 0 && n.FencedFor >= cfg.PowerOnAfter:
 			a.Kind, a.Reason = PowerOn, "nothing of a cell is left on the fenced node: powering it back on"
 		default:
 			continue

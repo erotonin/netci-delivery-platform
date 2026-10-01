@@ -283,3 +283,21 @@ func TestRecoveryOfAFencedNode(t *testing.T) {
 	none(t, Decide(fenced(func(n *NodeView) { n.MachineState = fence.Running }), c)) // booting: not Ready yet
 	only(t, Decide(fenced(func(n *NodeView) { n.MachineState, n.Ready, n.KubeletFresh = fence.Running, true, true }), c), Unfence)
 }
+
+func TestAFencedMachineStaysOffUntilEveryCellIsHeldAgain(t *testing.T) {
+	in := world()
+	in.Cells[0].LeaseHolder, in.Cells[0].AwaitingTakeover = "", true // released for the fenced holder
+	node(in, "netci-lab-1", func(n *NodeView) {
+		*n = NodeView{Name: "netci-lab-1", Machine: "netci-lab-1", ControlPlane: true, Fenced: true, FencedFor: time.Hour, MachineState: fence.Off}
+	})
+	c := cfg()
+	c.AutoPowerOn = true
+	for _, a := range Decide(in, c) {
+		if a.Kind == PowerOn {
+			t.Fatal("powered a fenced machine on while a cell's takeover was still under way")
+		}
+	}
+	in.Cells[0].LeaseHolder, in.Cells[0].AwaitingTakeover = "jenkins-0/uid-new", false
+	in.Cells[0].PodUID = "uid-new"
+	only(t, Decide(in, c), PowerOn)
+}

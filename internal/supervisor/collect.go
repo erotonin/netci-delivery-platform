@@ -118,6 +118,7 @@ func (c *Collector) Collect(ctx context.Context) (*Snapshot, error) {
 			cv.LeaseHolder, cv.LeaseEpoch = obs.Holder, obs.Epoch
 			cv.LeaseExpired = obs.Holder != "" && obs.Expired
 			cv.LeaseUnchanged = obs.SinceChange
+			cv.AwaitingTakeover = obs.Holder == "" && l.Annotations[lease.FencedAnnotation] != ""
 			snap.Leases[s.Namespace+"/"+s.Name] = l
 		}
 		pod, err := c.Client.CoreV1().Pods(s.Namespace).Get(ctx, cv.Pod, metav1.GetOptions{})
