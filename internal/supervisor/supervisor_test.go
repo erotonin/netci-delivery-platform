@@ -413,6 +413,30 @@ func TestAPowerLossDuringAnAPIStallIsFencedAsSoonAsTheAPIAnswers(t *testing.T) {
 	l.inOrder("confirmed-off netci-lab-1", "release-lease jenkins", "taint netci-lab-1", "delete-pod jenkins-0")
 }
 
+// Chaos series 9, run 2: the controller renewed once more after the supervisor's last look and
+// then lost its power, and the API stalled. After the stall the supervisor saw that renewal for
+// the first time and counted its quiet from then. The renewal happened during the gap, and the
+// Lease says when.
+func TestARenewalMadeJustBeforeTheStallDoesNotRestartTheCount(t *testing.T) {
+	l := newLab(t)
+	l.warm()
+	l.renew("cell-a", "jenkins") // after the supervisor's last look
+	l.kill("netci-lab-1")
+	l.power.set("netci-lab-1", fence.Off)
+	l.mu.Lock()
+	l.apiDown = true
+	l.mu.Unlock()
+	for i := 0; i < 5; i++ {
+		l.second()
+	}
+	l.mu.Lock()
+	l.apiDown = false
+	l.mu.Unlock()
+	if took := l.until("fencing", 30, func() bool { return l.has("delete-pod jenkins-0") }); took > 1 {
+		t.Fatalf("fenced %d s after the API answered again, counting from a renewal made 5 s before", took)
+	}
+}
+
 func TestAHungMachineIsPoweredOffOnlyOnceItsKubeletIsSilent(t *testing.T) {
 	l := newLab(t)
 	l.warm()

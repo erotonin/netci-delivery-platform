@@ -50,12 +50,30 @@ func NewObserver(c clock.PassiveClock) *Observer {
 // change: an observer that has just started cannot know how long it has been unchanged, and
 // must wait a full duration before it can call it expired.
 func (o *Observer) Observe(l *coordinationv1.Lease) Observation {
+	return o.ObserveSince(l, time.Time{})
+}
+
+// ObserveSince is Observe for an observer that last looked at notBefore: a version it has not
+// seen was written after then, and when exactly the Lease's renewTime says, kept within
+// (notBefore, now]. The holder's clock is another machine's; the bounds keep its error within
+// the time the observer did not look. A zero notBefore is Observe: the change counts as now.
+func (o *Observer) ObserveSince(l *coordinationv1.Lease, notBefore time.Time) Observation {
 	now := o.Clock.Now()
 	key := l.Namespace + "/" + l.Name
 	o.mu.Lock()
 	s, ok := o.seen[key]
 	if !ok || s.resourceVersion != l.ResourceVersion {
-		s = seen{resourceVersion: l.ResourceVersion, changedAt: now}
+		changed := now
+		if !notBefore.IsZero() && l.Spec.RenewTime != nil {
+			changed = l.Spec.RenewTime.Time
+			if changed.Before(notBefore) {
+				changed = notBefore
+			}
+			if changed.After(now) {
+				changed = now
+			}
+		}
+		s = seen{resourceVersion: l.ResourceVersion, changedAt: changed}
 		o.seen[key] = s
 	}
 	o.mu.Unlock()

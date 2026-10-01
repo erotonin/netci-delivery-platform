@@ -123,7 +123,8 @@ func (c *Collector) Collect(ctx context.Context) (*Snapshot, error) {
 			cv.LeaseHolder, cv.LeaseEpoch = obs.Holder, obs.Epoch
 			cv.LeaseExpired = obs.Holder != "" && obs.Expired
 			cv.LeaseUnchanged = obs.SinceChange
-			cv.LeaseQuiet = c.quiet.Observe(l).SinceChange
+			// A renewal first seen now was made after the last look; the Lease says when.
+			cv.LeaseQuiet = c.quiet.ObserveSince(l, c.lastOK).SinceChange
 			cv.AwaitingTakeover = obs.Holder == "" && l.Annotations[lease.FencedAnnotation] != ""
 			snap.Leases[s.Namespace+"/"+s.Name] = l
 		}
