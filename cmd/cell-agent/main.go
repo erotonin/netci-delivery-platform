@@ -53,7 +53,11 @@ func run(log *slog.Logger) error {
 	if pod == "" || uid == "" || ns == "" {
 		return errors.New("POD_NAME, POD_UID and POD_NAMESPACE must come from the downward API")
 	}
-	duration, err := env("NETCI_LEASE_DURATION", 6*time.Second)
+	// 15 s / 10 s, as Kubernetes' own controllers use. 6 s / 4 s was tried in the lab: when a
+	// machine lost power, etcd on the two surviving members took 1-3 s per read, and a healthy
+	// cell on another machine could not renew within 4 s and killed its own Jenkins. The
+	// deadline must outlast the control plane's worst stall; detection costs 9 s more for it.
+	duration, err := env("NETCI_LEASE_DURATION", 15*time.Second)
 	if err != nil {
 		return err
 	}
@@ -61,7 +65,7 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	deadline, err := env("NETCI_RENEW_DEADLINE", 4*time.Second)
+	deadline, err := env("NETCI_RENEW_DEADLINE", 10*time.Second)
 	if err != nil {
 		return err
 	}
@@ -138,7 +142,7 @@ func guard(log *slog.Logger, args []string) int {
 		log.Error("usage: cell-agent guard -- COMMAND [ARGS]")
 		return 2
 	}
-	stale, err := env("NETCI_RENEW_DEADLINE", 4*time.Second)
+	stale, err := env("NETCI_RENEW_DEADLINE", 10*time.Second)
 	if err != nil {
 		log.Error("bad configuration", "error", err)
 		return 2

@@ -144,6 +144,24 @@ func run(log *slog.Logger) error {
 	}
 	log.Info("supervisor starting", "identity", pod, "interval", interval, "node_stale", cfg.NodeStale,
 		"auto_power_on", cfg.AutoPowerOn, "panic_fraction", cfg.PanicFraction)
+	// Losing the leader lease (an API stall can cause it) puts the replica back into the
+	// election instead of exiting: a restart cost 13 s in the lab. The supervisor's
+	// observations start over in either case, so nothing seen before the loss is acted on.
+	for ctx.Err() == nil {
+		runElection(ctx, lock, sup, metrics, log)
+		if ctx.Err() == nil {
+			log.Warn("lost the leader lease; standing for election again")
+			time.Sleep(time.Second)
+		}
+	}
+	shutdown, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_ = server.Shutdown(shutdown)
+	return nil
+}
+
+func runElection(ctx context.Context, lock resourcelock.Interface, sup *supervisor.Supervisor, metrics *supervisor.Metrics, log *slog.Logger) {
+	sup.Restart()
 	leaderelection.RunOrDie(ctx, leaderelection.LeaderElectionConfig{
 		// Short: when the leader dies with a cell's machine, this is added to the takeover.
 		Lock: lock, LeaseDuration: 10 * time.Second, RenewDeadline: 7 * time.Second, RetryPeriod: time.Second,
@@ -160,15 +178,6 @@ func run(log *slog.Logger) error {
 			},
 		},
 	})
-	shutdown, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	_ = server.Shutdown(shutdown)
-	if ctx.Err() == nil {
-		// Lost the leadership without being asked to stop: exit, and start over with nothing
-		// remembered rather than act on observations from before the loss.
-		return errors.New("lost the leader lease")
-	}
-	return nil
 }
 
 // powerControllers reads NETCI_FENCE_CONFIG (one power controller per node: Redfish BMCs, the

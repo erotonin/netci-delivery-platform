@@ -131,7 +131,8 @@ Each figure is one run; the chaos suite repeats them with random failure points.
 ## Cell agent and Cell Supervisor (built 2026-10-01)
 
 **Cell agent** (`cmd/cell-agent`, a native sidecar of the controller pod). It holds the cell's
-Lease as `<pod>/<uid>` (6 s duration, renewed every second, 4 s renew deadline). Expiry is
+Lease as `<pod>/<uid>` (15 s duration, renewed every second, 10 s renew deadline; 6 s / 4 s
+was tried first, see "Unattended takeover" below). Expiry is
 judged only on the observer's own monotonic clock (unchanged for the whole duration), never
 from timestamps another machine wrote. The deadline counts from when a renewal *started*, so
 a holder stops at least `duration - deadline` before anyone else may start, whatever the
@@ -171,8 +172,31 @@ Lab evidence for the agent (cell-b, `lab/evidence/agent-*.json`, one run each):
 | Agent SIGSTOPped (hung) | guard killed Jenkins 3.5 s after the stop (exit 137); liveness restarted the agent; Ready again |
 | Pod cut off from the API server for 20 s (iptables in its network namespace) | Jenkins killed 3.2 s after the cut; no JVM of the pod while cut off; back after the cut healed |
 
-**Not yet verified live:** the supervisor's takeover after a power loss. It needs the host's
-power agent reachable from the cluster (`lab/supervisor.sh`).
+## Unattended takeover (lab, 2026-10-01; lab/evidence/spike-resume-node-poweroff-supervised-*.json)
+
+A VM was powered off under a 240 s build, with no operator action. The supervisor detected the
+loss, confirmed the machine off through the power agent, released the Lease, tainted and
+marked the node, deleted the pod, powered the machine back on and removed the taint. In every
+run:
+- the build resumed and finished SUCCESS;
+- its `sh` step ran once;
+- at most 1 of 240 log lines was lost.
+
+What the runs found, and what changed:
+
+| Run | Fenced after | Jenkins up after | What it showed | Change |
+|---|---|---|---|---|
+| 1 | 21 s | 67 s | The leader, on a healthy node, lost its lease: one HTTP/2 connection to the dead API server, every call failing. Restarted, it refused to start: the dead node still read Ready | HTTP/1.1 clients; the startup check retries and calls a mapping wrong only if the kubelet heartbeat is renewed |
+| 2 | ~31 s | 95 s | The leader died with the cell's node. Longhorn moved the volume only once Kubernetes marked the node NotReady, 74 s after the power loss | The supervisor marks a fenced node NotReady itself; its pods prefer nodes without cells |
+| 3 | 6.6 s | 109 s | Fast fencing, but the machine was powered on 30 s later, while the volume was still moving; Longhorn deleted the almost-started pod | Power on only once every cell is held again |
+| 4 | 30 s* | 61 s | Volume attached 13 s after fencing (was 27-45 s) | — |
+| 5 | 16 s* | 75 s | **A healthy cell on another node lost its Lease and restarted Jenkins:** etcd on the surviving members took 1-3 s per read, and the 4 s renew deadline did not outlast that | Cell Lease 15 s / 10 s, as Kubernetes' own controllers use; renewals retried with short attempts; the supervisor re-enters the election instead of exiting |
+
+\* The supervisor's leader lost its own lease in the same API stall and had to regain it.
+
+**Not verified live yet:**
+- that a healthy cell survives a neighbour's power loss with the 15 s / 10 s Lease;
+- the takeover time with those timings.
 
 ## What this reuses from netCI
 

@@ -36,6 +36,13 @@ type takeover struct {
 	holder      string
 }
 
+// Restart forgets everything observed, as after a loss of leadership: the next tick starts its
+// observations over and acts on nothing until it has watched for a full lease duration.
+func (s *Supervisor) Restart() {
+	s.Collector.ForgetAll()
+	s.alerted, s.takeovers = nil, nil
+}
+
 // Run ticks until ctx is done.
 func (s *Supervisor) Run(ctx context.Context) {
 	t := time.NewTicker(s.Interval)

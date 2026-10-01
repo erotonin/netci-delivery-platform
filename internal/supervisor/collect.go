@@ -62,6 +62,9 @@ type Collector struct {
 	lastOK time.Time
 }
 
+// ForgetAll drops every observation: the next Collect starts over.
+func (c *Collector) ForgetAll() { c.cells, c.lastOK = nil, time.Time{} }
+
 // Snapshot is one observation: Decide's input, and the Leases as read, for the executor's
 // conditional updates.
 type Snapshot struct {

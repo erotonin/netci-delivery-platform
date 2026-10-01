@@ -280,7 +280,7 @@ spec:
           command: [/netci-bin/cell-agent, guard, --, /usr/local/bin/jenkins.sh]
           env:
             - {name: NETCI_GATE_FILE, value: /run/netci/gate}
-            - {name: NETCI_RENEW_DEADLINE, value: 4s}
+            - {name: NETCI_RENEW_DEADLINE, value: 10s}   # the agent's; see cmd/cell-agent
             - {name: CASC_JENKINS_CONFIG, value: /var/jenkins_config/jenkins.yaml}
             # Jenkins provisions no cloud agent for 100 s after start-up by default, and then
             # only every 10 s: after a takeover, new builds would wait that long for an agent.
