@@ -256,6 +256,7 @@ spec:
     metadata: {labels: {app: jenkins, netci.io/cell: "true"}}
     spec:
       serviceAccountName: jenkins
+      priorityClassName: netci-cell
       imagePullSecrets: [{name: harbor-pull}]
       securityContext: {runAsUser: 1000, runAsGroup: 1000, fsGroup: 1000}
       # The cell agent kills the controller's JVM the moment the Lease is lost; it can only

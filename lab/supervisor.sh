@@ -33,6 +33,7 @@ line="restrict,from=\"${GUESTS}\",command=\"${AGENT}\" $(cut -d' ' -f1,2 "${STAT
 mv "${HOME}/.ssh/authorized_keys.new" "${HOME}/.ssh/authorized_keys"
 
 # 4. The cluster side. Secrets go through files, never a command line.
+kubectl apply -f "${ROOT}/lab/priorities.yaml" >/dev/null
 kubectl create namespace netci-system --dry-run=client -o yaml | kubectl apply -f - >/dev/null
 kubectl -n netci-system create secret generic netci-fence \
   --from-file=id_ed25519="${STATE}/fence/id_ed25519" --from-file=host_key.pub="${STATE}/fence/host_key.pub" \

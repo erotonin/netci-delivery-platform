@@ -62,3 +62,8 @@ fabric:
 monitoring:
   enabled: false
   labels: {}
+
+# PriorityClasses netci-platform, netci-cell and netci-sandbox (cluster-scoped), used by this chart
+# and by netci-cell. Turn off only if they are managed elsewhere under the same names.
+priorityClasses:
+  create: true

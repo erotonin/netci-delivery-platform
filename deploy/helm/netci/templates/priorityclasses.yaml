@@ -1,0 +1,26 @@
+{{- if .Values.priorityClasses.create }}
+# Who gets room first when a machine is lost and everything it ran needs a new place (ADR-060).
+# With one priority for all, the lost machine's other pods took the room and a controller, with
+# every build it carries, had nowhere to go (seen in the lab).
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: netci-platform
+value: 1000000
+description: "netCI's supervisor, queue and fabric: without them nothing is taken over."
+---
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: netci-cell
+value: 900000
+description: "A cell's Jenkins controller: one carries many builds, so it outranks any one build."
+---
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: netci-sandbox
+value: -10
+preemptionPolicy: Never
+description: "Build sandboxes: the first to give way, and never the cause of another pod's eviction."
+{{- end }}

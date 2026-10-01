@@ -9,6 +9,7 @@
 #   lab/vms.sh ssh N    shell on guest N
 #   lab/vms.sh down     shut the guests down (disks kept)
 #   lab/vms.sh destroy  delete the guests and their disks
+#   lab/vms.sh reclaim  give the host back the space the guests freed, one guest at a time
 #
 # Addresses are fixed by DHCP reservation on libvirt's default network, so a restart does not
 # move a node (the corp lab lost etcd quorum to exactly that, 2026-09-29).
@@ -90,7 +91,7 @@ up() {
       # host-passthrough: the guests expose VMX/SVM, so Kata sandboxes can run inside them.
       virt-install --connect qemu:///system --name "$n" --vcpus "${VCPUS}" --memory "${MEMORY_MB}" \
         --cpu host-passthrough --os-variant ubuntu24.04 --import \
-        --disk "path=${DISKS}/$n.qcow2,bus=virtio" --disk "path=${DISKS}/$n-seed.iso,device=cdrom" \
+        --disk "path=${DISKS}/$n.qcow2,bus=virtio,discard=unmap" --disk "path=${DISKS}/$n-seed.iso,device=cdrom" \
         --network "network=default,mac=$(mac "$i"),model=virtio" \
         --graphics none --noautoconsole --autostart >/dev/null
     elif [[ "$("${VIRSH[@]}" domstate "$n")" != running ]]; then
@@ -130,8 +131,37 @@ destroy() {
   done
 }
 
+# Guests' disks are thin qcow2 files that only grow: Longhorn rebuilding replicas after every
+# power-off kept writing new blocks, and the host's disk filled until QEMU paused two guests
+# (I/O error policy: stop). With discard, blocks a guest frees are freed in the file too.
+# Turning it on for an existing guest needs a cold restart, so each guest is drained (its cell
+# moves the ordinary way), restarted, trimmed, and the next waits until Longhorn is healthy.
+reclaim() {
+  export KUBECONFIG="${STATE}/kubeconfig"
+  for i in $(seq 1 "${NODES}"); do
+    local n; n=$(name "$i")
+    if ! "${VIRSH[@]}" dumpxml --inactive "$n" | grep -q "discard='unmap'"; then
+      "${VIRSH[@]}" dumpxml --inactive "$n" \
+        | sed "s|<driver name='qemu' type='qcow2'/>|<driver name='qemu' type='qcow2' discard='unmap' detect_zeroes='unmap'/>|" \
+        > "${STATE}/$n.xml"
+      "${VIRSH[@]}" define "${STATE}/$n.xml" >/dev/null
+      log "$n: drain"
+      kubectl drain "$n" --ignore-daemonsets --delete-emptydir-data --timeout=600s >/dev/null
+      "${VIRSH[@]}" shutdown "$n" >/dev/null
+      until [[ "$("${VIRSH[@]}" domstate "$n")" == "shut off" ]]; do sleep 2; done
+      "${VIRSH[@]}" start "$n" >/dev/null
+      until kubectl get node "$n" -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null | grep -q True; do sleep 3; done
+      kubectl uncordon "$n" >/dev/null
+    fi
+    log "$n: trim $(ssh_run "$i" 'sudo fstrim -av' | tr '\n' ' ')"
+    until [[ "$(kubectl -n longhorn-system get volumes.longhorn.io -o jsonpath='{.items[*].status.robustness}')" =~ ^(healthy ?)+$ ]]; do sleep 5; done
+  done
+  sudo du -sh "${DISKS}"
+}
+
 case "${1:-}" in
   up) up ;;
+  reclaim) reclaim ;;
   status) status ;;
   ssh) shift; i=$1; shift; ssh_run "$i" "$@" ;;
   down) down ;;

@@ -25,6 +25,7 @@ type Config struct {
 	BootstrapImage string            `json:"bootstrapImage"`
 	FabricURL      string            `json:"fabricUrl"`
 	PullSecrets    []string          `json:"pullSecrets,omitempty"`
+	PriorityClass  string            `json:"priorityClass,omitempty"`
 	Pools          []Pool            `json:"pools"`
 	Cells          map[string]string `json:"cells"`
 }
@@ -93,5 +94,5 @@ func (c *Config) PoolMap() map[string]Pool {
 // Settings are the pod settings shared by every pool.
 func (c *Config) Settings() PodSettings {
 	return PodSettings{Namespace: c.Namespace, ServiceAccount: c.ServiceAccount, BootstrapImage: c.BootstrapImage,
-		FabricURL: c.FabricURL, Audience: c.Audience, PullSecrets: c.PullSecrets}
+		FabricURL: c.FabricURL, Audience: c.Audience, PullSecrets: c.PullSecrets, PriorityClass: c.PriorityClass}
 }

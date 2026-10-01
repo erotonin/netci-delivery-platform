@@ -29,6 +29,7 @@ json.dump({"auths": {"172.17.0.1:8930": {"auth": auth}}}, open(out, "w"))
 EOF
 )
 kubectl apply -f "${ROOT}/lab/spike/storageclass-sync.yaml" -f "${ROOT}/lab/spike/storageclass-commit1.yaml" >/dev/null
+kubectl apply -f "${ROOT}/lab/priorities.yaml" >/dev/null
 rendered="$(render)"
 /usr/bin/grep -q "/cell-agent" <<<"${rendered}" || { echo "render broke the cell-agent command" >&2; exit 1; }
 kubectl apply -f - <<<"${rendered}" >/dev/null

@@ -85,7 +85,8 @@ func newWorld(t *testing.T, warm, max int) *world {
 	m := NewMetrics(prometheus.NewRegistry())
 	pools := map[string]Pool{"standard": {Name: "standard", Labels: []string{"linux"}, Image: "jenkins/inbound-agent:x",
 		Warm: warm, Max: max, CPU: "1", Memory: "1Gi", Disk: "4Gi", UserNamespace: true}}
-	ps := PodSettings{Namespace: ns, ServiceAccount: "netci-sandbox", BootstrapImage: "netci/netci:x", FabricURL: "http://fabric", Audience: "netci-fabric"}
+	ps := PodSettings{Namespace: ns, ServiceAccount: "netci-sandbox", BootstrapImage: "netci/netci:x", FabricURL: "http://fabric", Audience: "netci-fabric",
+		PriorityClass: "netci-sandbox"}
 	b := NewBindings()
 	recon := &Reconciler{Store: s, Client: kube, Pods: ps, Pools: pools, Bindings: b, Clock: clk, Log: log, Metrics: m,
 		BindTimeout: 2 * time.Minute, StartTimeout: 5 * time.Minute}
@@ -175,6 +176,9 @@ func TestThePoolIsKeptWarmAndSandboxPodsCarryNoAPICredential(t *testing.T) {
 	}
 	if p.Spec.HostUsers == nil || *p.Spec.HostUsers {
 		t.Fatal("no user namespace")
+	}
+	if p.Spec.PriorityClassName != "netci-sandbox" {
+		t.Fatalf("priority class %q: a sandbox would compete with a controller that needs its room", p.Spec.PriorityClassName)
 	}
 	c := p.Spec.Containers[0]
 	if c.SecurityContext == nil || *c.SecurityContext.AllowPrivilegeEscalation || len(c.SecurityContext.Capabilities.Drop) != 1 {

@@ -73,6 +73,7 @@ spec:
     metadata: {labels: {app: netci-fabric}}
     spec:
       serviceAccountName: netci-fabric
+      priorityClassName: netci-platform
       imagePullSecrets: [{name: harbor-pull}]
       securityContext: {runAsNonRoot: true, runAsUser: 65532, runAsGroup: 65532, seccompProfile: {type: RuntimeDefault}}
       containers:

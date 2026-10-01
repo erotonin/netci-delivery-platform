@@ -56,6 +56,7 @@ cat > "${Q}/config.json" <<JSON
    "rules": [{"event": "push", "ref": "main", "job": "webhook-probe",
               "parameters": {"GIT_SHA": "{{sha}}", "BRANCH": "{{ref_name}}", "BY": "{{user}}"}}]}}}
 JSON
+kubectl apply -f "${ROOT}/lab/priorities.yaml" >/dev/null
 kubectl create namespace netci-system --dry-run=client -o yaml | kubectl apply -f - >/dev/null
 kubectl -n netci-system create secret generic harbor-pull --type kubernetes.io/dockerconfigjson \
   --from-file=.dockerconfigjson="${STATE}/harbor-pull.json" --dry-run=client -o yaml | kubectl apply -f - >/dev/null

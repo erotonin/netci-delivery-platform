@@ -102,6 +102,9 @@ spec:
         app: netci-supervisor
     spec:
       serviceAccountName: netci-supervisor
+      {{- if .Values.priorityClasses.create }}
+      priorityClassName: netci-platform
+      {{- end }}
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}

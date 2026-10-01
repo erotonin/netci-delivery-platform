@@ -72,6 +72,7 @@ spec:
     metadata: {labels: {app: netci-supervisor}}
     spec:
       serviceAccountName: netci-supervisor
+      priorityClassName: netci-platform
       imagePullSecrets: [{name: harbor-pull}]
       securityContext: {runAsNonRoot: true, runAsUser: 65532, runAsGroup: 65532, fsGroup: 65532, seccompProfile: {type: RuntimeDefault}}
       # Two replicas on different nodes: losing the leader's node costs a leader election

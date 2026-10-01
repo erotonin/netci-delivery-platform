@@ -55,6 +55,9 @@ spec:
         netci.io/cell: "true"
     spec:
       serviceAccountName: jenkins
+      {{- with .Values.priorityClassName }}
+      priorityClassName: {{ . }}
+      {{- end }}
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}

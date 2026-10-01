@@ -34,6 +34,9 @@ spec:
       labels:
         app: netci-queue
     spec:
+      {{- if .Values.priorityClasses.create }}
+      priorityClassName: netci-platform
+      {{- end }}
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}

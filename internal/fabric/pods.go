@@ -58,6 +58,10 @@ type PodSettings struct {
 	FabricURL      string
 	Audience       string
 	PullSecrets    []string // image pull secrets in the sandbox namespace
+	// PriorityClass of sandbox pods. Below the controllers': when a machine is lost and its
+	// controller needs room, the scheduler evicts sandboxes for it rather than leave the
+	// controller -- and every build it carries -- waiting (seen in the lab). Empty: none.
+	PriorityClass string
 }
 
 const (
@@ -99,6 +103,7 @@ func (ps PodSettings) pod(sb *Sandbox, p Pool) *corev1.Pod {
 			EnableServiceLinks:            &no,
 			TerminationGracePeriodSeconds: ptr(int64(10)),
 			ImagePullSecrets:              pullSecrets(ps.PullSecrets),
+			PriorityClassName:             ps.PriorityClass,
 			NodeSelector:                  p.NodeSelector,
 			SecurityContext: &corev1.PodSecurityContext{
 				RunAsNonRoot: &yes, RunAsUser: &uid, RunAsGroup: &uid, FSGroup: &uid,

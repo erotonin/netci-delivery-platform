@@ -32,3 +32,7 @@ secrets:
   secretName: ""
 
 terminationGracePeriodSeconds: 30
+
+# Above build pods, so that a controller that lost its machine is given room (the netci chart
+# creates netci-cell). Empty: the cluster's default priority.
+priorityClassName: netci-cell

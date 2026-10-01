@@ -18,11 +18,12 @@ hash="$(tr -d '\n' < "${F}/cell-b-token" | sha256sum | cut -d' ' -f1)"
 cat > "${F}/config.json" <<JSON
 {"namespace": "netci-agents", "serviceAccount": "netci-sandbox", "audience": "netci-fabric",
  "bootstrapImage": "${NETCI_IMAGE}", "fabricUrl": "http://netci-fabric.netci-system.svc.cluster.local:8080",
- "pullSecrets": ["harbor-pull"],
+ "pullSecrets": ["harbor-pull"], "priorityClass": "netci-sandbox",
  "pools": [{"name": "standard", "labels": ["netci-standard"], "image": "${AGENT_IMAGE}",
             "warm": 2, "max": 6, "cpu": "1", "memory": "1Gi", "disk": "4Gi", "userNamespace": true}],
  "cells": {"cell-b": "${hash}"}}
 JSON
+kubectl apply -f "${ROOT}/lab/priorities.yaml" >/dev/null
 sed -e "s|NETCI_IMAGE|${NETCI_IMAGE}|" "${ROOT}/lab/fabric/fabric.yaml" | kubectl apply -f - >/dev/null
 kubectl -n netci-agents create secret generic harbor-pull --type kubernetes.io/dockerconfigjson \
   --from-file=.dockerconfigjson="${STATE}/harbor-pull.json" --dry-run=client -o yaml | kubectl apply -f - >/dev/null
