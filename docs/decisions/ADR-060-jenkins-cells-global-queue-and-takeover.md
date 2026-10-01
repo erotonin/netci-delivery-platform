@@ -225,10 +225,12 @@ and no lost work.
 | Longhorn tuning as admission policies (it had been undone mid-series) | 6 | 6/6 SUCCESS, one marker each | 2.6-9.6 s | 28.2-86.2 s | 43.3-105.0 s | One attach took 70 s (unexplained; logs lost) |
 | Attacher leader lease 10 s; probe records the leaders | 6 | 6/6 SUCCESS, one marker each | 3.1-7.4 s | 25.6-64.4 s | 42.5-83.4 s | Every run lost a leader of kube-controller-manager, kube-scheduler or the attacher |
 | **Control-plane timings at upstream values** (`lab/k3s-timings.sh upstream`; `chaos-poweroff-20261001T201806Z.json`) | 6 | **6/6 SUCCESS**, one marker each, 1 line lost once | **2.5-3.5 s** | 19.1-47.4 s (median 23.2) | **37.4-64.8 s (median 40.9)** | Slowest: both cells and all three leaders on the lost machine |
+| Every cell on a fenced machine released at once; attacher retries ≤ 2 s | 6 | 6/6 SUCCESS, one marker each, 1 line lost once | 2.9-3.6 s | 13.4-64.8 s | 32.9-82.6 s | Longhorn deleted the replacement after it took its Lease in 2 runs (ADR-067) |
+| **netCI restarts a failed JENKINS_HOME; Longhorn leaves StatefulSets alone** (`chaos-poweroff-20261001T213158Z.json`) | 6 | **6/6 SUCCESS**, one marker each, no line lost | **2.8-3.6 s** | 14.3-43.5 s (median 19.9) | **32.6-63.3 s (median 40.5)** | Jenkins started in 11-16 s every time |
 
 With the lab's control plane at upstream timings, standing in for a control plane on machines
-without cells, a power loss is fenced in 2.5-3.5 s and the build continues after ~40 s
-(median). With k3s's own timings, fencing takes ~3 s, or 8-9 s when the lost machine held etcd's
+without cells, a power loss is fenced in 2.8-3.6 s and the build continues after 40.5 s
+(median), 32.6 s at best (the latest series). With k3s's own timings, fencing takes ~3 s, or 8-9 s when the lost machine held etcd's
 leadership. The
 lab's k3s sets etcd's election timeout to 5 s, and until a new leader is elected no API server
 answers anyone, so the supervisor has nothing to act through. A control plane on machines that

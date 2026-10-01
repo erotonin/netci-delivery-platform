@@ -8,8 +8,15 @@ Changelog and releases use Semantic Versioning once the project reaches 1.0.0.
 ### Changed - 2026-10-02: takeover in under a minute, and nothing left for a person (ADR-060, ADR-066)
 - **Lab:** the latest series of 6 unattended power-offs passed, with the control plane's failover
   at upstream timings (`lab/k3s-timings.sh`). Fencing took 2.5-3.5 s and the build resumed at
-  37-65 s (median 41 s); before, those figures were 14.5-23 s and 71-84 s. With k3s's own
-  timings the build resumed at 42-83 s. Every build
+  33-63 s (median 40.5 s); before, those figures were 14.5-23 s and 71-84 s. With k3s's own
+  timings the build resumed at 42-83 s.
+- A controller whose `JENKINS_HOME` stops taking writes is restarted by netCI, on any storage
+  (ADR-067). Longhorn's own remount deletion had raced fast takeovers and deleted replacement
+  controllers; StatefulSets are now left out of it.
+- Fencing a machine releases the Lease of every cell on it. A second cell had waited 15 s for
+  its Lease to expire.
+- Longhorn's tuning is applied by admission policies (`deploy/longhorn/tuning-policy.yaml`), so
+  Longhorn's driver deployer no longer undoes it. Every build
   finished, every `netciOnce` block ran once, and no log line was lost. 43 power-offs have been
   run in all.
 - **Fencing.** A machine found off is fenced 3 s after its last renewal, not at Lease expiry.
