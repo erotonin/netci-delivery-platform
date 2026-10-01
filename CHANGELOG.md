@@ -5,6 +5,16 @@ Changelog and releases use Semantic Versioning once the project reaches 1.0.0.
 
 ## [Unreleased]
 
+### Added - 2026-10-01: agent fabric v1 (ADR-064)
+- `netci-fabric` keeps warm sandbox pods and binds each one late to the controller that claims
+  it. `netci-sandbox` is the sandbox's entrypoint. The netCI plugin's `netci` cloud provisions
+  at once and runs one build per sandbox.
+- Lab: builds run in sandboxes with a user namespace, and every claim is released. Not faster
+  than the Kubernetes plugin on an idle lab with cached images (5.9 s vs 4.4 s median); see
+  ADR-064.
+- Controllers provision with no start-up delay. Jenkins otherwise waits 100 s after it starts,
+  which a takeover would add to new builds.
+
 ### Added - 2026-10-01: durable run queue and the netCI Jenkins plugin (ADR-063)
 - `netci-queue`: an intake API that accepts runs into PostgreSQL before acknowledging them,
   and dispatchers that hand each run to its cell until Jenkins has started it.

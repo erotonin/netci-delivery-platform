@@ -1,0 +1,79 @@
+{
+  "scenario": "fabric-agents",
+  "started": "2026-10-01T09:13:04.910407+00:00",
+  "runs": 5,
+  "fabric_sandbox_uid_map": "0  813957120      65536",
+  "fabric_user_namespace": true,
+  "sandboxes_after": {
+    "warm": 2
+  },
+  "fabric-probe": {
+    "results": [
+      "SUCCESS",
+      "SUCCESS",
+      "SUCCESS",
+      "SUCCESS",
+      "SUCCESS"
+    ],
+    "seconds_trigger_to_done": [
+      20.49,
+      4.64,
+      19.04,
+      5.91,
+      3.6
+    ],
+    "median": 5.91,
+    "max": 20.49
+  },
+  "k8s-probe": {
+    "results": [
+      "SUCCESS",
+      "SUCCESS",
+      "SUCCESS",
+      "SUCCESS",
+      "SUCCESS"
+    ],
+    "seconds_trigger_to_done": [
+      5.67,
+      18.33,
+      3.49,
+      3.54,
+      4.38
+    ],
+    "median": 4.38,
+    "max": 18.33
+  },
+  "fabric-probe (burst)": {
+    "results": [
+      "SUCCESS",
+      "SUCCESS",
+      "SUCCESS",
+      "SUCCESS"
+    ],
+    "seconds_trigger_to_done": [
+      7.09,
+      7.08,
+      6.87,
+      7.01
+    ],
+    "median": 7.04,
+    "max": 7.09
+  },
+  "k8s-probe (burst)": {
+    "results": [
+      "SUCCESS",
+      "SUCCESS",
+      "SUCCESS",
+      "SUCCESS"
+    ],
+    "seconds_trigger_to_done": [
+      3.22,
+      3.25,
+      3.34,
+      3.43
+    ],
+    "median": 3.29,
+    "max": 3.43
+  },
+  "verdict": "PASS"
+}

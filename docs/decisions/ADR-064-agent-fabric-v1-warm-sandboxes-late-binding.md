@@ -69,6 +69,38 @@ would make new builds wait over a minute and a half, whatever is warm. Cells run
 `-Dhudson.slaves.NodeProvisioner.initialDelay=0` and a 2 s `recurrencePeriod`. In the plugin's
 tests a build on a sandbox went from about 115 s to about 7 s, Jenkins' own start included.
 
+## Lab result (cell-b, 2026-10-01; lab/evidence/fabric-agents-*.json)
+
+Works end to end:
+- Pipeline `node('netci-standard')` builds ran in fabric sandboxes;
+- every claim was released and the pool returned to two warm sandboxes;
+- the sandbox ran in a user namespace (`uid_map` maps uid 0 to host uid 813957120, not 0).
+
+From the sandbox's own log:
+- the binding arrives 0.00-0.01 s after the claim;
+- the agent's WebSocket is connected 0.5-0.6 s after the binding;
+- the rest of a trivial build is the `sh` step and the node's removal.
+
+Before a QueueListener woke the provisioner, 2.6 s passed between a build starting and its
+claim (the provisioner's period).
+
+**Not faster than the Kubernetes plugin on this lab, yet.**
+
+| Trivial build, trigger to done | Fabric sandbox | Kubernetes plugin pod |
+|---|---|---|
+| one at a time, median of 5 | 5.9 s | 4.4 s |
+| 4 at once, median | 7.0 s | 3.3 s |
+
+Each side had outliers of 17-20 s right after the controller restarted (a warm-up, not yet
+explained). On an idle cluster whose nodes already hold the agent image, a new pod starts in
+about a second, which leaves warm capacity little to win. The fabric's value shown here is:
+- isolation (user namespace, no API credential, limits);
+- sandboxes that survive a takeover;
+- one pool shared by every cell.
+
+Its latency case — large toolchain images, busy nodes, heavy pod start — is still to be
+measured. Until it is, the fabric is not claimed to be faster.
+
 ## Rejected
 
 - **Putting the binding in a Secret mounted into the pod:** a Secret update takes up to a
