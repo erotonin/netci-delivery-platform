@@ -197,7 +197,19 @@ What the runs found, and what changed:
 \* The supervisor's leader lost its own lease in the same API stall and had to regain it.
 
 Run 6 is the design working as intended: a power loss is taken over in ~45 s, with no person
-and no lost work. One run is not a p95; the chaos suite repeats it.
+and no lost work.
+
+**Repeated (lab/spike/chaos_poweroff.py, random failure tick 5-60, evidence chaos-poweroff-*.json).**
+
+| Series | Runs | Builds | Fenced | Lease held | Build resumed | Other cell |
+|---|---|---|---|---|---|---|
+| Before the hot standby | 4 | 4/4 SUCCESS, 1 line lost once | 27.5-37.9 s | 61.5-75.1 s | 81.2-93.9 s | Never lost its Lease when on another machine; taken over when on the same one |
+| Hot standby (every replica observes) | 4 | 4/4 SUCCESS, 1 line lost once | 14.5-23.1 s | 52.4-63.1 s | 71.1-83.7 s | The same |
+
+With the hot standby, fencing is at the cell Lease's duration. The largest remaining part is
+between fencing and the new pod holding the Lease: Longhorn attaching the volume took 34 s in
+one run against 13 s in run 6. The storage layer's failover is the next thing to measure and
+tune; a volume that attaches as fast as run 6's would bring the takeover to ~45 s.
 
 ## What this reuses from netCI
 
