@@ -1,0 +1,14 @@
+{
+  "scenario": "agent-handover",
+  "cell": "cell-b",
+  "started": "2026-10-01T04:26:47.697560+00:00",
+  "old_holder": "jenkins-0/8f514148-136e-4009-822d-dc456d0ddab1",
+  "new_holder": "jenkins-0/316107d1-c686-4fee-8167-e791f5ecb580",
+  "epoch_before": 0,
+  "epoch_after": 1,
+  "old_agent_released_explicitly": true,
+  "seconds_to_release": 0.35,
+  "seconds_to_new_holder": 6.64,
+  "seconds_to_ready": 16.54,
+  "verdict": "PASS"
+}

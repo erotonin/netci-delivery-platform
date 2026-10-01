@@ -1,0 +1,16 @@
+{
+  "scenario": "agent-handover",
+  "cell": "cell-b",
+  "started": "2026-10-01T04:27:27.666513+00:00",
+  "old_holder": "jenkins-0/316107d1-c686-4fee-8167-e791f5ecb580",
+  "new_holder": "jenkins-0/d072c3bf-4d30-44bb-868d-f8ead097cd09",
+  "epoch_before": 1,
+  "epoch_after": 2,
+  "old_agent_released_explicitly": true,
+  "seconds_to_release": 0.32,
+  "seconds_to_new_holder": 7.83,
+  "seconds_to_ready": 22.05,
+  "jenkins_last_line": "2026-10-01 04:27:28.865+0000 [id=35]\tINFO\thudson.lifecycle.Lifecycle#onStatusUpdate: Jenkins stopped",
+  "seconds_jenkins_last_line_to_release": 0.07,
+  "verdict": "PASS"
+}

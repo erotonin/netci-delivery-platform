@@ -77,8 +77,12 @@ func (a *Agent) Wire() {
 //
 // The renewal loop does not stop with ctx: on pod termination the lease must outlive the
 // controller, and only Shutdown ends it.
+//
+// A gate left by a previous run of this container is not touched: the gate's age already says
+// whether that run kept renewing, and the guard acts on it. Closing it here would kill a
+// controller whose Lease never lapsed whenever the guard happened to look during the few
+// milliseconds before the first renewal reopened it.
 func (a *Agent) Run(ctx context.Context) {
-	a.closeGate() // nothing runs until the lease is held, whatever a previous container left
 	go func() {
 		defer close(a.renewing)
 		a.Holder.Run(a.renewCtx)

@@ -198,3 +198,45 @@ func TestShutdownKeepsTheLeaseUntilTheControllerHasExitedThenReleasesIt(t *testi
 		t.Fatal("gate left open after shutdown")
 	}
 }
+
+func TestARestartedAgentDoesNotInterruptAControllerWhoseLeaseItStillHolds(t *testing.T) {
+	api, f := leasetest.New(), newFakeProc(t)
+	first, gate := agent(t, api, f, "jenkins-0/a")
+	ctx1, stop1 := context.WithCancel(context.Background())
+	go first.Run(ctx1)
+	eventually(t, "gate open", func() bool { return exists(gate) })
+	f.start(t, 42, "java -jar jenkins.war")
+	stop1()
+	first.stopRenewing() // the container died: no release, no shutdown
+	<-first.renewing
+
+	// The kubelet restarts the container at once, with the same pod identity and the same gate.
+	// Checked at the new agent's first write -- before it could reopen a gate it had closed, so
+	// a close at start cannot slip between two looks.
+	var mu sync.Mutex
+	closedAtFirstWrite, looked := false, false
+	api.BeforeWrite = func() {
+		mu.Lock()
+		defer mu.Unlock()
+		if !looked {
+			looked, closedAtFirstWrite = true, !exists(gate)
+		}
+	}
+	second, _ := agent(t, api, f, "jenkins-0/a")
+	second.GateFile = gate
+	ctx2, stop2 := context.WithCancel(context.Background())
+	defer stop2()
+	go second.Run(ctx2)
+	eventually(t, "first renewal", func() bool { mu.Lock(); defer mu.Unlock(); return looked })
+	mu.Lock()
+	if closedAtFirstWrite {
+		t.Fatal("the gate was closed while the lease was still held by this identity")
+	}
+	mu.Unlock()
+	if len(f.kills()) != 0 {
+		t.Fatalf("killed a controller whose lease never lapsed: %v", f.kills())
+	}
+	if held, epoch := second.Holder.Holding(); !held || epoch != 0 {
+		t.Fatalf("held=%v epoch=%d", held, epoch)
+	}
+}

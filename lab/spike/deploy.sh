@@ -13,7 +13,8 @@ STORAGE_CLASS="${STORAGE_CLASS:-longhorn-commit1}"
 NODE_PORT="${NODE_PORT:-30080}"
 # The netCI image carrying the cell agent and its guard (make image, then push it to Harbor).
 : "${NETCI_IMAGE:?set NETCI_IMAGE to the netCI image (a Harbor reference)}"
-render() { sed -e "s/cell-a/${CELL}/g" -e "s/storageClassName: longhorn-commit1/storageClassName: ${STORAGE_CLASS}/" \
+# \b: "cell-a" is also the start of "cell-agent".
+render() { sed -e "s/\bcell-a\b/${CELL}/g" -e "s/storageClassName: longhorn-commit1/storageClassName: ${STORAGE_CLASS}/" \
   -e "s/nodePort: 30080/nodePort: ${NODE_PORT}/" -e "s|NETCI_IMAGE|${NETCI_IMAGE}|g" "${ROOT}/lab/spike/cell.yaml"; }
 ( umask 077
   [[ -s "${STATE}/cell-admin-password" ]] || openssl rand -base64 24 | tr -d '\n' > "${STATE}/cell-admin-password"
@@ -27,7 +28,9 @@ json.dump({"auths": {"172.17.0.1:8930": {"auth": auth}}}, open(out, "w"))
 EOF
 )
 kubectl apply -f "${ROOT}/lab/spike/storageclass-sync.yaml" -f "${ROOT}/lab/spike/storageclass-commit1.yaml" >/dev/null
-render | kubectl apply -f - >/dev/null
+rendered="$(render)"
+/usr/bin/grep -q "/cell-agent" <<<"${rendered}" || { echo "render broke the cell-agent command" >&2; exit 1; }
+kubectl apply -f - <<<"${rendered}" >/dev/null
 kubectl -n "${CELL}" create secret generic harbor-pull --type kubernetes.io/dockerconfigjson \
   --from-file=.dockerconfigjson="${STATE}/harbor-pull.json" --dry-run=client -o yaml | kubectl apply -f - >/dev/null
 kubectl -n "${CELL}" create secret generic jenkins-cell \
