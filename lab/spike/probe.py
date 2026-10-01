@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import datetime
 import http.cookiejar
 import json
 import os
@@ -172,6 +173,9 @@ def fail(kind: str, facts: dict) -> dict[str, float]:
         facts["supervisorBefore"] = supervisor_state()
         subprocess.run(["virsh", "-c", "qemu:///system", "destroy", node], check=True, capture_output=True)
         t["failure"] = now()
+        # The wall-clock time too (the timings are monotonic): to line them up with the
+        # supervisor's log and the cluster's events.
+        facts["failureAt"] = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="milliseconds")
         t["fenced"] = wait("supervisor fenced the node", lambda: "out-of-service" in kubectl(
             "get", "node", node, "-o", "jsonpath={.spec.taints[*].key}") and now(), 300, 0.2)
         t["leaseTaken"] = wait("a new pod holds the cell's lease", lambda: (lambda h: h and h != holder and now())(
