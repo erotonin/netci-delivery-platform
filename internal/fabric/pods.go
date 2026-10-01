@@ -67,7 +67,22 @@ type PodSettings struct {
 const (
 	labelSandbox = "netci.io/sandbox"
 	labelPool    = "netci.io/pool"
+
+	// What node autoscalers read before evicting a pod to remove its node: cluster-autoscaler's
+	// and Karpenter's. A sandbox has no controller of its own, which both would otherwise treat
+	// as blocking the node for good.
+	safeToEvict  = "cluster-autoscaler.kubernetes.io/safe-to-evict"
+	doNotDisrupt = "karpenter.sh/do-not-disrupt"
 )
+
+// evictable is a sandbox's stance towards node autoscalers: a warm one is spare and may go
+// with its node; one claimed for a build may not, or the build dies with a scale-down.
+func evictable(claimed bool) map[string]string {
+	if claimed {
+		return map[string]string{safeToEvict: "false", doNotDisrupt: "true"}
+	}
+	return map[string]string{safeToEvict: "true"}
+}
 
 // pod builds a sandbox's pod. The pod has no Kubernetes API credential, only a token whose
 // audience is the fabric; the build runs as a non-root user with no capabilities, within
@@ -94,7 +109,8 @@ func (ps PodSettings) pod(sb *Sandbox, p Pool) *corev1.Pod {
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: sb.Pod, Namespace: ps.Namespace,
-			Labels: map[string]string{labelSandbox: sb.ID.String(), labelPool: p.Name},
+			Labels:      map[string]string{labelSandbox: sb.ID.String(), labelPool: p.Name},
+			Annotations: evictable(sb.State == Claimed || sb.State == Bound),
 		},
 		Spec: corev1.PodSpec{
 			RestartPolicy:                 corev1.RestartPolicyNever,

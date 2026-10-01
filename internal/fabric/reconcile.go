@@ -2,6 +2,7 @@ package fabric
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"time"
@@ -9,6 +10,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/utils/clock"
 )
@@ -110,10 +112,13 @@ func (r *Reconciler) one(ctx context.Context, sb *Sandbox, pod *corev1.Pod, now 
 			if sb.PodUID == "" {
 				_ = r.Store.SetPodUID(ctx, sb.ID, string(pod.UID))
 			}
+			r.protect(ctx, pod)
 		}
 	case Bound:
 		if pod == nil || terminated {
 			r.move(ctx, sb, Failed, "", "the pod running a build disappeared or ended")
+		} else {
+			r.protect(ctx, pod)
 		}
 	case Released, Failed:
 		r.Bindings.Drop(sb.ID)
@@ -157,6 +162,19 @@ func (r *Reconciler) createPod(ctx context.Context, sb *Sandbox) {
 		if apierrors.IsInvalid(err) || apierrors.IsForbidden(err) {
 			r.move(ctx, sb, Failed, "", "the pod was refused: "+err.Error())
 		}
+	}
+}
+
+// protect marks a sandbox that was warm when its pod was created, and is now claimed, as not to
+// be evicted by a node autoscaler.
+func (r *Reconciler) protect(ctx context.Context, pod *corev1.Pod) {
+	if pod.Annotations[safeToEvict] == "false" {
+		return
+	}
+	patch, _ := json.Marshal(map[string]any{"metadata": map[string]any{"annotations": evictable(true)}})
+	_, err := r.Client.CoreV1().Pods(r.Pods.Namespace).Patch(ctx, pod.Name, types.MergePatchType, patch, metav1.PatchOptions{})
+	if err != nil && !apierrors.IsNotFound(err) {
+		r.Log.Error("protect a claimed sandbox from eviction", "pod", pod.Name, "error", err)
 	}
 }
 
