@@ -29,6 +29,7 @@ import (
 	"k8s.io/utils/clock"
 
 	"github.com/erotonin/netci-delivery-platform/internal/fence"
+	"github.com/erotonin/netci-delivery-platform/internal/kubeclient"
 	"github.com/erotonin/netci-delivery-platform/internal/supervisor"
 )
 
@@ -65,6 +66,10 @@ func run(log *slog.Logger) error {
 	}
 	interval := duration("NETCI_INTERVAL", time.Second, &errs)
 	offTimeout := duration("NETCI_OFF_TIMEOUT", 20*time.Second, &errs)
+	// How long one API request may go unanswered before its connections are dropped and a read
+	// is sent again (internal/kubeclient). Raise it only for an API server that is slow to start
+	// answering the supervisor's lists.
+	apiAttempt := duration("NETCI_API_ATTEMPT_TIMEOUT", 700*time.Millisecond, &errs)
 	if err := errors.Join(errs...); err != nil {
 		return err
 	}
@@ -77,12 +82,11 @@ func run(log *slog.Logger) error {
 	// Service may be the one on the machine that just died (seen in the lab: 5 s timeouts made
 	// the leader miss its own renewals on a healthy node).
 	restCfg.Timeout = 2 * time.Second
-	// HTTP/1.1: a timed-out request closes its connection, so the next one can reach a live API
-	// server. In the lab every call of the leader failed for 7 s on one pinned HTTP/2
-	// connection to the API server of the machine that had just been powered off.
-	restCfg.TLSClientConfig.NextProtos = []string{"http/1.1"}
 	restCfg.QPS, restCfg.Burst = 50, 100
-	client, err := kubernetes.NewForConfig(restCfg)
+	// HTTP/1.1, a bound on each attempt, and every connection dropped when one fails: pooled
+	// connections to the dead machine's API server failed two observations in a row in the lab,
+	// the supervisor started over, and fenced at 9.7 s instead of ~4 s.
+	client, err := kubernetes.NewForConfig(kubeclient.Config(restCfg, apiAttempt))
 	if err != nil {
 		return err
 	}
@@ -134,7 +138,7 @@ func run(log *slog.Logger) error {
 	// connection does not cost the leadership at the moment the supervisor is needed.
 	leCfg := rest.CopyConfig(restCfg)
 	leCfg.Timeout = time.Second
-	leClient, err := kubernetes.NewForConfig(leCfg)
+	leClient, err := kubernetes.NewForConfig(kubeclient.Config(leCfg, min(apiAttempt, 500*time.Millisecond)))
 	if err != nil {
 		return err
 	}

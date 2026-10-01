@@ -27,6 +27,7 @@ import (
 	"k8s.io/utils/clock"
 
 	"github.com/erotonin/netci-delivery-platform/internal/fabric"
+	"github.com/erotonin/netci-delivery-platform/internal/kubeclient"
 )
 
 func main() {
@@ -51,8 +52,8 @@ func run(log *slog.Logger) error {
 		return err
 	}
 	restCfg.Timeout = 10 * time.Second
-	restCfg.TLSClientConfig.NextProtos = []string{"http/1.1"} // see cmd/supervisor: no pinned HTTP/2 connection
-	client, err := kubernetes.NewForConfig(restCfg)
+	// See internal/kubeclient: no request waits 10 s on a connection to a dead machine.
+	client, err := kubernetes.NewForConfig(kubeclient.Config(restCfg, 2*time.Second))
 	if err != nil {
 		return err
 	}

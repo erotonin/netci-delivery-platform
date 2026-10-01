@@ -27,6 +27,7 @@ import (
 	"k8s.io/utils/clock"
 
 	"github.com/erotonin/netci-delivery-platform/internal/cellagent"
+	"github.com/erotonin/netci-delivery-platform/internal/kubeclient"
 	"github.com/erotonin/netci-delivery-platform/internal/lease"
 )
 
@@ -81,11 +82,11 @@ func run(log *slog.Logger) error {
 	// A renewal that waits on a dead connection must not outlast the renew deadline; the holder
 	// also bounds each call, this bounds the transport underneath it.
 	cfg.Timeout = interval
-	// HTTP/1.1: a request that times out closes its connection, and the next one is balanced
-	// afresh. One HTTP/2 connection to an API server on a dead machine would carry every
-	// renewal into the void until its health check notices (45 s by default).
-	cfg.TLSClientConfig.NextProtos = []string{"http/1.1"}
-	client, err := kubernetes.NewForConfig(cfg)
+	// HTTP/1.1 and every connection dropped when an attempt goes unanswered (internal/kubeclient):
+	// one HTTP/2 connection to an API server on a dead machine would carry every renewal into
+	// the void until its health check notices (45 s by default), and a pooled HTTP/1.1 one would
+	// cost the next attempt too.
+	client, err := kubernetes.NewForConfig(kubeclient.Config(cfg, attemptTimeout))
 	if err != nil {
 		return err
 	}
@@ -94,7 +95,7 @@ func run(log *slog.Logger) error {
 	holder := &lease.Holder{
 		Leases: client.CoordinationV1(), Namespace: ns, Name: getenv("NETCI_LEASE_NAME", "netci-cell"),
 		Identity: pod + "/" + uid, Duration: duration, RenewInterval: interval, RenewDeadline: deadline,
-		AttemptTimeout: 300 * time.Millisecond,
+		AttemptTimeout: attemptTimeout,
 		Clock:          clock.RealClock{}, Observer: lease.NewObserver(nil), Log: log,
 	}
 	if err := holder.Validate(); err != nil {
@@ -191,6 +192,10 @@ func getenv(key, def string) string {
 	}
 	return def
 }
+
+// attemptTimeout bounds one call to the API server. A healthy one answers a Lease update in
+// milliseconds; a renewal stuck longer is retried on a new connection inside the renew deadline.
+const attemptTimeout = 300 * time.Millisecond
 
 func env(key string, def time.Duration) (time.Duration, error) {
 	v := os.Getenv(key)

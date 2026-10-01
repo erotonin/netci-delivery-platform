@@ -169,15 +169,33 @@ def fail(kind: str, facts: dict) -> dict[str, float]:
         # this records when each of its effects became visible, and touches nothing.
         holder = kubectl("-n", NS, "get", "lease", "jenkins", "-o", "jsonpath={.spec.holderIdentity}")
         facts["leaseHolderBefore"] = holder
+        facts["supervisorBefore"] = supervisor_state()
         subprocess.run(["virsh", "-c", "qemu:///system", "destroy", node], check=True, capture_output=True)
         t["failure"] = now()
         t["fenced"] = wait("supervisor fenced the node", lambda: "out-of-service" in kubectl(
             "get", "node", node, "-o", "jsonpath={.spec.taints[*].key}") and now(), 300, 0.2)
         t["leaseTaken"] = wait("a new pod holds the cell's lease", lambda: (lambda h: h and h != holder and now())(
             kubectl("-n", NS, "get", "lease", "jenkins", "-o", "jsonpath={.spec.holderIdentity}")), 300, 0.2)
+        facts["supervisorAfter"] = supervisor_state()
     else:
         raise ValueError(kind)
     return t
+
+
+def supervisor_state() -> dict:
+    """Which supervisor replica leads, where, and its observation counters: a takeover slower
+    than the policy allows is explained by these (a leader lost with the machine, or
+    observations failing and starting over)."""
+    leader = kubectl("-n", "netci-system", "get", "lease", "netci-supervisor", "-o", "jsonpath={.spec.holderIdentity}", check=False)
+    state: dict = {"leader": leader}
+    pods = json.loads(kubectl("-n", "netci-system", "get", "pods", "-l", "app=netci-supervisor", "-o", "json", check=False) or '{"items":[]}')
+    for pod in pods["items"]:
+        name = pod["metadata"]["name"]
+        metrics = kubectl("get", "--raw", f"/api/v1/namespaces/netci-system/pods/{name}:9090/proxy/metrics", check=False, timeout=10)
+        counters = {m: float(v) for m, v in re.findall(
+            r"^netci_supervisor_(observe_errors_total|observation_resets_total|leading) (\S+)$", metrics, re.M)}
+        state[name] = {"node": pod["spec"].get("nodeName"), **counters}
+    return state
 
 
 def supervisor_events() -> list[str]:
