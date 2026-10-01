@@ -56,6 +56,25 @@ generated into `.netci-gate/lab/fence/` and is restricted:
 
 To revoke it, delete the line ending in `netci-fence`.
 
+## Run queue
+
+```bash
+NETCI_IMAGE=172.17.0.1:8930/netci/netci@sha256:<digest> lab/queue.sh
+lab/spike/queue_crash_probe.py --runs 5
+```
+
+`lab/queue.sh` installs PostgreSQL (one instance, lab only) and two `netci-queue` replicas in
+`netci-system`, with intake on NodePort `30090`. Its secrets are under `.netci-gate/lab/queue/`:
+- the database password;
+- the API token of cell-b's `netci` user;
+- the probe's client token (the configuration holds only its SHA-256).
+
+The probe crashes the controller under queued runs and checks Jenkins' own build records.
+
+**Known Jenkins behaviour:** a job that JCasC's Job DSL creates while the controller starts can
+be overwritten by the concurrent "Loaded all jobs" phase. It is then on disk but absent until
+`/reload`. Jobs belong in a seed job run after start-up, not in JCasC.
+
 ## Requirements
 
 `/dev/kvm` with nested virtualisation (`/sys/module/kvm_intel/parameters/nested` = `Y`) for Kata

@@ -1,0 +1,96 @@
+{
+  "scenario": "queue-crash",
+  "cell": "cell-b",
+  "started": "2026-10-01T05:15:38.300149+00:00",
+  "netci_runs": 5,
+  "queued_in_jenkins_before_kill": 6,
+  "netci_runs_finished_success": 5,
+  "netci_runs_redispatched_after_crash": 5,
+  "builds_per_netci_run": {
+    "5a613102-7b67-476c-9a34-e58a20f83eaf": [
+      8
+    ],
+    "40b708b9-23cd-4180-878d-9954803f589c": [
+      9
+    ],
+    "2b06e366-ac50-4f1d-a30b-ce3b666a59ea": [
+      10
+    ],
+    "0b853a4c-764e-4e04-91be-e14c9cb4cea0": [
+      11
+    ],
+    "15021541-75d8-4d06-ba39-7400875b435e": [
+      7
+    ]
+  },
+  "control_trigger_builds": [],
+  "seconds_kill_to_all_finished": 34.2,
+  "runs": [
+    {
+      "id": "5a613102-7b67-476c-9a34-e58a20f83eaf",
+      "state": "finished",
+      "result": "SUCCESS",
+      "build": 8,
+      "history": [
+        "accepted",
+        "dispatched",
+        "dispatched (lost from the queue of a controller that restarted)",
+        "started",
+        "finished"
+      ]
+    },
+    {
+      "id": "40b708b9-23cd-4180-878d-9954803f589c",
+      "state": "finished",
+      "result": "SUCCESS",
+      "build": 9,
+      "history": [
+        "accepted",
+        "dispatched",
+        "dispatched (lost from the queue of a controller that restarted)",
+        "started",
+        "finished"
+      ]
+    },
+    {
+      "id": "2b06e366-ac50-4f1d-a30b-ce3b666a59ea",
+      "state": "finished",
+      "result": "SUCCESS",
+      "build": 10,
+      "history": [
+        "accepted",
+        "dispatched",
+        "dispatched (lost from the queue of a controller that restarted)",
+        "started",
+        "finished"
+      ]
+    },
+    {
+      "id": "0b853a4c-764e-4e04-91be-e14c9cb4cea0",
+      "state": "finished",
+      "result": "SUCCESS",
+      "build": 11,
+      "history": [
+        "accepted",
+        "dispatched",
+        "dispatched (lost from the queue of a controller that restarted)",
+        "started",
+        "finished"
+      ]
+    },
+    {
+      "id": "15021541-75d8-4d06-ba39-7400875b435e",
+      "state": "finished",
+      "result": "SUCCESS",
+      "build": 7,
+      "history": [
+        "accepted",
+        "dispatched",
+        "dispatched (lost from the queue of a controller that restarted)",
+        "started",
+        "finished"
+      ]
+    }
+  ],
+  "verdict": "PASS"
+}

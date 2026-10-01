@@ -53,6 +53,16 @@ started. The lab showed that the REST API cannot carry one for every job:
    in the last second before a power loss (ADR-060's bounded writeback) can be scheduled again.
    The re-execution guard (ADR-060 decision 1) is what covers that window, not this ADR.
 
+## Lab result (cell-b, 2026-10-01; lab/evidence/queue-crash-*.json, one run)
+
+Five runs were submitted through netci-queue and one trigger went straight to Jenkins. With
+all six in Jenkins' queue (20 s quiet period), the controller's JVM was SIGKILLed:
+- all five netCI runs were found missing from the restarted controller's queue and dispatched
+  again;
+- each finished SUCCESS with exactly one build carrying its run id;
+- the direct trigger was lost and never ran;
+- 34 s passed from the kill to the last build finishing.
+
 ## Rejected
 
 - **A required `NETCI_RUN_ID` job parameter:** every job would have to change, and jobs without

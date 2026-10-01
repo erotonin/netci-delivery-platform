@@ -5,6 +5,14 @@ Changelog and releases use Semantic Versioning once the project reaches 1.0.0.
 
 ## [Unreleased]
 
+### Added - 2026-10-01: durable run queue and the netCI Jenkins plugin (ADR-063)
+- `netci-queue`: an intake API that accepts runs into PostgreSQL before acknowledging them,
+  and dispatchers that hand each run to its cell until Jenkins has started it.
+- The netCI plugin's dispatch is idempotent under Jenkins' queue lock.
+- Lab: a controller was SIGKILLed under 5 queued netCI runs and 1 direct trigger. All 5 netCI
+  runs ran once; the direct trigger was lost (`lab/evidence/queue-crash-*.json`).
+- Redfish power control for real servers, with a per-node power-controller configuration.
+
 ### Added - 2026-10-01: cell agent and Cell Supervisor (ADR-060, decision 4)
 - `cell-agent`, a sidecar: Jenkins runs only while its pod holds the cell's Lease. It is
   killed within 4 s of losing it, including when the agent itself hangs (`cell-agent guard`).
