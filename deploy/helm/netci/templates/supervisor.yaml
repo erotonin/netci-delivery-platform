@@ -70,6 +70,32 @@ roleRef:
   name: netci-supervisor-leader
   apiGroup: rbac.authorization.k8s.io
 ---
+# The API servers behind the default kubernetes Service, which the supervisor dials directly
+# (internal/kubeclient): read only, and only these.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: netci-supervisor-apiservers
+  namespace: default
+rules:
+  - apiGroups: [discovery.k8s.io]
+    resources: [endpointslices]
+    verbs: [list]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: netci-supervisor-apiservers
+  namespace: default
+subjects:
+  - kind: ServiceAccount
+    name: netci-supervisor
+    namespace: {{ .Release.Namespace }}
+roleRef:
+  kind: Role
+  name: netci-supervisor-apiservers
+  apiGroup: rbac.authorization.k8s.io
+---
 apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:

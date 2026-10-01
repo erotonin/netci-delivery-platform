@@ -30,6 +30,13 @@ supervisor's counters) found this in four places:
    that client is closed, and a read is sent again on a new connection. The kubelet does the same
    after a failed heartbeat. Writes are not repeated by the transport, because only the caller
    knows whether its write may be repeated. Watches are refused rather than cut off.
+   The supervisor goes further: it dials the API servers directly, from the endpoints of the
+   `kubernetes` Service, and stays away for 30 s from one that failed an attempt. Bounding the
+   attempts was not enough. Through the Service, each new connection still had a one-in-three
+   chance of reaching the dead machine's API server until its endpoint was removed, 15-30 s
+   later. Chaos series 7 then recorded the live leader failing three observations and starting
+   over, so it fenced at 11.9 s. The request still names the Service, so TLS still verifies the
+   Service's name, which every API server's certificate carries.
 2. **Third-party clients on the takeover path get client-go's HTTP/2 health check at 2 s + 2 s**
    (`HTTP2_READ_IDLE_TIMEOUT_SECONDS`, `HTTP2_PING_TIMEOUT_SECONDS`): Longhorn's managers and
    CSI attachers (`lab/longhorn-tune.sh`). Attachers run one per node, spread per revision, and

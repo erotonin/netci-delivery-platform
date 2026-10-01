@@ -21,10 +21,12 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptrace"
 	"net/url"
 	"sync"
 	"time"
 
+	utilnet "k8s.io/apimachinery/pkg/util/net"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/util/connrotation"
 )
@@ -41,8 +43,37 @@ const MaxAttempts = 3
 // It is for clients of short requests. A watch would be cut by the attempt bound, so watches are
 // refused rather than silently broken.
 func Config(base *rest.Config, attempt time.Duration) *rest.Config {
+	return Balanced(base, attempt, nil)
+}
+
+// Balanced is Config with each connection to the Service dialled to an API server chosen by b,
+// which avoids one that just failed an attempt. Without it a new connection still had a one in
+// three chance of the dead machine's API server -- kube-proxy picks at random until the
+// endpoint is removed, 15-30 s later -- and the supervisor still lost observations in a row
+// (lab, chaos series 7). The request still names the Service, so TLS verifies the server
+// against the Service's name as before: every API server's certificate carries it. With no API
+// server known to b, connections go to the Service as with Config.
+func Balanced(base *rest.Config, attempt time.Duration, b *Balancer) *rest.Config {
 	cfg := rest.CopyConfig(base)
-	dialer := connrotation.NewDialer((&net.Dialer{Timeout: attempt, KeepAlive: 15 * time.Second}).DialContext)
+	plain := (&net.Dialer{Timeout: attempt, KeepAlive: 15 * time.Second}).DialContext
+	dial := plain
+	if b != nil {
+		service := hostPort(cfg.Host)
+		dial = func(ctx context.Context, network, addr string) (net.Conn, error) {
+			target := addr
+			if addr == service {
+				if picked := b.pick(); picked != "" {
+					target = picked
+				}
+			}
+			c, err := plain(ctx, network, target)
+			if err != nil && target != addr {
+				b.fail(target)
+			}
+			return c, err
+		}
+	}
+	dialer := connrotation.NewDialer(dial)
 	cfg.Dial = dialer.DialContext
 	cfg.TLSClientConfig.NextProtos = []string{"http/1.1"}
 	inner := cfg.WrapTransport
@@ -50,16 +81,38 @@ func Config(base *rest.Config, attempt time.Duration) *rest.Config {
 		if inner != nil {
 			rt = inner(rt)
 		}
-		return &attempts{next: rt, attempt: attempt, closeAll: dialer.CloseAll}
+		return &attempts{next: rt, attempt: attempt, closeAll: dialer.CloseAll, balancer: b}
 	}
 	return cfg
+}
+
+func hostPort(host string) string {
+	u, err := url.Parse(host)
+	if err != nil || u.Host == "" {
+		return host
+	}
+	if u.Port() != "" {
+		return u.Host
+	}
+	if u.Scheme == "http" {
+		return net.JoinHostPort(u.Hostname(), "80")
+	}
+	return net.JoinHostPort(u.Hostname(), "443")
 }
 
 type attempts struct {
 	next     http.RoundTripper
 	attempt  time.Duration
 	closeAll func()
+	balancer *Balancer
 }
+
+// CloseIdleConnections passes the call on: without it, http.Client's would stop here and keep
+// connections a caller asked to drop (client-go asks on a credential rotation, for one).
+func (a *attempts) CloseIdleConnections() { utilnet.CloseIdleConnectionsFor(a.next) }
+
+// WrappedRoundTripper is client-go's convention for reaching the transport underneath.
+func (a *attempts) WrappedRoundTripper() http.RoundTripper { return a.next }
 
 // ErrAttemptTimeout is the error of an attempt that had no answer in time.
 var ErrAttemptTimeout = errors.New("no answer from the API server in time")
@@ -90,7 +143,14 @@ func (a *attempts) RoundTrip(req *http.Request) (*http.Response, error) {
 func (a *attempts) once(req *http.Request) (*http.Response, error) {
 	ctx, cancel := context.WithCancel(req.Context())
 	var mu sync.Mutex
-	expired := false
+	expired, remote := false, ""
+	if a.balancer != nil {
+		ctx = httptrace.WithClientTrace(ctx, &httptrace.ClientTrace{GotConn: func(info httptrace.GotConnInfo) {
+			mu.Lock()
+			remote = info.Conn.RemoteAddr().String()
+			mu.Unlock()
+		}})
+	}
 	timer := time.AfterFunc(a.attempt, func() {
 		mu.Lock()
 		expired = true
@@ -100,8 +160,11 @@ func (a *attempts) once(req *http.Request) (*http.Response, error) {
 	resp, err := a.next.RoundTrip(req.WithContext(ctx))
 	timer.Stop()
 	mu.Lock()
-	timedOut := expired
+	timedOut, server := expired, remote
 	mu.Unlock()
+	if (err != nil || timedOut) && a.balancer != nil && server != "" {
+		a.balancer.fail(server)
+	}
 	if err != nil {
 		cancel()
 		if timedOut {

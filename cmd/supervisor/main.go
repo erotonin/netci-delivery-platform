@@ -87,7 +87,11 @@ func run(log *slog.Logger) error {
 	// HTTP/1.1, a bound on each attempt, and every connection dropped when one fails: pooled
 	// connections to the dead machine's API server failed two observations in a row in the lab,
 	// the supervisor started over, and fenced at 9.7 s instead of ~4 s.
-	client, err := kubernetes.NewForConfig(kubeclient.Config(restCfg, apiAttempt))
+	// The API servers are dialled directly, avoiding for 30 s one that failed an attempt: through
+	// the Service a new connection kept a one-in-three chance of the dead machine's until its
+	// endpoint was removed (ADR-066).
+	apiservers := kubeclient.NewBalancer(30 * time.Second)
+	client, err := kubernetes.NewForConfig(kubeclient.Balanced(restCfg, apiAttempt, apiservers))
 	if err != nil {
 		return err
 	}
@@ -107,6 +111,7 @@ func run(log *slog.Logger) error {
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer stop()
+	go kubeclient.Discover(ctx, client, apiservers, 10*time.Second, log)
 
 	for {
 		err := supervisor.ValidateMachines(ctx, client, fencer, machines, 3*time.Second, 12*time.Second)
@@ -139,7 +144,7 @@ func run(log *slog.Logger) error {
 	// connection does not cost the leadership at the moment the supervisor is needed.
 	leCfg := rest.CopyConfig(restCfg)
 	leCfg.Timeout = time.Second
-	leClient, err := kubernetes.NewForConfig(kubeclient.Config(leCfg, min(apiAttempt, 500*time.Millisecond)))
+	leClient, err := kubernetes.NewForConfig(kubeclient.Balanced(leCfg, min(apiAttempt, 500*time.Millisecond), apiservers))
 	if err != nil {
 		return err
 	}
@@ -162,7 +167,7 @@ func run(log *slog.Logger) error {
 	// loss: it lists every pod, so on its own client with room for a large cluster's answer.
 	hrCfg := rest.CopyConfig(restCfg)
 	hrCfg.Timeout = 20 * time.Second
-	hrClient, err := kubernetes.NewForConfig(kubeclient.Config(hrCfg, 10*time.Second))
+	hrClient, err := kubernetes.NewForConfig(kubeclient.Balanced(hrCfg, 10*time.Second, apiservers))
 	if err != nil {
 		return err
 	}
