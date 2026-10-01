@@ -24,12 +24,17 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 export KUBECONFIG="${ROOT}/.netci-gate/lab/kubeconfig"
 sed 's/NAMESPACE/longhorn-system/' "${ROOT}/deploy/longhorn/tuning-policy.yaml" | kubectl apply -f - >/dev/null
 sleep 5 # the API servers load the policies
-kubectl -n longhorn-system rollout restart deploy/csi-attacher >/dev/null
+# An update of the objects themselves, not of their pod templates, so that the policies tune
+# them: "kubectl rollout restart" left an annotation in the attacher's template, and the driver
+# deployer's next write, without it, rolled the attachers out in the middle of a takeover and
+# killed the leader just elected (11 s lost). The template now changes only if it lacked the
+# tuning, and stays what Longhorn writes plus the tuning.
+stamp="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+kubectl -n longhorn-system annotate deploy/csi-attacher ds/longhorn-manager netci.io/tuned="${stamp}" --overwrite >/dev/null
+kubectl -n longhorn-system patch deploy csi-attacher --type json \
+  -p '[{"op":"remove","path":"/spec/template/metadata/annotations/kubectl.kubernetes.io~1restartedAt"}]' >/dev/null 2>&1 || true
 kubectl -n longhorn-system rollout status deploy/csi-attacher --timeout=300s
-if ! kubectl -n longhorn-system get ds longhorn-manager -o jsonpath='{.spec.template.spec.containers[0].env[*].name}' | grep -q HTTP2_READ_IDLE; then
-  kubectl -n longhorn-system rollout restart ds/longhorn-manager >/dev/null
-  kubectl -n longhorn-system rollout status ds/longhorn-manager --timeout=600s
-fi
+kubectl -n longhorn-system rollout status ds/longhorn-manager --timeout=600s
 # Longhorn deletes a pod whose volume it re-attached, judging by start times; a replacement that
 # a fast takeover had started first was deleted too (2 of 6 runs, 35-55 s each). Cells' pods are
 # restarted by netCI instead, from the cell agent's own write probe; StatefulSets are left out of

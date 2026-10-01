@@ -60,11 +60,13 @@ helm install cell-a ./netci-cell -n cell-a \
 
 If the cells' `JENKINS_HOME` volumes are on Longhorn, apply
 `deploy/longhorn/tuning-policy.yaml`, with `NAMESPACE` replaced by Longhorn's namespace, and
-update Longhorn's CSI attacher once so that the policy applies to it:
+update Longhorn's CSI attacher and managers once so that the policy applies to them. Do not use
+`kubectl rollout restart` for this. It leaves an annotation in the pod template, and the next
+time Longhorn's driver deployer writes the attacher, the attachers roll out again.
 
 ```bash
 sed 's/NAMESPACE/longhorn-system/' deploy/longhorn/tuning-policy.yaml | kubectl apply -f -
-kubectl -n longhorn-system rollout restart deploy/csi-attacher ds/longhorn-manager
+kubectl -n longhorn-system annotate deploy/csi-attacher ds/longhorn-manager netci.io/tuned="$(date -u +%FT%TZ)" --overwrite
 ```
 
 This needs Kubernetes 1.36 or later, where MutatingAdmissionPolicy is GA. Without the policy:
