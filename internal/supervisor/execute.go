@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	coordinationv1 "k8s.io/api/coordination/v1"
@@ -37,6 +38,25 @@ type Executor struct {
 	Events     EventSink
 	Metrics    *Metrics
 	OffTimeout time.Duration
+	// QuietCheck: how long another cell's Lease must stay unchanged, on a machine being fenced,
+	// before it is released with it -- more than one renewal interval. Zero: those Leases are
+	// left to expire.
+	QuietCheck time.Duration
+	sleep      func(context.Context, time.Duration) bool // tests replace it
+}
+
+func (e *Executor) wait(ctx context.Context, d time.Duration) bool {
+	if e.sleep != nil {
+		return e.sleep(ctx, d)
+	}
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-t.C:
+		return true
+	}
 }
 
 // EventSink records a Kubernetes Event about an object; tests use a fake.
@@ -150,7 +170,16 @@ func (e *Executor) fenceNode(ctx context.Context, a Action, l *coordinationv1.Le
 	if err := e.deletePod(ctx, a, true); err != nil {
 		return err
 	}
-	// 5. And every other pod on the machine: Kubernetes force-deletes them too once the node is
+	// 5. Every other cell whose controller is on this machine is as dead as this one: give its
+	// Lease up too, before its pod goes. Otherwise its replacement finds the Lease held by a pod
+	// that no longer exists and waits out the Lease's duration (seen in the lab: 16 s more for the
+	// second of two cells on one machine, fenced through the first).
+	if !e.releaseCellsOn(ctx, a, log) {
+		// Another cell's holder renewed while its pod is bound to this node: something on it may
+		// be running after all. The fenced cell is done; the node's other pods are left alone.
+		return fmt.Errorf("%w: another cell on node %s renewed its lease; not deleting the node's other pods", ErrLeaseMoved, a.Node)
+	}
+	// 6. And every other pod on the machine: Kubernetes force-deletes them too once the node is
 	// out of service, but only on the pod garbage collector's next pass (every 20 s). The storage
 	// waits for that: Longhorn moves a volume only once the dead node's own longhorn-manager pod
 	// is gone (in the lab, 30 s of a takeover). The machine is off; nothing on it is running.
@@ -165,6 +194,83 @@ func (e *Executor) fenceNode(ctx context.Context, a Action, l *coordinationv1.Le
 		a.Machine, offAt.Sub(began).Round(time.Millisecond), a.Node, done.Sub(began).Round(time.Millisecond)))
 	log.Warn("cell fenced", "machine_off_after", offAt.Sub(began), "total", done.Sub(began), "epoch", lease.EpochOf(l))
 	return nil
+}
+
+// releaseCellsOn releases the Lease of every other cell whose controller pod is bound to the
+// fenced node. Only after the node's machine is confirmed off, and on the same evidence as the
+// cell being fenced: each Lease is read, then read again after QuietCheck (more than one renewal
+// interval), and released only if it did not change in between -- conditional on that version.
+// A Lease that changed has a live holder somewhere else, which the machine's state contradicts:
+// that cell is left alone and the fault reported.
+// It returns false when such a contradiction was found.
+func (e *Executor) releaseCellsOn(ctx context.Context, a Action, log *slog.Logger) bool {
+	pods, err := e.Client.CoreV1().Pods(metav1.NamespaceAll).List(ctx, metav1.ListOptions{
+		FieldSelector: "spec.nodeName=" + a.Node, LabelSelector: CellLabel})
+	if err != nil {
+		log.Warn("could not list the other cells on the fenced node; their Leases will expire instead", "error", err)
+		return true
+	}
+	type held struct {
+		ref      ObjectRef
+		identity string
+		lease    *coordinationv1.Lease
+	}
+	var others []held
+	for _, p := range pods.Items {
+		if p.Spec.NodeName != a.Node || (p.Namespace == a.Namespace && p.Name == a.Pod) {
+			continue
+		}
+		cell := statefulSetOf(&p)
+		leaseName := cell
+		if s, err := e.Client.AppsV1().StatefulSets(p.Namespace).Get(ctx, cell, metav1.GetOptions{}); err == nil && s.Annotations[LeaseAnnotation] != "" {
+			leaseName = s.Annotations[LeaseAnnotation]
+		}
+		l, err := e.Leases.Leases(p.Namespace).Get(ctx, leaseName, metav1.GetOptions{})
+		identity := p.Name + "/" + string(p.UID)
+		if err != nil || l.Spec.HolderIdentity == nil || *l.Spec.HolderIdentity != identity {
+			continue // not this pod's to give up
+		}
+		others = append(others, held{ObjectRef{Kind: "StatefulSet", Namespace: p.Namespace, Name: cell}, identity, l})
+	}
+	if len(others) == 0 || e.QuietCheck <= 0 || !e.wait(ctx, e.QuietCheck) {
+		return true
+	}
+	consistent := true
+	for _, o := range others {
+		cur, err := e.Leases.Leases(o.lease.Namespace).Get(ctx, o.lease.Name, metav1.GetOptions{})
+		if err == nil && cur.ResourceVersion == o.lease.ResourceVersion {
+			_, err = lease.ReleaseFenced(ctx, e.Leases, cur)
+		} else if err == nil {
+			err = ErrLeaseMoved
+		}
+		if err != nil {
+			if errors.Is(err, ErrLeaseMoved) || apierrors.IsConflict(err) {
+				consistent = false
+				e.Metrics.leaseMoved.Inc()
+				e.Events.Event(o.ref, true, "FenceAborted", fmt.Sprintf("%v: %s was off, yet the lease (held by %q) was renewed; check the node-to-machine mapping",
+					ErrLeaseMoved, a.Machine, o.identity))
+			}
+			log.Warn("did not release the lease of another cell on the fenced node", "cell", o.ref.Namespace+"/"+o.ref.Name, "error", err)
+			continue
+		}
+		e.Events.Event(o.ref, true, "Fenced", fmt.Sprintf("machine %s confirmed off while fencing %s/%s; lease released", a.Machine, a.Namespace, a.Cell))
+		log.Warn("lease released for another cell on the fenced node", "cell", o.ref.Namespace+"/"+o.ref.Name, "holder", o.identity)
+	}
+	return consistent
+}
+
+// statefulSetOf names the StatefulSet that owns a cell's controller pod: its owner, or its name
+// without the ordinal.
+func statefulSetOf(p *corev1.Pod) string {
+	for _, o := range p.OwnerReferences {
+		if o.Kind == "StatefulSet" {
+			return o.Name
+		}
+	}
+	if i := strings.LastIndex(p.Name, "-"); i > 0 {
+		return p.Name[:i]
+	}
+	return p.Name
 }
 
 // deletePodsOn force-deletes every pod bound to node. Only after its machine is confirmed off.

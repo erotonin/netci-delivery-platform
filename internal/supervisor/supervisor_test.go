@@ -101,6 +101,7 @@ func newLab(t *testing.T) *lab {
 	})
 	reg := prometheus.NewRegistry()
 	l.metrics = NewMetrics(reg)
+	defer func() { l.sup.Executor.sleep = func(context.Context, time.Duration) bool { return true } }() // no real waiting
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	cfg := DefaultConfig()
 	l.sup = &Supervisor{
@@ -108,7 +109,7 @@ func newLab(t *testing.T) *lab {
 			Machines: map[string]string{"netci-lab-1": "netci-lab-1", "netci-lab-2": "netci-lab-2", "netci-lab-3": "netci-lab-3"},
 			MaxGap:   3 * time.Second, StateTimeout: time.Second},
 		Executor: &Executor{Client: l.kube, Leases: l.leaseClient(), Fencer: l.power, Clock: l.clk, Log: log,
-			Events: l.events, Metrics: l.metrics, OffTimeout: 5 * time.Second},
+			Events: l.events, Metrics: l.metrics, OffTimeout: 5 * time.Second, QuietCheck: 2 * time.Second},
 		Config: cfg, Interval: time.Second, ActionTimeout: 10 * time.Second, AlertEvery: time.Minute,
 		Clock: l.clk, Log: log, Metrics: l.metrics,
 	}
@@ -434,6 +435,70 @@ func TestARenewalMadeJustBeforeTheStallDoesNotRestartTheCount(t *testing.T) {
 	l.mu.Unlock()
 	if took := l.until("fencing", 30, func() bool { return l.has("delete-pod jenkins-0") }); took > 1 {
 		t.Fatalf("fenced %d s after the API answered again, counting from a renewal made 5 s before", took)
+	}
+}
+
+// Chaos series 13, run 6: two cells on the machine that lost power, the second a renewal
+// behind the first. Fencing the machine through the first deleted every pod on it, the second
+// cell's too; its replacement then found the Lease held by a pod that no longer existed and
+// waited out the Lease's 15 s. Fencing a machine gives up the Lease of every cell on it.
+func TestEveryCellOnAFencedMachineHasItsLeaseReleased(t *testing.T) {
+	l := newLab(t)
+	l.warm()
+	ctx := context.Background()
+	if _, err := l.kube.AppsV1().StatefulSets("cell-c").Create(ctx, &appsv1.StatefulSet{ObjectMeta: metav1.ObjectMeta{
+		Name: "jenkins", Namespace: "cell-c", Labels: map[string]string{CellLabel: "true"}}}, metav1.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := l.kube.CoreV1().Pods("cell-c").Create(ctx, &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "jenkins-0", Namespace: "cell-c",
+		UID: "uid-c", Labels: map[string]string{CellLabel: "true"}, OwnerReferences: []metav1.OwnerReference{{Kind: "StatefulSet", Name: "jenkins"}}},
+		Spec: corev1.PodSpec{NodeName: "netci-lab-1"}}, metav1.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	l.create("cell-c", "jenkins", "jenkins-0/uid-c") // its last renewal: a second after cell-a's
+	l.kill("netci-lab-1")
+	l.power.set("netci-lab-1", fence.Off)
+	l.until("fencing", 30, func() bool { return l.has("delete-pod jenkins-0") })
+	l.second()
+	got, err := l.leases.Leases("cell-c").Get(ctx, "jenkins", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Spec.HolderIdentity != nil || got.Annotations[lease.FencedAnnotation] != "jenkins-0/uid-c" {
+		t.Fatalf("the other cell on the fenced machine still holds its Lease: %+v", got.Spec.HolderIdentity)
+	}
+	if _, err := l.kube.CoreV1().Pods("cell-c").Get(ctx, "jenkins-0", metav1.GetOptions{}); err == nil {
+		t.Fatal("the other cell's pod was left on the fenced machine")
+	}
+}
+
+// The node-to-machine mapping is wrong for the other cell's machine: its holder still renews.
+// It is not released, and its pod is not deleted with the machine's other pods.
+func TestAnotherCellWhoseHolderStillRenewsIsLeftAlone(t *testing.T) {
+	l := newLab(t)
+	l.warm()
+	ctx := context.Background()
+	_, _ = l.kube.AppsV1().StatefulSets("cell-c").Create(ctx, &appsv1.StatefulSet{ObjectMeta: metav1.ObjectMeta{
+		Name: "jenkins", Namespace: "cell-c", Labels: map[string]string{CellLabel: "true"}}}, metav1.CreateOptions{})
+	_, _ = l.kube.CoreV1().Pods("cell-c").Create(ctx, &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "jenkins-0", Namespace: "cell-c",
+		UID: "uid-c", Labels: map[string]string{CellLabel: "true"}}, Spec: corev1.PodSpec{NodeName: "netci-lab-1"}}, metav1.CreateOptions{})
+	l.create("cell-c", "jenkins", "jenkins-0/uid-c")
+	l.sup.Executor.sleep = func(context.Context, time.Duration) bool {
+		l.renew("cell-c", "jenkins") // alive elsewhere: it renews while the supervisor waits
+		return true
+	}
+	l.kill("netci-lab-1")
+	l.power.set("netci-lab-1", fence.Off)
+	l.until("fencing", 30, func() bool { return l.has("delete-pod jenkins-0") })
+	got, _ := l.leases.Leases("cell-c").Get(ctx, "jenkins", metav1.GetOptions{})
+	if got.Spec.HolderIdentity == nil || *got.Spec.HolderIdentity != "jenkins-0/uid-c" {
+		t.Fatal("released the Lease of a holder that renewed while the supervisor waited")
+	}
+	if _, err := l.kube.CoreV1().Pods("cell-c").Get(ctx, "jenkins-0", metav1.GetOptions{}); err != nil {
+		t.Fatal("deleted the pod of a cell whose holder still renews")
+	}
+	if !l.events.has("FenceAborted") {
+		t.Fatal("the contradiction was not reported")
 	}
 }
 

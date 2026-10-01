@@ -135,7 +135,8 @@ func run(log *slog.Logger) error {
 		Collector: &supervisor.Collector{Client: client, Leases: client.CoordinationV1(), Fencer: fencer, Machines: machines,
 			Config: cfg, Clock: clock.RealClock{}, MaxGap: 3 * interval, StateTimeout: 3 * time.Second},
 		Executor: &supervisor.Executor{Client: client, Leases: client.CoordinationV1(), Fencer: fencer, Clock: clock.RealClock{},
-			Log: log, Events: &supervisor.KubeEvents{Client: client, Instance: pod, Log: log}, Metrics: metrics, OffTimeout: offTimeout},
+			Log: log, Events: &supervisor.KubeEvents{Client: client, Instance: pod, Log: log}, Metrics: metrics, OffTimeout: offTimeout,
+			QuietCheck: 2 * time.Second},
 		Config: cfg, Interval: interval, ActionTimeout: offTimeout + 30*time.Second, AlertEvery: time.Minute,
 		Clock: clock.RealClock{}, Log: log, Metrics: metrics,
 	}
