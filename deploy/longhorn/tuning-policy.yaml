@@ -7,7 +7,9 @@
 # refuse it (failurePolicy: Ignore).
 #
 #   - attacher: retries at most 5 s apart, dead API connections noticed in ~4 s, one per node
-#     (spread per revision);
+#     (spread per revision), and a new leader within ~12 s of the old one's machine going, not
+#     ~20 s (the attachers run on the same machines as cells; renewals still outlast the lab's
+#     ~7 s etcd elections);
 #   - managers: dead API connections noticed in ~4 s.
 #
 # Written around a fault of the API server it runs on (k3s 1.36.4, cel-go 0.26.1): a JSON patch
@@ -32,7 +34,11 @@ spec:
       jsonPatch:
         expression: >
           [JSONPatch{op: "replace", path: "/spec/template/spec/containers/0/args",
-            value: object.spec.template.spec.containers[0].args.filter(a, !a.startsWith("--retry-interval-max=")) + ["--retry-interval-max=5s"]}]
+            value: object.spec.template.spec.containers[0].args.filter(a,
+                     !a.startsWith("--retry-interval-max=") && !a.startsWith("--leader-election-lease-duration=") &&
+                     !a.startsWith("--leader-election-renew-deadline=") && !a.startsWith("--leader-election-retry-period=")) +
+                   ["--retry-interval-max=5s", "--leader-election-lease-duration=10s",
+                    "--leader-election-renew-deadline=8s", "--leader-election-retry-period=2s"]}]
     - patchType: ApplyConfiguration
       applyConfiguration:
         expression: >
