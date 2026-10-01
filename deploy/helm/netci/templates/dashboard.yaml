@@ -1,0 +1,13 @@
+{{- if .Values.monitoring.dashboard.enabled }}
+# The netCI dashboard, for Grafana's dashboard sidecar (kube-prometheus-stack watches ConfigMaps
+# with this label). Every panel is a metric the binaries export.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: netci-dashboard
+  namespace: {{ .Release.Namespace }}
+  labels: {{- toYaml .Values.monitoring.dashboard.labels | nindent 4 }}
+data:
+  netci.json: |-
+{{ .Files.Get "dashboards/netci.json" | indent 4 }}
+{{- end }}

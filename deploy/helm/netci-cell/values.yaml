@@ -36,3 +36,9 @@ terminationGracePeriodSeconds: 30
 # Above build pods, so that a controller that lost its machine is given room (the netci chart
 # creates netci-cell). Empty: the cluster's default priority.
 priorityClassName: netci-cell
+
+# A prometheus-operator PodMonitor for the cell agent's metrics (Lease held, Lease lost, JCasC
+# reloads), which the netci chart's dashboard shows.
+monitoring:
+  enabled: false
+  labels: {}

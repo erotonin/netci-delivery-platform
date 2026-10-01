@@ -62,6 +62,11 @@ fabric:
 monitoring:
   enabled: false
   labels: {}
+  # A Grafana dashboard as a ConfigMap, for Grafana's dashboard sidecar.
+  dashboard:
+    enabled: false
+    labels:
+      grafana_dashboard: "1"
 
 # PriorityClasses netci-platform, netci-cell and netci-sandbox (cluster-scoped), used by this chart
 # and by netci-cell. Turn off only if they are managed elsewhere under the same names.

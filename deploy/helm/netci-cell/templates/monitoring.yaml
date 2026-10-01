@@ -1,0 +1,16 @@
+{{- if .Values.monitoring.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: netci-cell
+  namespace: {{ .Release.Namespace }}
+  labels: {{- toYaml .Values.monitoring.labels | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      netci.io/cell: "true"
+  podMetricsEndpoints:
+    - port: agent-metrics
+      path: /metrics
+      interval: 15s
+{{- end }}
