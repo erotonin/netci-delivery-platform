@@ -15,7 +15,7 @@ verified on k3s v1.36.4 with Longhorn 1.13 and Jenkins 2.555.3. Anything else is
 | Storage | A `ReadWriteOnce` storage class that replicates across machines and attaches elsewhere once a node is out of service (Longhorn has been tested) | `JENKINS_HOME` moves with the controller |
 | PostgreSQL | 14 or later, with backups; one database for netci-queue and netci-fabric | Runs, `netciOnce` markers and sandboxes are durable state |
 | Registry | One that serves the netCI image and your controller image, pinned by digest | The charts refuse an image without a digest |
-| Monitoring (optional) | prometheus-operator, Grafana's dashboard sidecar | Alerts and the dashboard (`monitoring.enabled`, `monitoring.dashboard.enabled`) |
+| Monitoring | prometheus-operator, Grafana's dashboard sidecar | Alerts and the dashboard (`monitoring.enabled`, `monitoring.dashboard.enabled`). Optional to install, but nothing tells a person about a failure the supervisor will not act on without it. Checked with kube-prometheus-stack 87.10.1 |
 
 ## 2. Images
 
@@ -87,11 +87,16 @@ this, and the cells kept their volumes.
 1. `kubectl -n netci-system get lease netci-supervisor`: a replica leads. Its log says
    `node-to-machine mapping checked against the power controller`.
 2. `netci_supervisor_cell_headroom` is 1 for every cell.
-3. A build on each cell, and a run submitted through netci-queue. On the lab: a Kubernetes
+3. In Prometheus, every netCI target is up (supervisor, queue and fabric replicas, one cell agent
+   per cell), and the `netci-*` rule groups are healthy. To see an alert end to end, scale
+   `netci-supervisor` to 0: `NetciSupervisorNotLeading` fires within two minutes (96 s on the
+   lab). Scale it back.
+4. A build on each cell, and a run submitted through netci-queue. On the lab: a Kubernetes
    plugin build, a fabric build, a `netciOnce` build, and a queued run that finished in 24 s.
-4. **A failure drill**: power off a cell's machine while a build runs (`lab/spike/chaos_poweroff.py`
-   shows how), and check that the build finishes. Do it on your hardware, through your power
-   controllers, before production.
+5. **A failure drill**: power off a cell's machine while a build runs, and, separately, hang one
+   (`lab/spike/chaos_poweroff.py --failure node-poweroff-supervised|node-hang-supervised` shows
+   how); check that the build finishes and that the hung machine was powered off by the
+   supervisor. Do it on your hardware, through your power controllers, before production.
 
 ## 6. Running it
 
