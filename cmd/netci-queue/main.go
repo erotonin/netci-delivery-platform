@@ -65,7 +65,11 @@ func run(log *slog.Logger) error {
 	for name := range cfg.Cells {
 		cellNames = append(cellNames, name)
 	}
-	metrics.Known(cellNames)
+	clientNames := make([]string, 0, len(cfg.Clients))
+	for name := range cfg.Clients {
+		clientNames = append(clientNames, name)
+	}
+	metrics.Known(cellNames, clientNames)
 	store := &runqueue.Store{Pool: pool}
 	intake := &runqueue.Intake{Store: store, Config: cfg, Log: log, Metrics: metrics}
 

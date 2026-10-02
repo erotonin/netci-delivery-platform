@@ -29,13 +29,18 @@ func NewMetrics(r prometheus.Registerer) *Metrics {
 	return m
 }
 
-// Known starts the transition counters at 0 for every configured pool: a labelled counter has no
-// series until its first increment, so increase() would miss the first sandboxes that fail.
+// Known starts every series at 0 for the configured pools: a labelled counter or histogram has no
+// series until its first observation, so increase() and rate() would miss the first sandboxes
+// that fail and the first claims served after a start.
 func (m *Metrics) Known(pools []string) {
 	for _, p := range pools {
 		for _, s := range []State{Creating, Warm, Claimed, Bound, Released, Failed} {
 			m.transitions.WithLabelValues(p, string(s))
 		}
+		m.claims.WithLabelValues(p, "warm")
+		m.claims.WithLabelValues(p, "cold")
+		m.claimToBind.WithLabelValues(p)
+		m.busySeconds.WithLabelValues(p)
 	}
 }
 

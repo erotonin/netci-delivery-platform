@@ -29,12 +29,18 @@ func NewMetrics(r prometheus.Registerer) *Metrics {
 	return m
 }
 
-// Known starts the counters the alerts read at 0 for every configured cell. A labelled counter
-// otherwise has no series until its first increment, and increase() needs two samples: the first
-// run dispatched again after a restart would never raise NetciRunsLostWithAController.
-func (m *Metrics) Known(cells []string) {
+// Known starts every series at 0 for the configured cells and clients. A labelled counter or
+// histogram otherwise has no series until its first observation, and rate() and increase() need
+// two samples: the first run dispatched again after a restart would never raise
+// NetciRunsLostWithAController, and the dashboard showed no rate for the first runs accepted
+// (found on the lab: 3 runs counted, rate 0, p95 NaN).
+func (m *Metrics) Known(cells, clients []string) {
 	for _, c := range cells {
 		m.redispatched.WithLabelValues(c)
 		m.errors.WithLabelValues(c)
+		m.acceptToStart.WithLabelValues(c)
+		for _, cl := range clients {
+			m.accepted.WithLabelValues(c, cl)
+		}
 	}
 }
