@@ -40,9 +40,9 @@ jenkins:
   controller:
     base: "jenkins/jenkins:2.555.3-lts-jdk21@sha256:e82bbdcffb6361c081ac66bbdcd5802a299b3631c78c3be04a0a91c7f952fff3"
     image: "netci/jenkins-controller"
-    tag: "2.555.3-netci8"
+    tag: "2.555.3-netci7"
   # What netCI's pipelines use directly. The rest of `plugins` is what these need.
-  requires: [configuration-as-code, kubernetes, workflow-aggregator, git, ws-cleanup, job-dsl, git-client, plain-credentials, credentials-binding, pipeline-stage-view, pipeline-utility-steps, timestamper, matrix-auth, opentelemetry]
+  requires: [configuration-as-code, kubernetes, workflow-aggregator, git, ws-cleanup, job-dsl, git-client, plain-credentials, credentials-binding, pipeline-stage-view, pipeline-utility-steps, timestamper, matrix-auth]
   # Every plugin on the controller with its exact version, dependencies included: left to
   # jenkins-plugin-cli, a dependency resolves to whatever the update site offers the day
   # the image is built. jenkins/plugins.txt is generated from this
@@ -50,7 +50,6 @@ jenkins:
   plugins:
     antisamy-markup-formatter: "173.v680e3a_b_69ff3"
     apache-httpcomponents-client-4-api: "4.5.14-269.vfa_2321039a_83"
-    apache-httpcomponents-client-5-api: "5.6.4-204.vfa_29df89ffcf"
     asm-api: "9.10.1-216.va_9256d3b_844b_"
     authentication-tokens: "1.144.v5ff4a_5ec5c33"
     bootstrap5-api: "5.3.8-1048.va_c299057e35c"
@@ -97,9 +96,6 @@ jenkins:
     mina-sshd-api-common: "2.19.0-192.v2b_a_7b_2c1dc71"
     mina-sshd-api-core: "2.19.0-192.v2b_a_7b_2c1dc71"
     okhttp-api: "5.3.2-200.vedb_720a_cf1f8"
-    opentelemetry: "3.1603.ve3fa_cc8a_b_f5e"
-    opentelemetry-api: "1.54.1.102.v276c93ee966d"
-    oss-symbols-api: "465.v25d9fdc88c26"
     pipeline-build-step: "601.v6d4c6d1a_9dc7"
     pipeline-graph-analysis: "254.v0f63a_a_447dca_"
     pipeline-groovy-lib: "806.v408277b_33d1d"
