@@ -16,7 +16,58 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 STATE="${ROOT}/.netci-gate/lab"
 M="${STATE}/monitoring"
 export KUBECONFIG="${STATE}/kubeconfig"
-CHART_VERSION=87.10.1 LOKI_CHART_VERSION=7.3.0
+CHART_VERSION=87.10.1
+LOKI_IMAGE=grafana/loki@sha256:2483b71b28b15dee230f85512cae2b20c4b5f6e98a6eabe686cbccfa5ea3ba4a  # 3.6.12
+
+# Loki on the host, not in the cluster: a build's log must be readable while a cell's machine is
+# lost, and with Loki on one of the lab's three machines -- which all run cells -- a power-off
+# took Loki too (lab/spike/logs_during_takeover.py, crash at tick 40). Production runs Loki on
+# its own machines or replicated; the host is the lab's other failure domain. It listens on the
+# libvirt network's address only.
+loki_on_host() {
+  local d="${STATE}/loki"
+  mkdir -m 700 -p "${d}/data"
+  cat > "${d}/config.yaml" <<'CONFIG'
+auth_enabled: false
+server:
+  http_listen_address: 192.168.122.1
+  http_listen_port: 3100
+  grpc_listen_address: 127.0.0.1
+  grpc_listen_port: 9096
+  # A shipper's push is one Fluent Bit chunk, up to ~2 MB, which Loki receives as up to ~5.3 MB:
+  # over the default 4 MB a backlog was refused with 500 and retried forever.
+  grpc_server_max_recv_msg_size: 16777216
+  grpc_server_max_send_msg_size: 16777216
+# Every address Loki tells its own parts to reach it at: left to itself it picks the host's first
+# interface, where nothing listens, and every query hung while pushes worked.
+frontend: {address: 127.0.0.1}
+common:
+  path_prefix: /loki
+  replication_factor: 1
+  instance_addr: 127.0.0.1
+  ring: {kvstore: {store: inmemory}, instance_addr: 127.0.0.1}
+  storage: {filesystem: {chunks_directory: /loki/chunks, rules_directory: /loki/rules}}
+schema_config:
+  configs:
+    - {from: "2026-01-01", store: tsdb, object_store: filesystem, schema: v13, index: {prefix: index_, period: 24h}}
+limits_config:
+  # The shippers send each line's build number as structured metadata.
+  allow_structured_metadata: true
+  retention_period: 168h
+  ingestion_rate_mb: 8
+  ingestion_burst_size_mb: 16
+compactor: {working_directory: /loki/compactor, retention_enabled: true, delete_request_store: filesystem}
+CONFIG
+  docker rm -f netci-lab-loki >/dev/null 2>&1 || true
+  docker run -d --name netci-lab-loki --restart unless-stopped --network host --user "$(id -u):$(id -g)" \
+    -v "${d}/config.yaml:/etc/loki/config.yaml:ro" -v "${d}/data:/loki" "${LOKI_IMAGE}" \
+    -config.file=/etc/loki/config.yaml >/dev/null
+  for _ in $(seq 1 60); do
+    curl -sf http://192.168.122.1:3100/ready >/dev/null && { echo "loki up on 192.168.122.1:3100"; return 0; }
+    sleep 2
+  done
+  echo "loki did not become ready; docker logs netci-lab-loki" >&2; return 1
+}
 
 case "${1:-}" in
   install)
@@ -57,45 +108,14 @@ grafana:
   sidecar:
     dashboards: {enabled: true, label: grafana_dashboard, labelValue: "1", searchNamespace: ALL}
   additionalDataSources:
-    - {name: Loki, type: loki, uid: loki, access: proxy, url: "http://loki.monitoring.svc.cluster.local:3100"}
+    - {name: Loki, type: loki, uid: loki, access: proxy, url: "http://192.168.122.1:3100"}
 VALUES
-    cat > "${M}/loki.yaml" <<'VALUES'
-deploymentMode: SingleBinary
-loki:
-  auth_enabled: false
-  commonConfig: {replication_factor: 1}
-  storage: {type: filesystem}
-  schemaConfig:
-    configs:
-      - {from: "2026-01-01", store: tsdb, object_store: filesystem, schema: v13, index: {prefix: index_, period: 24h}}
-  # The shippers send each line's build number as structured metadata. A shipper's push is one
-  # Fluent Bit chunk, up to ~2 MB, which Loki receives as up to ~5.3 MB: over Loki's default gRPC
-  # limit of 4 MB, a backlog (a first install, or one after Loki was down) was refused with 500
-  # and retried forever. 16 MB, and a burst to match.
-  server: {grpc_server_max_recv_msg_size: 16777216, grpc_server_max_send_msg_size: 16777216}
-  limits_config: {allow_structured_metadata: true, retention_period: 168h, ingestion_rate_mb: 8, ingestion_burst_size_mb: 16}
-  compactor: {retention_enabled: true, delete_request_store: filesystem}
-singleBinary:
-  replicas: 1
-  persistence: {enabled: true, size: 5Gi, storageClass: local-path}
-  resources: {requests: {cpu: 50m, memory: 128Mi}, limits: {memory: 512Mi}}
-backend: {replicas: 0}
-read: {replicas: 0}
-write: {replicas: 0}
-gateway: {enabled: false}
-chunksCache: {enabled: false}
-resultsCache: {enabled: false}
-lokiCanary: {enabled: false}
-test: {enabled: false}
-minio: {enabled: false}
-VALUES
-    helm upgrade --install loki grafana/loki --version "${LOKI_CHART_VERSION}" -n monitoring -f "${M}/loki.yaml" \
-      --wait --timeout 15m
+    loki_on_host
     helm upgrade --install monitoring prometheus-community/kube-prometheus-stack --version "${CHART_VERSION}" \
       -n monitoring -f "${M}/values.yaml" --wait --timeout 15m
     kubectl -n monitoring get pods ;;
   uninstall)
-    helm uninstall loki -n monitoring || true
+    docker rm -f netci-lab-loki >/dev/null 2>&1 || true
     helm uninstall monitoring -n monitoring || true
     kubectl get crd -o name | grep monitoring.coreos.com | xargs -r kubectl delete >/dev/null ;;
   *) sed -n '2,12p' "$0" >&2; exit 2 ;;

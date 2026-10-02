@@ -84,7 +84,7 @@ for cell in cell-a cell-b; do
         --set monitoring.enabled="$([[ "${MONITORING:-off}" == on ]] && echo true || echo false)")
   if [[ "${MONITORING:-off}" == on ]]; then
     # Build logs to the lab's Loki (lab/monitoring.sh), readable while the cell is taken over.
-    args+=(--set logShipping.enabled=true --set logShipping.lokiUrl=http://loki.monitoring.svc.cluster.local:3100
+    args+=(--set logShipping.enabled=true --set logShipping.lokiUrl=http://192.168.122.1:3100
            --set logShipping.image=cr.fluentbit.io/fluent/fluent-bit@sha256:c5542543523c9678398dd78d927c05e8425ec15b038f226b67b3b019b1a70845)
   fi
   # The lab's NodePort Service holds the port the chart's jenkins-ui takes.

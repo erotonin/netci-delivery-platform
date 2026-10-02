@@ -25,12 +25,14 @@ import sys
 import threading
 import time
 import urllib.parse
+import urllib.request
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import probe  # noqa: E402
 
-LOKI = "/api/v1/namespaces/monitoring/services/loki:3100/proxy/loki/api/v1/query_range"
+# The lab's Loki runs on the host (lab/monitoring.sh), outside the machines a takeover loses.
+LOKI = os.environ.get("NETCI_LOKI_URL", "http://192.168.122.1:3100") + "/loki/api/v1/query_range"
 JOB = "resume-probe"
 
 
@@ -38,10 +40,10 @@ def loki_ticks(cell: str, build: int, since_ns: int) -> list[int]:
     query = f'{{cell="{cell}", job="{JOB}"}} | build="{build}" |= "tick "'
     q = urllib.parse.urlencode({"query": query, "start": str(since_ns), "end": str(time.time_ns()), "limit": "5000",
                                 "direction": "forward"})
-    out = probe.kubectl("get", "--raw", f"{LOKI}?{q}", check=False, timeout=15)
     try:
-        result = json.loads(out)["data"]["result"]
-    except (ValueError, KeyError, TypeError):
+        with urllib.request.urlopen(f"{LOKI}?{q}", timeout=10) as r:
+            result = json.load(r)["data"]["result"]
+    except (OSError, ValueError, KeyError, TypeError):
         return []
     return [int(m.group(1)) for s in result for _, line in s["values"] if (m := re.match(r"tick (\d+) ", line))]
 
