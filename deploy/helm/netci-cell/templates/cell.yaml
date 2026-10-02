@@ -269,3 +269,92 @@ spec:
     - name: agent
       port: 50000
       targetPort: 50000
+{{- if .Values.kubernetesPlugin.enabled }}
+---
+# The Jenkins Kubernetes plugin's agents in this namespace, with the permissions its README asks
+# for and no more (secrets read only).
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: jenkins-agents
+  namespace: {{ .Release.Namespace }}
+rules:
+  - apiGroups: [""]
+    resources: [pods, pods/exec]
+    verbs: [create, delete, get, list, patch, update, watch]
+  - apiGroups: [""]
+    resources: [pods/log]
+    verbs: [get, list, watch]
+  - apiGroups: [""]
+    resources: [events]
+    verbs: [watch]
+  - apiGroups: [""]
+    resources: [secrets]
+    verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: jenkins-agents
+  namespace: {{ .Release.Namespace }}
+subjects:
+  - kind: ServiceAccount
+    name: jenkins
+    namespace: {{ .Release.Namespace }}
+roleRef:
+  kind: Role
+  name: jenkins-agents
+  apiGroup: rbac.authorization.k8s.io
+{{- end }}
+{{- if .Values.ui.nodePort }}
+---
+# The controller's web UI on every node's port: for clusters without an ingress controller.
+apiVersion: v1
+kind: Service
+metadata:
+  name: jenkins-ui
+  namespace: {{ .Release.Namespace }}
+spec:
+  type: NodePort
+  selector:
+    app: jenkins
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+      nodePort: {{ .Values.ui.nodePort }}
+{{- end }}
+{{- with .Values.ui.ingress }}
+{{- if .enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: jenkins
+  namespace: {{ $.Release.Namespace }}
+  {{- with .annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- with .className }}
+  ingressClassName: {{ . }}
+  {{- end }}
+  {{- with .tlsSecretName }}
+  tls:
+    - hosts: [{{ required "ui.ingress.host is required with TLS" $.Values.ui.ingress.host | quote }}]
+      secretName: {{ . }}
+  {{- end }}
+  rules:
+    - host: {{ required "ui.ingress.host is required" .host | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: jenkins
+                port:
+                  name: http
+{{- end }}
+{{- end }}

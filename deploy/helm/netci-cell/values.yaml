@@ -42,3 +42,17 @@ priorityClassName: netci-cell
 monitoring:
   enabled: false
   labels: {}
+
+# RBAC for the Jenkins Kubernetes plugin's agents in this namespace.
+kubernetesPlugin:
+  enabled: false
+
+# How people reach the controller's web UI. The jenkins Service (ClusterIP) is always there.
+ui:
+  nodePort: null        # e.g. 30081: a NodePort Service, jenkins-ui
+  ingress:
+    enabled: false
+    className: ""
+    host: ""
+    tlsSecretName: ""   # a kubernetes.io/tls Secret in the cell's namespace
+    annotations: {}
