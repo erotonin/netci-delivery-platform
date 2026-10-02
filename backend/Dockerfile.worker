@@ -9,7 +9,7 @@ ADD https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz /helm.tar.gz
 RUN echo "${HELM_SHA256}  /helm.tar.gz" | sha256sum -c - \
     && tar -xzf /helm.tar.gz -C / linux-amd64/helm && chmod 0755 /linux-amd64/helm
 
-FROM python:3.12.10-slim-bookworm
+FROM python:3.14.0-slim-bookworm
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
