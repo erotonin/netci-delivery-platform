@@ -67,10 +67,12 @@ func Headroom(nodes []corev1.Node, pods []corev1.Pod, cells []corev1.Pod) []Room
 				why = append(why, n.Name+": taint "+t.Key)
 				continue
 			}
-			// Pods of lower priority can be evicted for the controller; the others stay.
+			// Pods of lower priority can be evicted for the controller, but room that a running
+			// build holds is not room: the scheduler would evict it, and the build fails (on the
+			// lab, a takeover preempted the agent of the very build it was resuming).
 			cpu, mem := n.Status.Allocatable.Cpu().MilliValue(), n.Status.Allocatable.Memory().Value()
 			for _, p := range usedBy[n.Name] {
-				if p.UID == c.UID || priority(p) < priority(c) {
+				if p.UID == c.UID || priority(p) < priority(c) && !runsABuild(p) {
 					continue
 				}
 				r := requests(p)
@@ -288,10 +290,20 @@ func Sharing(cells []corev1.Pod) int {
 	return n
 }
 
+// runsABuild: a Kubernetes-plugin agent (created for one build), or a pod that says it must not
+// be disrupted -- as netci-fabric marks a sandbox once a controller has claimed it.
+func runsABuild(p *corev1.Pod) bool {
+	_, agent := p.Labels["jenkins/label"]
+	return agent || p.Annotations["cluster-autoscaler.kubernetes.io/safe-to-evict"] == "false" ||
+		p.Annotations["karpenter.sh/do-not-disrupt"] == "true"
+}
+
 // slim keeps of a pod what Headroom and Sharing read.
 func slim(p *corev1.Pod) corev1.Pod {
 	out := corev1.Pod{
-		ObjectMeta: metav1.ObjectMeta{Name: p.Name, Namespace: p.Namespace, UID: p.UID, OwnerReferences: p.OwnerReferences},
+		ObjectMeta: metav1.ObjectMeta{Name: p.Name, Namespace: p.Namespace, UID: p.UID, OwnerReferences: p.OwnerReferences,
+			Labels: keep(p.Labels, "jenkins/label"), Annotations: keep(p.Annotations,
+				"cluster-autoscaler.kubernetes.io/safe-to-evict", "karpenter.sh/do-not-disrupt")},
 		Spec: corev1.PodSpec{NodeName: p.Spec.NodeName, Priority: p.Spec.Priority, NodeSelector: p.Spec.NodeSelector,
 			Tolerations: p.Spec.Tolerations, Overhead: p.Spec.Overhead},
 		Status: corev1.PodStatus{Phase: p.Status.Phase},
@@ -302,6 +314,20 @@ func slim(p *corev1.Pod) corev1.Pod {
 	for _, c := range p.Spec.InitContainers {
 		out.Spec.InitContainers = append(out.Spec.InitContainers, corev1.Container{RestartPolicy: c.RestartPolicy,
 			Resources: corev1.ResourceRequirements{Requests: c.Resources.Requests}})
+	}
+	return out
+}
+
+// keep returns the entries of m under keys, or nil.
+func keep(m map[string]string, keys ...string) map[string]string {
+	var out map[string]string
+	for _, k := range keys {
+		if v, ok := m[k]; ok {
+			if out == nil {
+				out = map[string]string{}
+			}
+			out[k] = v
+		}
 	}
 	return out
 }

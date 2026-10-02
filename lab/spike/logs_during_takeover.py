@@ -87,8 +87,12 @@ def main() -> int:
         time.sleep(2)
     down = [e for e in timeline if not e["jenkinsAnswers"]]
     readable_while_down = max((e["lastTickInLoki"] for e in down), default=0)
+    # The probe exits 0 whatever became of the build: its evidence says.
+    m = re.search(r"evidence: (\S+)", run.stdout)
+    probe_facts = json.loads((probe.ROOT / m.group(1)).read_text()) if m else {}
     facts = {
         "scenario": "logs-during-takeover", "cell": cell, "job": JOB, "build": build,
+        "buildResult": probe_facts.get("result"), "probeEvidence": m.group(1) if m else None,
         "crashAtTick": args.crash_at_tick, "probeExit": run.returncode, "probeOutputTail": run.stdout.splitlines()[-5:],
         "timeline": timeline,
         "lastTickReadableWhileJenkinsDown": readable_while_down,
@@ -98,7 +102,7 @@ def main() -> int:
     }
     at_crash = range(args.crash_at_tick - 2, args.crash_at_tick + 4)
     facts["duplicatedAwayFromTheCrash"] = [t for t in facts["duplicated"] if t not in at_crash]
-    ok = (run.returncode == 0 and down and readable_while_down >= args.crash_at_tick - 2
+    ok = (run.returncode == 0 and facts["buildResult"] == "SUCCESS" and down and readable_while_down >= args.crash_at_tick - 2
           and not facts["missing"] and not facts["duplicatedAwayFromTheCrash"])
     facts["verdict"] = "PASS" if ok else "FAIL"
     stamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")

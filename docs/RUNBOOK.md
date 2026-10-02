@@ -72,11 +72,15 @@ The supervisor's observations keep failing, and it decides nothing while it cann
   lists, raise `NETCI_API_ATTEMPT_TIMEOUT` (default 0.7 s).
 
 ### NetciCellWithoutHeadroom (warning)
-If the machine running this cell's controller were lost, no other machine could take it, even
-with every build evicted. A takeover would fence the machine and then wait. The event
+If the machine running this cell's controller were lost, no other machine could take it without
+stopping a running build. Idle pods of lower priority (warm sandboxes, say) count as room; a
+running build does not: the scheduler would preempt it for the controller, and that build would
+fail -- the lab saw a takeover preempt the agent of the very build it was resuming. With no room
+at all, a takeover fences the machine and then waits. The event
 `NoTakeoverHeadroom` names each machine and why it cannot take the controller: cordoned, not
 Ready, a taint, or the room left.
-- **Act:** add a machine or memory, or move pods of the same or higher priority off one machine.
+- **Act:** add a machine or memory, or move pods of the same or higher priority, or long-running
+  builds, off one machine.
   This check is a necessary condition. When it passes, it does not promise that a takeover will
   succeed.
 

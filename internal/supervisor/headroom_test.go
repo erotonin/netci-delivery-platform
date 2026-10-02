@@ -76,9 +76,28 @@ func TestNoMachineWithRoomIsReported(t *testing.T) {
 
 func TestPodsOfLowerPriorityGiveWay(t *testing.T) {
 	nodes := []corev1.Node{machine("lab-1", "4", "5Gi"), machine("lab-2", "4", "5Gi")}
-	builds := []corev1.Pod{workload("sandbox-1", "lab-2", "1", "2Gi", -10), workload("agent", "lab-2", "1", "2Gi", 0)}
-	if r := room(t, nodes, builds, controller("lab-1")); !r.Fits {
-		t.Fatalf("builds counted as if they could not be evicted: %+v", r)
+	idle := []corev1.Pod{workload("warm-sandbox", "lab-2", "1", "2Gi", -10), workload("batch", "lab-2", "1", "2Gi", 0)}
+	if r := room(t, nodes, idle, controller("lab-1")); !r.Fits {
+		t.Fatalf("idle pods of lower priority counted as if they could not be evicted: %+v", r)
+	}
+}
+
+// What the logs-during-takeover runs met: the room a takeover found was the room of the agent
+// running the build it was resuming; the scheduler preempted it and the build failed.
+func TestTheRoomOfARunningBuildIsNotRoom(t *testing.T) {
+	nodes := []corev1.Node{machine("lab-1", "4", "5Gi"), machine("lab-2", "4", "5Gi")}
+	agent := workload("spike-ws-9nl20", "lab-2", "1", "2Gi", 0)
+	agent.Labels = map[string]string{"jenkins/label": "spike-ws"}
+	claimed := workload("sbx-claimed", "lab-2", "1", "2Gi", -10)
+	claimed.Annotations = map[string]string{"cluster-autoscaler.kubernetes.io/safe-to-evict": "false", "karpenter.sh/do-not-disrupt": "true"}
+	for name, build := range map[string]corev1.Pod{"Kubernetes-plugin agent": agent, "claimed sandbox": claimed} {
+		r := room(t, nodes, []corev1.Pod{build, workload("platform", "lab-2", "1", "2Gi", 1000000)}, controller("lab-1"))
+		if r.Fits {
+			t.Fatalf("%s: a running build's room counted as room: %+v", name, r)
+		}
+		if sl := slim(&build); !runsABuild(&sl) {
+			t.Fatalf("%s: slim lost what says it runs a build: %+v", name, sl.ObjectMeta)
+		}
 	}
 }
 
