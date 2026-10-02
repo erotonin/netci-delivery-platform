@@ -95,8 +95,28 @@ plugin's no-delay strategy removes.
 
 - The organisation runs Kubernetes on its build VMs; people still see "a VM fleet".
 - `untrusted` at full strength needs nested virtualisation on the hypervisor (vSphere and KVM
-  offer it). Where it is absent the fabric falls back and reports which fallback it used.
-- Nothing here is verified yet; the spike and the benchmarks decide the numbers.
+  offer it). ~~Where it is absent the fabric falls back and reports which fallback it used.~~
+  Superseded (2026-10-02): there is no fallback. A pool's RuntimeClass is checked when
+  netci-fabric starts, and a missing one stops it with the pool named. A fallback would run code
+  the organisation does not trust on the shared kernel while the pool still said `untrusted`.
+  An organisation without nested virtualisation gives such builds dedicated hosts or does
+  without the pool -- a choice made in the open, not by the fabric.
+
+## Verified on the lab (2026-10-02)
+
+- `standard`: container root maps to an unprivileged host uid (`fabric-agents-*.json`).
+- `untrusted`: Kata Containers 4.2.0, QEMU on the Rust runtime, on one machine with nested KVM
+  (`lab/kata.sh`). Four builds ran in four VMs: guest kernel 6.18.35 against the machines'
+  6.8.0-142, CPU flag `hypervisor`. Each VM was discarded after its build. A build took ~10 s
+  with a warm sandbox, as on `standard` (`lab/evidence/untrusted-sandboxes-20261002.json`).
+- A Kata VM is sized by the pod's memory limit, and its kernel keeps 70-95 MiB of it: a pool
+  limited to 1 GiB gives builds 947 MiB. Kata's `default_memory` does not add to it.
+- The NetworkPolicy holds from inside a Kata VM as from a `standard` sandbox: fabric,
+  controller and internet reachable; netci-queue, the API servers, a kubelet and Prometheus not.
+- A pool naming a RuntimeClass the cluster lacks: the new fabric replica stopped with the pool
+  named, and the running replicas kept serving until the change was rolled back.
+- Not done: `docker` (Sysbox), a separate node pool with taints for `untrusted`, image builds
+  inside an untrusted VM.
 
 Sources: docs.gitlab.com (runner advanced configuration, docker autoscaler, instance
 executor), zuul-ci.org nodepool configuration, javadoc ec2-fleet NoDelayProvisionStrategy,

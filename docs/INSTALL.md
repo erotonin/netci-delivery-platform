@@ -12,6 +12,7 @@ verified on k3s v1.36.4 with Longhorn 1.13 and Jenkins 2.555.3. Anything else is
 | Machines | Cells' machines with room for one more controller each (N+1): a takeover needs a machine that can take the controller | `NetciCellWithoutHeadroom` says when this is no longer true |
 | Control plane | On machines that run no cells, if you can | A lost machine that also runs etcd's leader or the controllers' leaders adds seconds to every takeover (ADR-066) |
 | Power control | A BMC per cell machine reachable from the cluster over Redfish, with an account allowed only to read and set power; or an SSH power agent for VMs (`lab/fence/`, installed by `lab/supervisor.sh`) | Nothing is fenced unless its power controller confirms the machine is off |
+| Untrusted builds (optional) | Kata Containers on the machines that take them, which needs hardware or nested virtualisation (`lab/kata.sh` installs kata-deploy 4.2.0 with one shim) | A fabric pool with `runtimeClass: kata-qemu-runtime-rs` runs each build in its own VM; the fabric refuses to start if the class is missing |
 | Storage | A `ReadWriteOnce` storage class that replicates across machines and attaches elsewhere once a node is out of service (Longhorn has been tested) | `JENKINS_HOME` moves with the controller |
 | PostgreSQL | 14 or later, with backups; one database for netci-queue and netci-fabric | Runs, `netciOnce` markers and sandboxes are durable state |
 | Registry | One that serves the netCI image and your controller image, pinned by digest | The charts refuse an image without a digest |
