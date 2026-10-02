@@ -59,6 +59,9 @@ func run(log *slog.Logger) error {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer stop()
+	if err := fabric.CheckRuntimeClasses(ctx, client, cfg.Pools); err != nil {
+		return err
+	}
 	pool, err := pgxpool.New(ctx, dsn)
 	if err != nil {
 		return fmt.Errorf("database: %w", err)
