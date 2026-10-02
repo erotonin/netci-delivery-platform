@@ -66,6 +66,14 @@ fabric:
       memory: 256Mi
   sandboxNamespace: netci-agents
   createSandboxNamespace: true
+  # What build sandboxes may reach (a NetworkPolicy in their namespace): DNS, the fabric, the
+  # cells' controllers, and addresses outside the cluster. clusterCIDRs is required: the pod,
+  # service and node ranges, which sandboxes may not reach. extraEgress adds NetworkPolicy egress
+  # rules, e.g. an artifact repository inside one of those ranges.
+  networkPolicy:
+    enabled: true
+    clusterCIDRs: []
+    extraEgress: []
   database:
     secretName: ""
     key: "url"

@@ -36,6 +36,8 @@ queue:
     nodePort: 30090
 
 fabric:
+  networkPolicy:
+    clusterCIDRs: [10.42.0.0/16, 10.43.0.0/16, 192.168.122.0/24]  # k3s pods, services; the lab's nodes
   database:
     secretName: netci-queue-db
   config:

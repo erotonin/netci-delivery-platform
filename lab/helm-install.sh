@@ -38,7 +38,9 @@ yaml.safe_dump({
                                   "items": [i for c in cells for i in ({"key": f"{c}-user", "path": f"{c}/user"},
                                                                        {"key": f"{c}-token", "path": f"{c}/token"})]},
               "service": {"type": "NodePort", "nodePort": 30090}},
-    "fabric": {"database": {"secretName": "netci-queue-db"}, "config": fabric},
+    "fabric": {"database": {"secretName": "netci-queue-db"}, "config": fabric,
+               # k3s pods and services, the lab's machines: sandboxes may reach none of them.
+               "networkPolicy": {"clusterCIDRs": ["10.42.0.0/16", "10.43.0.0/16", "192.168.122.0/24"]}},
 }, open(out, "w"))
 PY
 
