@@ -67,7 +67,9 @@ make image                       # the scratch image with every Go binary (clean
 - [ADR-066 — API clients survive the death of an API server](docs/decisions/ADR-066-api-clients-survive-the-death-of-an-api-server.md)
 - [ADR-067 — netCI restarts a cell whose JENKINS_HOME fails](docs/decisions/ADR-067-netci-restarts-a-cell-whose-jenkins-home-fails.md)
 
-Operating it: [the runbook](docs/RUNBOOK.md) (every alert, what to check, what to do) and
-[deploy/helm](deploy/helm/README.md).
+Installing it: [docs/INSTALL.md](docs/INSTALL.md) (prerequisites, images, both charts, the
+checks before anyone depends on it). Operating it: [the runbook](docs/RUNBOOK.md) (every alert,
+what to check, what to do) and [deploy/helm](deploy/helm/README.md). How it compares with
+CloudBees CI HA and Medik8s, and the work it rests on: [docs/research/HA-LANDSCAPE.md](docs/research/HA-LANDSCAPE.md).
 
 Apache-2.0. See [CONTRIBUTING.md](CONTRIBUTING.md) and [SECURITY.md](SECURITY.md).

@@ -209,4 +209,10 @@ spec:
           secret:
             secretName: {{ if .Values.supervisor.fence.configSecretName }}{{ .Values.supervisor.fence.configSecretName }}{{ else }}{{ required "supervisor.fence.secretName (or fence.configSecretName): without a power controller nothing can be fenced" .Values.supervisor.fence.secretName }}{{ end }}
             defaultMode: 0440
+            {{- with .Values.supervisor.fence.items }}
+            # Secret keys cannot hold "/": each power controller's credentials directory named
+            # in fence.json is made of keys mapped to paths here.
+            items:
+              {{- toYaml . | nindent 14 }}
+            {{- end }}
 {{- end }}

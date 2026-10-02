@@ -18,7 +18,13 @@ supervisor:
     addr: ""
     user: ""
     secretName: ""
-    # configSecretName: ""
+    # configSecretName: ""   # a Secret holding fence.json (internal/fence/config.go) and credentials
+    # Maps the config Secret's keys to the paths fence.json names, e.g.
+    #   - {key: fence.json, path: fence.json}
+    #   - {key: bmc-worker-7.username, path: bmc-worker-7/username}
+    #   - {key: bmc-worker-7.password, path: bmc-worker-7/password}
+    #   - {key: bmc-worker-7.tls-sha256, path: bmc-worker-7/tls-sha256}
+    items: []
   autoPowerOn: false
   panicFraction: 0.5
 
@@ -41,6 +47,13 @@ queue:
   service:
     type: ClusterIP
     # nodePort: 30090
+  # HTTPS for webhooks and API clients from outside the cluster; TLS is required.
+  ingress:
+    enabled: false
+    className: ""
+    host: ""
+    tlsSecretName: ""
+    annotations: {}
 
 fabric:
   enabled: true

@@ -126,3 +126,35 @@ spec:
       nodePort: {{ .Values.queue.service.nodePort }}
       {{- end }}
 {{- end }}
+{{- if and .Values.queue.enabled .Values.queue.ingress.enabled }}
+---
+# netci-queue's intake from outside the cluster -- GitLab and GitHub webhooks, API clients --
+# over HTTPS. Webhooks carry tokens and signatures; they are not to cross a network in clear.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: netci-queue
+  namespace: {{ .Release.Namespace }}
+  {{- with .Values.queue.ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- with .Values.queue.ingress.className }}
+  ingressClassName: {{ . }}
+  {{- end }}
+  tls:
+    - hosts: [{{ required "queue.ingress.host is required" .Values.queue.ingress.host | quote }}]
+      secretName: {{ required "queue.ingress.tlsSecretName is required: webhooks are not to arrive over plain HTTP" .Values.queue.ingress.tlsSecretName }}
+  rules:
+    - host: {{ .Values.queue.ingress.host | quote }}
+      http:
+        paths:
+          - path: /v1/
+            pathType: Prefix
+            backend:
+              service:
+                name: netci-queue
+                port:
+                  name: http
+{{- end }}
