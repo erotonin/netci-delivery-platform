@@ -5,6 +5,26 @@ Changelog and releases use Semantic Versioning once the project reaches 1.0.0.
 
 ## [Unreleased]
 
+### Added - 2026-10-02: production checks -- hung machines, untrusted builds in VMs, real monitoring
+- **Hung machines** (running, answering nothing) are powered off by the supervisor through
+  Redfish and taken over: 6/6 in the lab through sushy-tools' emulator, machine off 19-22 s after
+  the hang, build resumed after 69-83 s (ADR-060, `chaos-poweroff-20261002T070357Z.json`).
+- **Fixed:** two cells on one hung machine read as a mass failure, and the supervisor fenced
+  nothing. The guard now counts machines, as Kubernetes' node controller and NHC do.
+- **Untrusted builds run in their own VM**: a fabric pool with a Kata RuntimeClass
+  (`lab/kata.sh`); the fabric refuses to start when a pool's RuntimeClass is missing instead of
+  falling back to the shared kernel (ADR-061 superseded on that point).
+- **Sandboxes' network**: a NetworkPolicy lets them reach DNS, the fabric, the controllers and
+  addresses outside the cluster, nothing else; checked from both kinds of sandbox.
+- **Monitoring checked against a real Prometheus and Grafana** (`lab/monitoring.sh`). Found and
+  fixed: the no-leader alert stayed silent with no supervisor at all (`or absent()`); counters
+  and histograms had no series before their first event, so the first lost run never alerted
+  and first rates read 0. New `NetciComponentDown`; promtool unit tests for the alerts.
+- **Fixed:** a `helm upgrade` that changed netci-queue's or netci-fabric's configuration did not
+  restart them; their pods now carry a checksum of it.
+- Lab: `FENCE=redfish` and `MONITORING=on` for `lab/helm-install.sh`; a hung-machine scenario
+  (`--failure node-hang-supervised`).
+
 ### Changed - 2026-10-02: takeover in under a minute, and nothing left for a person (ADR-060, ADR-066)
 - **Lab:** the latest series of 6 unattended power-offs passed, with the control plane's failover
   at upstream timings (`lab/k3s-timings.sh`). Fencing took 2.5-3.5 s and the build resumed at
