@@ -46,8 +46,15 @@ number above is from that lab.
   - suspicion is cheap and fast (3 s of missed renewals) and only prompts a question;
   - the decision rests on the power controller's answer, which is not a guess;
   - a machine that is running but silent is powered off only after its kubelet has been
-    silent for 20 s, and never when that would cost the control plane its majority or affect
-    more than half the cells.
+    silent for 20 s, and never when that would cost the control plane its majority or when the
+    cells of more than half the machines that run cells stopped at once.
+- **Stop acting when too much fails at once, counted by machine** [12][13]. Kubernetes' node
+  controller treats a zone as unhealthy once 55% of its nodes (at least 3) are not Ready, and
+  in a cluster that small stops evicting; when every zone is unhealthy it assumes the control
+  plane has lost the nodes and evicts nothing. NHC starts no remediation below `minHealthy`
+  nodes (or above `maxUnhealthy`). Both count nodes. netCI first counted cells, and a hung
+  machine carrying both lab cells read as "2 of 2 cells at once": nothing was fenced and both
+  controllers stayed down (chaos series 18). It now counts machines, as they do.
 - **Chubby** [11]. Long leases, jeopardy and grace periods for the master, and sequencers
   checked by servers. netCI's equivalents are the renew deadline that outlasts an etcd election
   (a 4 s deadline did not, and a healthy cell restarted once), and the Lease epoch.
@@ -60,9 +67,10 @@ number above is from that lab.
 - **The unavailability window is the next limit.** CloudBees reaches zero downtime only with
   replicas that share a file system [1]. netCI's equivalent would be a read-only path for
   history and logs while a cell is taken over.
-- **Validate real power controllers.** The Redfish client is tested against a fake server.
-  Running it against a Redfish emulator in front of the lab's VMs (sushy-tools) is the closest
-  test short of hardware.
+- **Validate real power controllers.** The Redfish client was tested against a fake server, and
+  now fences the lab through sushy-tools' Redfish emulator in front of its VMs (TLS pinned by
+  SHA-256, basic auth, only the three lab machines visible): hung machines powered off and taken
+  over (chaos series 18). Real BMCs remain untested.
 
 ## References
 
@@ -77,3 +85,5 @@ number above is from that lab.
 9. W. Chen, S. Toueg, M. K. Aguilera, "On the Quality of Service of Failure Detectors", IEEE Transactions on Computers, 2002
 10. N. Hayashibara, X. Défago, R. Yared, T. Katayama, "The φ Accrual Failure Detector", SRDS 2004
 11. M. Burrows, "The Chubby lock service for loosely-coupled distributed systems", OSDI 2006
+12. Kubernetes, "Nodes: rate limits on eviction", kubernetes.io/docs/concepts/architecture/nodes; `--unhealthy-zone-threshold` 0.55 in `cmd/kube-controller-manager/app/options/nodelifecyclecontroller.go`
+13. Medik8s, "Node HealthCheck Operator" README (`minHealthy`, `maxUnhealthy`), github.com/medik8s/node-healthcheck-operator

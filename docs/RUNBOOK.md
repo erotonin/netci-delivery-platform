@@ -27,7 +27,8 @@ it over.
 ### NetciSupervisorNeedsAPerson (warning)
 The supervisor decided not to act on its own. The possible reasons:
 - an unknown power state;
-- more than half of the cells or nodes lost at once (a cluster problem, not a machine);
+- the cells of more than half the machines that run cells, or more than half the nodes' kubelets,
+  lost at once (a cluster problem, not a machine; cells sharing one machine count once);
 - the control plane without a majority;
 - a cell failing again within its 2-minute cooldown.
 - **Check:** the `SupervisorAlert` events give the exact reason.
@@ -44,10 +45,18 @@ that runs the node.
   mapping that is wrong anyway means a machine was renamed or moved since then.
 
 ### NetciSupervisorNotLeading (critical)
-No replica is leading, so a controller that dies now is not taken over.
+No replica is leading, or none is running at all, so a controller that dies now is not taken
+over.
 - **Check:** `kubectl -n netci-system get pods -l app=netci-supervisor` and their logs. A
   replica that cannot reach the API server, or that failed its start-up check of the mapping,
   does not lead.
+
+### NetciComponentDown (critical)
+No replica of netci-queue (`component` label) or netci-fabric has answered Prometheus for five
+minutes. Without the queue, webhooks and triggers are refused and nothing is dispatched; without
+the fabric, builds that need a sandbox wait.
+- **Check:** `kubectl -n netci-system get pods -l app=<component>` and their logs; a replica that
+  cannot reach PostgreSQL fails its readiness check.
 
 ### NetciSupervisorBlind (warning)
 The supervisor's observations keep failing, and it decides nothing while it cannot observe.

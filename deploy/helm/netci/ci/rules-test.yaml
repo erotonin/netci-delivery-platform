@@ -1,0 +1,81 @@
+# promtool unit tests for the chart's alerts (deploy/helm/netci/ci/test-rules.sh renders the
+# PrometheusRule into rules.yaml beside this file and runs them). Each case is a failure an
+# alert exists for, including the ones where the failing component exports nothing at all.
+rule_files: [rules.yaml]
+evaluation_interval: 15s
+tests:
+  - name: a supervisor that leads raises nothing
+    interval: 15s
+    input_series:
+      - {series: 'netci_supervisor_leading{pod="a"}', values: '1x20'}
+      - {series: 'netci_supervisor_leading{pod="b"}', values: '0x20'}
+      - {series: 'up{job="netci-system/netci-queue"}', values: '1x20'}
+      - {series: 'up{job="netci-system/netci-fabric"}', values: '1x20'}
+    alert_rule_test:
+      - {eval_time: 4m, alertname: NetciSupervisorNotLeading, exp_alerts: []}
+      - {eval_time: 4m, alertname: NetciComponentDown, exp_alerts: []}
+
+  - name: replicas running but none leading
+    interval: 15s
+    input_series:
+      - {series: 'netci_supervisor_leading{pod="a"}', values: '0x20'}
+      - {series: 'netci_supervisor_leading{pod="b"}', values: '0x20'}
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: NetciSupervisorNotLeading
+        exp_alerts: [{exp_labels: {severity: critical}}]
+
+  - name: no supervisor replica at all -- no series to compare
+    interval: 15s
+    input_series:
+      - {series: 'netci_supervisor_leading{pod="a"}', values: '1x4 stale'}
+    alert_rule_test:
+      - eval_time: 30s
+        alertname: NetciSupervisorNotLeading
+        exp_alerts: []
+      - eval_time: 3m
+        alertname: NetciSupervisorNotLeading
+        exp_alerts: [{exp_labels: {severity: critical}}]
+
+  - name: the queue answers nothing, the fabric is up
+    interval: 15s
+    input_series:
+      - {series: 'up{job="netci-system/netci-queue"}', values: '0x40'}
+      - {series: 'up{job="netci-system/netci-fabric"}', values: '1x40'}
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: NetciComponentDown
+        exp_alerts: []
+      - eval_time: 7m
+        alertname: NetciComponentDown
+        exp_alerts: [{exp_labels: {severity: critical, component: netci-queue}}]
+
+  - name: the fabric's pods are gone, so it has no target at all
+    interval: 15s
+    input_series:
+      - {series: 'up{job="netci-system/netci-queue"}', values: '1x40'}
+    alert_rule_test:
+      - eval_time: 7m
+        alertname: NetciComponentDown
+        exp_alerts: [{exp_labels: {severity: critical, component: netci-fabric}}]
+
+  - name: a lost cell not taken over within two minutes
+    interval: 15s
+    input_series:
+      - {series: 'netci_supervisor_cells_lost{pod="a"}', values: '0x4 1x20'}
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: NetciCellDown
+        exp_alerts: []
+      - eval_time: 4m
+        alertname: NetciCellDown
+        exp_alerts: [{exp_labels: {severity: critical}}]
+
+  - name: a fencing stopped by a moved Lease
+    interval: 1m
+    input_series:
+      - {series: 'netci_supervisor_lease_moved_total{pod="a"}', values: '0 0 1 1 1'}
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: NetciFenceLeaseMoved
+        exp_alerts: [{exp_labels: {severity: critical, pod: a}}]

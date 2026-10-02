@@ -28,12 +28,24 @@ spec:
   groups:
     - name: netci-takeover
       rules:
+        # "or absent": with every replica gone there is no series at all, and max() of nothing
+        # is nothing -- the alert would stay silent exactly when no supervisor runs.
         - alert: NetciSupervisorNotLeading
-          expr: max(netci_supervisor_leading) < 1
+          expr: max(netci_supervisor_leading) < 1 or absent(netci_supervisor_leading)
           for: 1m
           labels: {severity: critical}
           annotations:
             summary: No Cell Supervisor replica is leading; a controller that dies now is not taken over.
+        {{- range $app := list "netci-queue" "netci-fabric" }}
+        {{- if (index $.Values (trimPrefix "netci-" $app)).enabled }}
+        - alert: NetciComponentDown
+          expr: absent(up{job="{{ $.Release.Namespace }}/{{ $app }}"} == 1)
+          for: 5m
+          labels: {severity: critical, component: {{ $app }}}
+          annotations:
+            summary: No {{ $app }} replica has answered Prometheus for five minutes.
+        {{- end }}
+        {{- end }}
         - alert: NetciFenceLeaseMoved
           expr: increase(netci_supervisor_lease_moved_total[1h]) > 0
           labels: {severity: critical}
