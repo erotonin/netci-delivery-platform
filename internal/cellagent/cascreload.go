@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -24,7 +26,9 @@ import (
 // asks JCasC to apply it, through its token-protected reload endpoint, in place.
 //
 // A reload that fails is tried again at the next interval: the content is "applied" only once
-// Jenkins has accepted it.
+// Jenkins has accepted it. A file JCasC refuses is not: the same content gets the same answer,
+// and each attempt would apply it again up to the same error (JCasC is not transactional). It is
+// reported once, and the next change is tried.
 type CascReload struct {
 	File  string // the mounted jenkins.yaml
 	URL   string // the controller, e.g. http://127.0.0.1:8080
@@ -36,13 +40,21 @@ type CascReload struct {
 	Reloads *prometheus.CounterVec
 
 	applied [sha256.Size]byte
+	refused [sha256.Size]byte
 }
+
+// errRefused: Jenkins read the file and rejected it.
+var errRefused = errors.New("refused")
 
 // NewCascReloads registers the reload counter on r.
 func NewCascReloads(r prometheus.Registerer) *prometheus.CounterVec {
 	c := prometheus.NewCounterVec(prometheus.CounterOpts{Name: "netci_cell_casc_reloads_total",
 		Help: "Configuration as Code reloads asked of the controller after the file changed, by result."}, []string{"result"})
 	r.MustRegister(c)
+	// At 0 from the start: increase() needs two samples, and the first refusal must alert.
+	for _, result := range []string{"applied", "error", "refused"} {
+		c.WithLabelValues(result)
+	}
 	return c
 }
 
@@ -76,10 +88,18 @@ func (r *CascReload) Check(ctx context.Context) {
 		r.Log.Warn("cannot read the JCasC file", "file", r.File, "error", err)
 		return
 	}
-	if sum == r.applied {
+	if sum == r.applied || sum == r.refused {
 		return
 	}
-	if err := r.reload(ctx); err != nil {
+	err = r.reload(ctx)
+	if errors.Is(err, errRefused) {
+		r.refused = sum
+		r.count("refused")
+		r.Log.Error("the controller refused the changed JCasC file: it runs its previous configuration, possibly in part changed, "+
+			"and would not start on this file; the controller's log has the reason", "file", r.File)
+		return
+	}
+	if err != nil {
 		r.count("error")
 		r.Log.Warn("the JCasC file changed; the controller did not apply it yet", "file", r.File, "error", err)
 		return
@@ -112,16 +132,27 @@ func (r *CascReload) reload(ctx context.Context) error {
 		return fmt.Errorf("POST %s/reload-configuration-as-code/: failed", r.URL)
 	}
 	defer resp.Body.Close()
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+	// The body is never logged: JCasC's message about a refused file can quote its values.
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
 	switch resp.StatusCode {
 	case http.StatusOK:
+		// Before configuration-as-code #2907 (2026-09) a refused file was answered 200 with
+		// {"status":"error",...}: the lab's cells reported a refused file as applied.
+		var answer struct {
+			Status string `json:"status"`
+		}
+		if json.Unmarshal(body, &answer) == nil && answer.Status == "error" {
+			return errRefused
+		}
 		return nil
+	case http.StatusInternalServerError:
+		return errRefused
 	case http.StatusNotFound:
 		return fmt.Errorf("the controller has reload by token disabled (CASC_RELOAD_TOKEN unset): HTTP 404")
 	case http.StatusUnauthorized:
 		return fmt.Errorf("the controller refused the reload token: HTTP 401")
 	default:
-		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, bytes.TrimSpace(body))
+		return fmt.Errorf("HTTP %d", resp.StatusCode)
 	}
 }
 

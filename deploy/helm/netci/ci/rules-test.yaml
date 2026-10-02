@@ -71,6 +71,16 @@ tests:
         alertname: NetciCellDown
         exp_alerts: [{exp_labels: {severity: critical}}]
 
+  - name: a cell's controller refuses its changed JCasC
+    interval: 1m
+    input_series:
+      - {series: 'netci_cell_casc_reloads_total{namespace="cell-b",result="refused"}', values: '0 0 1 1 1'}
+      - {series: 'netci_cell_casc_reloads_total{namespace="cell-a",result="applied"}', values: '0 1 1 1 1'}
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: NetciCellConfigurationRefused
+        exp_alerts: [{exp_labels: {severity: critical, namespace: cell-b, result: refused}}]
+
   - name: a fencing stopped by a moved Lease
     interval: 1m
     input_series:

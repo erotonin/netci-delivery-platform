@@ -51,6 +51,14 @@ over.
   replica that cannot reach the API server, or that failed its start-up check of the mapping,
   does not lead.
 
+### NetciCellConfigurationRefused (critical)
+A cell's controller was asked to apply its changed JCasC ConfigMap and refused it. It runs its
+previous configuration, possibly in part changed (JCasC is not transactional), and **would not
+start on this file**: the next restart or takeover of that cell would leave it down.
+- **Check:** the controller's log, "Failed to reload Jenkins Configuration as Code via token",
+  gives the reason; the cell agent logs only that it was refused (the reason can quote values).
+- **Act:** fix the ConfigMap now. The agent applies the next change by itself.
+
 ### NetciComponentDown (critical)
 No replica of netci-queue (`component` label) or netci-fabric has answered Prometheus for five
 minutes. Without the queue, webhooks and triggers are refused and nothing is dispatched; without

@@ -46,6 +46,11 @@ spec:
             summary: No {{ $app }} replica has answered Prometheus for five minutes.
         {{- end }}
         {{- end }}
+        - alert: NetciCellConfigurationRefused
+          expr: increase(netci_cell_casc_reloads_total{result="refused"}[1h]) > 0
+          labels: {severity: critical}
+          annotations:
+            summary: A cell's controller refused its changed JCasC file. It runs its previous configuration, possibly in part changed, and would not start on this file -- fix the ConfigMap before its next restart or takeover.
         - alert: NetciFenceLeaseMoved
           expr: increase(netci_supervisor_lease_moved_total[1h]) > 0
           labels: {severity: critical}

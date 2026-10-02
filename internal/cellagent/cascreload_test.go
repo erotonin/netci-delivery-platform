@@ -20,6 +20,8 @@ type controllerStub struct {
 	mu     sync.Mutex
 	posts  int
 	status []int // answers in turn; then 200
+	// errorBody: answer 200 with JCasC's error JSON, as configuration-as-code before #2907 did.
+	errorBody bool
 }
 
 func (c *controllerStub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -30,6 +32,11 @@ func (c *controllerStub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	c.posts++
+	if c.errorBody {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"status":"error","message":"Failed to reload configuration: Invalid configuration elements; password: hunter2"}`))
+		return
+	}
 	if len(c.status) > 0 {
 		s := c.status[0]
 		c.status = c.status[1:]
@@ -84,8 +91,8 @@ func TestAChangedFileIsAppliedOnceAndTheStartingOneNot(t *testing.T) {
 	}
 }
 
-func TestAReloadTheControllerRefusedIsTriedAgain(t *testing.T) {
-	stub := &controllerStub{status: []int{http.StatusInternalServerError}}
+func TestAReloadThatFailedIsTriedAgain(t *testing.T) {
+	stub := &controllerStub{status: []int{http.StatusServiceUnavailable}}
 	srv := httptest.NewServer(stub)
 	defer srv.Close()
 	r, logs := reloader(t, srv.URL)
@@ -123,5 +130,35 @@ func TestADisabledReloadSaysWhy(t *testing.T) {
 	r.Check(context.Background())
 	if !strings.Contains(logs.String(), "CASC_RELOAD_TOKEN unset") {
 		t.Fatal(logs.String())
+	}
+}
+
+func TestAFileTheControllerRefusesIsNeitherReportedAppliedNorRetried(t *testing.T) {
+	for name, stub := range map[string]*controllerStub{
+		"200 with an error body (JCasC before #2907)": {errorBody: true},
+		"500 (JCasC since #2907)":                     {status: []int{http.StatusInternalServerError, http.StatusInternalServerError}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			srv := httptest.NewServer(stub)
+			defer srv.Close()
+			r, logs := reloader(t, srv.URL)
+			write(t, r.File, "jenkins: {systemMessage: two}\n")
+			r.Check(context.Background())
+			r.Check(context.Background())
+			if n := stub.count(); n != 1 {
+				t.Fatalf("%d attempts for one refused file, want 1", n)
+			}
+			if strings.Contains(logs.String(), "applied it in place") || !strings.Contains(logs.String(), "refused the changed JCasC file") {
+				t.Fatal(logs.String())
+			}
+			if strings.Contains(logs.String(), "hunter2") {
+				t.Fatalf("the refusal's body is in the log: %s", logs.String())
+			}
+			write(t, r.File, "jenkins: {systemMessage: three}\n")
+			r.Check(context.Background())
+			if n := stub.count(); n != 2 {
+				t.Fatalf("a changed file after a refusal: %d attempts, want 2", n)
+			}
+		})
 	}
 }
