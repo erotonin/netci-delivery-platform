@@ -165,14 +165,17 @@ def fail(kind: str, facts: dict) -> dict[str, float]:
             raise RuntimeError(f"{node} is '{state}', not off: refusing to fence")
         kubectl("taint", "node", node, "node.kubernetes.io/out-of-service=nodeshutdown:NoExecute", "--overwrite")
         t["fenced"] = now()
-    elif kind == "node-poweroff-supervised":
+    elif kind in ("node-poweroff-supervised", "node-hang-supervised"):
         # Only the fault. Detection, fencing and takeover are the Cell Supervisor's (ADR-060):
-        # this records when each of its effects became visible, and touches nothing.
+        # this records when each of its effects became visible, and touches nothing. A hung
+        # machine (suspended: running, answering nothing) is one the supervisor must power off
+        # itself, through the power controller, once its kubelet has been silent long enough.
         holder = kubectl("-n", NS, "get", "lease", "jenkins", "-o", "jsonpath={.spec.holderIdentity}")
         facts["leaseHolderBefore"] = holder
         facts["supervisorBefore"] = supervisor_state()
         facts["leadersBefore"] = leaders()
-        subprocess.run(["virsh", "-c", "qemu:///system", "destroy", node], check=True, capture_output=True)
+        fault = "destroy" if kind == "node-poweroff-supervised" else "suspend"
+        subprocess.run(["virsh", "-c", "qemu:///system", fault, node], check=True, capture_output=True)
         t["failure"] = now()
         # The wall-clock time too (the timings are monotonic): to line them up with the
         # supervisor's log and the cluster's events.
@@ -182,6 +185,9 @@ def fail(kind: str, facts: dict) -> dict[str, float]:
         t["leaseTaken"] = wait("a new pod holds the cell's lease", lambda: (lambda h: h and h != holder and now())(
             kubectl("-n", NS, "get", "lease", "jenkins", "-o", "jsonpath={.spec.holderIdentity}")), 300, 0.2)
         facts["supervisorAfter"] = supervisor_state()
+        if kind == "node-hang-supervised":
+            facts["machineAfterFencing"] = subprocess.run(["virsh", "-c", "qemu:///system", "domstate", node],
+                                                          capture_output=True, text=True).stdout.strip()
     else:
         raise ValueError(kind)
     return t
@@ -226,7 +232,7 @@ def supervisor_events() -> list[str]:
 
 
 def restore(kind: str, facts: dict) -> None:
-    if kind == "node-poweroff-supervised":
+    if kind in ("node-poweroff-supervised", "node-hang-supervised"):
         node = facts["controllerNodeBefore"]
         # The supervisor runs with auto power-on in the lab: it starts the machine once nothing
         # of a cell is left on it, and removes its taint once the node is Ready.
@@ -237,6 +243,9 @@ def restore(kind: str, facts: dict) -> None:
             facts["nodeRestoredBySupervisor"] = True
         except TimeoutError:
             facts["nodeRestoredBySupervisor"] = False
+            if subprocess.run(["virsh", "-c", "qemu:///system", "domstate", facts["controllerNodeBefore"]],
+                              capture_output=True, text=True).stdout.strip() == "paused":
+                subprocess.run(["virsh", "-c", "qemu:///system", "resume", facts["controllerNodeBefore"]], check=False)
             kind = "node-poweroff"  # clean up by hand, and say so
         facts["supervisorEvents"] = supervisor_events()
     if kind == "node-poweroff":
@@ -274,7 +283,7 @@ def scenario_resume(args) -> dict:
     facts["agentLog"] = str(agent_log.relative_to(ROOT))
     t = fail(args.failure, facts)
     j.after_restart()
-    wait("Jenkins down", lambda: not j.up(), 60, 0.2) if not args.failure.startswith("node-poweroff") else None
+    wait("Jenkins down", lambda: not j.up(), 60, 0.2) if not args.failure.startswith(("node-poweroff", "node-hang")) else None
     t["jenkinsUp"] = wait("Jenkins up", lambda: j.up() and now(), 900, 0.5)
     j.after_restart()
     facts["controllerNodeAfter"] = controller_node()
@@ -351,7 +360,8 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     sub = parser.add_subparsers(dest="cmd", required=True)
     r = sub.add_parser("resume")
-    r.add_argument("--failure", required=True, choices=["jvm-kill", "pod-delete", "node-poweroff", "node-poweroff-supervised"])
+    r.add_argument("--failure", required=True, choices=["jvm-kill", "pod-delete", "node-poweroff", "node-poweroff-supervised",
+                                                          "node-hang-supervised"])
     r.add_argument("--seconds", type=int, default=240)
     r.add_argument("--job", default="resume-probe", choices=["resume-probe", "once-probe"])
     # How far into the step to fail. 1 is the worst case for state written just before: the

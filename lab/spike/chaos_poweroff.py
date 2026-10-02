@@ -65,6 +65,9 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--runs", type=int, default=3)
     ap.add_argument("--job", default="resume-probe", choices=["resume-probe", "once-probe"])
+    # node-hang-supervised: the machine is suspended, not powered off -- the supervisor must
+    # power it off itself, through the power controller.
+    ap.add_argument("--failure", default="node-poweroff-supervised", choices=["node-poweroff-supervised", "node-hang-supervised"])
     args = ap.parse_args()
     started = dt.datetime.now(dt.timezone.utc)
     runs = []
@@ -74,13 +77,14 @@ def main() -> int:
         before = neighbour()
         tick = random.randint(5, 60)
         t0 = dt.datetime.now(dt.timezone.utc)
-        before_files = set(EVIDENCE.glob("spike-resume-node-poweroff-supervised-*.json"))
+        pattern = f"spike-resume-{args.failure}-*.json"
+        before_files = set(EVIDENCE.glob(pattern))
         r = subprocess.run([sys.executable, str(Path(__file__).parent / "probe.py"), "resume", "--failure",
-                            "node-poweroff-supervised", "--seconds", "240", "--crash-at-tick", str(tick), "--job", args.job],
+                            args.failure, "--seconds", "240", "--crash-at-tick", str(tick), "--job", args.job],
                            capture_output=True, text=True, timeout=3000)
         # Only this run's evidence: a probe that failed before writing any must not be read as
         # the previous run's result (series 6 counted run 1 twice that way).
-        new = sorted(set(EVIDENCE.glob("spike-resume-node-poweroff-supervised-*.json")) - before_files)
+        new = sorted(set(EVIDENCE.glob(pattern)) - before_files)
         if not new:
             runs.append({"run": i + 1, "crashAtTick": tick, "probeExit": r.returncode, "evidence": None,
                          "result": "NO EVIDENCE", "resumed": False, "timings_s": None, "once": None,
@@ -97,6 +101,7 @@ def main() -> int:
             "node": d.get("controllerNodeBefore"), "result": d.get("result"), "resumed": d.get("resumed"),
             "ticksMissing": d.get("ticksMissing"), "timings_s": d.get("timings_s"), "job": args.job, "once": d.get("once"),
             "nodeRestoredBySupervisor": d.get("nodeRestoredBySupervisor"),
+            "machineAfterFencing": d.get("machineAfterFencing"),
             # A neighbour on the machine that lost power is not a healthy neighbour: it must have
             # been taken over too. One on another machine must not have noticed anything.
             "neighbourNode": before[2],
