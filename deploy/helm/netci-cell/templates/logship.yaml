@@ -1,0 +1,57 @@
+{{- if .Values.logShipping.enabled }}
+{{- $u := urlParse (required "logShipping.lokiUrl: where Loki takes pushes, e.g. http://loki.monitoring.svc.cluster.local:3100" .Values.logShipping.lokiUrl) }}
+{{- $hostPort := splitList ":" $u.host }}
+{{- $tls := eq $u.scheme "https" }}
+{{- $port := ternary "443" "80" $tls }}
+{{- if eq (len $hostPort) 2 }}{{ $port = index $hostPort 1 }}{{ end }}
+# Fluent Bit beside the controller: every build log Jenkins writes, as it writes it, to Loki, so
+# that a build's log can be read while the cell is taken over (the controller and its volume are
+# then unavailable). Offsets live on the volume, so the next controller's shipper goes on from
+# where this one stopped: no line sent twice, none skipped.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: netci-logship
+  namespace: {{ .Release.Namespace }}
+data:
+  netci.lua: |
+{{ .Files.Get "files/logship.lua" | indent 4 }}
+  fluent-bit.conf: |
+    [SERVICE]
+        Flush        1
+        Log_Level    warn
+    [INPUT]
+        Name              tail
+        Tag               build
+        # Jobs, jobs in folders, branches of multibranch projects, and those in folders.
+        Path              /var/jenkins_home/jobs/*/builds/*/log,/var/jenkins_home/jobs/*/jobs/*/builds/*/log,/var/jenkins_home/jobs/*/branches/*/builds/*/log,/var/jenkins_home/jobs/*/jobs/*/branches/*/builds/*/log
+        Path_Key          file
+        DB                /var/jenkins_home/.netci-logship.db
+        Refresh_Interval  1
+        Read_from_Head    true
+        # On a first install, the builds of the last day only.
+        Ignore_Older      {{ .Values.logShipping.ignoreOlder }}
+        Mem_Buf_Limit     16MB
+        Skip_Long_Lines   On
+    [FILTER]
+        Name    lua
+        Match   build
+        script  /etc/netci-logship/netci.lua
+        call    build_line
+    [OUTPUT]
+        Name                 loki
+        Match                build
+        Host                 {{ index $hostPort 0 }}
+        Port                 {{ $port }}
+        tls                  {{ ternary "on" "off" $tls }}
+        {{- with .Values.logShipping.tenant }}
+        tenant_id            {{ . }}
+        {{- end }}
+        # One stream per cell and job; the build number is metadata, not a label (a label per
+        # build would make a stream per build).
+        labels               cell={{ .Release.Namespace }}, job=$job
+        structured_metadata  build=$build
+        remove_keys          job, build
+        drop_single_key      raw
+        Retry_Limit          no_limits
+{{- end }}

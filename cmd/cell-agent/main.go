@@ -174,6 +174,16 @@ func guard(log *slog.Logger, args []string) int {
 		GateFile: getenv("NETCI_GATE_FILE", "/run/netci/gate"), Stale: stale, Poll: 250 * time.Millisecond,
 		Command: args[1:], Log: log.With("component", "guard"), Now: time.Now,
 	}
+	if os.Getenv("NETCI_PLUGINS_FROM_IMAGE") == "true" {
+		home, ref := getenv("JENKINS_HOME", "/var/jenkins_home"), getenv("REF", "/usr/share/jenkins/ref")
+		g.BeforeStart = func() error {
+			removed, err := cellagent.PrunePlugins(home, ref)
+			if len(removed) > 0 {
+				log.Warn("removed plugins the controller's image does not carry", "component", "guard", "plugins", removed)
+			}
+			return err
+		}
+	}
 	code, err := g.Run(context.Background(), signals)
 	if err != nil {
 		log.Error("guard", "error", err, "exit", code)

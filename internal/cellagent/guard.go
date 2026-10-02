@@ -32,6 +32,10 @@ type Guard struct {
 	Command []string
 	Log     *slog.Logger
 	Now     func() time.Time
+	// BeforeStart, if set, runs once the gate is open and before the command: what must write
+	// JENKINS_HOME before the controller does, under the Lease. An error is logged; the
+	// controller still starts.
+	BeforeStart func() error
 }
 
 // ErrGateClosed: the controller was killed because the gate closed or went stale.
@@ -52,6 +56,11 @@ func (g *Guard) Run(ctx context.Context, signals <-chan os.Signal) (int, error) 
 		case <-signals:
 			return 0, nil // terminated before it was ever allowed to start
 		case <-t.C:
+		}
+	}
+	if g.BeforeStart != nil {
+		if err := g.BeforeStart(); err != nil {
+			g.Log.Warn("before starting the controller", "error", err)
 		}
 	}
 	cmd := exec.Command(g.Command[0], g.Command[1:]...)

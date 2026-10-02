@@ -33,6 +33,11 @@ secrets:
 
 terminationGracePeriodSeconds: 30
 
+# At each start, remove from JENKINS_HOME the plugins the controller image does not carry (the
+# Jenkins image adds its plugins to JENKINS_HOME but never removes one). Off only for a
+# controller whose plugins are managed in JENKINS_HOME, outside its image.
+pluginsFromImageOnly: true
+
 # Above build pods, so that a controller that lost its machine is given room (the netci chart
 # creates netci-cell). Empty: the cluster's default priority.
 priorityClassName: netci-cell
@@ -42,6 +47,20 @@ priorityClassName: netci-cell
 monitoring:
   enabled: false
   labels: {}
+
+# Every build's log, as Jenkins writes it, also in Loki: readable (in Grafana) while the cell is
+# taken over, when the controller and its volume are not. Fluent Bit beside the controller reads
+# the build logs on the volume; builds are not slowed, and nothing is installed in Jenkins.
+logShipping:
+  enabled: false
+  lokiUrl: ""        # e.g. http://loki.monitoring.svc.cluster.local:3100
+  tenant: ""         # X-Scope-OrgID for a multi-tenant Loki
+  # Fluent Bit, pinned by digest.
+  image: ""          # e.g. cr.fluentbit.io/fluent/fluent-bit@sha256:c5542543523c9678398dd78d927c05e8425ec15b038f226b67b3b019b1a70845 (5.1.3)
+  ignoreOlder: 1d    # on a first install, the builds of the last day only
+  resources:
+    requests: {cpu: 20m, memory: 32Mi}
+    limits: {memory: 128Mi}
 
 # RBAC for the Jenkins Kubernetes plugin's agents in this namespace.
 kubernetesPlugin:
