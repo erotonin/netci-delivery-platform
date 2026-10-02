@@ -32,8 +32,8 @@ type Config struct {
 	// neither again for that cell within this time; a second failure so soon is more likely a
 	// fault in what the supervisor sees than in the cell.
 	Cooldown time.Duration
-	// PanicFraction: when at least two cells (or nodes) and more than this fraction of them
-	// fail at once, nothing running is powered off and no pod is deleted -- a shared cause
+	// PanicFraction: when the cells of at least two machines (or two nodes' kubelets), and more
+	// than this fraction of them, fail at once, nothing running is powered off and no pod is deleted -- a shared cause
 	// (the network, the API server) is more likely, and acting would make it worse.
 	PanicFraction float64
 	// AutoPowerOn starts a fenced machine again once nothing of a cell is left on its node.
@@ -238,16 +238,26 @@ func failedVolumes(in Input, cfg Config) []Action {
 
 // panicked reports whether failures look shared rather than independent.
 func panicked(in Input, lost []CellView, cfg Config) (bool, string) {
-	var unhandled int
+	// Counted by machine, not by cell: cells that stopped renewing together on one machine are
+	// one failure, which that machine explains. Counted by cell, two cells sharing a machine that
+	// hung looked like "2 of 2 cells at once", and the supervisor left both controllers down
+	// waiting for a person (lab, chaos series 18).
+	unhandled := map[string]bool{}
 	for _, c := range lost {
 		if n, ok := in.Nodes[c.PodNode]; ok && n.Fenced {
 			continue // already being dealt with
 		}
-		unhandled++
+		unhandled[c.PodNode] = true
 	}
-	if unhandled >= 2 && float64(unhandled) > cfg.PanicFraction*float64(len(in.Cells)) {
-		return true, fmt.Sprintf("%d of %d cells stopped renewing at once: powering nothing off and deleting no pod (a shared cause is more likely)",
-			unhandled, len(in.Cells))
+	hosting := map[string]bool{}
+	for _, c := range in.Cells {
+		if c.PodNode != "" {
+			hosting[c.PodNode] = true
+		}
+	}
+	if len(unhandled) >= 2 && float64(len(unhandled)) > cfg.PanicFraction*float64(len(hosting)) {
+		return true, fmt.Sprintf("cells on %d of the %d machines that run cells stopped renewing at once: powering nothing off and deleting no pod (a shared cause is more likely)",
+			len(unhandled), len(hosting))
 	}
 	var stale, total int
 	for _, n := range in.Nodes {

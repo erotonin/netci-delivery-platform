@@ -185,6 +185,35 @@ func TestWhenMostCellsStopAtOnceNothingRunningIsPoweredOff(t *testing.T) {
 	}
 }
 
+func TestCellsSharingAHungMachineAreOneFailureNotAMassOne(t *testing.T) {
+	// Both cells on netci-lab-1, which hangs: one machine explains both, so it is powered off.
+	in := world()
+	in.Cells = append(in.Cells, cell("cell-b", "netci-lab-1"))
+	for i := range in.Cells {
+		expire(&in.Cells[i], 25*time.Second)
+	}
+	node(in, "netci-lab-1", func(n *NodeView) { n.KubeletFresh = false })
+	a := only(t, Decide(in, cfg()), FenceNode)
+	if !a.PowerOff || a.Node != "netci-lab-1" {
+		t.Fatalf("the hung machine must be powered off: %+v", a)
+	}
+}
+
+func TestCellsOfMostMachinesStoppingAtOnceAreStillAMassFailure(t *testing.T) {
+	// Two cells on each of two machines out of three hosting cells: two machines at once.
+	in := manyCells(3)
+	in.Cells = append(in.Cells, cell("cell-3", "netci-lab-1"), cell("cell-4", "netci-lab-2"))
+	for i := range in.Cells {
+		if in.Cells[i].PodNode != "netci-lab-3" {
+			expire(&in.Cells[i], time.Minute)
+		}
+	}
+	got := Decide(in, cfg())
+	if len(got) != 1 || got[0].Kind != Alert || !strings.Contains(got[0].Reason, "2 of the 3 machines") {
+		t.Fatalf("%+v", got)
+	}
+}
+
 func TestWhenMostNodesStopHeartbeatingAtOnceNothingRunningIsPoweredOff(t *testing.T) {
 	in := world()
 	expire(&in.Cells[0], time.Minute)
