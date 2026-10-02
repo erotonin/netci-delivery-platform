@@ -8,3 +8,11 @@
 {{- end -}}
 {{ .Values.image.repository }}@{{ .Values.image.digest }}
 {{- end -}}
+
+{{/* netci-fabric's configuration. The chart decides the fields set here; whatever the user sets for
+them is overwritten. Used by the ConfigMap and by the Deployment's checksum. */}}
+{{- define "netci.fabricConfig" -}}
+{{- $config := mergeOverwrite (deepCopy .Values.fabric.config) (dict "namespace" .Values.fabric.sandboxNamespace "serviceAccount" "netci-sandbox" "audience" "netci-fabric" "bootstrapImage" (include "netci.image" .) "fabricUrl" (printf "http://netci-fabric.%s.svc.cluster.local:8080" .Release.Namespace)) }}
+{{- if .Values.priorityClasses.create }}{{ $_ := set $config "priorityClass" "netci-sandbox" }}{{ end }}
+{{- $config | toJson }}
+{{- end }}

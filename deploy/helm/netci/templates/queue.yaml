@@ -33,6 +33,10 @@ spec:
     metadata:
       labels:
         app: netci-queue
+      annotations:
+        # netci-queue reads its configuration once, at start: a changed cell, route or client must
+        # restart it.
+        checksum/config: {{ .Values.queue.config | toJson | sha256sum }}
     spec:
       {{- if .Values.priorityClasses.create }}
       priorityClassName: netci-platform
