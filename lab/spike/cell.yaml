@@ -73,6 +73,9 @@ data:
             pools:
               - pool: standard
                 labels: netci-standard
+              # Each build in its own virtual machine (Kata, lab/kata.sh): for code not trusted.
+              - pool: untrusted
+                labels: netci-untrusted
         - kubernetes:
             name: k8s
             namespace: cell-a
@@ -195,6 +198,16 @@ data:
               cps {
                 sandbox(true)
                 script('''node('netci-standard') { sh 'echo "on $NODE_NAME: $(id -u) $(uname -r)"; cat /proc/self/uid_map' }''')
+              }
+            }
+          }
+          // On an untrusted sandbox the build sees its own kernel, not the machine's (ADR-061).
+          pipelineJob('untrusted-probe') {
+            quietPeriod(0)
+            definition {
+              cps {
+                sandbox(true)
+                script('''node('netci-untrusted') { sh 'echo "on $NODE_NAME: uid $(id -u), kernel $(uname -r), $(grep -m1 -o hypervisor /proc/cpuinfo || echo no-hypervisor), $(grep MemTotal /proc/meminfo)"' }''')
               }
             }
           }

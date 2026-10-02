@@ -20,7 +20,9 @@ cat > "${F}/config.json" <<JSON
  "bootstrapImage": "${NETCI_IMAGE}", "fabricUrl": "http://netci-fabric.netci-system.svc.cluster.local:8080",
  "pullSecrets": ["harbor-pull"], "priorityClass": "netci-sandbox",
  "pools": [{"name": "standard", "labels": ["netci-standard"], "image": "${AGENT_IMAGE}",
-            "warm": 2, "max": 6, "cpu": "1", "memory": "1Gi", "disk": "4Gi", "userNamespace": true}],
+            "warm": 2, "max": 6, "cpu": "1", "memory": "1Gi", "disk": "4Gi", "userNamespace": true},
+           {"name": "untrusted", "labels": ["netci-untrusted"], "image": "${AGENT_IMAGE}", "runtimeClass": "kata-qemu-runtime-rs",
+            "warm": 1, "max": 2, "cpu": "1", "memory": "1Gi", "disk": "4Gi"}],
  "cells": {"cell-b": "${hash}"}}
 JSON
 kubectl apply -f "${ROOT}/lab/priorities.yaml" >/dev/null

@@ -1,0 +1,20 @@
+{
+  "scenario": "untrusted-sandboxes",
+  "recordedFrom": "the output of lab/kata.sh check, the untrusted-probe and fabric-probe builds on cell-b, and connection attempts from inside a Kata sandbox (2026-10-02, this commit's session)",
+  "kata": {"chart": "oci://ghcr.io/kata-containers/kata-deploy-charts/kata-deploy", "version": "4.2.0",
+           "runtimeClass": "kata-qemu-runtime-rs", "node": "netci-lab-3", "nestedVirtualisation": true},
+  "machinesKernel": "6.8.0-142-generic",
+  "builds": [
+    {"job": "untrusted-probe", "number": 1, "result": "SUCCESS", "seconds": 10.0, "agent": "netci-untrusted-a8109375", "uid": 1000, "kernel": "6.18.35", "cpuFlag": "hypervisor", "memTotalKiB": 969716},
+    {"job": "untrusted-probe", "number": 2, "result": "SUCCESS", "seconds": 10.8, "agent": "netci-untrusted-f062b2cb", "kernel": "6.18.35"},
+    {"job": "untrusted-probe", "number": 3, "result": "SUCCESS", "seconds": 9.4, "agent": "netci-untrusted-4602bfb4", "kernel": "6.18.35"},
+    {"job": "untrusted-probe", "number": 4, "result": "SUCCESS", "seconds": 10.2, "agent": "netci-untrusted-daedfcde", "kernel": "6.18.35"},
+    {"job": "fabric-probe", "number": 22, "result": "SUCCESS", "seconds": 10.0, "agent": "netci-standard-d9625086", "kernel": "6.8.0-142-generic", "uidMap": "0 4085055488 65536"}
+  ],
+  "oneVmPerBuild": "4 builds, 4 distinct agents; afterwards one Kata sandbox (the warm one) remained",
+  "guestMemory": {"note": "the VM is sized by the container's memory limit; the guest kernel keeps the rest",
+                  "limitToGuestMiB": {"512": 443, "1024": 947, "2048": 1953}},
+  "networkFromKataSandbox": {"fabric": "open", "cellController": "open", "internet 1.1.1.1:443": "open",
+                             "netci-queue": "blocked", "kubernetesApi 10.43.0.1:443": "blocked", "apiServerOnNode :6443": "blocked",
+                             "kubelet :10250": "blocked", "prometheus": "blocked"}
+}
