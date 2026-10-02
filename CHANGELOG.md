@@ -24,6 +24,14 @@ Changelog and releases use Semantic Versioning once the project reaches 1.0.0.
   restart them; their pods now carry a checksum of it.
 - Lab: `FENCE=redfish` and `MONITORING=on` for `lab/helm-install.sh`; a hung-machine scenario
   (`--failure node-hang-supervised`).
+- **Build logs readable during a takeover** (ADR-068): netci-cell `logShipping` copies every
+  build log to Loki beside the controller; 3/3 power-offs mid-build, every line up to the crash
+  readable while Jenkins was down. The Jenkins OpenTelemetry plugin was tried and reverted (10 s
+  per agent, agents' output never arrived).
+- **Fixed:** a JCasC file the controller refused was reported as applied (JCasC answered 200);
+  `NetciCellConfigurationRefused`. A controller image rolled back left newer plugins in
+  `JENKINS_HOME`; the guard now removes plugins the image does not carry. The headroom check
+  counted a running build's room, and a takeover preempted the agent of the build it resumed.
 
 ### Changed - 2026-10-02: takeover in under a minute, and nothing left for a person (ADR-060, ADR-066)
 - **Lab:** the latest series of 6 unattended power-offs passed, with the control plane's failover

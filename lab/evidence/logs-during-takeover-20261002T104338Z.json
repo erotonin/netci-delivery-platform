@@ -1,0 +1,966 @@
+{
+  "scenario": "logs-during-takeover",
+  "cell": "cell-b",
+  "job": "resume-probe",
+  "build": 44,
+  "buildResult": "SUCCESS",
+  "probeEvidence": "lab/evidence/spike-resume-node-poweroff-supervised-20261002T173859.json",
+  "crashAtTick": 30,
+  "probeExit": 0,
+  "probeOutputTail": [
+    "  ],",
+    "  \"startedAt\": \"20261002T173859\",",
+    "  \"jenkinsVersion\": \"2.555.3\"",
+    "}",
+    "evidence: lab/evidence/spike-resume-node-poweroff-supervised-20261002T173859.json"
+  ],
+  "timeline": [
+    {
+      "t": 0.2,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 0,
+      "lastTickInLoki": 0
+    },
+    {
+      "t": 35.2,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 1,
+      "lastTickInLoki": 1
+    },
+    {
+      "t": 36.4,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 3,
+      "lastTickInLoki": 3
+    },
+    {
+      "t": 37.5,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 4,
+      "lastTickInLoki": 4
+    },
+    {
+      "t": 38.7,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 5,
+      "lastTickInLoki": 5
+    },
+    {
+      "t": 39.8,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 6,
+      "lastTickInLoki": 6
+    },
+    {
+      "t": 41.0,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 7,
+      "lastTickInLoki": 7
+    },
+    {
+      "t": 42.1,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 8,
+      "lastTickInLoki": 8
+    },
+    {
+      "t": 43.3,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 9,
+      "lastTickInLoki": 9
+    },
+    {
+      "t": 44.4,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 11,
+      "lastTickInLoki": 11
+    },
+    {
+      "t": 45.6,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 12,
+      "lastTickInLoki": 12
+    },
+    {
+      "t": 46.7,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 13,
+      "lastTickInLoki": 13
+    },
+    {
+      "t": 47.8,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 14,
+      "lastTickInLoki": 14
+    },
+    {
+      "t": 49.0,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 15,
+      "lastTickInLoki": 15
+    },
+    {
+      "t": 50.1,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 16,
+      "lastTickInLoki": 16
+    },
+    {
+      "t": 51.3,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 17,
+      "lastTickInLoki": 17
+    },
+    {
+      "t": 52.4,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 19,
+      "lastTickInLoki": 19
+    },
+    {
+      "t": 53.6,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 20,
+      "lastTickInLoki": 20
+    },
+    {
+      "t": 54.7,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 21,
+      "lastTickInLoki": 21
+    },
+    {
+      "t": 55.9,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 22,
+      "lastTickInLoki": 22
+    },
+    {
+      "t": 57.0,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 23,
+      "lastTickInLoki": 23
+    },
+    {
+      "t": 58.2,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 24,
+      "lastTickInLoki": 24
+    },
+    {
+      "t": 59.3,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 25,
+      "lastTickInLoki": 25
+    },
+    {
+      "t": 60.5,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 27,
+      "lastTickInLoki": 27
+    },
+    {
+      "t": 61.7,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 28,
+      "lastTickInLoki": 28
+    },
+    {
+      "t": 62.8,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 29,
+      "lastTickInLoki": 29
+    },
+    {
+      "t": 64.0,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 30,
+      "lastTickInLoki": 30
+    },
+    {
+      "t": 75.0,
+      "jenkinsAnswers": false,
+      "ticksInLoki": 30,
+      "lastTickInLoki": 30
+    },
+    {
+      "t": 87.1,
+      "jenkinsAnswers": false,
+      "ticksInLoki": 32,
+      "lastTickInLoki": 31
+    },
+    {
+      "t": 114.7,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 32,
+      "lastTickInLoki": 31
+    },
+    {
+      "t": 120.6,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 89,
+      "lastTickInLoki": 87
+    },
+    {
+      "t": 121.8,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 90,
+      "lastTickInLoki": 88
+    },
+    {
+      "t": 122.9,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 91,
+      "lastTickInLoki": 89
+    },
+    {
+      "t": 124.2,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 92,
+      "lastTickInLoki": 90
+    },
+    {
+      "t": 125.4,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 93,
+      "lastTickInLoki": 91
+    },
+    {
+      "t": 126.6,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 94,
+      "lastTickInLoki": 92
+    },
+    {
+      "t": 127.7,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 96,
+      "lastTickInLoki": 94
+    },
+    {
+      "t": 129.0,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 97,
+      "lastTickInLoki": 95
+    },
+    {
+      "t": 130.1,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 98,
+      "lastTickInLoki": 96
+    },
+    {
+      "t": 131.3,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 99,
+      "lastTickInLoki": 97
+    },
+    {
+      "t": 132.5,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 100,
+      "lastTickInLoki": 98
+    },
+    {
+      "t": 133.7,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 102,
+      "lastTickInLoki": 100
+    },
+    {
+      "t": 134.8,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 103,
+      "lastTickInLoki": 101
+    },
+    {
+      "t": 136.0,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 104,
+      "lastTickInLoki": 102
+    },
+    {
+      "t": 137.2,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 105,
+      "lastTickInLoki": 103
+    },
+    {
+      "t": 138.3,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 106,
+      "lastTickInLoki": 104
+    },
+    {
+      "t": 139.6,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 107,
+      "lastTickInLoki": 105
+    },
+    {
+      "t": 140.7,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 109,
+      "lastTickInLoki": 107
+    },
+    {
+      "t": 141.9,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 110,
+      "lastTickInLoki": 108
+    },
+    {
+      "t": 143.0,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 111,
+      "lastTickInLoki": 109
+    },
+    {
+      "t": 144.2,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 112,
+      "lastTickInLoki": 110
+    },
+    {
+      "t": 145.4,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 113,
+      "lastTickInLoki": 111
+    },
+    {
+      "t": 147.7,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 115,
+      "lastTickInLoki": 113
+    },
+    {
+      "t": 148.8,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 117,
+      "lastTickInLoki": 115
+    },
+    {
+      "t": 150.0,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 118,
+      "lastTickInLoki": 116
+    },
+    {
+      "t": 152.3,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 120,
+      "lastTickInLoki": 118
+    },
+    {
+      "t": 154.6,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 122,
+      "lastTickInLoki": 120
+    },
+    {
+      "t": 155.8,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 124,
+      "lastTickInLoki": 122
+    },
+    {
+      "t": 158.1,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 126,
+      "lastTickInLoki": 124
+    },
+    {
+      "t": 160.4,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 128,
+      "lastTickInLoki": 126
+    },
+    {
+      "t": 162.7,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 130,
+      "lastTickInLoki": 128
+    },
+    {
+      "t": 163.9,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 131,
+      "lastTickInLoki": 129
+    },
+    {
+      "t": 165.0,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 133,
+      "lastTickInLoki": 131
+    },
+    {
+      "t": 166.2,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 134,
+      "lastTickInLoki": 132
+    },
+    {
+      "t": 167.3,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 135,
+      "lastTickInLoki": 133
+    },
+    {
+      "t": 168.5,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 136,
+      "lastTickInLoki": 134
+    },
+    {
+      "t": 169.6,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 138,
+      "lastTickInLoki": 136
+    },
+    {
+      "t": 170.8,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 139,
+      "lastTickInLoki": 137
+    },
+    {
+      "t": 172.0,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 140,
+      "lastTickInLoki": 138
+    },
+    {
+      "t": 174.3,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 141,
+      "lastTickInLoki": 139
+    },
+    {
+      "t": 175.4,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 142,
+      "lastTickInLoki": 140
+    },
+    {
+      "t": 176.6,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 143,
+      "lastTickInLoki": 141
+    },
+    {
+      "t": 177.7,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 145,
+      "lastTickInLoki": 143
+    },
+    {
+      "t": 178.9,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 147,
+      "lastTickInLoki": 145
+    },
+    {
+      "t": 180.0,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 148,
+      "lastTickInLoki": 146
+    },
+    {
+      "t": 181.2,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 149,
+      "lastTickInLoki": 147
+    },
+    {
+      "t": 182.3,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 150,
+      "lastTickInLoki": 148
+    },
+    {
+      "t": 184.6,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 152,
+      "lastTickInLoki": 150
+    },
+    {
+      "t": 185.8,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 153,
+      "lastTickInLoki": 151
+    },
+    {
+      "t": 187.0,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 154,
+      "lastTickInLoki": 152
+    },
+    {
+      "t": 188.2,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 156,
+      "lastTickInLoki": 154
+    },
+    {
+      "t": 189.3,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 157,
+      "lastTickInLoki": 155
+    },
+    {
+      "t": 190.5,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 158,
+      "lastTickInLoki": 156
+    },
+    {
+      "t": 191.7,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 159,
+      "lastTickInLoki": 157
+    },
+    {
+      "t": 192.9,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 160,
+      "lastTickInLoki": 158
+    },
+    {
+      "t": 194.0,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 161,
+      "lastTickInLoki": 159
+    },
+    {
+      "t": 195.3,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 162,
+      "lastTickInLoki": 160
+    },
+    {
+      "t": 196.4,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 163,
+      "lastTickInLoki": 161
+    },
+    {
+      "t": 197.6,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 164,
+      "lastTickInLoki": 162
+    },
+    {
+      "t": 198.7,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 166,
+      "lastTickInLoki": 164
+    },
+    {
+      "t": 199.9,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 167,
+      "lastTickInLoki": 165
+    },
+    {
+      "t": 201.0,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 168,
+      "lastTickInLoki": 166
+    },
+    {
+      "t": 202.2,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 169,
+      "lastTickInLoki": 167
+    },
+    {
+      "t": 203.3,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 170,
+      "lastTickInLoki": 168
+    },
+    {
+      "t": 204.5,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 171,
+      "lastTickInLoki": 169
+    },
+    {
+      "t": 205.7,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 173,
+      "lastTickInLoki": 171
+    },
+    {
+      "t": 206.8,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 174,
+      "lastTickInLoki": 172
+    },
+    {
+      "t": 207.9,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 175,
+      "lastTickInLoki": 173
+    },
+    {
+      "t": 209.1,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 176,
+      "lastTickInLoki": 174
+    },
+    {
+      "t": 210.2,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 177,
+      "lastTickInLoki": 175
+    },
+    {
+      "t": 211.4,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 178,
+      "lastTickInLoki": 176
+    },
+    {
+      "t": 212.5,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 179,
+      "lastTickInLoki": 177
+    },
+    {
+      "t": 213.7,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 181,
+      "lastTickInLoki": 179
+    },
+    {
+      "t": 214.8,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 182,
+      "lastTickInLoki": 180
+    },
+    {
+      "t": 216.0,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 183,
+      "lastTickInLoki": 181
+    },
+    {
+      "t": 217.1,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 184,
+      "lastTickInLoki": 182
+    },
+    {
+      "t": 218.3,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 185,
+      "lastTickInLoki": 183
+    },
+    {
+      "t": 219.4,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 186,
+      "lastTickInLoki": 184
+    },
+    {
+      "t": 220.6,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 187,
+      "lastTickInLoki": 185
+    },
+    {
+      "t": 221.7,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 189,
+      "lastTickInLoki": 187
+    },
+    {
+      "t": 222.9,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 190,
+      "lastTickInLoki": 188
+    },
+    {
+      "t": 224.1,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 191,
+      "lastTickInLoki": 189
+    },
+    {
+      "t": 225.2,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 192,
+      "lastTickInLoki": 190
+    },
+    {
+      "t": 226.3,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 193,
+      "lastTickInLoki": 191
+    },
+    {
+      "t": 227.5,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 194,
+      "lastTickInLoki": 192
+    },
+    {
+      "t": 228.7,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 196,
+      "lastTickInLoki": 194
+    },
+    {
+      "t": 229.8,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 197,
+      "lastTickInLoki": 195
+    },
+    {
+      "t": 231.0,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 198,
+      "lastTickInLoki": 196
+    },
+    {
+      "t": 232.1,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 199,
+      "lastTickInLoki": 197
+    },
+    {
+      "t": 233.3,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 200,
+      "lastTickInLoki": 198
+    },
+    {
+      "t": 234.4,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 201,
+      "lastTickInLoki": 199
+    },
+    {
+      "t": 235.5,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 202,
+      "lastTickInLoki": 200
+    },
+    {
+      "t": 236.7,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 204,
+      "lastTickInLoki": 202
+    },
+    {
+      "t": 237.8,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 205,
+      "lastTickInLoki": 203
+    },
+    {
+      "t": 239.0,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 206,
+      "lastTickInLoki": 204
+    },
+    {
+      "t": 240.1,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 207,
+      "lastTickInLoki": 205
+    },
+    {
+      "t": 241.3,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 208,
+      "lastTickInLoki": 206
+    },
+    {
+      "t": 242.4,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 209,
+      "lastTickInLoki": 207
+    },
+    {
+      "t": 243.6,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 210,
+      "lastTickInLoki": 208
+    },
+    {
+      "t": 244.7,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 212,
+      "lastTickInLoki": 210
+    },
+    {
+      "t": 245.9,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 213,
+      "lastTickInLoki": 211
+    },
+    {
+      "t": 247.1,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 214,
+      "lastTickInLoki": 212
+    },
+    {
+      "t": 248.2,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 215,
+      "lastTickInLoki": 213
+    },
+    {
+      "t": 249.3,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 216,
+      "lastTickInLoki": 214
+    },
+    {
+      "t": 250.5,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 217,
+      "lastTickInLoki": 215
+    },
+    {
+      "t": 251.6,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 219,
+      "lastTickInLoki": 217
+    },
+    {
+      "t": 252.8,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 220,
+      "lastTickInLoki": 218
+    },
+    {
+      "t": 253.9,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 221,
+      "lastTickInLoki": 219
+    },
+    {
+      "t": 255.1,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 222,
+      "lastTickInLoki": 220
+    },
+    {
+      "t": 256.2,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 223,
+      "lastTickInLoki": 221
+    },
+    {
+      "t": 257.4,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 224,
+      "lastTickInLoki": 222
+    },
+    {
+      "t": 258.5,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 225,
+      "lastTickInLoki": 223
+    },
+    {
+      "t": 259.7,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 227,
+      "lastTickInLoki": 225
+    },
+    {
+      "t": 260.8,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 228,
+      "lastTickInLoki": 226
+    },
+    {
+      "t": 262.0,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 229,
+      "lastTickInLoki": 227
+    },
+    {
+      "t": 263.1,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 230,
+      "lastTickInLoki": 228
+    },
+    {
+      "t": 264.3,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 231,
+      "lastTickInLoki": 229
+    },
+    {
+      "t": 265.4,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 232,
+      "lastTickInLoki": 230
+    },
+    {
+      "t": 266.6,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 234,
+      "lastTickInLoki": 232
+    },
+    {
+      "t": 267.8,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 235,
+      "lastTickInLoki": 233
+    },
+    {
+      "t": 268.9,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 236,
+      "lastTickInLoki": 234
+    },
+    {
+      "t": 270.1,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 237,
+      "lastTickInLoki": 235
+    },
+    {
+      "t": 271.2,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 238,
+      "lastTickInLoki": 236
+    },
+    {
+      "t": 272.4,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 239,
+      "lastTickInLoki": 237
+    },
+    {
+      "t": 273.5,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 240,
+      "lastTickInLoki": 238
+    },
+    {
+      "t": 274.7,
+      "jenkinsAnswers": true,
+      "ticksInLoki": 242,
+      "lastTickInLoki": 240
+    }
+  ],
+  "lastTickReadableWhileJenkinsDown": 31,
+  "completeInLokiSecondsAfterTheBuild": 0.0,
+  "ticksInLoki": 242,
+  "distinctTicksInLoki": 240,
+  "missing": [],
+  "duplicated": [
+    30,
+    31
+  ],
+  "duplicatedAwayFromTheCrash": [],
+  "verdict": "PASS"
+}

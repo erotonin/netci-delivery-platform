@@ -20,9 +20,9 @@ documentation, and nothing here is a measurement of them.
 | Published failover time | Lab: power loss fenced in 2.7-3.8 s, build resumed after 41-50 s (6 runs, `chaos-poweroff-20261001T220424Z.json`); hung machine powered off through Redfish in 19-22 s, build resumed after 69-83 s (6 runs, `chaos-poweroff-20261002T070357Z.json`) | None found [2] | Configurable timeouts; none published for a takeover |
 
 Where netCI is weaker. CloudBees's active/active keeps the controller serving during a
-replica's loss: its UI and API do not go down. netCI's cell is unavailable for about 40 s,
-and its history and logs cannot be read while the cell is down. The durable run queue keeps
-triggers that arrive meanwhile. netCI has been measured only on a three-VM lab, and every
+replica's loss: its UI and API do not go down. netCI's cell is unavailable for about a minute.
+Its builds' logs stay readable meanwhile, in Grafana from Loki (ADR-068), and the durable run
+queue keeps triggers that arrive meanwhile, but the Jenkins UI itself is down. netCI has been measured only on a three-VM lab, and every
 number above is from that lab.
 
 ## Published work the design follows
@@ -65,8 +65,8 @@ number above is from that lab.
   asks for the power state again and releases the Lease conditionally on its version; that
   check found a wrong mapping in a test.
 - **The unavailability window is the next limit.** CloudBees reaches zero downtime only with
-  replicas that share a file system [1]. netCI's equivalent would be a read-only path for
-  history and logs while a cell is taken over.
+  replicas that share a file system [1]. netCI now copies build logs out as they are written
+  (ADR-068); the Jenkins UI itself stays down during a takeover.
 - **Validate real power controllers.** The Redfish client was tested against a fake server, and
   now fences the lab through sushy-tools' Redfish emulator in front of its VMs (TLS pinned by
   SHA-256, basic auth, only the three lab machines visible): hung machines powered off and taken

@@ -12,6 +12,7 @@ verified on k3s v1.36.4 with Longhorn 1.13 and Jenkins 2.555.3. Anything else is
 | Machines | Cells' machines with room for one more controller each (N+1): a takeover needs a machine that can take the controller | `NetciCellWithoutHeadroom` says when this is no longer true |
 | Control plane | On machines that run no cells, if you can | A lost machine that also runs etcd's leader or the controllers' leaders adds seconds to every takeover (ADR-066) |
 | Power control | A BMC per cell machine reachable from the cluster over Redfish, with an account allowed only to read and set power; or an SSH power agent for VMs (`lab/fence/`, installed by `lab/supervisor.sh`) | Nothing is fenced unless its power controller confirms the machine is off |
+| Logs during a takeover (optional) | Loki 3, taking pushes of ~5.3 MB: `server.grpc_server_max_recv_msg_size` and `grpc_server_max_send_msg_size` 16777216, `limits_config.ingestion_burst_size_mb` 16, `allow_structured_metadata: true` | A cell's build logs are copied to Loki as Jenkins writes them (netci-cell `logShipping`, ADR-068): readable in Grafana while the cell is taken over. With Loki's default 4 MB a backlog is refused and retried forever. Run Loki where the loss of a cell's machine does not take it too (its own machines, or replicated): on the lab, Loki shared a machine with a cell and went down with it |
 | Untrusted builds (optional) | Kata Containers on the machines that take them, which needs hardware or nested virtualisation (`lab/kata.sh` installs kata-deploy 4.2.0 with one shim) | A fabric pool with `runtimeClass: kata-qemu-runtime-rs` runs each build in its own VM; the fabric refuses to start if the class is missing |
 | Storage | A `ReadWriteOnce` storage class that replicates across machines and attaches elsewhere once a node is out of service (Longhorn has been tested) | `JENKINS_HOME` moves with the controller |
 | PostgreSQL | 14 or later, with backups; one database for netci-queue and netci-fabric | Runs, `netciOnce` markers and sandboxes are durable state |
@@ -73,6 +74,12 @@ API server was lost, and Longhorn may delete the new controller.
   changes without a restart.
 - **Values**: `image.controller`, `netci.repository`/`netci.digest`, `storage.className`, `ui.ingress`
   (or `ui.nodePort`), `kubernetesPlugin.enabled` if builds use the Kubernetes plugin.
+- **Build logs to Loki** (optional): `logShipping.enabled`, `logShipping.lokiUrl`, and
+  `logShipping.image` (Fluent Bit pinned by digest; `values.yaml` names the tested one). During
+  a takeover, read a build's log in Grafana: `{cell="<namespace>", job="<job>"} | build="<n>"`.
+- `pluginsFromImageOnly` (default `true`) removes at each start the plugins in `JENKINS_HOME`
+  that the controller image does not carry. Turn it off only if plugins are managed in
+  `JENKINS_HOME` rather than in the image.
 
 ```bash
 helm upgrade --install cell-payments deploy/helm/netci-cell -n cell-payments --create-namespace -f cell-values.yaml
