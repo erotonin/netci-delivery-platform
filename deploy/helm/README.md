@@ -24,8 +24,14 @@ helm install netci ./netci -n netci-system \
   --set supervisor.fence.secretName=netci-fence \
   --set queue.database.secretName=netci-queue-db \
   --set queue.cellCredentials.secretName=netci-queue-cells \
-  --set fabric.database.secretName=netci-queue-db
+  --set fabric.database.secretName=netci-queue-db \
+  --set 'fabric.networkPolicy.clusterCIDRs={10.42.0.0/16,10.43.0.0/16,192.168.10.0/24}'
 ```
+
+`fabric.networkPolicy.clusterCIDRs` is required: your pod, service and node address ranges,
+which build sandboxes may not reach (the chart refuses to render without them, or set
+`fabric.networkPolicy.enabled=false`). Add exceptions, such as an artifact repository inside
+those ranges, with `fabric.networkPolicy.extraEgress`.
 
 ## `netci-cell` Chart
 
@@ -42,19 +48,25 @@ Before installing the `netci-cell` chart, the following must exist:
   `once-token`). With a `casc-reload-token` key (any random string), a change to the JCasC
   ConfigMap is applied to the running controller within about a minute (the kubelet's update,
   then the cell agent's 10 s check), with no restart. Without it, the change applies at the
-  controller's next start.
+  controller's next start. A file the controller refuses raises `NetciCellConfigurationRefused`:
+  the controller would not start on it, so fix it before the cell's next restart.
 
 ### Example Installation
 
 ```bash
 helm install cell-a ./netci-cell -n cell-a \
-  --set image.controller=registry.example/netci/jenkins-controller:2.555.3-netci5 \
+  --set image.controller=registry.example/netci/jenkins-controller:2.555.3-netci7 \
   --set netci.repository=my-repo/netci \
   --set netci.digest=sha256:yourdigest... \
   --set casc.configMapName=jenkins-casc \
   --set secrets.secretName=jenkins-cell \
   --set storage.className=my-storage-class
 ```
+
+Optional: `logShipping.enabled` with `logShipping.lokiUrl` and `logShipping.image` (Fluent Bit
+pinned by digest) copies every build log to Loki, readable while the cell is taken over
+(ADR-068). `pluginsFromImageOnly` (on by default) removes at each start the plugins in
+`JENKINS_HOME` that the controller image does not carry.
 
 ## Storage: Longhorn
 
