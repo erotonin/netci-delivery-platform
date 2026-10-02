@@ -228,6 +228,23 @@ and no lost work.
 | Every cell on a fenced machine released at once; attacher retries ≤ 2 s | 6 | 6/6 SUCCESS, one marker each, 1 line lost once | 2.9-3.6 s | 13.4-64.8 s | 32.9-82.6 s | Longhorn deleted the replacement after it took its Lease in 2 runs (ADR-067) |
 | **netCI restarts a failed JENKINS_HOME; Longhorn leaves StatefulSets alone** (`chaos-poweroff-20261001T213158Z.json`) | 6 | **6/6 SUCCESS**, one marker each, no line lost | **2.8-3.6 s** | 14.3-43.5 s (median 19.9) | **32.6-63.3 s (median 40.5)** | Jenkins started in 11-16 s every time |
 | **Longhorn tuning without template annotations** (`chaos-poweroff-20261001T220424Z.json`) | 6 | **6/6 SUCCESS**, one marker each, 1 line lost once | **2.7-3.8 s** | 18.0-31.9 s (median 24.6) | **40.8-50.3 s (median 42.9)** | Every run lost two or three of the controllers' and the attacher's leaders with the machine; no run past 51 s |
+| **Installed with the Helm charts** (`chaos-poweroff-20261002T060641Z.json`) | 6 | **6/6 SUCCESS**, one marker each, 1 line lost twice | **3.1-3.6 s** | 19.8-44.3 s (median 25.0) | 53.7-73.4 s (median 57.7) | Jenkins took 25-31 s to start (11-16 s before): the host had come back from a reboot in its power-saver profile, cores at 1.6-1.9 of 4.5 GHz |
+
+**Hung machines, fenced through Redfish.** In the series above a machine loses its power, so
+the power controller already reports it off. In these the machine is suspended
+(`virsh suspend`): running, answering nothing. The supervisor itself must power it off, once
+its kubelet has been silent for 20 s, through sushy-tools' Redfish emulator in front of the VMs
+(`lab/redfish.sh`; TLS pinned by SHA-256, basic auth, only the three lab machines visible).
+
+| Series | Runs | Builds | Fenced (machine off) | Lease held | Build resumed | Other cell |
+|---|---|---|---|---|---|---|
+| First (`chaos-poweroff-20261002T063919Z.json`) | 2 | 1 SUCCESS, then **FAIL** | 20.0 s | 38.4 s | 67.1 s | Run 2: both cells were on the hung machine (the preferred anti-affinity lost to the scheduler's other scores). The supervisor read "2 of 2 cells stopped renewing at once" as a shared cause and fenced nothing; both controllers stayed down. Fixed: the mass-failure guard counts machines, not cells, as Kubernetes' node controller and NHC do |
+| Both cells on the hung machine, after the fix (`chaos-poweroff-20261002T065849Z.json`) | 1 | SUCCESS, one marker | 24.1 s | 36.8 s | 73.6 s | Both taken over |
+| **After the fix** (`chaos-poweroff-20261002T070357Z.json`) | 6 | **6/6 SUCCESS**, one marker each, no line lost; every machine powered off by the supervisor and back on | **18.6-22.3 s** | 33.1-51.9 s (median 39.8) | **69.1-82.5 s (median 71.2)** | Both cells on the hung machine in 3 runs; both taken over each time |
+
+A hung machine costs ~17 s more than a power loss: the 20 s the supervisor waits for a silent
+kubelet before it switches a running machine off. That wait is what separates a hung machine
+from a slow one; it is a setting (`NodeStale`), not a limit of the design.
 
 With the lab's control plane at upstream timings, standing in for a control plane on machines
 without cells, a power loss is fenced in about 3 s. The build continues after 41-50 s even when

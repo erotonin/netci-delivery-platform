@@ -17,7 +17,7 @@ documentation, and nothing here is a measurement of them.
 | Wrong node-to-machine mapping | Checked at start against the kubelet's heartbeat; a Lease renewed after "off" stops the fencing | — | — |
 | Running builds | Pipeline durability: builds resume on the new controller; `netciOnce` keeps a marked step from running twice | Running Pipeline builds are adopted by another replica [1] | Not its concern |
 | Plugins | Unchanged Jenkins; one controller at a time, so plugins see a normal Jenkins | Several plugins limited or unsupported in HA (Docker, EC2, Kubernetes plugin settings, Blue Ocean, file parameters) [2] | — |
-| Published failover time | Lab: fenced in 2.7-3.8 s, build resumed after 41-50 s (6 runs, `chaos-poweroff-20261001T220424Z.json`) | None found [2] | Configurable timeouts; none published for a takeover |
+| Published failover time | Lab: power loss fenced in 2.7-3.8 s, build resumed after 41-50 s (6 runs, `chaos-poweroff-20261001T220424Z.json`); hung machine powered off through Redfish in 19-22 s, build resumed after 69-83 s (6 runs, `chaos-poweroff-20261002T070357Z.json`) | None found [2] | Configurable timeouts; none published for a takeover |
 
 Where netCI is weaker. CloudBees's active/active keeps the controller serving during a
 replica's loss: its UI and API do not go down. netCI's cell is unavailable for about 40 s,

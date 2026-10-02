@@ -2,7 +2,9 @@
 # Install netCI on the lab with its Helm charts, as an organisation would, adopting what the lab
 # scripts installed so that nothing stops on the way.
 #
-#   NETCI_IMAGE=172.17.0.1:8930/netci/netci@sha256:<digest> [FENCE=redfish] lab/helm-install.sh
+#   NETCI_IMAGE=172.17.0.1:8930/netci/netci@sha256:<digest> [FENCE=redfish] [MONITORING=on] lab/helm-install.sh
+#
+# MONITORING=on adds the PodMonitors, alerts and dashboard (needs lab/monitoring.sh install first).
 #
 # Values come from what the lab scripts generated (.netci-gate/lab/{queue,fabric}/config.json:
 # token hashes only) and go to .netci-gate/lab/helm/, never into the repository. Objects that
@@ -67,6 +69,9 @@ if [[ "${FENCE:-ssh}" == redfish ]]; then
   "${ROOT}/lab/redfish.sh" secret > "${H}/fence-redfish.yaml"
   platform+=(-f "${H}/fence-redfish.yaml")
 fi
+if [[ "${MONITORING:-off}" == on ]]; then
+  platform+=(--set monitoring.enabled=true --set monitoring.dashboard.enabled=true)
+fi
 (cd "${ROOT}" && adopt netci netci-system "${platform[@]}")
 (cd "${ROOT}" && helm upgrade --install netci "${platform[@]}" -n netci-system --wait --timeout 10m)
 
@@ -75,7 +80,8 @@ for cell in cell-a cell-b; do
   case "${cell}" in cell-a) class=longhorn-sync port=30080 ;; cell-b) class=longhorn-commit1 port=30081 ;; esac
   args=(deploy/helm/netci-cell -f "${ROOT}/deploy/helm/netci-cell/ci/lab-values.yaml"
         --set image.controller="${CONTROLLER}" --set netci.repository="${REPO}" --set netci.digest="${DIGEST}"
-        --set storage.className="${class}" --set ui.nodePort="${port}" --set kubernetesPlugin.enabled=true)
+        --set storage.className="${class}" --set ui.nodePort="${port}" --set kubernetesPlugin.enabled=true
+        --set monitoring.enabled="$([[ "${MONITORING:-off}" == on ]] && echo true || echo false)")
   # The lab's NodePort Service holds the port the chart's jenkins-ui takes.
   kubectl -n "${cell}" delete service jenkins-np --ignore-not-found >/dev/null
   (cd "${ROOT}" && adopt "${cell}" "${cell}" "${args[@]}")

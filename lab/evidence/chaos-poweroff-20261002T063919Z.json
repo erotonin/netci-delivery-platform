@@ -1,0 +1,94 @@
+{
+  "scenario": "chaos-poweroff",
+  "started": "2026-10-02T06:39:19.929393+00:00",
+  "runs": [
+    {
+      "run": 1,
+      "crashAtTick": 58,
+      "probeExit": 0,
+      "evidence": "spike-resume-node-hang-supervised-20261002T133950.json",
+      "node": "netci-lab-2",
+      "result": "SUCCESS",
+      "resumed": true,
+      "ticksMissing": [],
+      "timings_s": {
+        "fenced": 20.0,
+        "leaseTaken": 38.4,
+        "jenkinsUp": 64.2,
+        "resumed": 67.1
+      },
+      "job": "once-probe",
+      "once": {
+        "markers": 1,
+        "firstStarts": 1,
+        "refused": false
+      },
+      "nodeRestoredBySupervisor": true,
+      "machineAfterFencing": "shut off",
+      "neighbourNode": "netci-lab-1",
+      "neighbourColocated": false,
+      "neighbourJenkinsRestarted": false,
+      "neighbourLeaseLosses": 0,
+      "neighbourHeldAgain": false
+    },
+    {
+      "run": 2,
+      "crashAtTick": 7,
+      "probeExit": 1,
+      "evidence": null,
+      "result": "NO EVIDENCE",
+      "resumed": false,
+      "timings_s": null,
+      "once": null,
+      "probeOutputTail": [
+        "Traceback (most recent call last):",
+        "  File \"/home/deployer/netci-delivery-platform/lab/spike/probe.py\", line 388, in <module>",
+        "    sys.exit(main())",
+        "             ^^^^^^",
+        "  File \"/home/deployer/netci-delivery-platform/lab/spike/probe.py\", line 376, in main",
+        "    facts = {\"resume\": scenario_resume, \"queue\": scenario_queue, \"bench\": scenario_bench}[args.cmd](args)",
+        "            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^",
+        "  File \"/home/deployer/netci-delivery-platform/lab/spike/probe.py\", line 284, in scenario_resume",
+        "    t = fail(args.failure, facts)",
+        "        ^^^^^^^^^^^^^^^^^^^^^^^^^",
+        "  File \"/home/deployer/netci-delivery-platform/lab/spike/probe.py\", line 183, in fail",
+        "    t[\"fenced\"] = wait(\"supervisor fenced the node\", lambda: \"out-of-service\" in kubectl(",
+        "                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^",
+        "  File \"/home/deployer/netci-delivery-platform/lab/spike/probe.py\", line 140, in wait",
+        "    raise TimeoutError(f\"timed out waiting for {what}\")",
+        "TimeoutError: timed out waiting for supervisor fenced the node"
+      ]
+    }
+  ],
+  "summary": {
+    "fenced": {
+      "values": [
+        20.0
+      ],
+      "median": 20.0,
+      "max": 20.0
+    },
+    "leaseTaken": {
+      "values": [
+        38.4
+      ],
+      "median": 38.4,
+      "max": 38.4
+    },
+    "jenkinsUp": {
+      "values": [
+        64.2
+      ],
+      "median": 64.2,
+      "max": 64.2
+    },
+    "resumed": {
+      "values": [
+        67.1
+      ],
+      "median": 67.1,
+      "max": 67.1
+    }
+  },
+  "verdict": "FAIL"
+}

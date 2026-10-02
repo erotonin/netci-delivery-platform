@@ -1,0 +1,65 @@
+#!/usr/bin/env bash
+# Prometheus and Grafana on the lab (kube-prometheus-stack, lean), to check netCI's monitoring
+# against the real thing: the PodMonitors select the pods, the rules load and evaluate, the
+# dashboard's queries return data, and an alert fires when its failure happens.
+#
+#   lab/monitoring.sh install      then: MONITORING=on NETCI_IMAGE=... lab/helm-install.sh
+#   lab/monitoring.sh uninstall
+#
+# Prometheus is on NodePort 30909, Grafana on 30300 (user admin; the password is generated into
+# .netci-gate/lab/monitoring/ and never printed). Only what netCI's checks need: no node-exporter,
+# kube-state-metrics, Alertmanager or the stack's default rules, so it fits beside the cells.
+set -euo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+STATE="${ROOT}/.netci-gate/lab"
+M="${STATE}/monitoring"
+export KUBECONFIG="${STATE}/kubeconfig"
+CHART_VERSION=87.10.1
+
+case "${1:-}" in
+  install)
+    mkdir -m 700 -p "${M}"
+    ( umask 077; [[ -s "${M}/grafana-password" ]] || openssl rand -hex 16 | tr -d '\n' > "${M}/grafana-password" )
+    kubectl create namespace monitoring --dry-run=client -o yaml | kubectl apply -f - >/dev/null
+    printf 'admin' > "${M}/grafana-user"
+    kubectl -n monitoring create secret generic grafana-admin --from-file=admin-user="${M}/grafana-user" \
+      --from-file=admin-password="${M}/grafana-password" --dry-run=client -o yaml | kubectl apply -f - >/dev/null
+    cat > "${M}/values.yaml" <<'VALUES'
+defaultRules: {create: false}
+alertmanager: {enabled: false}
+nodeExporter: {enabled: false}
+kubeStateMetrics: {enabled: false}
+kubelet: {enabled: false}
+kubeApiServer: {enabled: false}
+kubeControllerManager: {enabled: false}
+kubeScheduler: {enabled: false}
+kubeProxy: {enabled: false}
+kubeEtcd: {enabled: false}
+coreDns: {enabled: false}
+prometheusOperator:
+  resources: {requests: {cpu: 50m, memory: 64Mi}, limits: {memory: 256Mi}}
+prometheus:
+  service: {type: NodePort, nodePort: 30909}
+  prometheusSpec:
+    # Every PodMonitor and PrometheusRule in the cluster, whatever its labels: netCI's charts
+    # set none by default.
+    podMonitorSelectorNilUsesHelmValues: false
+    serviceMonitorSelectorNilUsesHelmValues: false
+    ruleSelectorNilUsesHelmValues: false
+    retention: 2d
+    resources: {requests: {cpu: 100m, memory: 256Mi}, limits: {memory: 768Mi}}
+grafana:
+  admin: {existingSecret: grafana-admin, userKey: admin-user, passwordKey: admin-password}
+  service: {type: NodePort, nodePort: 30300}
+  resources: {requests: {cpu: 50m, memory: 128Mi}, limits: {memory: 384Mi}}
+  sidecar:
+    dashboards: {enabled: true, label: grafana_dashboard, labelValue: "1", searchNamespace: ALL}
+VALUES
+    helm upgrade --install monitoring prometheus-community/kube-prometheus-stack --version "${CHART_VERSION}" \
+      -n monitoring -f "${M}/values.yaml" --wait --timeout 15m
+    kubectl -n monitoring get pods ;;
+  uninstall)
+    helm uninstall monitoring -n monitoring || true
+    kubectl get crd -o name | grep monitoring.coreos.com | xargs -r kubectl delete >/dev/null ;;
+  *) sed -n '2,12p' "$0" >&2; exit 2 ;;
+esac
