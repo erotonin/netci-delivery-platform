@@ -28,3 +28,13 @@ func NewMetrics(r prometheus.Registerer) *Metrics {
 	r.MustRegister(m.transitions, m.redispatched, m.errors, m.acceptToStart, m.accepted)
 	return m
 }
+
+// Known starts the counters the alerts read at 0 for every configured cell. A labelled counter
+// otherwise has no series until its first increment, and increase() needs two samples: the first
+// run dispatched again after a restart would never raise NetciRunsLostWithAController.
+func (m *Metrics) Known(cells []string) {
+	for _, c := range cells {
+		m.redispatched.WithLabelValues(c)
+		m.errors.WithLabelValues(c)
+	}
+}

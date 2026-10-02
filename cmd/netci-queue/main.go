@@ -61,6 +61,11 @@ func run(log *slog.Logger) error {
 	registry := prometheus.NewRegistry()
 	registry.MustRegister(collectors.NewGoCollector(), collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
 	metrics := runqueue.NewMetrics(registry)
+	cellNames := make([]string, 0, len(cfg.Cells))
+	for name := range cfg.Cells {
+		cellNames = append(cellNames, name)
+	}
+	metrics.Known(cellNames)
 	store := &runqueue.Store{Pool: pool}
 	intake := &runqueue.Intake{Store: store, Config: cfg, Log: log, Metrics: metrics}
 

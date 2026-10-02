@@ -71,6 +71,11 @@ func run(log *slog.Logger) error {
 	registry := prometheus.NewRegistry()
 	registry.MustRegister(collectors.NewGoCollector(), collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
 	metrics := fabric.NewMetrics(registry)
+	pools := make([]string, 0, len(cfg.Pools))
+	for _, p := range cfg.Pools {
+		pools = append(pools, p.Name)
+	}
+	metrics.Known(pools)
 	store := &fabric.Store{Pool: pool}
 	bindings := fabric.NewBindings()
 	recon := &fabric.Reconciler{Store: store, Client: client, Pods: cfg.Settings(), Pools: cfg.PoolMap(), Bindings: bindings,

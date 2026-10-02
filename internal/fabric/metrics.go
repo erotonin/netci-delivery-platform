@@ -29,6 +29,16 @@ func NewMetrics(r prometheus.Registerer) *Metrics {
 	return m
 }
 
+// Known starts the transition counters at 0 for every configured pool: a labelled counter has no
+// series until its first increment, so increase() would miss the first sandboxes that fail.
+func (m *Metrics) Known(pools []string) {
+	for _, p := range pools {
+		for _, s := range []State{Creating, Warm, Claimed, Bound, Released, Failed} {
+			m.transitions.WithLabelValues(p, string(s))
+		}
+	}
+}
+
 func (m *Metrics) setPool(pool string, counts map[State]int) {
 	for _, s := range []State{Creating, Warm, Claimed, Bound, Released, Failed} {
 		m.sandboxes.WithLabelValues(pool, string(s)).Set(float64(counts[s]))
