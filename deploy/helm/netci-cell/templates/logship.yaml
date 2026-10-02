@@ -20,6 +20,10 @@ data:
     [SERVICE]
         Flush        1
         Log_Level    warn
+        # Retries back off to 30 s at most (Fluent Bit's default cap is 2000 s): on the lab, after
+        # Loki had been down for 80 s, lines kept arriving minutes later.
+        scheduler.base 2
+        scheduler.cap  30
     [INPUT]
         Name              tail
         Tag               build
