@@ -30,7 +30,7 @@ against real Jenkins, with the evidence file named; "tested" means automated tes
 
 | Guarantee | How | Status |
 |---|---|---|
-| Each build gets a fresh, isolated sandbox | One pod per build, user namespace, no API credential, limits | **Lab**: `uid_map` shows container root mapped to an unprivileged host uid (`fabric-agents-*.json`) |
+| Each build gets a fresh, isolated sandbox | One pod per build, user namespace, no API credential, limits; a NetworkPolicy lets it reach only DNS, the fabric, the controllers and addresses outside the cluster | **Lab**: `uid_map` shows container root mapped to an unprivileged host uid (`fabric-agents-*.json`); from a sandbox, netCI's PostgreSQL, netci-queue, the API servers, a kubelet and Longhorn's API were unreachable while fabric builds succeeded |
 | The sandbox is bound late to whichever controller needs it | Warm pods long-poll the fabric; the claim carries the node's inbound secret, never stored | **Lab**: binding 0.01 s after the claim, agent connected 0.5 s later |
 | Faster than the Kubernetes plugin | — | **Not shown.** On an idle lab with cached images it is slower (5.9 s vs 4.4 s median); see ADR-064 |
 | The fleet is sized ahead of demand; hosts are recycled | — | Not built |

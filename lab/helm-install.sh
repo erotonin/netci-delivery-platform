@@ -2,7 +2,7 @@
 # Install netCI on the lab with its Helm charts, as an organisation would, adopting what the lab
 # scripts installed so that nothing stops on the way.
 #
-#   NETCI_IMAGE=172.17.0.1:8930/netci/netci@sha256:<digest> lab/helm-install.sh
+#   NETCI_IMAGE=172.17.0.1:8930/netci/netci@sha256:<digest> [FENCE=redfish] lab/helm-install.sh
 #
 # Values come from what the lab scripts generated (.netci-gate/lab/{queue,fabric}/config.json:
 # token hashes only) and go to .netci-gate/lab/helm/, never into the repository. Objects that
@@ -62,6 +62,11 @@ for d in yaml.safe_load_all(sys.stdin):
 }
 
 platform=(deploy/helm/netci -f "${H}/netci.yaml" --set image.repository="${REPO}" --set image.digest="${DIGEST}")
+# FENCE=redfish: fence through the Redfish emulator (lab/redfish.sh) instead of the SSH agent.
+if [[ "${FENCE:-ssh}" == redfish ]]; then
+  "${ROOT}/lab/redfish.sh" secret > "${H}/fence-redfish.yaml"
+  platform+=(-f "${H}/fence-redfish.yaml")
+fi
 (cd "${ROOT}" && adopt netci netci-system "${platform[@]}")
 (cd "${ROOT}" && helm upgrade --install netci "${platform[@]}" -n netci-system --wait --timeout 10m)
 
