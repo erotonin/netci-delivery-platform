@@ -168,10 +168,11 @@ func (r *Reconciler) createPod(ctx context.Context, sb *Sandbox) {
 // protect marks a sandbox that was warm when its pod was created, and is now claimed, as not to
 // be evicted by a node autoscaler.
 func (r *Reconciler) protect(ctx context.Context, pod *corev1.Pod) {
-	if pod.Annotations[safeToEvict] == "false" {
+	if pod.Annotations[safeToEvict] == "false" && pod.Labels[LabelBusy] == "true" {
 		return
 	}
-	patch, _ := json.Marshal(map[string]any{"metadata": map[string]any{"annotations": evictable(true)}})
+	patch, _ := json.Marshal(map[string]any{"metadata": map[string]any{"annotations": evictable(true),
+		"labels": map[string]string{LabelBusy: "true"}}})
 	_, err := r.Client.CoreV1().Pods(r.Pods.Namespace).Patch(ctx, pod.Name, types.MergePatchType, patch, metav1.PatchOptions{})
 	if err != nil && !apierrors.IsNotFound(err) {
 		r.Log.Error("protect a claimed sandbox from eviction", "pod", pod.Name, "error", err)

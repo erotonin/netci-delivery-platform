@@ -373,8 +373,9 @@ func TestAWarmSandboxMayBeEvictedAndAClaimedOneNot(t *testing.T) {
 	w.start()
 	w.tick()
 	pod := w.pods()[0]
-	if pod.Annotations["cluster-autoscaler.kubernetes.io/safe-to-evict"] != "true" || pod.Annotations["karpenter.sh/do-not-disrupt"] != "" {
-		t.Fatalf("a warm sandbox: %v", pod.Annotations)
+	if pod.Annotations["cluster-autoscaler.kubernetes.io/safe-to-evict"] != "true" || pod.Annotations["karpenter.sh/do-not-disrupt"] != "" ||
+		pod.Labels["netci.io/busy"] != "" {
+		t.Fatalf("a warm sandbox: %v %v", pod.Annotations, pod.Labels)
 	}
 	if code, warm := w.req("POST", "/v1/claims", "cell-b-token", claimBody("netci-standard-abc")); code != 200 || warm["pod"] != pod.Name {
 		t.Fatalf("%d %v", code, warm)
@@ -382,8 +383,9 @@ func TestAWarmSandboxMayBeEvictedAndAClaimedOneNot(t *testing.T) {
 	w.tick()
 	for _, p := range w.pods() { // the pool's new warm sandbox is there too
 		if p.Name == pod.Name &&
-			(p.Annotations["cluster-autoscaler.kubernetes.io/safe-to-evict"] != "false" || p.Annotations["karpenter.sh/do-not-disrupt"] != "true") {
-			t.Fatalf("a claimed sandbox an autoscaler may still evict: %v", p.Annotations)
+			(p.Annotations["cluster-autoscaler.kubernetes.io/safe-to-evict"] != "false" || p.Annotations["karpenter.sh/do-not-disrupt"] != "true" ||
+				p.Labels["netci.io/busy"] != "true") {
+			t.Fatalf("a claimed sandbox an autoscaler or the scheduler may still take as idle: %v %v", p.Annotations, p.Labels)
 		}
 	}
 	// A cold sandbox is claimed before its pod exists, and is created protected.
@@ -394,8 +396,9 @@ func TestAWarmSandboxMayBeEvictedAndAClaimedOneNot(t *testing.T) {
 	// Before any reconciliation: the claim creates the pod, already protected.
 	for _, p := range w.pods() {
 		if p.Name == cold["pod"] {
-			if p.Annotations["cluster-autoscaler.kubernetes.io/safe-to-evict"] != "false" || p.Annotations["karpenter.sh/do-not-disrupt"] != "true" {
-				t.Fatalf("a cold sandbox created evictable: %v", p.Annotations)
+			if p.Annotations["cluster-autoscaler.kubernetes.io/safe-to-evict"] != "false" || p.Annotations["karpenter.sh/do-not-disrupt"] != "true" ||
+				p.Labels["netci.io/busy"] != "true" {
+				t.Fatalf("a cold sandbox created evictable: %v %v", p.Annotations, p.Labels)
 			}
 			return
 		}

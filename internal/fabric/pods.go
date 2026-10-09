@@ -67,6 +67,11 @@ type PodSettings struct {
 const (
 	labelSandbox = "netci.io/sandbox"
 	labelPool    = "netci.io/pool"
+	// LabelBusy marks a sandbox running a build. A PodDisruptionBudget on it (the netci chart)
+	// steers the scheduler's preemption: warm and claimed sandboxes share one priority, and a
+	// controller that needs room after a takeover otherwise took a running build's sandbox as
+	// readily as an idle one.
+	LabelBusy = "netci.io/busy"
 
 	// What node autoscalers read before evicting a pod to remove its node: cluster-autoscaler's
 	// and Karpenter's. A sandbox has no controller of its own, which both would otherwise treat
@@ -82,6 +87,14 @@ func evictable(claimed bool) map[string]string {
 		return map[string]string{safeToEvict: "false", doNotDisrupt: "true"}
 	}
 	return map[string]string{safeToEvict: "true"}
+}
+
+func sandboxLabels(sb *Sandbox, p Pool) map[string]string {
+	l := map[string]string{labelSandbox: sb.ID.String(), labelPool: p.Name}
+	if sb.State == Claimed || sb.State == Bound {
+		l[LabelBusy] = "true"
+	}
+	return l
 }
 
 // pod builds a sandbox's pod. The pod has no Kubernetes API credential, only a token whose
@@ -109,7 +122,7 @@ func (ps PodSettings) pod(sb *Sandbox, p Pool) *corev1.Pod {
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: sb.Pod, Namespace: ps.Namespace,
-			Labels:      map[string]string{labelSandbox: sb.ID.String(), labelPool: p.Name},
+			Labels:      sandboxLabels(sb, p),
 			Annotations: evictable(sb.State == Claimed || sb.State == Bound),
 		},
 		Spec: corev1.PodSpec{

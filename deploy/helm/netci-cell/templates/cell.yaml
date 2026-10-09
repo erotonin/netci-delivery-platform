@@ -335,6 +335,23 @@ roleRef:
   kind: Role
   name: jenkins-agents
   apiGroup: rbac.authorization.k8s.io
+---
+# The plugin's agents each run one build (label jenkins/label, which the plugin sets). Agents
+# have the cluster's default priority, below a controller's: a controller that needs room after
+# a takeover may preempt one, and in the lab one preempted the agent of the very build it was
+# resuming. The scheduler avoids pods whose budget a preemption would break, so with this it
+# takes idle pods first, and an agent only when nothing else frees room. Draining a node waits
+# for its builds (kubectl drain --disable-eviction overrides).
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: jenkins-agents
+  namespace: {{ .Release.Namespace }}
+spec:
+  maxUnavailable: 0
+  selector:
+    matchExpressions:
+      - {key: jenkins/label, operator: Exists}
 {{- end }}
 {{- if .Values.ui.nodePort }}
 ---

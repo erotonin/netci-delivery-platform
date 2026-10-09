@@ -281,3 +281,22 @@ spec:
     {{- toYaml . | nindent 4 }}
     {{- end }}
 {{- end }}
+{{- if .Values.fabric.enabled }}
+---
+# Sandboxes running a build (label netci.io/busy, set when a controller claims one). Warm and
+# claimed sandboxes share one priority, so when a controller needs room after a takeover the
+# scheduler would preempt either; it avoids pods whose budget a preemption would break, and so
+# takes idle ones first -- still preempting a busy one when nothing else frees room, so a
+# takeover is never stuck. Draining a node waits for its builds (kubectl drain
+# --disable-eviction overrides).
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: netci-busy-sandboxes
+  namespace: {{ .Values.fabric.sandboxNamespace }}
+spec:
+  maxUnavailable: 0
+  selector:
+    matchLabels:
+      netci.io/busy: "true"
+{{- end }}
