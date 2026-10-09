@@ -37,3 +37,16 @@ jobs:
           java-version: "21"
           cache: maven
       - run: mvn -B -ntp -f jenkins/plugin/pom.xml verify
+  charts:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.19.0
+      - run: pip install --user pyyaml
+      # Both charts render with the lab's values, and refuse what they must: an image without a
+      # digest, a tolerance that is not a number. A template error otherwise reaches an install.
+      - run: ci/charts.sh
+      # The alerts' PromQL loads, and each fires when its failure happens (promtool unit tests).
+      - run: deploy/helm/netci/ci/test-rules.sh
