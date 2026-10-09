@@ -295,7 +295,11 @@ metadata:
   name: netci-busy-sandboxes
   namespace: {{ .Values.fabric.sandboxNamespace }}
 spec:
-  maxUnavailable: 0
+  # Sandboxes and agents are pods without a controller: Kubernetes defines a budget on such pods
+  # only with an integer minAvailable ("maxUnavailable: 0" left the budget's status undefined, and
+  # the disruption controller warned so). A minimum above any number of pods there can be allows
+  # no voluntary disruption of any of them.
+  minAvailable: 1000000
   selector:
     matchLabels:
       netci.io/busy: "true"
