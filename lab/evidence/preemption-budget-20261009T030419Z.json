@@ -1,0 +1,96 @@
+{
+  "scenario": "preemption-with-running-build-budget",
+  "kubernetes": "v1.36.1",
+  "rounds": [
+    {
+      "budget": false,
+      "onlyBuilds": false,
+      "busyOn": "pre-b",
+      "controllerOn": "pre-b",
+      "preempted": "busy (a running build)"
+    },
+    {
+      "budget": false,
+      "onlyBuilds": false,
+      "busyOn": "pre-a",
+      "controllerOn": "pre-a",
+      "preempted": "busy (a running build)"
+    },
+    {
+      "budget": false,
+      "onlyBuilds": false,
+      "busyOn": "pre-b",
+      "controllerOn": "pre-b",
+      "preempted": "busy (a running build)"
+    },
+    {
+      "budget": false,
+      "onlyBuilds": false,
+      "busyOn": "pre-a",
+      "controllerOn": "pre-a",
+      "preempted": "busy (a running build)"
+    },
+    {
+      "budget": false,
+      "onlyBuilds": false,
+      "busyOn": "pre-b",
+      "controllerOn": "pre-b",
+      "preempted": "busy (a running build)"
+    },
+    {
+      "budget": true,
+      "onlyBuilds": false,
+      "busyOn": "pre-b",
+      "controllerOn": "pre-a",
+      "preempted": "idle"
+    },
+    {
+      "budget": true,
+      "onlyBuilds": false,
+      "busyOn": "pre-a",
+      "controllerOn": "pre-b",
+      "preempted": "idle"
+    },
+    {
+      "budget": true,
+      "onlyBuilds": false,
+      "busyOn": "pre-b",
+      "controllerOn": "pre-a",
+      "preempted": "idle"
+    },
+    {
+      "budget": true,
+      "onlyBuilds": false,
+      "busyOn": "pre-a",
+      "controllerOn": "pre-b",
+      "preempted": "idle"
+    },
+    {
+      "budget": true,
+      "onlyBuilds": false,
+      "busyOn": "pre-b",
+      "controllerOn": "pre-a",
+      "preempted": "idle"
+    },
+    {
+      "budget": true,
+      "onlyBuilds": true,
+      "busyOn": "pre-b",
+      "controllerOn": "pre-b",
+      "preempted": "a running build (the only room)"
+    },
+    {
+      "budget": true,
+      "onlyBuilds": true,
+      "busyOn": "pre-a",
+      "controllerOn": "pre-a",
+      "preempted": "a running build (the only room)"
+    }
+  ],
+  "withoutBudgetBuildsPreempted": 5,
+  "withBudgetBuildsPreempted": 0,
+  "roundsEach": 5,
+  "onlyBuildsControllerPlaced": 2,
+  "onlyBuildsRounds": 2,
+  "verdict": "PASS"
+}
