@@ -43,14 +43,45 @@ func runFor(p *VolumeProbe, d time.Duration) {
 	p.Run(ctx)
 }
 
+// Writes that succeed are never reported. Not with real fsyncs: on a loaded CI runner one fsync
+// outlasted the test's 50 ms timeout, the next ticks found it still running, and the probe
+// reported a healthy disk (CI run 37883975435). Real I/O is checked once, below.
 func TestAWorkingVolumeIsNeverReported(t *testing.T) {
-	p, r := probe(t, writeSynced)
+	var mu sync.Mutex
+	writes := 0
+	p, r := probe(t, func(string) error {
+		mu.Lock()
+		writes++
+		mu.Unlock()
+		return nil
+	})
 	runFor(p, 100*time.Millisecond)
 	if got := r.list(); len(got) != 0 {
 		t.Fatalf("reported %v", got)
 	}
-	if _, err := os.Stat(filepath.Join(p.Dir, "volume-probe")); err != nil {
-		t.Fatalf("the probe did not write: %v", err)
+	mu.Lock()
+	defer mu.Unlock()
+	if writes < 3 {
+		t.Fatalf("%d writes in 100 ms at a 5 ms interval", writes)
+	}
+}
+
+func TestTheProbeWritesAndSyncsItsFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), ".netci", "volume-probe")
+	for i := 0; i < 2; i++ { // the second replaces the first
+		if err := writeSynced(path); err != nil {
+			t.Fatal(err)
+		}
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(string(b))); err != nil {
+		t.Fatalf("the probe file holds %q: %v", b, err)
+	}
+	if _, err := os.Stat(path + ".tmp"); !os.IsNotExist(err) {
+		t.Fatalf("the temporary file was left behind: %v", err)
 	}
 }
 
