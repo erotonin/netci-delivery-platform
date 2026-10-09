@@ -37,6 +37,10 @@ emulator that answers at once and always succeeds:
    Kubernetes defines budgets on pods without a controller only in that form (with
    `maxUnavailable` the disruption controller warns "undefined behavior").
 
+4. **A changed fence configuration is loaded and checked.** The supervisor reads it once; it
+   now fingerprints its directory (a Secret volume's `..data` link) and starts again when it
+   changes, so a rotated BMC password or a new machine goes through the start-up mapping check.
+
 ## Verified
 
 | What | How | Result |
@@ -46,6 +50,7 @@ emulator that answers at once and always succeeds:
 | Scale | `lab/scale/run.sh` on kwok (real kube-apiserver, etcd, scheduler, controller manager v1.36.1); the real lease code for each cell agent; the real supervisor | Before: an observation took 4.0 s at 100 cells and 11.9 s at 300, and fencing 6-8 s and 12-17 s. After: 0.05-0.1 s mean at 100-600 cells, fencing 2.6-3.0 s, every cell held again within 5.7 s; 0.16 cores and 53 MiB at 600 cells |
 | Preemption | `lab/scale/preemption.py`, real kube-scheduler | Without the budget a running build was preempted 5/5; with it 0/5, the idle sandbox taken instead; with builds on every machine the controller was still placed 2/2 |
 | The lab after the change | 3 power losses through the same slow BMC (`chaos-poweroff-20261009T040127Z.json`) | 3/3 SUCCESS, one netciOnce marker each. Observations 17 ms p50, 84 ms p99 when quiet. Fencing took 5.5-6.9 s against 2.8-4.1 s with the emulator: the BMC's 1.5 s twice, once for the state read that prompts the fencing and once for the confirmation before the Lease is released -- the confirmation is kept |
+| A rotated BMC password | The emulator's password changed, then the fence Secret | Before: the replicas kept the old configuration (found when re-pointing them). After: each stopped when its volume was updated, 18 s apart, and checked the mapping with the new password; both within 66 s of the Secret. A power loss then: fenced 3.0 s, SUCCESS (`chaos-poweroff-20261009T042237Z.json`) |
 | Budget on the lab | a claimed sandbox | Labelled at once; its eviction refused by the budget, an idle one's allowed |
 | The alert | `lab/spike/headroom_probe.py` | Metric 0 after 26 s, alert firing at the rule's 10 minutes, cleared 30 s after the build ended |
 

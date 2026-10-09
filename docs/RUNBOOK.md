@@ -66,6 +66,13 @@ the fabric, builds that need a sandbox wait.
 - **Check:** `kubectl -n netci-system get pods -l app=<component>` and their logs; a replica that
   cannot reach PostgreSQL fails its readiness check.
 
+### Rotating BMC credentials, adding a machine
+Update the fence Secret. Each supervisor replica notices within a minute or so (when the kubelet
+updates its volume), stops with "the power controllers' configuration changed", and starts
+again: the new start checks every node's machine against the new configuration before acting.
+The replicas restart at different moments. If a restarted replica logs a failed mapping check,
+it acts on nothing until it passes: fix the Secret.
+
 ### NetciSupervisorSlowObservations (warning)
 One observation -- every cell's Lease and pod, the nodes, their heartbeats -- takes more than half
 the supervisor's 1 s interval at p99. Every loss is detected that much later, and a gap of over
