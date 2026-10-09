@@ -65,7 +65,7 @@ func run(log *slog.Logger) error {
 		cfg.PanicFraction = f
 	}
 	interval := duration("NETCI_INTERVAL", time.Second, &errs)
-	offTimeout := duration("NETCI_OFF_TIMEOUT", 20*time.Second, &errs)
+	offTimeout := duration("NETCI_OFF_TIMEOUT", 60*time.Second, &errs)
 	// How long one power-state query may take. A BMC slower than this reads as Unknown and is
 	// never fenced: raise it, with the BMC's requestTimeout in fence.json, to the BMC's latency.
 	stateTimeout := duration("NETCI_POWER_QUERY_TIMEOUT", 3*time.Second, &errs)
