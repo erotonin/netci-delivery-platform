@@ -11,6 +11,7 @@ type Metrics struct {
 	resets          prometheus.Counter
 	fenceSeconds    prometheus.Histogram
 	takeoverSeconds prometheus.Histogram
+	observeSeconds  prometheus.Histogram
 	cells           prometheus.Gauge
 	lost            prometheus.Gauge
 	leading         prometheus.Gauge
@@ -36,6 +37,11 @@ func NewMetrics(r prometheus.Registerer) *Metrics {
 		takeoverSeconds: prometheus.NewHistogram(prometheus.HistogramOpts{Name: "netci_supervisor_takeover_seconds",
 			Help:    "From the last renewal seen by the supervisor to a new pod holding the cell's lease.",
 			Buckets: []float64{5, 10, 15, 20, 30, 45, 60, 90, 120, 180, 300}}),
+		// One observation lists every cell's Lease and pod: it grows with the number of cells, and
+		// one that takes longer than the interval delays every detection.
+		observeSeconds: prometheus.NewHistogram(prometheus.HistogramOpts{Name: "netci_supervisor_observation_seconds",
+			Help:    "How long one observation of the cluster took, successful or not.",
+			Buckets: []float64{0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2, 3, 5}}),
 		cells:   prometheus.NewGauge(prometheus.GaugeOpts{Name: "netci_supervisor_cells", Help: "Cells observed."}),
 		lost:    prometheus.NewGauge(prometheus.GaugeOpts{Name: "netci_supervisor_cells_lost", Help: "Cells whose pod has stopped renewing its lease."}),
 		leading: prometheus.NewGauge(prometheus.GaugeOpts{Name: "netci_supervisor_leading", Help: "1 while this replica is the one acting."}),
@@ -44,7 +50,7 @@ func NewMetrics(r prometheus.Registerer) *Metrics {
 		sharing: prometheus.NewGauge(prometheus.GaugeOpts{Name: "netci_supervisor_cells_sharing_a_machine",
 			Help: "Cells whose controller shares its machine with another cell's: lost together with it."}),
 	}
-	r.MustRegister(m.actions, m.alerts, m.leaseMoved, m.observeErrors, m.resets, m.fenceSeconds, m.takeoverSeconds, m.cells, m.lost, m.leading,
+	r.MustRegister(m.actions, m.alerts, m.leaseMoved, m.observeErrors, m.resets, m.fenceSeconds, m.takeoverSeconds, m.observeSeconds, m.cells, m.lost, m.leading,
 		m.headroom, m.sharing)
 	return m
 }

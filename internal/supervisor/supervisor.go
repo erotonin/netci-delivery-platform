@@ -59,7 +59,9 @@ func (s *Supervisor) Tick(ctx context.Context) {
 	if s.alerted == nil {
 		s.alerted, s.takeovers = map[string]time.Time{}, map[string]takeover{}
 	}
+	began := time.Now()
 	snap, err := s.Collector.Collect(ctx)
+	s.Metrics.observeSeconds.Observe(time.Since(began).Seconds())
 	if err != nil {
 		s.Metrics.observeErrors.Inc()
 		if msg := err.Error(); msg != s.lastErr {

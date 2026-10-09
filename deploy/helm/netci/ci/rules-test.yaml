@@ -81,6 +81,21 @@ tests:
         alertname: NetciCellConfigurationRefused
         exp_alerts: [{exp_labels: {severity: critical, namespace: cell-b, result: refused}}]
 
+  - name: observations slower than half the interval
+    interval: 15s
+    input_series:
+      # 4 observations every 15 s (about one a second), all between 0.5 s and 1 s.
+      - {series: 'netci_supervisor_observation_seconds_bucket{le="0.5"}', values: '0+0x100'}
+      - {series: 'netci_supervisor_observation_seconds_bucket{le="1"}', values: '0+15x100'}
+      - {series: 'netci_supervisor_observation_seconds_bucket{le="+Inf"}', values: '0+15x100'}
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: NetciSupervisorSlowObservations
+        exp_alerts: []
+      - eval_time: 22m
+        alertname: NetciSupervisorSlowObservations
+        exp_alerts: [{exp_labels: {severity: warning}}]
+
   - name: a fencing stopped by a moved Lease
     interval: 1m
     input_series:

@@ -84,6 +84,12 @@ spec:
           labels: {severity: info}
           annotations:
             summary: "{{ "{{" }} $value {{ "}}" }} cells' controllers share a machine and would be lost together with it. Moving one restarts its controller: do it at a quiet time (delete its pod; it prefers a machine without a cell)."
+        - alert: NetciSupervisorSlowObservations
+          expr: histogram_quantile(0.99, sum(rate(netci_supervisor_observation_seconds_bucket[10m])) by (le)) > 0.5
+          for: 10m
+          labels: {severity: warning}
+          annotations:
+            summary: The supervisor's observations take longer than half its 1 s interval at p99; every detection is that much later, and beyond 3 s it starts over.
         - alert: NetciSupervisorBlind
           expr: increase(netci_supervisor_observe_errors_total[5m]) > 30
           labels: {severity: warning}

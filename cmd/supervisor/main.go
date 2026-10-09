@@ -24,6 +24,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/tools/leaderelection"
 	"k8s.io/client-go/tools/leaderelection/resourcelock"
 	"k8s.io/utils/clock"
@@ -78,7 +79,12 @@ func run(log *slog.Logger) error {
 		return err
 	}
 
+	// In a pod, the cluster's own credentials. KUBECONFIG only for runs outside a cluster, such
+	// as the scale test against simulated nodes (lab/scale).
 	restCfg, err := rest.InClusterConfig()
+	if path := os.Getenv("KUBECONFIG"); path != "" {
+		restCfg, err = clientcmd.BuildConfigFromFlags("", path)
+	}
 	if err != nil {
 		return err
 	}

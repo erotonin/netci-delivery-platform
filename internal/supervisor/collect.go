@@ -7,9 +7,9 @@ import (
 	"sync"
 	"time"
 
+	appsv1 "k8s.io/api/apps/v1"
 	coordinationv1 "k8s.io/api/coordination/v1"
 	corev1 "k8s.io/api/core/v1"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	coordinationclient "k8s.io/client-go/kubernetes/typed/coordination/v1"
@@ -102,23 +102,59 @@ func (c *Collector) Collect(ctx context.Context) (*Snapshot, error) {
 		return nil, fmt.Errorf("list volume attachments: %w", err)
 	}
 
+	// Every cell's Lease and pod in one list each, by name across namespaces. One GET of each per
+	// cell made an observation grow with the cells: the scale test (lab/scale) measured 4 s per
+	// observation at 100 cells -- the client's 50 requests a second -- against a 1 s interval, so
+	// the supervisor kept starting over and fenced at 6-8 s instead of 3 s.
+	leaseOf := func(s *appsv1.StatefulSet) string {
+		if n := s.Annotations[LeaseAnnotation]; n != "" {
+			return n
+		}
+		return s.Name
+	}
+	leaseNames, podNames := map[string]bool{}, map[string]bool{}
+	for i := range sets.Items {
+		leaseNames[leaseOf(&sets.Items[i])] = true
+		podNames[sets.Items[i].Name+"-0"] = true
+	}
+	cellLeases := map[string]*coordinationv1.Lease{}
+	for name := range leaseNames {
+		list, err := c.Leases.Leases(metav1.NamespaceAll).List(ctx, metav1.ListOptions{FieldSelector: "metadata.name=" + name})
+		if err != nil {
+			return nil, fmt.Errorf("list cell leases: %w", err)
+		}
+		for i := range list.Items {
+			if l := &list.Items[i]; l.Name == name { // the filter is the server's; checked here too
+				cellLeases[l.Namespace+"/"+l.Name] = l
+			}
+		}
+	}
+	cellPods := map[string]*corev1.Pod{}
+	for name := range podNames {
+		list, err := c.Client.CoreV1().Pods(metav1.NamespaceAll).List(ctx, metav1.ListOptions{FieldSelector: "metadata.name=" + name})
+		if err != nil {
+			return nil, fmt.Errorf("list cell pods: %w", err)
+		}
+		for i := range list.Items {
+			if p := &list.Items[i]; p.Name == name {
+				cellPods[p.Namespace+"/"+p.Name] = p
+			}
+		}
+	}
+
 	in := Input{Now: start, Nodes: map[string]NodeView{}}
-	for _, s := range sets.Items {
+	for i := range sets.Items {
+		s := &sets.Items[i]
 		cv := CellView{Namespace: s.Namespace, Name: s.Name, Pod: s.Name + "-0"}
 		if t, err := time.Parse(time.RFC3339, s.Annotations[LastActionAnnotation]); err == nil {
 			cv.LastAction = t
 		}
-		leaseName := s.Name
-		if n := s.Annotations[LeaseAnnotation]; n != "" {
-			leaseName = n
-		}
-		l, err := c.Leases.Leases(s.Namespace).Get(ctx, leaseName, metav1.GetOptions{})
+		leaseName := leaseOf(s)
+		l, found := cellLeases[s.Namespace+"/"+leaseName]
 		switch {
-		case apierrors.IsNotFound(err):
+		case !found:
 			c.cells.Forget(s.Namespace, leaseName) // never held yet: nothing to lose
 			c.quiet.Forget(s.Namespace, leaseName)
-		case err != nil:
-			return nil, fmt.Errorf("lease of %s/%s: %w", s.Namespace, s.Name, err)
 		default:
 			obs := c.cells.Observe(l)
 			cv.LeaseHolder, cv.LeaseEpoch = obs.Holder, obs.Epoch
@@ -132,12 +168,7 @@ func (c *Collector) Collect(ctx context.Context) (*Snapshot, error) {
 			}
 			snap.Leases[s.Namespace+"/"+s.Name] = l
 		}
-		pod, err := c.Client.CoreV1().Pods(s.Namespace).Get(ctx, cv.Pod, metav1.GetOptions{})
-		switch {
-		case apierrors.IsNotFound(err):
-		case err != nil:
-			return nil, fmt.Errorf("pod of %s/%s: %w", s.Namespace, s.Name, err)
-		default:
+		if pod, found := cellPods[s.Namespace+"/"+cv.Pod]; found {
 			cv.PodExists, cv.PodUID, cv.PodNode = true, string(pod.UID), pod.Spec.NodeName
 			cv.PodDeleting = pod.DeletionTimestamp != nil
 			for _, cond := range pod.Status.Conditions {

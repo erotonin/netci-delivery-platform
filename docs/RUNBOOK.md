@@ -66,6 +66,14 @@ the fabric, builds that need a sandbox wait.
 - **Check:** `kubectl -n netci-system get pods -l app=<component>` and their logs; a replica that
   cannot reach PostgreSQL fails its readiness check.
 
+### NetciSupervisorSlowObservations (warning)
+One observation -- every cell's Lease and pod, the nodes, their heartbeats -- takes more than half
+the supervisor's 1 s interval at p99. Every loss is detected that much later, and a gap of over
+3 s makes the supervisor forget what it saw and start over.
+- **Check:** `netci_supervisor_observation_seconds` against `netci_supervisor_cells`, and the API
+  servers' latency. The scale test (`lab/scale/run.sh`) gives the expected time per cell count.
+- **Act:** a slow API server first; otherwise fewer cells per supervisor (one per cluster).
+
 ### NetciSupervisorBlind (warning)
 The supervisor's observations keep failing, and it decides nothing while it cannot observe.
 - **Check:** the API servers' health. If the API servers are slow to answer the supervisor's

@@ -12,6 +12,7 @@ import (
 	coordinationv1 "k8s.io/api/coordination/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	coordinationclient "k8s.io/client-go/kubernetes/typed/coordination/v1"
 )
@@ -28,6 +29,21 @@ type APIServer struct {
 	// Hang: the next this-many calls block until their context ends, as a call on a connection
 	// to a dead API server does.
 	hang int
+	// calls counts every request made (Get, List, Create, Update).
+	calls int
+}
+
+// Calls returns how many requests were made to the server.
+func (a *APIServer) Calls() int {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.calls
+}
+
+func (a *APIServer) count() {
+	a.mu.Lock()
+	a.calls++
+	a.mu.Unlock()
 }
 
 // HangNext makes the next n calls hang until their context ends.
@@ -82,6 +98,7 @@ type leaseClient struct {
 }
 
 func (c *leaseClient) Get(ctx context.Context, name string, _ metav1.GetOptions) (*coordinationv1.Lease, error) {
+	c.a.count()
 	if err := c.a.hung(ctx); err != nil {
 		return nil, err
 	}
@@ -98,6 +115,7 @@ func (c *leaseClient) Get(ctx context.Context, name string, _ metav1.GetOptions)
 }
 
 func (c *leaseClient) Create(ctx context.Context, l *coordinationv1.Lease, _ metav1.CreateOptions) (*coordinationv1.Lease, error) {
+	c.a.count()
 	if err := c.a.hung(ctx); err != nil {
 		return nil, err
 	}
@@ -121,6 +139,7 @@ func (c *leaseClient) Create(ctx context.Context, l *coordinationv1.Lease, _ met
 }
 
 func (c *leaseClient) Update(ctx context.Context, l *coordinationv1.Lease, _ metav1.UpdateOptions) (*coordinationv1.Lease, error) {
+	c.a.count()
 	if err := c.a.hung(ctx); err != nil {
 		return nil, err
 	}
@@ -166,15 +185,25 @@ func (unreachableClient) Update(context.Context, *coordinationv1.Lease, metav1.U
 	return nil, fmt.Errorf("dial tcp: i/o timeout")
 }
 
-func (c *leaseClient) List(ctx context.Context, _ metav1.ListOptions) (*coordinationv1.LeaseList, error) {
+// List, as the API server does it: namespace "" is every namespace, and a field selector on
+// metadata.name or metadata.namespace filters.
+func (c *leaseClient) List(ctx context.Context, opts metav1.ListOptions) (*coordinationv1.LeaseList, error) {
+	c.a.count()
 	c.a.mu.Lock()
 	defer c.a.mu.Unlock()
 	if c.a.unreachable {
 		return nil, fmt.Errorf("dial tcp: i/o timeout")
 	}
+	sel := fields.Everything()
+	if opts.FieldSelector != "" {
+		var err error
+		if sel, err = fields.ParseSelector(opts.FieldSelector); err != nil {
+			return nil, err
+		}
+	}
 	out := &coordinationv1.LeaseList{}
 	for _, l := range c.a.leases {
-		if l.Namespace == c.ns {
+		if (c.ns == "" || l.Namespace == c.ns) && sel.Matches(fields.Set{"metadata.name": l.Name, "metadata.namespace": l.Namespace}) {
 			out.Items = append(out.Items, *l.DeepCopy())
 		}
 	}
