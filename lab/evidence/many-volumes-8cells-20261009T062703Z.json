@@ -1,0 +1,320 @@
+{
+  "scenario": "many-volumes-poweroff",
+  "cells": 8,
+  "storageClass": "longhorn-sync",
+  "volumeSize": "128Mi",
+  "standin": "172.17.0.1:8930/netci/lab-standin@sha256:ce842bb2f2236d7dee3504fb147b36eea23b430104dc0c1bea3c6d7b2efb8087",
+  "startedAt": "2026-10-09T06:27:03+00:00",
+  "runs": [
+    {
+      "node": "netci-lab-2",
+      "supervisorLeaderOn": "netci-lab-3",
+      "failureAt": "2026-10-09T06:31:23.602+00:00",
+      "observedFor": 30.6,
+      "polls": 45,
+      "fencedAfterSeconds": 3.6,
+      "cells": {
+        "vol-01": {
+          "replaced": 3.9,
+          "scheduled": 3.9,
+          "on": "netci-lab-1",
+          "attached": 24.4,
+          "leaseTaken": 26.5,
+          "ready": 30.6,
+          "resumedFromSeq": 1932,
+          "badLines": 0,
+          "starts": 6,
+          "lastWriteBeforeFailureSeconds": 0.493,
+          "warnings": {
+            "FailedScheduling": 2,
+            "FailedAttachVolume": 7
+          }
+        },
+        "vol-02": {
+          "replaced": 5.9,
+          "scheduled": 5.9,
+          "on": "netci-lab-1",
+          "attached": 12.2,
+          "leaseTaken": 14.2,
+          "ready": 18.3,
+          "resumedFromSeq": 690,
+          "badLines": 0,
+          "starts": 2,
+          "lastWriteBeforeFailureSeconds": 0.491,
+          "warnings": {
+            "FailedScheduling": 2
+          }
+        },
+        "vol-03": {
+          "replaced": 5.9,
+          "scheduled": 5.9,
+          "on": "netci-lab-1",
+          "attached": 18.3,
+          "leaseTaken": 20.3,
+          "ready": 24.4,
+          "resumedFromSeq": 599,
+          "badLines": 0,
+          "starts": 2,
+          "lastWriteBeforeFailureSeconds": 0.493,
+          "warnings": {
+            "FailedScheduling": 2
+          }
+        },
+        "vol-04": {
+          "replaced": 5.9,
+          "scheduled": 5.9,
+          "on": "netci-lab-1",
+          "attached": 12.2,
+          "leaseTaken": 14.2,
+          "ready": 18.3,
+          "resumedFromSeq": 514,
+          "badLines": 0,
+          "starts": 2,
+          "lastWriteBeforeFailureSeconds": 0.322,
+          "warnings": {
+            "FailedScheduling": 2
+          }
+        },
+        "vol-05": {
+          "replaced": 5.9,
+          "scheduled": 5.9,
+          "on": "netci-lab-1",
+          "attached": 14.9,
+          "leaseTaken": 16.3,
+          "ready": 21.7,
+          "resumedFromSeq": 427,
+          "badLines": 0,
+          "starts": 2,
+          "lastWriteBeforeFailureSeconds": 0.491,
+          "warnings": {
+            "FailedScheduling": 2
+          }
+        },
+        "vol-06": {
+          "replaced": 5.9,
+          "scheduled": 5.9,
+          "on": "netci-lab-1",
+          "attached": 18.3,
+          "leaseTaken": 20.3,
+          "ready": 24.4,
+          "resumedFromSeq": 326,
+          "badLines": 0,
+          "starts": 2,
+          "lastWriteBeforeFailureSeconds": 0.49,
+          "warnings": {
+            "FailedScheduling": 2
+          }
+        },
+        "vol-07": {
+          "replaced": 5.9,
+          "scheduled": 6.6,
+          "on": "netci-lab-1",
+          "attached": 12.2,
+          "leaseTaken": 14.2,
+          "ready": 19.7,
+          "resumedFromSeq": 231,
+          "badLines": 0,
+          "starts": 2,
+          "lastWriteBeforeFailureSeconds": 0.321,
+          "warnings": {
+            "FailedScheduling": 2
+          }
+        },
+        "vol-08": {
+          "replaced": 5.9,
+          "scheduled": 5.9,
+          "on": "netci-lab-3",
+          "attached": 18.3,
+          "leaseTaken": 19.7,
+          "ready": 25.1,
+          "resumedFromSeq": 130,
+          "badLines": 0,
+          "starts": 2,
+          "lastWriteBeforeFailureSeconds": 0.388,
+          "warnings": {
+            "FailedScheduling": 2
+          }
+        }
+      },
+      "poweredBackOnBy": "supervisor"
+    },
+    {
+      "node": "netci-lab-2",
+      "supervisorLeaderOn": "netci-lab-3",
+      "failureAt": "2026-10-09T06:37:51.823+00:00",
+      "observedFor": 26.7,
+      "polls": 39,
+      "fencedAfterSeconds": 3.8,
+      "cells": {
+        "vol-01": {
+          "replaced": 6.2,
+          "scheduled": 6.2,
+          "on": "netci-lab-3",
+          "attached": 13.1,
+          "leaseTaken": 14.5,
+          "ready": 19.9,
+          "resumedFromSeq": 3557,
+          "badLines": 0,
+          "starts": 8,
+          "lastWriteBeforeFailureSeconds": 0.358,
+          "warnings": {
+            "FailedScheduling": 2,
+            "FailedAttachVolume": 8
+          }
+        },
+        "vol-02": {
+          "replaced": 6.2,
+          "scheduled": 6.2,
+          "on": "netci-lab-1",
+          "attached": 15.2,
+          "leaseTaken": 17.2,
+          "ready": 21.2,
+          "resumedFromSeq": 2356,
+          "badLines": 0,
+          "starts": 4,
+          "lastWriteBeforeFailureSeconds": 0.336,
+          "warnings": {
+            "FailedScheduling": 2,
+            "FailedAttachVolume": 1
+          }
+        },
+        "vol-03": {
+          "replaced": 6.2,
+          "scheduled": 6.2,
+          "on": "netci-lab-1",
+          "attached": 12.4,
+          "leaseTaken": 14.5,
+          "ready": 19.2,
+          "resumedFromSeq": 2242,
+          "badLines": 0,
+          "starts": 4,
+          "lastWriteBeforeFailureSeconds": 0.345,
+          "warnings": {
+            "FailedScheduling": 2,
+            "FailedAttachVolume": 1
+          }
+        },
+        "vol-04": {
+          "replaced": 4.1,
+          "scheduled": 4.1,
+          "on": "netci-lab-1",
+          "attached": 19.9,
+          "leaseTaken": 22.6,
+          "ready": 26.7,
+          "resumedFromSeq": 2220,
+          "badLines": 0,
+          "starts": 4,
+          "lastWriteBeforeFailureSeconds": 0.349,
+          "warnings": {
+            "FailedScheduling": 2
+          }
+        },
+        "vol-05": {
+          "replaced": 6.2,
+          "scheduled": 6.2,
+          "on": "netci-lab-1",
+          "attached": 14.5,
+          "leaseTaken": 17.2,
+          "ready": 21.2,
+          "resumedFromSeq": 2085,
+          "badLines": 0,
+          "starts": 4,
+          "lastWriteBeforeFailureSeconds": 0.331,
+          "warnings": {
+            "FailedScheduling": 2,
+            "FailedAttachVolume": 1
+          }
+        },
+        "vol-06": {
+          "replaced": 6.2,
+          "scheduled": 6.2,
+          "on": "netci-lab-1",
+          "attached": 14.5,
+          "leaseTaken": 17.2,
+          "ready": 21.2,
+          "resumedFromSeq": 2003,
+          "badLines": 0,
+          "starts": 4,
+          "lastWriteBeforeFailureSeconds": 0.335,
+          "warnings": {
+            "FailedScheduling": 2,
+            "FailedAttachVolume": 1
+          }
+        },
+        "vol-07": {
+          "replaced": 6.2,
+          "scheduled": 6.2,
+          "on": "netci-lab-1",
+          "attached": 13.7,
+          "leaseTaken": 15.2,
+          "ready": 20.6,
+          "resumedFromSeq": 1888,
+          "badLines": 0,
+          "starts": 4,
+          "lastWriteBeforeFailureSeconds": 0.335,
+          "warnings": {
+            "FailedScheduling": 2,
+            "FailedAttachVolume": 1
+          }
+        },
+        "vol-08": {
+          "replaced": 6.2,
+          "scheduled": 6.9,
+          "on": "netci-lab-1",
+          "attached": 13.7,
+          "leaseTaken": 15.2,
+          "ready": 19.2,
+          "resumedFromSeq": 1804,
+          "badLines": 0,
+          "starts": 4,
+          "lastWriteBeforeFailureSeconds": 0.35,
+          "warnings": {
+            "FailedScheduling": 2,
+            "FailedAttachVolume": 1
+          }
+        }
+      },
+      "poweredBackOnBy": "supervisor"
+    }
+  ],
+  "summary": {
+    "replaced": {
+      "median": 5.9,
+      "max": 6.2,
+      "n": 16
+    },
+    "scheduled": {
+      "median": 6.050000000000001,
+      "max": 6.9,
+      "n": 16
+    },
+    "attached": {
+      "median": 14.5,
+      "max": 24.4,
+      "n": 16
+    },
+    "leaseTaken": {
+      "median": 16.75,
+      "max": 26.5,
+      "n": 16
+    },
+    "ready": {
+      "median": 21.2,
+      "max": 30.6,
+      "n": 16
+    },
+    "attachAfterScheduled": {
+      "median": 8.3,
+      "max": 20.5
+    },
+    "lastWriteBeforeFailureSeconds": {
+      "min": 0.321,
+      "max": 0.493
+    },
+    "fencedAfterSeconds": [
+      3.6,
+      3.8
+    ]
+  },
+  "verdict": "PASS"
+}

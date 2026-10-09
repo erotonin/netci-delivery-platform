@@ -1,0 +1,104 @@
+{
+  "scenario": "many-volumes-poweroff",
+  "cells": 1,
+  "storageClass": "longhorn-sync",
+  "volumeSize": "128Mi",
+  "standin": "172.17.0.1:8930/netci/lab-standin@sha256:ce842bb2f2236d7dee3504fb147b36eea23b430104dc0c1bea3c6d7b2efb8087",
+  "startedAt": "2026-10-09T06:23:04+00:00",
+  "runs": [
+    {
+      "node": "netci-lab-2",
+      "supervisorLeaderOn": "netci-lab-3",
+      "failureAt": "2026-10-09T06:23:48.006+00:00",
+      "observedFor": 30.5,
+      "polls": 47,
+      "fencedAfterSeconds": 2.8,
+      "cells": {
+        "vol-01": {
+          "replaced": 3.1,
+          "scheduled": 3.7,
+          "on": "netci-lab-3",
+          "attached": 23.1,
+          "leaseTaken": 26.5,
+          "ready": 30.5,
+          "resumedFromSeq": 132,
+          "badLines": 0,
+          "starts": 2,
+          "lastWriteBeforeFailureSeconds": 0.438,
+          "warnings": {
+            "FailedScheduling": 2,
+            "FailedAttachVolume": 5
+          }
+        }
+      },
+      "poweredBackOnBy": "supervisor"
+    },
+    {
+      "node": "netci-lab-2",
+      "supervisorLeaderOn": "netci-lab-3",
+      "failureAt": "2026-10-09T06:26:28.777+00:00",
+      "observedFor": 24.3,
+      "polls": 38,
+      "fencedAfterSeconds": 3.5,
+      "cells": {
+        "vol-01": {
+          "replaced": 3.7,
+          "scheduled": 3.7,
+          "on": "netci-lab-1",
+          "attached": 17.9,
+          "leaseTaken": 19.2,
+          "ready": 24.3,
+          "resumedFromSeq": 690,
+          "badLines": 0,
+          "starts": 4,
+          "lastWriteBeforeFailureSeconds": 0.426,
+          "warnings": {
+            "FailedScheduling": 2,
+            "FailedAttachVolume": 6
+          }
+        }
+      },
+      "poweredBackOnBy": "supervisor"
+    }
+  ],
+  "summary": {
+    "replaced": {
+      "median": 3.4000000000000004,
+      "max": 3.7,
+      "n": 2
+    },
+    "scheduled": {
+      "median": 3.7,
+      "max": 3.7,
+      "n": 2
+    },
+    "attached": {
+      "median": 20.5,
+      "max": 23.1,
+      "n": 2
+    },
+    "leaseTaken": {
+      "median": 22.85,
+      "max": 26.5,
+      "n": 2
+    },
+    "ready": {
+      "median": 27.4,
+      "max": 30.5,
+      "n": 2
+    },
+    "attachAfterScheduled": {
+      "median": 16.8,
+      "max": 19.4
+    },
+    "lastWriteBeforeFailureSeconds": {
+      "min": 0.426,
+      "max": 0.438
+    },
+    "fencedAfterSeconds": [
+      2.8,
+      3.5
+    ]
+  },
+  "verdict": "PASS"
+}

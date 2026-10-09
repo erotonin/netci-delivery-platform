@@ -1,0 +1,74 @@
+{
+  "scenario": "many-volumes-poweroff",
+  "cells": 1,
+  "storageClass": "longhorn-sync",
+  "standin": "172.17.0.1:8930/netci/lab-standin@sha256:ce842bb2f2236d7dee3504fb147b36eea23b430104dc0c1bea3c6d7b2efb8087",
+  "startedAt": "2026-10-09T05:59:31+00:00",
+  "runs": [
+    {
+      "node": "netci-lab-2",
+      "supervisorLeaderOn": "netci-lab-3",
+      "failureAt": "2026-10-09T06:01:10.712+00:00",
+      "observedFor": 22.4,
+      "polls": 34,
+      "fencedAfterSeconds": 3.5,
+      "cells": {
+        "vol-01": {
+          "replaced": 3.8,
+          "scheduled": 3.8,
+          "on": "netci-lab-1",
+          "attached": 15.7,
+          "leaseTaken": 17.7,
+          "ready": 22.4,
+          "resumedFromSeq": 400,
+          "badLines": 0,
+          "starts": 2,
+          "lastWriteBeforeFailureSeconds": 0.379,
+          "warnings": {
+            "FailedScheduling": 2
+          }
+        }
+      },
+      "poweredBackOnBy": "supervisor"
+    }
+  ],
+  "summary": {
+    "replaced": {
+      "median": 3.8,
+      "max": 3.8,
+      "n": 1
+    },
+    "scheduled": {
+      "median": 3.8,
+      "max": 3.8,
+      "n": 1
+    },
+    "attached": {
+      "median": 15.7,
+      "max": 15.7,
+      "n": 1
+    },
+    "leaseTaken": {
+      "median": 17.7,
+      "max": 17.7,
+      "n": 1
+    },
+    "ready": {
+      "median": 22.4,
+      "max": 22.4,
+      "n": 1
+    },
+    "attachAfterScheduled": {
+      "median": 11.9,
+      "max": 11.9
+    },
+    "lastWriteBeforeFailureSeconds": {
+      "min": 0.379,
+      "max": 0.379
+    },
+    "fencedAfterSeconds": [
+      3.5
+    ]
+  },
+  "verdict": "PASS"
+}
