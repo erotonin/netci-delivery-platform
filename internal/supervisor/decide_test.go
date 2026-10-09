@@ -199,6 +199,22 @@ func TestCellsSharingAHungMachineAreOneFailureNotAMassOne(t *testing.T) {
 	}
 }
 
+// Eight cells on a machine that lost its power: one fencing, which releases every cell's Lease
+// (fenceNode, step 5). One per cell repeated the power controller's confirmation for each, in a
+// row, before any pod could go (lab: 8 in 2.5 s; 1.5 s each with a slow BMC).
+func TestCellsSharingAMachineThatIsOffAreFencedOnce(t *testing.T) {
+	in := world()
+	in.Cells = append(in.Cells, cell("cell-b", "netci-lab-1"), cell("cell-c", "netci-lab-1"), cell("cell-d", "netci-lab-2"))
+	for i := range in.Cells[:3] {
+		expire(&in.Cells[i], 15*time.Second)
+	}
+	node(in, "netci-lab-1", func(n *NodeView) { n.MachineState = fence.Off })
+	a := only(t, Decide(in, cfg()), FenceNode)
+	if a.Node != "netci-lab-1" || a.Namespace != "cell-a" {
+		t.Fatalf("%+v", a)
+	}
+}
+
 func TestCellsOfMostMachinesStoppingAtOnceAreStillAMassFailure(t *testing.T) {
 	// Two cells on each of two machines out of three hosting cells: two machines at once.
 	in := manyCells(3)

@@ -203,9 +203,16 @@ func Decide(in Input, cfg Config) []Action {
 	actions = append(actions, failedVolumes(in, cfg)...)
 
 	powerOffDecided := false
+	fencing := map[string]bool{}
 	for _, c := range lost {
 		a, ok := decideCell(c, in, cfg)
 		if !ok {
+			continue
+		}
+		// One fencing per machine: it releases the Lease of every cell on it (fenceNode, step 5).
+		// One per cell repeated the power controller's confirmation for each, in a row, before any
+		// pod could go (lab: 8 cells, 2.5 s; with a BMC answering in 1.5 s, 12 s).
+		if a.Kind == FenceNode && fencing[a.Node] {
 			continue
 		}
 		if a.Kind == DeletePod || (a.Kind == FenceNode && a.PowerOff) {
@@ -218,6 +225,9 @@ func Decide(in Input, cfg Config) []Action {
 				}
 				powerOffDecided = true
 			}
+		}
+		if a.Kind == FenceNode {
+			fencing[a.Node] = true
 		}
 		actions = append(actions, a)
 	}

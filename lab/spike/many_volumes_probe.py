@@ -122,6 +122,9 @@ def place(cells: list[str], node: str, size: str) -> None:
             p = cell_pod(ns)
             if p and p["spec"].get("nodeName") == node and ready(p):
                 continue
+            # A namespace of a previous run may still be terminating: wait it out.
+            wait(f"{ns} of a previous run gone", lambda ns=ns: "Terminating" not in kubectl(
+                "get", "namespace", ns, "-o", "jsonpath={.status.phase}", check=False), 300, 2)
             if kubectl("get", "namespace", ns, check=False) == "":
                 kubectl("create", "namespace", ns)
                 secret = {"apiVersion": "v1", "kind": "Secret", "type": pull["type"], "data": pull["data"],
@@ -132,14 +135,16 @@ def place(cells: list[str], node: str, size: str) -> None:
                 kubectl("-n", ns, "create", "secret", "generic", "jenkins-cell")
             if p:  # on another machine since a previous run: back onto this one
                 kubectl("-n", ns, "delete", "pod", "jenkins-0", "--wait=true", "--timeout=120s")
-            subprocess.run(["helm", "upgrade", "--install", ns, str(CHART), "-n", ns,
+            out = subprocess.run(["helm", "upgrade", "--install", ns, str(CHART), "-n", ns,
                             "-f", str(CHART / "ci" / "lab-values.yaml"),
                             "--set", f"image.controller={STANDIN}", "--set", f"netci.repository={repo}",
                             "--set", f"netci.digest={digest}", "--set", "storage.className=longhorn-sync",
                             "--set", f"storage.size={size}", "--set", "pluginsFromImageOnly=false",
                             "--set", "resources.requests.cpu=10m", "--set", "resources.requests.memory=16Mi",
                             "--set", "resources.limits.memory=64Mi", "--set", "terminationGracePeriodSeconds=10",
-                            "--wait", "--timeout", "5m"], check=True, capture_output=True, text=True)
+                            "--wait", "--timeout", "5m"], capture_output=True, text=True)
+            if out.returncode != 0:
+                raise RuntimeError(f"helm install {ns}: {out.stderr.strip()[-500:]}")
         for ns in cells:
             wait(f"{ns} Ready on {node}", lambda ns=ns: (lambda p: ready(p) and p["spec"]["nodeName"] == node)(cell_pod(ns)), 300, 2)
     finally:
