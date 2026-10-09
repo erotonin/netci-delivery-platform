@@ -1,0 +1,66 @@
+{
+  "scenario": "upgrade",
+  "to": "172.17.0.1:8930/netci/netci@sha256:de4a7241b9012a836aef00ea1c31fc3ed5e00caf0e1d6e0e452995ba21ae18e2",
+  "started": "2026-10-09T09:42:23+00:00",
+  "imagesBefore": {
+    "netci-system/netci-supervisor": [
+      "sha256:7d326e8fe121"
+    ],
+    "netci-system/netci-queue": [
+      "sha256:7d326e8fe121"
+    ],
+    "netci-system/netci-fabric": [
+      "sha256:7d326e8fe121"
+    ],
+    "cell-a/jenkins": [
+      "sha256:7d326e8fe121"
+    ],
+    "cell-b/jenkins": [
+      "sha256:7d326e8fe121"
+    ]
+  },
+  "build": 90,
+  "installSeconds": 56.8,
+  "installExit": 0,
+  "buildResult": "SUCCESS",
+  "once": {
+    "markers": 1,
+    "refused": false
+  },
+  "ticksMissing": [],
+  "runs": {
+    "accepted": 6,
+    "intakeFailures": [],
+    "intakeSecondsMax": 0.06,
+    "finishedSuccess": 6,
+    "notExactlyOnce": {}
+  },
+  "cellDownSeconds": {
+    "cell-a": [
+      19.0
+    ],
+    "cell-b": [
+      21.0
+    ]
+  },
+  "supervisorActions": [],
+  "outOfService": [],
+  "imagesAfter": {
+    "netci-system/netci-supervisor": [
+      "sha256:de4a7241b901"
+    ],
+    "netci-system/netci-queue": [
+      "sha256:de4a7241b901"
+    ],
+    "netci-system/netci-fabric": [
+      "sha256:de4a7241b901"
+    ],
+    "cell-a/jenkins": [
+      "sha256:de4a7241b901"
+    ],
+    "cell-b/jenkins": [
+      "sha256:de4a7241b901"
+    ]
+  },
+  "verdict": "PASS"
+}
