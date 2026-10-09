@@ -1,0 +1,144 @@
+{
+  "scenario": "many-volumes-poweroff",
+  "cells": 1,
+  "storageClass": "longhorn-sync",
+  "volumeSize": "128Mi",
+  "standin": "172.17.0.1:8930/netci/lab-standin@sha256:ce842bb2f2236d7dee3504fb147b36eea23b430104dc0c1bea3c6d7b2efb8087",
+  "startedAt": "2026-10-09T06:53:42+00:00",
+  "runs": [
+    {
+      "node": "netci-lab-2",
+      "supervisorLeaderOn": "netci-lab-1",
+      "failureAt": "2026-10-09T06:54:24.363+00:00",
+      "observedFor": 21.9,
+      "polls": 34,
+      "fencedAfterSeconds": 2.8,
+      "cells": {
+        "vol-01": {
+          "replaced": 5.7,
+          "scheduled": 5.7,
+          "on": "netci-lab-1",
+          "attached": 15.4,
+          "leaseTaken": 16.7,
+          "ready": 21.9,
+          "resumedFromSeq": 122,
+          "badLines": 0,
+          "starts": 2,
+          "lastWriteBeforeFailureSeconds": 0.44
+        }
+      },
+      "poweredBackOnBy": "supervisor"
+    },
+    {
+      "node": "netci-lab-2",
+      "supervisorLeaderOn": "netci-lab-1",
+      "failureAt": "2026-10-09T06:57:24.966+00:00",
+      "observedFor": 17.9,
+      "polls": 28,
+      "fencedAfterSeconds": 3.5,
+      "cells": {
+        "vol-01": {
+          "replaced": 5.0,
+          "scheduled": 5.0,
+          "on": "netci-lab-1",
+          "attached": 11.4,
+          "leaseTaken": 12.7,
+          "ready": 17.9,
+          "resumedFromSeq": 796,
+          "badLines": 0,
+          "starts": 4,
+          "lastWriteBeforeFailureSeconds": 0.408
+        }
+      },
+      "poweredBackOnBy": "supervisor"
+    },
+    {
+      "node": "netci-lab-2",
+      "supervisorLeaderOn": "netci-lab-1",
+      "failureAt": "2026-10-09T07:00:05.095+00:00",
+      "observedFor": 17.4,
+      "polls": 27,
+      "fencedAfterSeconds": 3.5,
+      "cells": {
+        "vol-01": {
+          "replaced": 5.0,
+          "scheduled": 5.0,
+          "on": "netci-lab-1",
+          "attached": 10.9,
+          "leaseTaken": 13.5,
+          "ready": 17.4,
+          "resumedFromSeq": 1416,
+          "badLines": 0,
+          "starts": 6,
+          "lastWriteBeforeFailureSeconds": 0.48
+        }
+      },
+      "poweredBackOnBy": "supervisor"
+    },
+    {
+      "node": "netci-lab-2",
+      "supervisorLeaderOn": "netci-lab-1",
+      "failureAt": "2026-10-09T07:02:46.944+00:00",
+      "observedFor": 25.9,
+      "polls": 40,
+      "fencedAfterSeconds": 3.5,
+      "cells": {
+        "vol-01": {
+          "replaced": 7.7,
+          "scheduled": 7.7,
+          "on": "netci-lab-1",
+          "attached": 20.0,
+          "leaseTaken": 22.0,
+          "ready": 25.9,
+          "resumedFromSeq": 2029,
+          "badLines": 0,
+          "starts": 8,
+          "lastWriteBeforeFailureSeconds": 0.463
+        }
+      },
+      "poweredBackOnBy": "supervisor"
+    }
+  ],
+  "summary": {
+    "replaced": {
+      "median": 5.35,
+      "max": 7.7,
+      "n": 4
+    },
+    "scheduled": {
+      "median": 5.35,
+      "max": 7.7,
+      "n": 4
+    },
+    "attached": {
+      "median": 13.4,
+      "max": 20.0,
+      "n": 4
+    },
+    "leaseTaken": {
+      "median": 15.1,
+      "max": 22.0,
+      "n": 4
+    },
+    "ready": {
+      "median": 19.9,
+      "max": 25.9,
+      "n": 4
+    },
+    "attachAfterScheduled": {
+      "median": 8.1,
+      "max": 12.3
+    },
+    "lastWriteBeforeFailureSeconds": {
+      "min": 0.408,
+      "max": 0.48
+    },
+    "fencedAfterSeconds": [
+      2.8,
+      3.5,
+      3.5,
+      3.5
+    ]
+  },
+  "verdict": "PASS"
+}

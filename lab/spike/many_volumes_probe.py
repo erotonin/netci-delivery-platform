@@ -258,6 +258,9 @@ def run_once(cells: list[str], node: str) -> dict:
                                     "-o", "json", check=False) or '{"items":[]}')["items"]
         trouble = {}
         for e in events:
+            # Events of a previous run stay for an hour: only this run's count.
+            if (e.get("lastTimestamp") or e.get("eventTime") or "") < facts["failureAt"][:19]:
+                continue
             if e.get("type") == "Warning" and e.get("reason") in ("FailedAttachVolume", "FailedMount", "FailedScheduling"):
                 trouble[e["reason"]] = trouble.get(e["reason"], 0) + (e.get("count") or 1)
         if trouble:

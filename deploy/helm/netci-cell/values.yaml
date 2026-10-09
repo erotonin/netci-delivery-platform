@@ -38,6 +38,11 @@ terminationGracePeriodSeconds: 30
 # controller whose plugins are managed in JENKINS_HOME, outside its image.
 pluginsFromImageOnly: true
 
+# How long the controller pod stays on a node given the out-of-service taint before Kubernetes
+# deletes it. The Cell Supervisor deletes it sooner, once the storage has settled (netci chart,
+# supervisor.storageSettle); this is the backstop when no supervisor does.
+outOfServiceTolerationSeconds: 30
+
 # Above build pods, so that a controller that lost its machine is given room (the netci chart
 # creates netci-cell). Empty: the cluster's default priority.
 priorityClassName: netci-cell

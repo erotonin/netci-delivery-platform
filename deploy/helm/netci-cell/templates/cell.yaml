@@ -71,6 +71,22 @@ spec:
                     netci.io/cell: "true"
                 namespaceSelector: {}
                 topologyKey: kubernetes.io/hostname
+      # The Cell Supervisor deletes this pod itself, the netci chart's supervisor.storageSettle after
+      # it fences the machine: deleting it starts the volume's detach, and one asked for while the
+      # storage is still taking in that the node is gone waited ~10 s for the dead machine (lab).
+      # Without the toleration Kubernetes' taint eviction deletes the pod the moment the
+      # out-of-service taint is added, and the pod garbage collector force-deletes it on its next
+      # pass: in the lab it came first for 3 of 8 pods, and two of their volumes were late. Past
+      # the toleration Kubernetes deletes the pod anyway, so without a supervisor a takeover is
+      # slower, never stuck.
+      {{- if not (kindIs "float64" .Values.outOfServiceTolerationSeconds) }}
+      {{- fail "outOfServiceTolerationSeconds: a number of seconds" }}
+      {{- end }}
+      tolerations:
+        - key: node.kubernetes.io/out-of-service
+          operator: Exists
+          effect: NoExecute
+          tolerationSeconds: {{ int .Values.outOfServiceTolerationSeconds }}
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
