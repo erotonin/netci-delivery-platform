@@ -1,0 +1,95 @@
+{
+  "scenario": "resume",
+  "failure": "node-poweroff-supervised",
+  "seconds": 240,
+  "job": "once-probe",
+  "build": 86,
+  "ticksBeforeFailure": 22,
+  "agentNode": "netci-lab-2",
+  "agentPod": "spike-ws-bcqlh",
+  "agentLog": "lab/evidence/agent-spike-ws-bcqlh.log",
+  "controllerNodeBefore": "netci-lab-3",
+  "leaseHolderBefore": "jenkins-0/71a8acda-8986-4d31-825c-a59d1788d115",
+  "supervisorBefore": {
+    "leader": "netci-supervisor-6bbcf645c9-vssmh",
+    "netci-supervisor-6bbcf645c9-4x954": {
+      "node": "netci-lab-3",
+      "leading": 0.0,
+      "observation_resets_total": 1.0,
+      "observe_errors_total": 0.0
+    },
+    "netci-supervisor-6bbcf645c9-vssmh": {
+      "node": "netci-lab-1",
+      "leading": 1.0,
+      "observation_resets_total": 1.0,
+      "observe_errors_total": 0.0
+    }
+  },
+  "leadersBefore": {
+    "controller-manager": "netci-lab-1",
+    "scheduler": "netci-lab-3",
+    "csi-attacher": "netci-lab-3"
+  },
+  "failureAt": "2026-10-09T08:29:16.158+00:00",
+  "supervisorAfter": {
+    "leader": "netci-supervisor-6bbcf645c9-vssmh",
+    "netci-supervisor-6bbcf645c9-vd4f9": {
+      "node": "netci-lab-2",
+      "leading": 0.0,
+      "observation_resets_total": 1.0,
+      "observe_errors_total": 0.0
+    },
+    "netci-supervisor-6bbcf645c9-vssmh": {
+      "node": "netci-lab-1",
+      "leading": 1.0,
+      "observation_resets_total": 1.0,
+      "observe_errors_total": 0.0
+    }
+  },
+  "controllerNodeAfter": "netci-lab-1",
+  "result": "SUCCESS",
+  "reachedStageAfter": true,
+  "ticksSeen": 241,
+  "ticksMissing": [],
+  "resumed": true,
+  "consoleTail": [
+    "[Pipeline] }",
+    "[Pipeline] // stage",
+    "[Pipeline] stage",
+    "[Pipeline] { (after)",
+    "[Pipeline] echo",
+    "reached the stage after the long step",
+    "[Pipeline] }",
+    "[Pipeline] // stage",
+    "[Pipeline] }",
+    "[Pipeline] // node",
+    "[Pipeline] End of Pipeline",
+    "Finished: SUCCESS"
+  ],
+  "once": {
+    "markers": 1,
+    "firstStarts": 1,
+    "refused": false
+  },
+  "timings_s": {
+    "fenced": 3.2,
+    "leaseTaken": 19.5,
+    "jenkinsUp": 41.9,
+    "resumed": 43.3
+  },
+  "nodeRestoredBySupervisor": true,
+  "supervisorEvents": [
+    "2026-10-09T08:29:21Z Fenced: machine netci-lab-3 confirmed off while fencing cell-a/jenkins; lease released",
+    "2026-10-09T08:23:42Z Fenced: machine netci-lab-2 confirmed off in 187ms; lease released, node netci-lab-2 out of service (707ms in all); the cells' pods are deleted once the storage has settled",
+    "2026-10-09T08:14:40Z TakeoverComplete: jenkins-0/6f873acc-a217-4fa3-ae0b-d07982476873 holds the lease (epoch 169) 19.0s after the last renewal by jenkins-0/2c075913-6d03-4136-88a2-a0f8260e89fe",
+    "2026-10-09T07:47:44Z TakeoverComplete: jenkins-0/2c075913-6d03-4136-88a2-a0f8260e89fe holds the lease (epoch 168) 30.0s after the last renewal by jenkins-0/fdbdf50e-5f64-40c3-be26-28bb946a14f5",
+    "2026-10-09T07:47:36Z NoTakeoverHeadroom: no other machine could take the controller if netci-lab-3 were lost: [netci-lab-1: 1820m CPU and 1926348Ki memory left for 1040m and 2112Mi netci-lab-2: not Ready]",
+    "2026-10-09T07:47:20Z Fenced: machine netci-lab-2 confirmed off in 183ms; lease released, node netci-lab-2 out of service (2.865s in all); the cells' pods are deleted once the storage has settled",
+    "2026-10-09T08:19:38Z Fenced: machine netci-lab-1 confirmed off while fencing cell-a/jenkins; lease released",
+    "2026-10-09T07:54:17Z NoTakeoverHeadroom: no other machine could take the controller if netci-lab-3 were lost: [netci-lab-1: 1820m CPU and 1926348Ki memory left for 1040m and 2112Mi netci-lab-2: not Ready]",
+    "2026-10-09T07:44:26Z NoTakeoverHeadroom: no other machine could take the controller if netci-lab-2 were lost: [netci-lab-1: taint netci.io/probe-placement netci-lab-3: taint netci.io/probe-placement]",
+    "2026-10-09T07:30:46Z NoTakeoverHeadroom: no other machine could take the controller if netci-lab-3 were lost: [netci-lab-1: 1820m CPU and 1926348Ki memory left for 1040m and 2112Mi netci-lab-2: not Ready]"
+  ],
+  "startedAt": "20261009T152840",
+  "jenkinsVersion": "2.555.3"
+}

@@ -62,7 +62,8 @@ emulator that answers at once and always succeeds:
 - **Scale with real storage and Jenkins.** The scale test measures the control plane's share
   (detection, fencing, the Lease); a takeover in the lab spends ~22 s moving the volume and ~17 s
   starting Jenkins, out of ~51 s (chaos series 19). Neither depends on the number of cells, but
-  a storage system moving many volumes at once is untested.
+  a storage system moving many volumes at once is untested. *Since measured (ADR-070): eight
+  Longhorn volumes moved as fast as one; the first pod deleted paid ~10 s, now avoided.*
 
 ## Rejected
 

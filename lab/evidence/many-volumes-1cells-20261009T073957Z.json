@@ -1,0 +1,11 @@
+{
+  "scenario": "many-volumes-poweroff",
+  "cells": 1,
+  "storageClass": "longhorn-sync",
+  "volumeSize": "128Mi",
+  "standin": "172.17.0.1:8930/netci/lab-standin@sha256:ce842bb2f2236d7dee3504fb147b36eea23b430104dc0c1bea3c6d7b2efb8087",
+  "startedAt": "2026-10-09T07:39:57+00:00",
+  "runs": [],
+  "verdict": "FAIL",
+  "error": "Command '['helm', 'upgrade', '--install', 'vol-01', '/home/deployer/netci-delivery-platform/deploy/helm/netci-cell', '-n', 'vol-01', '-f', '/home/deployer/netci-delivery-platform/deploy/helm/netci-cell/ci/lab-values.yaml', '--set', 'image.controller=172.17.0.1:8930/netci/lab-standin@sha256:ce842bb2f2236d7dee3504fb147b36eea23b430104dc0c1bea3c6d7b2efb8087', '--set', 'netci.repository=172.17.0.1:8930/netci/netci', '--set', 'netci.digest=sha256:7d326e8fe121301745e449d04f01140c7e031883689f7ff54bf1ffc0f4efc866', '--set', 'storage.className=longhorn-sync', '--set', 'storage.size=128Mi', '--set', 'pluginsFromImageOnly=false', '--set', 'resources.requests.cpu=10m', '--set', 'resources.requests.memory=16Mi', '--set', 'resources.limits.memory=64Mi', '--set', 'terminationGracePeriodSeconds=10', '--wait', '--timeout', '5m']' returned non-zero exit status 1."
+}

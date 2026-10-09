@@ -5,6 +5,18 @@ Changelog and releases use Semantic Versioning once the project reaches 1.0.0.
 
 ## [Unreleased]
 
+### Fixed - 2026-10-09: many volumes at once, and a pod deleted while it renewed (ADR-070)
+- **Safety.** When fencing stopped because another cell on the machine still renewed its Lease
+  (a wrong node-to-machine mapping), the recovery deleted that running controller's pod a second
+  later. Only pods whose Lease was released for them or has expired are deleted now.
+- **Storage.** Eight volumes moved at once as fast as one (lab, every fsynced write intact). The
+  pod deleted first paid ~10 s while Longhorn still took in the node loss (5 of 5): the cells'
+  pods now go `supervisor.storageSettle` (3 s) after fencing, and tolerate the out-of-service
+  taint for `outOfServiceTolerationSeconds` (30) so taint eviction does not go first. Measured:
+  the penalty in 1 of 7 single-cell runs; the whole takeover's gain is within the lab's spread.
+- A machine is fenced once, not once per cell on it.
+- Lab: `lab/spike/many_volumes_probe.py`, `lab/spike/standin/`.
+
 ### Fixed - 2026-10-09: real BMCs, scale, and running builds (ADR-069)
 - **Fencing with real BMCs.** A ForceOff that failed ended the fencing: iDRAC's 409 "already
   powered OFF", a slow BMC's late answer, a busy one's 503. Fencing now asks again until its

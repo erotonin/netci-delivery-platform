@@ -1,0 +1,95 @@
+{
+  "scenario": "resume",
+  "failure": "node-poweroff-supervised",
+  "seconds": 240,
+  "job": "once-probe",
+  "build": 84,
+  "ticksBeforeFailure": 50,
+  "agentNode": "netci-lab-3",
+  "agentPod": "spike-ws-hb2r5",
+  "agentLog": "lab/evidence/agent-spike-ws-hb2r5.log",
+  "controllerNodeBefore": "netci-lab-1",
+  "leaseHolderBefore": "jenkins-0/6f873acc-a217-4fa3-ae0b-d07982476873",
+  "supervisorBefore": {
+    "leader": "netci-supervisor-6bbcf645c9-ft42j",
+    "netci-supervisor-6bbcf645c9-b9rlb": {
+      "node": "netci-lab-1",
+      "leading": 0.0,
+      "observation_resets_total": 1.0,
+      "observe_errors_total": 0.0
+    },
+    "netci-supervisor-6bbcf645c9-ft42j": {
+      "node": "netci-lab-2",
+      "leading": 1.0,
+      "observation_resets_total": 1.0,
+      "observe_errors_total": 0.0
+    }
+  },
+  "leadersBefore": {
+    "controller-manager": "netci-lab-1",
+    "scheduler": "netci-lab-1",
+    "csi-attacher": "netci-lab-1"
+  },
+  "failureAt": "2026-10-09T08:19:33.178+00:00",
+  "supervisorAfter": {
+    "leader": "netci-supervisor-6bbcf645c9-ft42j",
+    "netci-supervisor-6bbcf645c9-ft42j": {
+      "node": "netci-lab-2",
+      "leading": 1.0,
+      "observation_resets_total": 1.0,
+      "observe_errors_total": 0.0
+    },
+    "netci-supervisor-6bbcf645c9-ndsgg": {
+      "node": "netci-lab-3",
+      "leading": 0.0,
+      "observation_resets_total": 1.0,
+      "observe_errors_total": 0.0
+    }
+  },
+  "controllerNodeAfter": "netci-lab-2",
+  "result": "SUCCESS",
+  "reachedStageAfter": true,
+  "ticksSeen": 240,
+  "ticksMissing": [],
+  "resumed": true,
+  "consoleTail": [
+    "[Pipeline] }",
+    "[Pipeline] // stage",
+    "[Pipeline] stage",
+    "[Pipeline] { (after)",
+    "[Pipeline] echo",
+    "reached the stage after the long step",
+    "[Pipeline] }",
+    "[Pipeline] // stage",
+    "[Pipeline] }",
+    "[Pipeline] // node",
+    "[Pipeline] End of Pipeline",
+    "Finished: SUCCESS"
+  ],
+  "once": {
+    "markers": 1,
+    "firstStarts": 1,
+    "refused": false
+  },
+  "timings_s": {
+    "fenced": 3.1,
+    "leaseTaken": 44.2,
+    "jenkinsUp": 63.8,
+    "resumed": 69.4
+  },
+  "nodeRestoredBySupervisor": true,
+  "supervisorEvents": [
+    "2026-10-09T07:37:16Z NoTakeoverHeadroom: no other machine could take the controller if netci-lab-3 were lost: [netci-lab-1: 1820m CPU and 1926348Ki memory left for 1040m and 2112Mi netci-lab-2: not Ready]",
+    "2026-10-09T08:20:17Z TakeoverComplete: jenkins-0/a8aff3a1-5a5e-4576-9121-71de763b7fea holds the lease (epoch 170) 45.0s after the last renewal by jenkins-0/6f873acc-a217-4fa3-ae0b-d07982476873",
+    "2026-10-09T08:14:40Z TakeoverComplete: jenkins-0/6f873acc-a217-4fa3-ae0b-d07982476873 holds the lease (epoch 169) 19.0s after the last renewal by jenkins-0/2c075913-6d03-4136-88a2-a0f8260e89fe",
+    "2026-10-09T07:47:44Z TakeoverComplete: jenkins-0/2c075913-6d03-4136-88a2-a0f8260e89fe holds the lease (epoch 168) 30.0s after the last renewal by jenkins-0/fdbdf50e-5f64-40c3-be26-28bb946a14f5",
+    "2026-10-09T07:47:36Z NoTakeoverHeadroom: no other machine could take the controller if netci-lab-3 were lost: [netci-lab-1: 1820m CPU and 1926348Ki memory left for 1040m and 2112Mi netci-lab-2: not Ready]",
+    "2026-10-09T07:47:20Z Fenced: machine netci-lab-2 confirmed off in 183ms; lease released, node netci-lab-2 out of service (2.865s in all); the cells' pods are deleted once the storage has settled",
+    "2026-10-09T08:19:38Z Fenced: machine netci-lab-1 confirmed off while fencing cell-a/jenkins; lease released",
+    "2026-10-09T07:54:17Z NoTakeoverHeadroom: no other machine could take the controller if netci-lab-3 were lost: [netci-lab-1: 1820m CPU and 1926348Ki memory left for 1040m and 2112Mi netci-lab-2: not Ready]",
+    "2026-10-09T07:44:26Z NoTakeoverHeadroom: no other machine could take the controller if netci-lab-2 were lost: [netci-lab-1: taint netci.io/probe-placement netci-lab-3: taint netci.io/probe-placement]",
+    "2026-10-09T07:30:46Z NoTakeoverHeadroom: no other machine could take the controller if netci-lab-3 were lost: [netci-lab-1: 1820m CPU and 1926348Ki memory left for 1040m and 2112Mi netci-lab-2: not Ready]"
+  ],
+  "startedAt": "20261009T151831",
+  "jenkinsVersion": "2.555.3"
+}
