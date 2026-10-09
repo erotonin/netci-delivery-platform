@@ -5,6 +5,19 @@ Changelog and releases use Semantic Versioning once the project reaches 1.0.0.
 
 ## [Unreleased]
 
+### Fixed - 2026-10-09: real BMCs, scale, and running builds (ADR-069)
+- **Fencing with real BMCs.** A ForceOff that failed ended the fencing: iDRAC's 409 "already
+  powered OFF", a slow BMC's late answer, a busy one's 503. Fencing now asks again until its
+  deadline and only a refusal ends it. The power timeouts are settings; the off timeout is 60 s
+  (a BMC answering in 1.5 s, busy once and 8 s late took 22 s, past the old 20 s).
+- **Scale.** Each observation made two requests per cell: 4.0 s at 100 cells and 11.9 s at 300,
+  so fencing took 12-17 s. Now two lists: 0.1 s at 600 cells, fencing 2.7-2.9 s. New metric
+  `netci_supervisor_observation_seconds` and alert `NetciSupervisorSlowObservations`.
+- **Running builds.** They now carry a disruption budget: a takeover that needs room preempts
+  idle sandboxes first (real kube-scheduler: 0/5 builds preempted, 5/5 without the budget).
+- Lab: `lab/redfish.sh quirks` (a BMC that behaves like a real one), `lab/scale/run.sh` (kwok),
+  `lab/scale/preemption.py`, `lab/spike/headroom_probe.py`.
+
 ### Added - 2026-10-02: production checks -- hung machines, untrusted builds in VMs, real monitoring
 - **Hung machines** (running, answering nothing) are powered off by the supervisor through
   Redfish and taken over: 6/6 in the lab through sushy-tools' emulator, machine off 19-22 s after
