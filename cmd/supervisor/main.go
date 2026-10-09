@@ -47,6 +47,9 @@ func run(log *slog.Logger) error {
 	if pod == "" || ns == "" {
 		return errors.New("POD_NAME and POD_NAMESPACE must come from the downward API")
 	}
+	// Taken before the configuration is read: a change between the two is caught too.
+	fenceDir := getenv("NETCI_FENCE_DIR", "/etc/netci/fence")
+	fenceAt, fpErr := fence.Fingerprint(fenceDir)
 	fencer, machines, err := powerControllers()
 	if err != nil {
 		return err
@@ -121,6 +124,32 @@ func run(log *slog.Logger) error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer stop()
 	go kubeclient.Discover(ctx, client, apiservers, 10*time.Second, log)
+	// The power controllers' configuration is read once: a change -- a rotated BMC password, a
+	// machine added -- is applied by starting again, which loads it and checks the mapping
+	// against it before acting. Kept, a rotated password would fail every state query and
+	// nothing would be fenced. The kubelet updates the two replicas' volumes at different times.
+	var fenceChanged atomic.Bool
+	if fpErr == nil {
+		go func() {
+			t := time.NewTicker(10 * time.Second)
+			defer t.Stop()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-t.C:
+				}
+				if now, err := fence.Fingerprint(fenceDir); err == nil && now != fenceAt {
+					log.Warn("the power controllers' configuration changed: starting again to load it and check it", "dir", fenceDir)
+					fenceChanged.Store(true)
+					stop()
+					return
+				}
+			}
+		}()
+	} else {
+		log.Warn("cannot fingerprint the power controllers' configuration; a change to it needs a restart", "dir", fenceDir, "error", fpErr)
+	}
 
 	for {
 		err := supervisor.ValidateMachines(ctx, client, fencer, machines, 3*time.Second, 12*time.Second)
@@ -232,6 +261,9 @@ func run(log *slog.Logger) error {
 	shutdown, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	_ = server.Shutdown(shutdown)
+	if fenceChanged.Load() {
+		return errors.New("the power controllers' configuration changed; restarting to load it")
+	}
 	return nil
 }
 
