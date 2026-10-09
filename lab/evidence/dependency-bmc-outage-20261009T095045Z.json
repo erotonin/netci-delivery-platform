@@ -1,0 +1,17 @@
+{
+  "scenario": "bmc-outage",
+  "started": "2026-10-09T09:50:45+00:00",
+  "tag": "bmc-outage-20261009T095045",
+  "build": 93,
+  "node": "netci-lab-1",
+  "actedWhileUnknown": [],
+  "alerts": [
+    "2026-10-09T09:51:31Z cell-b/jenkins SupervisorAlert: the controller stopped renewing and the power state of netci-lab-1 is unknown: not fencing on a guess"
+  ],
+  "fencedAfterBmcBackSeconds": 0.1,
+  "buildResult": "SUCCESS",
+  "markers": 1,
+  "ticksMissing": [],
+  "takeoverSeconds": 221.5,
+  "verdict": "PASS"
+}
