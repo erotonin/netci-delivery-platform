@@ -1,0 +1,89 @@
+{
+  "scenario": "scale",
+  "nodes": 100,
+  "cells": 300,
+  "started": "2026-10-09T03:50:24Z",
+  "steady": {
+    "count": 90,
+    "meanSeconds": 0.039,
+    "p50Seconds": 0.05,
+    "p99Seconds": 0.25,
+    "cpuCores": 0.04366511422727584,
+    "rssMiB": 43.2
+  },
+  "duringKills": {
+    "count": 194,
+    "meanSeconds": 0.037,
+    "p50Seconds": 0.05,
+    "p99Seconds": 0.25
+  },
+  "kills": [
+    {
+      "node": "fake-000",
+      "cells": 3,
+      "heldAgainSeconds": [
+        2.9,
+        4.9,
+        4.9
+      ],
+      "notHeldAgain": 0,
+      "nodeTaintedSeconds": 2.6,
+      "machineBackSeconds": 38.7
+    },
+    {
+      "node": "fake-001",
+      "cells": 4,
+      "heldAgainSeconds": [
+        3.2,
+        5.2,
+        5.2,
+        5.2
+      ],
+      "notHeldAgain": 0,
+      "nodeTaintedSeconds": 3,
+      "machineBackSeconds": 40.1
+    },
+    {
+      "node": "fake-000",
+      "cells": 4,
+      "heldAgainSeconds": [
+        3.1,
+        5.1,
+        5.1,
+        5.1
+      ],
+      "notHeldAgain": 0,
+      "nodeTaintedSeconds": 2.9,
+      "machineBackSeconds": 40
+    },
+    {
+      "node": "fake-001",
+      "cells": 4,
+      "heldAgainSeconds": [
+        3.2,
+        5.1,
+        5.1,
+        5.1
+      ],
+      "notHeldAgain": 0,
+      "nodeTaintedSeconds": 2.8,
+      "machineBackSeconds": 39.9
+    },
+    {
+      "node": "fake-000",
+      "cells": 4,
+      "heldAgainSeconds": [
+        3.2,
+        5.2,
+        5.2,
+        5.2
+      ],
+      "notHeldAgain": 0,
+      "nodeTaintedSeconds": 3,
+      "machineBackSeconds": 39.9
+    }
+  ],
+  "supervisorObservationResets": 1,
+  "supervisorObserveErrors": 0,
+  "verdict": "PASS"
+}

@@ -1,0 +1,64 @@
+{
+  "scenario": "scale",
+  "nodes": 200,
+  "cells": 600,
+  "started": "2026-10-09T03:45:03Z",
+  "steady": {
+    "count": 90,
+    "meanSeconds": 0.105,
+    "p50Seconds": 0.1,
+    "p99Seconds": 0.25,
+    "cpuCores": 0.1574104485763276,
+    "rssMiB": 53.3
+  },
+  "duringKills": {
+    "count": 112,
+    "meanSeconds": 0.106,
+    "p50Seconds": 0.1,
+    "p99Seconds": 0.25
+  },
+  "kills": [
+    {
+      "node": "fake-035",
+      "cells": 4,
+      "heldAgainSeconds": [
+        2.9,
+        5,
+        5,
+        5
+      ],
+      "notHeldAgain": 0,
+      "nodeTaintedSeconds": 2.7,
+      "machineBackSeconds": 34.8
+    },
+    {
+      "node": "fake-036",
+      "cells": 4,
+      "heldAgainSeconds": [
+        3.1,
+        5.1,
+        5.1,
+        5.7
+      ],
+      "notHeldAgain": 0,
+      "nodeTaintedSeconds": 2.9,
+      "machineBackSeconds": 39
+    },
+    {
+      "node": "fake-038",
+      "cells": 4,
+      "heldAgainSeconds": [
+        3.2,
+        5.2,
+        5.6,
+        5.6
+      ],
+      "notHeldAgain": 0,
+      "nodeTaintedSeconds": 2.9,
+      "machineBackSeconds": 41
+    }
+  ],
+  "supervisorObservationResets": 1,
+  "supervisorObserveErrors": 0,
+  "verdict": "PASS"
+}
