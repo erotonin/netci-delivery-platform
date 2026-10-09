@@ -1,0 +1,40 @@
+{
+  "scenario": "headroom-running-build",
+  "cell": "cell-a",
+  "cellNode": "netci-lab-2",
+  "controllerNeeds": {
+    "cpuMilli": 1040,
+    "memoryMiB": 2112
+  },
+  "freeBefore": {
+    "netci-lab-1": {
+      "cpuMilli": 1520,
+      "memoryMiB": 2869,
+      "evictableMiB": 2048
+    },
+    "netci-lab-2": {
+      "cpuMilli": 1190,
+      "memoryMiB": 309,
+      "evictableMiB": 192
+    },
+    "netci-lab-3": {
+      "cpuMilli": 1695,
+      "memoryMiB": 2713,
+      "evictableMiB": 1600
+    }
+  },
+  "buildMiB": 192,
+  "arranged": {
+    "full": [
+      "netci-lab-3"
+    ],
+    "roomOnlyUnderABuild": "netci-lab-1"
+  },
+  "headroomZeroAfterSeconds": 26.0,
+  "alertPendingAfterSeconds": 56.0,
+  "event": "no other machine could take the controller if netci-lab-2 were lost: [netci-lab-1: 3500m CPU and 2097360Ki memory left for 1040m and 2112Mi netci-lab-3: 3035m CPU and 1704144Ki memory left for 1040m and 2112Mi]",
+  "alertFiringAfterSeconds": 656,
+  "headroomBackAfterSeconds": 30.0,
+  "verdict": "PASS",
+  "alertFiringNote": "From Prometheus' ALERTS history: pending 02:36:03Z, firing 02:46:03Z (the rule's 10 m), resolved by 02:46:58Z after the build label was removed. The probe recorded 1201.4 from a wrong formula, since fixed."
+}
