@@ -39,6 +39,10 @@ type RedfishConfig struct {
 	System      string `json:"system"`
 	Credentials string `json:"credentials"`
 	ServerName  string `json:"serverName,omitempty"`
+	// RequestTimeout bounds each request to the BMC ("5s" by default). A BMC that takes longer
+	// to answer reads as Unknown and is never fenced, so set it from the BMC's measured
+	// latency.
+	RequestTimeout string `json:"requestTimeout,omitempty"`
 }
 
 type SSHConfig struct {
@@ -121,6 +125,13 @@ func loadRedfish(c *RedfishConfig) (*Redfish, error) {
 		return nil, fmt.Errorf("redfish credentials: %w", err)
 	}
 	pin := RedfishTLS{ServerName: c.ServerName, RequestTimeout: 5 * time.Second}
+	if c.RequestTimeout != "" {
+		d, err := time.ParseDuration(c.RequestTimeout)
+		if err != nil || d <= 0 || d > time.Minute {
+			return nil, fmt.Errorf("redfish requestTimeout %q: a duration up to 1m", c.RequestTimeout)
+		}
+		pin.RequestTimeout = d
+	}
 	if ca, err := os.ReadFile(filepath.Join(c.Credentials, "ca.crt")); err == nil {
 		pin.CAPEM = ca
 	}

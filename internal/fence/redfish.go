@@ -198,7 +198,7 @@ func (r *Redfish) do(ctx context.Context, method, path string, body any, out any
 	defer resp.Body.Close()
 	data, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		return fmt.Errorf("redfish %s %s: HTTP %d%s", method, path, resp.StatusCode, redfishMessage(data))
+		return &HTTPError{Method: method, Path: path, Status: resp.StatusCode, Message: redfishMessage(data)}
 	}
 	if out == nil {
 		return nil
@@ -209,14 +209,42 @@ func (r *Redfish) do(ctx context.Context, method, path string, body any, out any
 	return nil
 }
 
+// HTTPError is a BMC's non-2xx answer.
+type HTTPError struct {
+	Method, Path string
+	Status       int
+	Message      string
+}
+
+func (e *HTTPError) Error() string {
+	return fmt.Sprintf("redfish %s %s: HTTP %d%s", e.Method, e.Path, e.Status, e.Message)
+}
+
+// Refused: the request itself is wrong or not allowed. 409 is not a refusal: iDRAC answers it
+// for "already off" and while it settles after a power change.
+func (e *HTTPError) Refused() bool {
+	switch e.Status {
+	case http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound, http.StatusMethodNotAllowed:
+		return true
+	}
+	return false
+}
+
 // redfishMessage extracts the standard error message, if any, without echoing the whole body.
+// iDRAC puts it under error.@Message.ExtendedInfo; that is used when error.message is empty.
 func redfishMessage(data []byte) string {
 	var e struct {
 		Error struct {
-			Message string `json:"message"`
+			Message  string `json:"message"`
+			Extended []struct {
+				Message string `json:"Message"`
+			} `json:"@Message.ExtendedInfo"`
 		} `json:"error"`
 	}
-	if json.Unmarshal(data, &e) == nil && e.Error.Message != "" {
+	if json.Unmarshal(data, &e) == nil && e.Error.Message == "" && len(e.Error.Extended) > 0 {
+		e.Error.Message = e.Error.Extended[0].Message
+	}
+	if e.Error.Message != "" {
 		msg := e.Error.Message
 		if len(msg) > 200 {
 			msg = msg[:200]

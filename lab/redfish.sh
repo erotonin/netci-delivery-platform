@@ -6,6 +6,8 @@
 #   lab/redfish.sh start    install (venv), generate TLS and credentials once, start the emulator
 #   lab/redfish.sh stop
 #   lab/redfish.sh secret   (re)create the supervisor's fence Secret and print the Helm values
+#   lab/redfish.sh quirks start|stop   a real BMC's behaviour in front of it, on port 8001
+#                                      (lab/redfish-quirks.py); then BMC_PORT=8001 for secret
 #
 # The emulator may act on netci-lab-1..3 only (SUSHY_EMULATOR_ALLOWED_INSTANCES, by libvirt UUID):
 # the host's other VMs are not visible through it. It listens on the libvirt network's host
@@ -61,12 +63,27 @@ case "${1:-}" in
     echo "the emulator did not answer; see ${R}/emulator.log" >&2; exit 1 ;;
   stop)
     [[ -s "${R}/pid" ]] && kill "$(cat "${R}/pid")" 2>/dev/null || true; rm -f "${R}/pid" ;;
+  quirks)
+    case "${2:-}" in
+      start)
+        if [[ -s "${R}/quirks.pid" ]] && kill -0 "$(cat "${R}/quirks.pid")" 2>/dev/null; then echo "running"; exit 0; fi
+        nohup python3 "${ROOT}/lab/redfish-quirks.py" "${R}" > "${R}/quirks.log" 2>&1 &
+        echo $! > "${R}/quirks.pid"
+        for _ in $(seq 1 20); do
+          curl -s --cacert "${R}/tls.crt" -o /dev/null -w '%{http_code}' "https://${LISTEN}:8001/redfish/v1/" 2>/dev/null | grep -qE '200|401' && { echo "quirks up on 8001"; exit 0; }
+          sleep 1
+        done
+        echo "the quirks proxy did not answer; see ${R}/quirks.log" >&2; exit 1 ;;
+      stop) [[ -s "${R}/quirks.pid" ]] && kill "$(cat "${R}/quirks.pid")" 2>/dev/null || true; rm -f "${R}/quirks.pid" ;;
+      *) echo "usage: lab/redfish.sh quirks start|stop" >&2; exit 2 ;;
+    esac ;;
   secret)
-    python3 - "${R}" "${LISTEN}" "${PORT}" "$(uuids | paste -sd' ' -)" <<'PY' > "${R}/fence.json"
+    python3 - "${R}" "${LISTEN}" "${BMC_PORT:-${PORT}}" "$(uuids | paste -sd' ' -)" "${REQUEST_TIMEOUT:-}" <<'PY' > "${R}/fence.json"
 import json, sys
-r, listen, port, uuids = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4].split()
+r, listen, port, uuids, timeout = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4].split(), sys.argv[5]
 nodes = {f"netci-lab-{i+1}": {"redfish": {"endpoint": f"https://{listen}:{port}", "system": f"/redfish/v1/Systems/{u}",
-                                          "credentials": "/etc/netci/fence/bmc"}} for i, u in enumerate(uuids)}
+                                          "credentials": "/etc/netci/fence/bmc", **({"requestTimeout": timeout} if timeout else {})}}
+         for i, u in enumerate(uuids)}
 print(json.dumps({"nodes": nodes}, indent=1))
 PY
     printf 'netci' > "${R}/username"

@@ -66,6 +66,9 @@ func run(log *slog.Logger) error {
 	}
 	interval := duration("NETCI_INTERVAL", time.Second, &errs)
 	offTimeout := duration("NETCI_OFF_TIMEOUT", 20*time.Second, &errs)
+	// How long one power-state query may take. A BMC slower than this reads as Unknown and is
+	// never fenced: raise it, with the BMC's requestTimeout in fence.json, to the BMC's latency.
+	stateTimeout := duration("NETCI_POWER_QUERY_TIMEOUT", 3*time.Second, &errs)
 	// How long one API request may go unanswered before its connections are dropped and a read
 	// is sent again (internal/kubeclient). Raise it only for an API server that is slow to start
 	// answering the supervisor's lists.
@@ -133,7 +136,7 @@ func run(log *slog.Logger) error {
 
 	sup := &supervisor.Supervisor{
 		Collector: &supervisor.Collector{Client: client, Leases: client.CoordinationV1(), Fencer: fencer, Machines: machines,
-			Config: cfg, Clock: clock.RealClock{}, MaxGap: 3 * interval, StateTimeout: 3 * time.Second},
+			Config: cfg, Clock: clock.RealClock{}, MaxGap: 3 * interval, StateTimeout: stateTimeout},
 		Executor: &supervisor.Executor{Client: client, Leases: client.CoordinationV1(), Fencer: fencer, Clock: clock.RealClock{},
 			Log: log, Events: &supervisor.KubeEvents{Client: client, Instance: pod, Log: log}, Metrics: metrics, OffTimeout: offTimeout,
 			QuietCheck: 2 * time.Second},

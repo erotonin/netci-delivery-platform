@@ -185,6 +185,10 @@ spec:
               value: {{ .Values.supervisor.autoPowerOn | quote }}
             - name: NETCI_PANIC_FRACTION
               value: {{ .Values.supervisor.panicFraction | quote }}
+            - name: NETCI_POWER_QUERY_TIMEOUT
+              value: {{ .Values.supervisor.power.queryTimeout | quote }}
+            - name: NETCI_OFF_TIMEOUT
+              value: {{ .Values.supervisor.power.offTimeout | quote }}
           ports:
             - name: metrics
               containerPort: 9090

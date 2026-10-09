@@ -27,6 +27,13 @@ supervisor:
     items: []
   autoPowerOn: false
   panicFraction: 0.5
+  # Power controllers' timing. queryTimeout bounds each power-state query: a BMC slower than it
+  # reads as Unknown and is never fenced (set Redfish's requestTimeout in fence.json to match).
+  # offTimeout: how long a machine has, after the power-off, to report Off. Real BMCs answer in
+  # 0.5-3 s and report Off seconds after a ForceOff; measure yours (docs/INSTALL.md).
+  power:
+    queryTimeout: 3s
+    offTimeout: 20s
 
 queue:
   enabled: true
