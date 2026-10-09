@@ -189,6 +189,8 @@ spec:
               value: {{ .Values.supervisor.power.queryTimeout | quote }}
             - name: NETCI_OFF_TIMEOUT
               value: {{ .Values.supervisor.power.offTimeout | quote }}
+            - name: NETCI_STORAGE_SETTLE
+              value: {{ .Values.supervisor.storageSettle | quote }}
           ports:
             - name: metrics
               containerPort: 9090

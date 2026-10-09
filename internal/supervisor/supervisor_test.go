@@ -350,15 +350,25 @@ func TestAPowerLossIsFencedWithinTheLeaseDurationAndInTheSafeOrder(t *testing.T)
 	l.kill("netci-lab-1")
 	l.power.set("netci-lab-1", fence.Off)
 
-	took := l.until("fencing", 30, func() bool { return l.has("delete-pod jenkins-0") })
+	took := l.until("fencing", 30, func() bool { return l.has("taint netci-lab-1") })
 	if took > 4 {
 		t.Fatalf("fenced %d s after the power loss; a machine found off is fenced %s after the last renewal", took, l.sup.Config.SuspectAfter)
 	}
 	if l.has("power-off netci-lab-1") {
 		t.Fatal("powered off a machine that was already off")
 	}
-	l.inOrder("confirmed-off netci-lab-1", "release-lease jenkins", "taint netci-lab-1", "not-ready netci-lab-1", "delete-pod jenkins-0",
-		"delete-pod longhorn-manager-a")
+	// The cell's pod goes once the storage has taken in that the node is gone, and not before:
+	// its deletion starts the volume's detach (Config.StorageSettle).
+	settle := l.sup.Config.StorageSettle
+	if l.has("delete-pod jenkins-0") {
+		t.Fatal("deleted the cell's pod with the taint, before the storage had settled")
+	}
+	after := time.Duration(l.until("the cell's pod deleted", 10, func() bool { return l.has("delete-pod jenkins-0") })) * time.Second
+	if after < settle || after > settle+time.Second {
+		t.Fatalf("the cell's pod was deleted %s after the taint; want %s", after, settle)
+	}
+	l.inOrder("confirmed-off netci-lab-1", "release-lease jenkins", "taint netci-lab-1", "not-ready netci-lab-1", "delete-pod longhorn-manager-a",
+		"confirmed-off netci-lab-1", "delete-pod jenkins-0")
 	if l.has("delete-pod longhorn-manager-b") {
 		t.Fatal("deleted a pod on a machine that is running")
 	}
@@ -415,10 +425,11 @@ func TestAPowerLossDuringAnAPIStallIsFencedAsSoonAsTheAPIAnswers(t *testing.T) {
 	l.mu.Lock()
 	l.apiDown = false
 	l.mu.Unlock()
-	took := l.until("fencing", 30, func() bool { return l.has("delete-pod jenkins-0") })
+	took := l.until("fencing", 30, func() bool { return l.has("taint netci-lab-1") })
 	if took > 1 {
 		t.Fatalf("fenced %d s after the API answered again; the Lease had not changed for 6 s", took)
 	}
+	l.until("the cell's pod deleted", 5, func() bool { return l.has("delete-pod jenkins-0") })
 	if testutil.ToFloat64(l.metrics.resets) < 2 { // the start, and the gap
 		t.Fatal("the stall did not reset the observations: the test does not exercise the gap")
 	}
@@ -444,7 +455,7 @@ func TestARenewalMadeJustBeforeTheStallDoesNotRestartTheCount(t *testing.T) {
 	l.mu.Lock()
 	l.apiDown = false
 	l.mu.Unlock()
-	if took := l.until("fencing", 30, func() bool { return l.has("delete-pod jenkins-0") }); took > 1 {
+	if took := l.until("fencing", 30, func() bool { return l.has("taint netci-lab-1") }); took > 1 {
 		t.Fatalf("fenced %d s after the API answered again, counting from a renewal made 5 s before", took)
 	}
 }
@@ -505,11 +516,21 @@ func TestAnotherCellWhoseHolderStillRenewsIsLeftAlone(t *testing.T) {
 	if got.Spec.HolderIdentity == nil || *got.Spec.HolderIdentity != "jenkins-0/uid-c" {
 		t.Fatal("released the Lease of a holder that renewed while the supervisor waited")
 	}
-	if _, err := l.kube.CoreV1().Pods("cell-c").Get(ctx, "jenkins-0", metav1.GetOptions{}); err != nil {
-		t.Fatal("deleted the pod of a cell whose holder still renews")
-	}
 	if !l.events.has("FenceAborted") {
 		t.Fatal("the contradiction was not reported")
+	}
+	// Nor later: the node stays fenced and its machine off, and the recovery of a fenced node
+	// deleted every cell pod still bound to it -- this one too, a second after the fencing had
+	// refused to.
+	for i := 0; i < 10; i++ {
+		l.renew("cell-c", "jenkins")
+		l.second()
+		if _, err := l.kube.CoreV1().Pods("cell-c").Get(ctx, "jenkins-0", metav1.GetOptions{}); err != nil {
+			t.Fatalf("deleted the pod of a cell whose holder still renews, %d s after fencing", i+1)
+		}
+	}
+	if !l.events.has("SupervisorAlert") {
+		t.Fatal("the pod left on the fenced node was not reported")
 	}
 }
 
@@ -701,7 +722,7 @@ func TestAStandbyObservesButDoesNotActAndActsAtOnceWhenItLeads(t *testing.T) {
 	// It becomes the leader: its observations are already old enough to act on, at once.
 	leading = true
 	l.second()
-	if !l.has("delete-pod jenkins-0") {
+	if !l.has("taint netci-lab-1") {
 		t.Fatalf("the new leader waited to observe again: %v", l.opsCopy())
 	}
 }

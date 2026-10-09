@@ -37,6 +37,12 @@ supervisor:
   power:
     queryTimeout: 3s
     offTimeout: 60s
+  # How long after fencing a machine the cells' pods on it are deleted, which starts their volumes'
+  # detach. Asked for while the storage is still taking in that the node is gone, a detach can
+  # wait for the dead machine: in the lab, Longhorn spent ~10 s on each cell deleted within 0.3 s
+  # (5 of 5). The cells' Leases are released at fencing, so nothing else waits. "0" for storage
+  # that does not need it.
+  storageSettle: 3s
 
 queue:
   enabled: true

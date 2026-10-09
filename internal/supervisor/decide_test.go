@@ -287,8 +287,77 @@ func TestTheCooldownStopsAPowerOffLoop(t *testing.T) {
 func TestACellOnAFencedNodeIsLeftToRecovery(t *testing.T) {
 	in := world()
 	expire(&in.Cells[0], time.Minute)
-	node(in, "netci-lab-1", func(n *NodeView) { n.Fenced, n.MachineState, n.KubeletFresh, n.CellPods = true, fence.Off, false, 1 })
-	only(t, Decide(in, cfg()), ForceDeletePods)
+	node(in, "netci-lab-1", func(n *NodeView) {
+		n.Fenced, n.MachineState, n.KubeletFresh, n.CellPods, n.FencedFor = true, fence.Off, false, 1, cfg().StorageSettle
+	})
+	a := only(t, Decide(in, cfg()), ForceDeletePods)
+	if len(a.Pods) != 1 || a.Pods[0] != (PodRef{Namespace: "cell-a", Name: "jenkins-0", UID: "uid-cell-a"}) {
+		t.Fatalf("%+v", a.Pods)
+	}
+}
+
+// The cells' pods on a fenced node go once the storage has had StorageSettle to take in that the
+// node is gone: deleting one starts its volume's detach, and one asked for sooner waited for the
+// dead machine (lab: ~10 s, 5 of 5). And only a pod that no longer renews its Lease -- released
+// for it at fencing, or expired. One still renewing is running somewhere, whatever the power
+// controller says of this machine: it is never deleted, and a person is told.
+func TestCellPodsOnAFencedNodeGoAfterTheStorageSettledAndOnlyIfSilent(t *testing.T) {
+	c := cfg()
+	in := world()
+	released := cell("cell-a", "netci-lab-1")
+	released.LeaseHolder = "" // given up by the supervisor when it fenced the machine
+	renewing := cell("cell-b", "netci-lab-1")
+	expired := cell("cell-c", "netci-lab-1")
+	expire(&expired, time.Minute)
+	elsewhere := cell("cell-d", "netci-lab-2")
+	elsewhere.LeaseHolder = ""
+	in.Cells = []CellView{released, renewing, expired, elsewhere}
+	fenced := func(after time.Duration) {
+		node(in, "netci-lab-1", func(n *NodeView) {
+			n.Fenced, n.MachineState, n.KubeletFresh, n.CellPods, n.FencedFor = true, fence.Off, false, 3, after
+		})
+	}
+	// The renewing cell's alert stands whenever it is looked at; nothing is deleted before the settle.
+	fenced(c.StorageSettle - time.Millisecond)
+	for _, a := range Decide(in, c) {
+		if a.Kind == ForceDeletePods {
+			t.Fatalf("deleted before the storage settled: %+v", a)
+		}
+	}
+	fenced(c.StorageSettle)
+	var del *Action
+	alerts := 0
+	for _, a := range Decide(in, c) {
+		switch a.Kind {
+		case ForceDeletePods:
+			a := a
+			del = &a
+		case Alert:
+			alerts++
+			if a.Namespace != "cell-b" || !strings.Contains(a.Reason, "still renews") {
+				t.Fatalf("%+v", a)
+			}
+		default:
+			t.Fatalf("%+v", a)
+		}
+	}
+	if del == nil || alerts != 1 {
+		t.Fatalf("delete %+v, alerts %d", del, alerts)
+	}
+	want := []PodRef{{"cell-a", "jenkins-0", "uid-cell-a"}, {"cell-c", "jenkins-0", "uid-cell-c"}}
+	if len(del.Pods) != 2 || del.Pods[0] != want[0] || del.Pods[1] != want[1] || del.Node != "netci-lab-1" {
+		t.Fatalf("%+v", del)
+	}
+	// Zero: at the first observation of the fenced node.
+	c.StorageSettle = 0
+	fenced(0)
+	found := false
+	for _, a := range Decide(in, c) {
+		found = found || a.Kind == ForceDeletePods
+	}
+	if !found {
+		t.Fatal("StorageSettle 0 did not delete at once")
+	}
 }
 
 func TestRecoveryOfAFencedNode(t *testing.T) {
@@ -307,7 +376,9 @@ func TestRecoveryOfAFencedNode(t *testing.T) {
 	only(t, Decide(fenced(func(*NodeView) {}), c), PowerOn)
 	none(t, Decide(fenced(func(n *NodeView) { n.Attachments = 1 }), c))
 	none(t, Decide(fenced(func(n *NodeView) { n.FencedFor = time.Second }), c))
-	only(t, Decide(fenced(func(n *NodeView) { n.CellPods = 2 }), c), ForceDeletePods)
+	in.Cells = []CellView{{Namespace: "cell-a", Name: "jenkins", Pod: "jenkins-0", PodUID: "u", PodExists: true, PodNode: "netci-lab-1"}}
+	only(t, Decide(fenced(func(n *NodeView) { n.CellPods = 1 }), c), ForceDeletePods)
+	in.Cells = nil
 	none(t, Decide(fenced(func(n *NodeView) { n.MachineState = fence.Unknown }), c))
 	none(t, Decide(fenced(func(n *NodeView) { n.MachineState = fence.Running }), c)) // booting: not Ready yet
 	only(t, Decide(fenced(func(n *NodeView) { n.MachineState, n.Ready, n.KubeletFresh = fence.Running, true, true }), c), Unfence)

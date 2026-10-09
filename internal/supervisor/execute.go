@@ -165,11 +165,8 @@ func (e *Executor) fenceNode(ctx context.Context, a Action, l *coordinationv1.Le
 	if err := e.markNotReady(ctx, a.Node); err != nil {
 		log.Warn("could not mark the node not ready; storage will wait for Kubernetes to", "error", err)
 	}
-	// 4. Delete the pod now rather than wait for the pod garbage collector's next pass. Only the
-	// pod that held the Lease: the UID precondition never touches a replacement.
-	if err := e.deletePod(ctx, a, true); err != nil {
-		return err
-	}
+	// 4. The cell's pod is not deleted here: ForceDeletePods does, Config.StorageSettle after the
+	// taint, once the storage has taken in that the node is gone.
 	// 5. Every other cell whose controller is on this machine is as dead as this one: give its
 	// Lease up too, before its pod goes. Otherwise its replacement finds the Lease held by a pod
 	// that no longer exists and waits out the Lease's duration (seen in the lab: 16 s more for the
@@ -179,10 +176,11 @@ func (e *Executor) fenceNode(ctx context.Context, a Action, l *coordinationv1.Le
 		// be running after all. The fenced cell is done; the node's other pods are left alone.
 		return fmt.Errorf("%w: another cell on node %s renewed its lease; not deleting the node's other pods", ErrLeaseMoved, a.Node)
 	}
-	// 6. And every other pod on the machine: Kubernetes force-deletes them too once the node is
-	// out of service, but only on the pod garbage collector's next pass (every 20 s). The storage
-	// waits for that: Longhorn moves a volume only once the dead node's own longhorn-manager pod
-	// is gone (in the lab, 30 s of a takeover). The machine is off; nothing on it is running.
+	// 6. Every pod on the machine but the cells': Kubernetes force-deletes them too once the node
+	// is out of service, but only on the pod garbage collector's next pass (every 20 s). The
+	// storage waits for that: Longhorn moves a volume only once the dead node's own
+	// longhorn-manager pod is gone (in the lab, 30 s of a takeover). The machine is off; nothing
+	// on it is running.
 	if n, err := e.deletePodsOn(ctx, a.Node); err != nil {
 		log.Warn("could not delete the other pods of the fenced node; the pod garbage collector will", "error", err)
 	} else if n > 0 {
@@ -190,7 +188,7 @@ func (e *Executor) fenceNode(ctx context.Context, a Action, l *coordinationv1.Le
 	}
 	done := e.Clock.Now()
 	e.Metrics.fenceSeconds.Observe(done.Sub(began).Seconds())
-	e.Events.Event(cellRef, true, "Fenced", fmt.Sprintf("machine %s confirmed off in %s; lease released, node %s out of service, pod deleted (%s in all)",
+	e.Events.Event(cellRef, true, "Fenced", fmt.Sprintf("machine %s confirmed off in %s; lease released, node %s out of service (%s in all); the cells' pods are deleted once the storage has settled",
 		a.Machine, offAt.Sub(began).Round(time.Millisecond), a.Node, done.Sub(began).Round(time.Millisecond)))
 	log.Warn("cell fenced", "machine_off_after", offAt.Sub(began), "total", done.Sub(began), "epoch", lease.EpochOf(l))
 	return nil
@@ -286,6 +284,9 @@ func (e *Executor) deletePodsOn(ctx context.Context, node string) (int, error) {
 		// that runs is the one thing this must never do.
 		if p.Spec.NodeName != node {
 			continue
+		}
+		if _, cell := p.Labels[CellLabel]; cell {
+			continue // ForceDeletePods, after Config.StorageSettle
 		}
 		uid := p.UID
 		err := e.Client.CoreV1().Pods(p.Namespace).Delete(ctx, p.Name, metav1.DeleteOptions{
@@ -401,24 +402,20 @@ func (e *Executor) deletePod(ctx context.Context, a Action, force bool) error {
 	return nil
 }
 
-// forceDeleteOnFencedNode finishes a fencing that stopped between the taint and the deletion.
-// It asks the power controller again first: force-deleting is only safe on a machine that is off.
+// forceDeleteOnFencedNode deletes the cells' pods on a fenced node that Decide named: those whose
+// Lease was released for them or has expired. It asks the power controller again first:
+// force-deleting is only safe on a machine that is off. Each deletion carries the UID observed,
+// so a replacement of the same name is never touched.
 func (e *Executor) forceDeleteOnFencedNode(ctx context.Context, a Action) error {
 	state, err := e.Fencer.State(ctx, a.Machine)
 	if err != nil || state != fence.Off {
 		return fmt.Errorf("machine %s no longer reports off (%s, %v): not force-deleting", a.Machine, state, err)
 	}
-	pods, err := e.Client.CoreV1().Pods(metav1.NamespaceAll).List(ctx, metav1.ListOptions{
-		LabelSelector: CellLabel, FieldSelector: "spec.nodeName=" + a.Node})
-	if err != nil {
-		return err
-	}
-	for _, p := range pods.Items {
-		pa := Action{Namespace: p.Namespace, Pod: p.Name, PodUID: string(p.UID)}
-		if err := e.deletePod(ctx, pa, true); err != nil {
+	for _, p := range a.Pods {
+		if err := e.deletePod(ctx, Action{Namespace: p.Namespace, Pod: p.Name, PodUID: p.UID}, true); err != nil {
 			return err
 		}
-		e.Log.Warn("force-deleted a cell pod left on a fenced node", "pod", p.Namespace+"/"+p.Name, "node", a.Node)
+		e.Log.Warn("force-deleted a cell pod on a fenced node", "pod", p.Namespace+"/"+p.Name, "node", a.Node)
 	}
 	return nil
 }

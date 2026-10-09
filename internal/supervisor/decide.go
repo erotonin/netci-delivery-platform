@@ -48,12 +48,21 @@ type Config struct {
 	// alive elsewhere (a wrong mapping) would have renewed meanwhile. Power losses -- the commonest
 	// failure -- are taken over seconds sooner; a hung or cut-off machine still waits for expiry.
 	SuspectAfter time.Duration
+	// StorageSettle: how long after the taint the cells' pods on a fenced node are deleted. Their
+	// deletion starts the volumes' detach, and one asked for while the storage is still taking in
+	// that the node is gone can wait for the dead machine: in the lab, every pod deleted within
+	// 0.3 s of its node being marked not ready (5 of 5) cost its takeover about 10 s more, while
+	// Longhorn tried to reach the engine on the machine that was off before it gave up and the
+	// detach was retried (lab/spike/many_volumes_probe.py, ADR-070). The Leases are released at
+	// fencing, so nothing else waits meanwhile. Zero: at the next observation.
+	StorageSettle time.Duration
 }
 
 // DefaultConfig is the production default.
 func DefaultConfig() Config {
 	return Config{NodeStale: 20 * time.Second, StuckPodAfter: 30 * time.Second, Cooldown: 2 * time.Minute,
-		PanicFraction: 0.5, PowerOnAfter: 30 * time.Second, SuspectAfter: 3 * time.Second}
+		PanicFraction: 0.5, PowerOnAfter: 30 * time.Second, SuspectAfter: 3 * time.Second,
+		StorageSettle: 3 * time.Second}
 }
 
 // CellView is what was observed of one cell.
@@ -132,12 +141,13 @@ type Kind string
 
 const (
 	// FenceNode: power the machine off if PowerOff, confirm it is off, release the cell's Lease
-	// on behalf of the fenced holder, add the out-of-service taint, force-delete the cell's pod.
+	// on behalf of the fenced holder, add the out-of-service taint, delete the node's other pods.
+	// The cells' pods are left to ForceDeletePods (Config.StorageSettle).
 	FenceNode Kind = "FenceNode"
 	// DeletePod: the node's kubelet is alive; delete the controller pod gracefully.
 	DeletePod Kind = "DeletePod"
-	// ForceDeletePods: the node is fenced and its machine off, but cell pods are still bound
-	// to it (the executor stopped between the taint and the deletion).
+	// ForceDeletePods: the node is fenced and its machine off, and cell pods (Action.Pods) are
+	// still bound to it: those whose Lease was released for them or has expired.
 	ForceDeletePods Kind = "ForceDeletePods"
 	// Unfence: the machine is running again and its node Ready; remove the taint.
 	Unfence Kind = "Unfence"
@@ -156,10 +166,15 @@ type Action struct {
 	PodUID    string
 	Node      string
 	Machine   string
-	Holder    string // the identity being fenced
-	PowerOff  bool   // FenceNode: the machine is running and must be stopped first
+	Holder    string   // the identity being fenced
+	PowerOff  bool     // FenceNode: the machine is running and must be stopped first
+	Pods      []PodRef // ForceDeletePods: the pods to delete, each only if it is still the pod observed
 	Reason    string
 }
+
+// PodRef names one pod as observed: a deletion carries its UID, so that it never touches a
+// replacement of the same name.
+type PodRef struct{ Namespace, Name, UID string }
 
 // Decide returns what to do about the observed cluster. At most one machine that is running is
 // powered off per decision; the next decision sees its effect.
@@ -376,7 +391,15 @@ func recovery(in Input, cfg Config) []Action {
 		a := Action{Node: n.Name, Machine: n.Machine}
 		switch {
 		case n.MachineState == fence.Off && n.CellPods > 0:
-			a.Kind, a.Reason = ForceDeletePods, "the node is fenced and its machine off, but cell pods are still bound to it"
+			if n.FencedFor < cfg.StorageSettle {
+				continue // the storage is still taking in that the node is gone
+			}
+			deletable, alerts := cellPodsToDelete(in, n)
+			actions = append(actions, alerts...)
+			if len(deletable) == 0 {
+				continue
+			}
+			a.Kind, a.Pods, a.Reason = ForceDeletePods, deletable, "the node is fenced and its machine off, but cell pods are still bound to it"
 		case n.MachineState == fence.Running && n.Ready && n.KubeletFresh:
 			a.Kind, a.Reason = Unfence, "the machine is running again and its node is Ready"
 		case cfg.AutoPowerOn && settled && n.MachineState == fence.Off && n.CellPods == 0 && n.Attachments == 0 && n.FencedFor >= cfg.PowerOnAfter:
@@ -387,6 +410,28 @@ func recovery(in Input, cfg Config) []Action {
 		actions = append(actions, a)
 	}
 	return actions
+}
+
+// cellPodsToDelete: the cell pods bound to a fenced node whose Lease no longer names them -- the
+// supervisor released it when fencing -- or names them but has expired. A pod that still renews
+// is running somewhere, whatever the power controller says of this node's machine (a wrong
+// mapping): it is never deleted, and a person is told.
+func cellPodsToDelete(in Input, n NodeView) ([]PodRef, []Action) {
+	var pods []PodRef
+	var alerts []Action
+	for _, c := range in.Cells {
+		if !c.PodExists || c.PodNode != n.Name {
+			continue
+		}
+		if c.holdsLease() && !c.LeaseExpired {
+			alerts = append(alerts, Action{Kind: Alert, Namespace: c.Namespace, Cell: c.Name, Node: n.Name, Reason: fmt.Sprintf(
+				"node %s is fenced and machine %s reports off, yet %s/%s still renews its Lease: not deleting it; check the node-to-machine mapping",
+				n.Name, n.Machine, c.Namespace, c.Pod)})
+			continue
+		}
+		pods = append(pods, PodRef{Namespace: c.Namespace, Name: c.Pod, UID: c.PodUID})
+	}
+	return pods, alerts
 }
 
 // quorumWithout reports whether, without skip, the control-plane nodes still heartbeating are a

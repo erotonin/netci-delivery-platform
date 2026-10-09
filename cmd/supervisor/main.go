@@ -60,6 +60,7 @@ func run(log *slog.Logger) error {
 	cfg.StuckPodAfter = duration("NETCI_STUCK_POD_AFTER", cfg.StuckPodAfter, &errs)
 	cfg.Cooldown = duration("NETCI_COOLDOWN", cfg.Cooldown, &errs)
 	cfg.PowerOnAfter = duration("NETCI_POWER_ON_AFTER", cfg.PowerOnAfter, &errs)
+	cfg.StorageSettle = durationOrZero("NETCI_STORAGE_SETTLE", cfg.StorageSettle, &errs)
 	cfg.AutoPowerOn = os.Getenv("NETCI_AUTO_POWER_ON") == "true"
 	if v := os.Getenv("NETCI_PANIC_FRACTION"); v != "" {
 		f, err := strconv.ParseFloat(v, 64)
@@ -193,7 +194,7 @@ func run(log *slog.Logger) error {
 		LockConfig: resourcelock.ResourceLockConfig{Identity: pod},
 	}
 	log.Info("supervisor starting", "identity", pod, "interval", interval, "node_stale", cfg.NodeStale,
-		"auto_power_on", cfg.AutoPowerOn, "panic_fraction", cfg.PanicFraction)
+		"auto_power_on", cfg.AutoPowerOn, "panic_fraction", cfg.PanicFraction, "storage_settle", cfg.StorageSettle)
 	// Losing the leader lease (an API stall can cause it) puts the replica back into the
 	// election instead of exiting: a restart cost 13 s in the lab. The supervisor's
 	// observations start over in either case, so nothing seen before the loss is acted on.
@@ -358,6 +359,14 @@ func getenv(key, def string) string {
 		return v
 	}
 	return def
+}
+
+// durationOrZero is duration, where zero is a setting too (off).
+func durationOrZero(key string, def time.Duration, errs *[]error) time.Duration {
+	if v := os.Getenv(key); v == "0" || v == "0s" {
+		return 0
+	}
+	return duration(key, def, errs)
 }
 
 func duration(key string, def time.Duration, errs *[]error) time.Duration {
