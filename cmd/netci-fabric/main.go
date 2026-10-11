@@ -82,7 +82,8 @@ func run(log *slog.Logger) error {
 	store := &fabric.Store{Pool: pool}
 	bindings := fabric.NewBindings()
 	recon := &fabric.Reconciler{Store: store, Client: client, Pods: cfg.Settings(), Pools: cfg.PoolMap(), Bindings: bindings,
-		Clock: clock.RealClock{}, Log: log, Metrics: metrics, BindTimeout: 2 * time.Minute, StartTimeout: 5 * time.Minute}
+		Clock: clock.RealClock{}, Log: log, Metrics: metrics, BindTimeout: 2 * time.Minute, WarmBindTimeout: 15 * time.Second,
+		StartTimeout: 5 * time.Minute}
 	api := &fabric.API{Store: store, Client: client, Pods: cfg.Settings(), Pools: cfg.PoolMap(), Cells: cfg.Cells,
 		Bindings: bindings, Recon: recon, Log: log, Metrics: metrics, LongPoll: 30 * time.Second}
 

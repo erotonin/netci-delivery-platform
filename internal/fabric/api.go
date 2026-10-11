@@ -45,6 +45,7 @@ func (a *API) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /v1/claims", a.claim)
 	mux.HandleFunc("DELETE /v1/claims/{id}", a.release)
+	mux.HandleFunc("GET /v1/claims/{id}", a.claimState)
 	mux.HandleFunc("GET /v1/binding", a.binding)
 	mux.HandleFunc("GET /v1/state", a.state)
 	return mux
@@ -152,6 +153,32 @@ func busy(live []*Sandbox, pool string) int {
 		}
 	}
 	return n
+}
+
+// claimState tells a controller what became of its claim: while it waits for the sandbox's
+// agent, it stops as soon as the fabric has given the claim up, instead of waiting out its own
+// connect timeout (lab: a claim given up after 2 minutes kept a build waiting 5).
+func (a *API) claimState(w http.ResponseWriter, r *http.Request) {
+	cell, ok := a.cell(r)
+	if !ok {
+		problem(w, http.StatusUnauthorized, "a cell token is required")
+		return
+	}
+	id, err := uuid.Parse(r.PathValue("id"))
+	if err != nil {
+		problem(w, http.StatusNotFound, "no such claim")
+		return
+	}
+	sb, err := a.Store.Get(r.Context(), id)
+	if errors.Is(err, ErrNotFound) || (err == nil && sb.Cell != cell) {
+		problem(w, http.StatusNotFound, "no such claim")
+		return
+	}
+	if err != nil {
+		problem(w, http.StatusServiceUnavailable, "try again")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"id": sb.ID, "state": sb.State, "reason": sb.Reason})
 }
 
 func (a *API) release(w http.ResponseWriter, r *http.Request) {

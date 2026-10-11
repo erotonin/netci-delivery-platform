@@ -1,0 +1,152 @@
+{
+  "scenario": "fabric-timeline",
+  "started": "2026-10-11T10:21:51+00:00",
+  "runs": 5,
+  "builds": {
+    "fabric-probe": [
+      {
+        "build": 36,
+        "result": "SUCCESS",
+        "agent": "netci-standard-3ed964d8",
+        "triggerToDone": 354.81,
+        "fromTrigger": {
+          "started": 0.14,
+          "runningOn": 353.52,
+          "stepOutput": 354.73,
+          "finished": 354.81,
+          "claimed": 350.23
+        }
+      },
+      {
+        "build": 37,
+        "result": "SUCCESS",
+        "agent": "netci-standard-76297388",
+        "triggerToDone": 4.53,
+        "fromTrigger": {
+          "started": 0.1,
+          "runningOn": 3.2,
+          "stepOutput": 4.46,
+          "finished": 4.53,
+          "claimed": 0.2
+        }
+      },
+      {
+        "build": 38,
+        "result": "SUCCESS",
+        "agent": "netci-standard-14d76b0a",
+        "triggerToDone": 4.76,
+        "fromTrigger": {
+          "started": 0.1,
+          "runningOn": 3.45,
+          "stepOutput": 4.68,
+          "finished": 4.76,
+          "claimed": 0.39
+        }
+      },
+      {
+        "build": 39,
+        "result": "SUCCESS",
+        "agent": "netci-standard-c27fd605",
+        "triggerToDone": 5.78,
+        "fromTrigger": {
+          "started": 0.1,
+          "runningOn": 4.55,
+          "stepOutput": 5.71,
+          "finished": 5.78,
+          "claimed": 1.21
+        }
+      },
+      {
+        "build": 40,
+        "result": "SUCCESS",
+        "agent": "netci-standard-828cc662",
+        "triggerToDone": 4.87,
+        "fromTrigger": {
+          "started": 0.1,
+          "runningOn": 3.64,
+          "stepOutput": 4.79,
+          "finished": 4.87,
+          "claimed": 0.26
+        }
+      }
+    ],
+    "k8s-probe": [
+      {
+        "build": 14,
+        "result": "SUCCESS",
+        "agent": "spike-ws-28pjr",
+        "triggerToDone": 4.56,
+        "fromTrigger": {
+          "started": 0.09,
+          "runningOn": 3.74,
+          "stepOutput": 4.46,
+          "finished": 4.56
+        }
+      },
+      {
+        "build": 15,
+        "result": "SUCCESS",
+        "agent": "spike-ws-zh791",
+        "triggerToDone": 2.78,
+        "fromTrigger": {
+          "started": 0.1,
+          "runningOn": 1.88,
+          "stepOutput": 2.7,
+          "finished": 2.78
+        }
+      },
+      {
+        "build": 16,
+        "result": "SUCCESS",
+        "agent": "spike-ws-6fzpr",
+        "triggerToDone": 3.67,
+        "fromTrigger": {
+          "started": 0.1,
+          "runningOn": 2.78,
+          "stepOutput": 3.59,
+          "finished": 3.67
+        }
+      },
+      {
+        "build": 17,
+        "result": "SUCCESS",
+        "agent": "spike-ws-h99c5",
+        "triggerToDone": 4.44,
+        "fromTrigger": {
+          "started": 0.1,
+          "runningOn": 3.61,
+          "stepOutput": 4.35,
+          "finished": 4.44
+        }
+      },
+      {
+        "build": 18,
+        "result": "SUCCESS",
+        "agent": "spike-ws-l2q2h",
+        "triggerToDone": 4.51,
+        "fromTrigger": {
+          "started": 0.1,
+          "runningOn": 3.67,
+          "stepOutput": 4.43,
+          "finished": 4.51
+        }
+      }
+    ]
+  },
+  "fabric-probe": {
+    "started": 0.1,
+    "runningOn": 3.64,
+    "stepOutput": 4.79,
+    "finished": 4.87,
+    "claimed": 0.39,
+    "triggerToDone": 4.87
+  },
+  "k8s-probe": {
+    "started": 0.1,
+    "runningOn": 3.61,
+    "stepOutput": 4.35,
+    "finished": 4.44,
+    "triggerToDone": 4.44
+  },
+  "verdict": "PASS"
+}

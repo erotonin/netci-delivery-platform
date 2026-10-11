@@ -27,6 +27,9 @@ type Reconciler struct {
 	Metrics  *Metrics
 	// BindTimeout: a claim whose sandbox has not taken its binding by then is given up.
 	BindTimeout time.Duration
+	// WarmBindTimeout: the same for a claim of a warm sandbox, which takes its binding within a
+	// second; one that has not by then is broken, and is failed. Zero: BindTimeout.
+	WarmBindTimeout time.Duration
 	// StartTimeout: a sandbox not warm by then (image pull stuck, unschedulable) is failed.
 	StartTimeout time.Duration
 }
@@ -96,8 +99,14 @@ func (r *Reconciler) one(ctx context.Context, sb *Sandbox, pod *corev1.Pod, now 
 			r.move(ctx, sb, Failed, "", "not warm within the start timeout")
 		}
 	case Warm:
-		if pod == nil || terminated {
+		switch {
+		case pod == nil || terminated:
 			r.move(ctx, sb, Failed, "", "the warm pod disappeared or ended")
+		case !ready(pod):
+			// A sandbox is ready once the fabric has answered it, and stays so: one that is not has
+			// lost its container (lab: after machine restarts, containers that could not start
+			// again). Handed out, it never takes its binding and the build waits.
+			r.move(ctx, sb, Failed, "", "the warm pod is no longer ready")
 		}
 	case Claimed:
 		switch {
@@ -105,6 +114,9 @@ func (r *Reconciler) one(ctx context.Context, sb *Sandbox, pod *corev1.Pod, now 
 			r.createPod(ctx, sb) // claimed before it existed
 		case pod == nil || terminated:
 			r.move(ctx, sb, Failed, "", "the claimed pod disappeared or ended")
+		case !sb.Cold && r.WarmBindTimeout > 0 && sb.ClaimedAt != nil && now.Sub(*sb.ClaimedAt) > r.WarmBindTimeout:
+			r.Bindings.Drop(sb.ID)
+			r.move(ctx, sb, Failed, "", "a warm sandbox did not take its binding within "+r.WarmBindTimeout.String())
 		case sb.ClaimedAt != nil && now.Sub(*sb.ClaimedAt) > r.BindTimeout:
 			r.Bindings.Drop(sb.ID)
 			r.move(ctx, sb, Released, "", "not bound within the bind timeout")

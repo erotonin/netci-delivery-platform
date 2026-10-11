@@ -12,6 +12,8 @@ import jenkins.model.Jenkins;
  * claim carries the node's inbound secret: the sandbox can become this agent and nothing else.
  */
 public final class NetciLauncher extends JNLPLauncher {
+    private static final long ASK_EVERY = TimeUnit.SECONDS.toNanos(2);
+
     public NetciLauncher() {
         super();
         setWebSocket(true);
@@ -46,9 +48,26 @@ public final class NetciLauncher extends JNLPLauncher {
                 listener.getLogger().printf("netCI: sandbox %s (%s) claimed for %s%n", claim.pod(), claim.warm() ? "warm" : "created for this claim", agent.getNodeName());
             }
             long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(cloud.getConnectTimeoutSeconds());
+            long ask = System.nanoTime() + ASK_EVERY;
             while (!computer.isOnline()) {
                 if (System.nanoTime() > deadline) {
                     throw new IOException("the sandbox did not connect within " + cloud.getConnectTimeoutSeconds() + " s");
+                }
+                // The fabric gives a claim up when its sandbox does not take its binding (a broken
+                // warm sandbox, 15 s): stop waiting then, and Jenkins asks again. Waiting out the
+                // connect timeout instead kept a build of the lab waiting 353 s. A fabric that does
+                // not answer is waited for, as before.
+                if (System.nanoTime() > ask) {
+                    ask = System.nanoTime() + ASK_EVERY;
+                    String state = null;
+                    try {
+                        state = cloud.client().state(agent.getClaimId());
+                    } catch (IOException e) {
+                        // not answered now: ask again later
+                    }
+                    if (state != null && !state.startsWith("claimed") && !state.startsWith("bound")) {
+                        throw new IOException("the fabric gave the claimed sandbox up: " + state);
+                    }
                 }
                 Thread.sleep(200);
             }

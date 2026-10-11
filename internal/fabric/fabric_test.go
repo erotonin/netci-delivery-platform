@@ -405,3 +405,82 @@ func TestAWarmSandboxMayBeEvictedAndAClaimedOneNot(t *testing.T) {
 	}
 	t.Fatalf("no pod %v for the cold claim", cold["pod"])
 }
+
+// After a night of machine restarts the lab's warm sandboxes included pods whose container could
+// not start again: Running, never Ready, so never answering a binding. They stayed "warm", a
+// build's claim took one, and the controller waited out its connect timeout before asking again
+// -- one build waited 353 s. A warm pod that is not ready is failed and replaced, never handed out.
+func TestAWarmSandboxWhosePodIsNotReadyIsNeverHandedOut(t *testing.T) {
+	w := newWorld(t, 2, 4)
+	w.tick()
+	w.start()
+	w.tick()
+	pods := w.pods()
+	broken := pods[0]
+	broken.Status.Conditions = []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionFalse}}
+	if _, err := w.kube.CoreV1().Pods(ns).Update(context.Background(), &broken, metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	w.tick()
+	if _, err := w.kube.CoreV1().Pods(ns).Get(context.Background(), broken.Name, metav1.GetOptions{}); err == nil {
+		t.Fatal("the unready warm pod was kept")
+	}
+	code, got := w.req("POST", "/v1/claims", "cell-b-token", claimBody("a"))
+	if code != http.StatusCreated && code != http.StatusOK {
+		t.Fatalf("claim: %d %v", code, got)
+	}
+	if got["pod"] == broken.Name {
+		t.Fatal("handed out the sandbox whose pod is not ready")
+	}
+}
+
+// A warm sandbox answers its binding within a second. One that has not after WarmBindTimeout is
+// broken: it is failed (and replaced), and the controller, which asks what became of its claim,
+// stops waiting. A claim that had to create its pod is given BindTimeout, as before.
+func TestAWarmClaimNotBoundQuicklyFailsItsSandbox(t *testing.T) {
+	w := newWorld(t, 1, 4)
+	w.recon.WarmBindTimeout = 15 * time.Second
+	w.tick()
+	w.start()
+	w.tick()
+	_, warm := w.req("POST", "/v1/claims", "cell-b-token", claimBody("warm"))
+	_, cold := w.req("POST", "/v1/claims", "cell-b-token", claimBody("cold")) // nothing warm left: created for it
+	if warm["warm"] != true || cold["warm"] != false {
+		t.Fatalf("warm %v, cold %v", warm, cold)
+	}
+	w.clk.Step(20 * time.Second)
+	w.tick()
+	if _, st := w.req("GET", "/v1/claims/"+warm["id"].(string), "cell-b-token", ""); st["state"] != string(Failed) {
+		t.Fatalf("the warm claim: %v", st)
+	}
+	if _, st := w.req("GET", "/v1/claims/"+cold["id"].(string), "cell-b-token", ""); st["state"] != string(Claimed) {
+		t.Fatalf("the cold claim was given up after 20 s: %v", st)
+	}
+	w.clk.Step(3 * time.Minute)
+	w.tick()
+	if _, st := w.req("GET", "/v1/claims/"+cold["id"].(string), "cell-b-token", ""); st["state"] != string(Released) {
+		t.Fatalf("the cold claim after BindTimeout: %v", st)
+	}
+}
+
+func TestOnlyTheClaimingCellCanAskAboutAClaim(t *testing.T) {
+	w := newWorld(t, 1, 2)
+	w.tick()
+	w.start()
+	w.tick()
+	_, c := w.req("POST", "/v1/claims", "cell-b-token", claimBody("a"))
+	id := c["id"].(string)
+	if code, st := w.req("GET", "/v1/claims/"+id, "cell-b-token", ""); code != http.StatusOK || st["state"] != string(Claimed) {
+		t.Fatalf("%d %v", code, st)
+	}
+	if code, _ := w.req("GET", "/v1/claims/"+id, "cell-c-token", ""); code != http.StatusNotFound {
+		t.Fatalf("another cell: %d", code)
+	}
+	if code, _ := w.req("GET", "/v1/claims/"+id, "", ""); code != http.StatusUnauthorized {
+		t.Fatalf("no token: %d", code)
+	}
+	w.req("DELETE", "/v1/claims/"+id, "cell-b-token", "")
+	if _, st := w.req("GET", "/v1/claims/"+id, "cell-b-token", ""); st["state"] != string(Released) {
+		t.Fatalf("after release: %v", st)
+	}
+}

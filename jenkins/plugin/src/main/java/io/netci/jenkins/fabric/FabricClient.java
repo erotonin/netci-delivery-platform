@@ -56,6 +56,21 @@ final class FabricClient {
         return new Claim(o.getString("id"), o.optString("pod"), o.optBoolean("warm"));
     }
 
+    /** What became of a claim: its state ("claimed", "bound", "released", "failed", ...), or "gone" if the fabric has no such claim. */
+    String state(String claimId) throws IOException, InterruptedException {
+        HttpResponse<String> r = HTTP.send(
+                request("/v1/claims/" + claimId).timeout(Duration.ofSeconds(5)).GET().build(), HttpResponse.BodyHandlers.ofString());
+        if (r.statusCode() == 404) {
+            return "gone";
+        }
+        if (r.statusCode() != 200) {
+            throw new IOException("fabric answered HTTP " + r.statusCode() + " about a claim: " + detail(r.body()));
+        }
+        JSONObject o = JSONObject.fromObject(r.body());
+        String reason = o.optString("reason", "");
+        return reason.isEmpty() ? o.optString("state") : o.optString("state") + " (" + reason + ")";
+    }
+
     void release(String claimId) throws IOException, InterruptedException {
         HttpResponse<String> r = HTTP.send(
                 request("/v1/claims/" + claimId).DELETE().build(), HttpResponse.BodyHandlers.ofString());

@@ -112,6 +112,9 @@ data:
                           - labelSelector: {matchLabels: {app: jenkins}}
                             topologyKey: kubernetes.io/hostname
     unclassified:
+      # Every Pipeline's console with timestamps: lab/spike/fabric_timeline.py reads where a build's seconds go.
+      timestamper:
+        allPipelines: true
       location:
         url: "http://jenkins.cell-a.svc.cluster.local:8080/"
       # netciOnce (ADR-065): markers in netci-queue's PostgreSQL, with a token that can do nothing else.

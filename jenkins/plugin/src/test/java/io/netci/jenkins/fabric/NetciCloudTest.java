@@ -46,6 +46,9 @@ class NetciCloudTest {
     private final Map<String, Process> agents = new ConcurrentHashMap<>();
     private final AtomicInteger refuse = new AtomicInteger();
     private final AtomicInteger granted = new AtomicInteger();
+    /** How many of the next granted claims get no agent and are reported failed, as the fabric does for a broken sandbox. */
+    private final AtomicInteger dead = new AtomicInteger();
+    private final Map<String, String> states = new ConcurrentHashMap<>();
 
     /** A fabric whose sandboxes are agent processes started on claim, as netci-sandbox would. */
     @BeforeEach
@@ -78,9 +81,17 @@ class NetciCloudTest {
             reply(ex, 401, "{}");
             return;
         }
+        if ("GET".equals(ex.getRequestMethod())) {
+            String id = ex.getRequestURI().getPath().substring("/v1/claims/".length());
+            String state = states.get(id);
+            reply(ex, state == null ? 404 : 200, state == null ? "{\"detail\":\"no such claim\"}"
+                    : new JSONObject().element("id", id).element("state", state).element("reason", "a warm sandbox did not take its binding").toString());
+            return;
+        }
         if ("DELETE".equals(ex.getRequestMethod())) {
             String id = ex.getRequestURI().getPath().substring("/v1/claims/".length());
             releases.add(id);
+            states.put(id, "released");
             Process p = agents.remove(id);
             if (p != null) {
                 p.destroy();
@@ -96,7 +107,12 @@ class NetciCloudTest {
         }
         String id = UUID.randomUUID().toString();
         granted.incrementAndGet();
-        agents.put(id, startAgent(c.getString("controller"), c.getString("agent"), c.getString("secret")));
+        if (dead.getAndDecrement() > 0) {
+            states.put(id, "failed"); // granted, and then given up: no agent will ever connect
+        } else {
+            states.put(id, "claimed");
+            agents.put(id, startAgent(c.getString("controller"), c.getString("agent"), c.getString("secret")));
+        }
         reply(ex, 200, new JSONObject().element("id", id).element("pod", "sbx-" + id.substring(0, 8)).element("warm", true).toString());
     }
 
@@ -177,6 +193,26 @@ class NetciCloudTest {
         // fabric granted must have been released, and nothing else.
         assertEquals(granted.get(), releases.size(), "granted claims and releases differ");
         assertTrue(granted.get() >= 1);
+    }
+
+    /**
+     * The fabric gives a claim up when its sandbox does not take its binding (a broken warm
+     * sandbox, 15 s). The launcher asks what became of its claim while it waits and stops at once,
+     * so Jenkins asks again; before, it waited out its connect timeout (lab: a build waited 353 s).
+     */
+    @Test
+    void aClaimTheFabricGaveUpOnIsAbandonedAtOnce() throws Exception {
+        dead.set(1);
+        FreeStyleProject p = r.createFreeStyleProject("after-a-dead-sandbox");
+        p.setAssignedLabel(Label.get("netci-linux"));
+        long t0 = System.nanoTime();
+        FreeStyleBuild b = p.scheduleBuild2(0).get(100, java.util.concurrent.TimeUnit.SECONDS);
+        long seconds = java.util.concurrent.TimeUnit.NANOSECONDS.toSeconds(System.nanoTime() - t0);
+        r.assertBuildStatusSuccess(b);
+        assertTrue(seconds < 60, "the build waited " + seconds + " s: the dead claim was waited out (connect timeout 120 s)");
+        assertTrue(granted.get() >= 2, "granted " + granted.get());
+        waitForNoSandboxNodes();
+        assertEquals(granted.get(), releases.size(), "a granted claim was not released");
     }
 
     @Test
