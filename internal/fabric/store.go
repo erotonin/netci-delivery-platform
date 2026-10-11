@@ -202,6 +202,13 @@ func (s *Store) SetPodUID(ctx context.Context, id uuid.UUID, uid string) error {
 }
 
 // Get returns one sandbox.
+// Now is the database's time: the clock every timestamp of the store is written in.
+func (s *Store) Now(ctx context.Context) (time.Time, error) {
+	var t time.Time
+	err := s.Pool.QueryRow(ctx, `SELECT now()`).Scan(&t)
+	return t, err
+}
+
 func (s *Store) Get(ctx context.Context, id uuid.UUID) (*Sandbox, error) {
 	sb, err := scan(s.Pool.QueryRow(ctx, `SELECT `+columns+` FROM sandboxes WHERE id = $1`, id))
 	if errors.Is(err, pgx.ErrNoRows) {

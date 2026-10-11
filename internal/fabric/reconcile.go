@@ -12,7 +12,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
-	"k8s.io/utils/clock"
 )
 
 // Reconciler makes the pods match the rows, and keeps each pool's warm sandboxes topped up.
@@ -22,9 +21,13 @@ type Reconciler struct {
 	Pods     PodSettings
 	Pools    map[string]Pool
 	Bindings *Bindings
-	Clock    clock.PassiveClock
-	Log      *slog.Logger
-	Metrics  *Metrics
+	// Now is the time the store's timestamps are written in: the database's clock (Store.Now) when
+	// nil. Claims and starts are timed against it, never against this process's clock -- the
+	// lab's database ran on a machine that resumed 197 s behind the others after a pause, and the
+	// fabric gave up every claim at its next pass.
+	Now     func(context.Context) (time.Time, error)
+	Log     *slog.Logger
+	Metrics *Metrics
 	// BindTimeout: a claim whose sandbox has not taken its binding by then is given up.
 	BindTimeout time.Duration
 	// WarmBindTimeout: the same for a claim of a warm sandbox, which takes its binding within a
@@ -44,13 +47,16 @@ func (r *Reconciler) Tick(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	now, err := r.now(ctx)
+	if err != nil {
+		return err
+	}
 	byName := map[string]*corev1.Pod{}
 	for i := range pods.Items {
 		byName[pods.Items[i].Name] = &pods.Items[i]
 	}
 	live := map[string]bool{}
 	count := map[string]map[State]int{}
-	now := r.Clock.Now()
 	for _, sb := range rows {
 		live[sb.Pod] = true
 		if count[sb.Pool] == nil {
@@ -82,6 +88,13 @@ func (r *Reconciler) Tick(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+func (r *Reconciler) now(ctx context.Context) (time.Time, error) {
+	if r.Now != nil {
+		return r.Now(ctx)
+	}
+	return r.Store.Now(ctx)
 }
 
 func (r *Reconciler) one(ctx context.Context, sb *Sandbox, pod *corev1.Pod, now time.Time) {

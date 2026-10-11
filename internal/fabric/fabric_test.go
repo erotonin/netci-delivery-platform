@@ -88,7 +88,13 @@ func newWorld(t *testing.T, warm, max int) *world {
 	ps := PodSettings{Namespace: ns, ServiceAccount: "netci-sandbox", BootstrapImage: "netci/netci:x", FabricURL: "http://fabric", Audience: "netci-fabric",
 		PriorityClass: "netci-sandbox"}
 	b := NewBindings()
-	recon := &Reconciler{Store: s, Client: kube, Pods: ps, Pools: pools, Bindings: b, Clock: clk, Log: log, Metrics: m,
+	// The reconciler's time is the database's, moved on as far as the test steps its clock.
+	start := clk.Now()
+	dbNow := func(ctx context.Context) (time.Time, error) {
+		t, err := s.Now(ctx)
+		return t.Add(clk.Since(start)), err
+	}
+	recon := &Reconciler{Store: s, Client: kube, Pods: ps, Pools: pools, Bindings: b, Now: dbNow, Log: log, Metrics: m,
 		BindTimeout: 2 * time.Minute, StartTimeout: 5 * time.Minute}
 	api := &API{Store: s, Client: kube, Pods: ps, Pools: pools, Cells: map[string]string{"cell-b": hash("cell-b-token"), "cell-c": hash("cell-c-token")},
 		Bindings: b, Recon: recon, Log: log, Metrics: m, LongPoll: 300 * time.Millisecond}
@@ -482,5 +488,21 @@ func TestOnlyTheClaimingCellCanAskAboutAClaim(t *testing.T) {
 	w.req("DELETE", "/v1/claims/"+id, "cell-b-token", "")
 	if _, st := w.req("GET", "/v1/claims/"+id, "cell-b-token", ""); st["state"] != string(Released) {
 		t.Fatalf("after release: %v", st)
+	}
+}
+
+// The lab's machine running PostgreSQL resumed 197 s behind the others after being paused, and the
+// fabric gave up every claim at its next pass: claimed_at is the database's time, and the
+// reconciler compared it with its own. A claim's age is measured on one clock, the database's.
+func TestAFabricWhoseClockIsAheadOfTheDatabaseKeepsAFreshClaim(t *testing.T) {
+	w := newWorld(t, 2, 4)
+	skewOn(w, 200*time.Second) // the fabric's process clock, minutes ahead of the database's
+	w.tick()
+	w.start()
+	w.tick()
+	_, warm := w.req("POST", "/v1/claims", "cell-b-token", claimBody("fresh"))
+	w.tick()
+	if _, st := w.req("GET", "/v1/claims/"+warm["id"].(string), "cell-b-token", ""); st["state"] != string(Claimed) {
+		t.Fatalf("a claim made a moment ago was given up: %v", st)
 	}
 }
