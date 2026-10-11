@@ -49,9 +49,9 @@ def claimed_at(agent: str) -> float | None:
     return None
 
 
-def run_once(j: probe.Jenkins, job: str) -> dict:
+def run_once(j: probe.Jenkins, job: str, concurrent: bool = False) -> dict:
     t0 = time.time()
-    number = j.trigger(job)
+    number = j.trigger_item(job) if concurrent else j.trigger(job)
     probe.wait(f"{job} #{number} done", lambda: (b := j.build(job, number)) and not b["building"] and b.get("result"), 600, 0.2)
     b = j.get_json(f"/job/{job}/{number}/api/json?tree=result,timestamp,duration")
     lines = stamped(j, job, number)
@@ -85,7 +85,7 @@ def main() -> int:
             results[key] = []
             for _ in range(args.runs):
                 with ThreadPoolExecutor(args.burst) as ex:
-                    results[key] += list(ex.map(lambda _: run_once(probe.Jenkins(), job), range(args.burst)))
+                    results[key] += list(ex.map(lambda _: run_once(probe.Jenkins(), job, True), range(args.burst)))
                 time.sleep(30)  # the warm pool refills before the next burst
     facts: dict = {"scenario": "fabric-timeline", "started": started.isoformat(timespec="seconds"), "runs": args.runs,
                    "burst": args.burst, "builds": results}
@@ -93,6 +93,8 @@ def main() -> int:
         facts[job] = {k: statistics.median([r["fromTrigger"][k] for r in rs if r["fromTrigger"].get(k) is not None])
                       for k in rs[0]["fromTrigger"] if any(r["fromTrigger"].get(k) is not None for r in rs)}
         facts[job]["triggerToDone"] = statistics.median(r["triggerToDone"] for r in rs)
+    for job, rs in results.items():
+        facts[job]["distinctBuilds"] = len({r["build"] for r in rs})
     facts["verdict"] = "PASS" if all(r["result"] == "SUCCESS" for rs in results.values() for r in rs) else "FAIL"
     out = probe.EVIDENCE / f"fabric-timeline-{started.strftime('%Y%m%dT%H%M%SZ')}.json"
     out.write_text(json.dumps(facts, indent=2) + "\n")

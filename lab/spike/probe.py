@@ -117,6 +117,32 @@ class Jenkins:
         self.post(f"/job/{job}/buildWithParameters" if params else f"/job/{job}/build", params)
         return before
 
+    def trigger_item(self, job: str, timeout: float = 120) -> int:
+        """Triggers job and returns the number of the build its queue item became. Safe when several
+        triggers race: trigger() reads nextBuildNumber first, so concurrent callers all get the same
+        number. Two identical triggers Jenkins folds into one queue item get the same build."""
+        if self.crumb is None:
+            c = self.get_json("/crumbIssuer/api/json")
+            self.crumb = (c["crumbRequestField"], c["crumb"])
+        auth = base64.b64encode(f"admin:{self.password}".encode()).decode()
+        last: Exception | None = None
+        for ip in NODES.values():
+            req = urllib.request.Request(f"http://{ip}:{PORT}/job/{job}/build", data=b"", method="POST")
+            req.add_header("Authorization", f"Basic {auth}")
+            req.add_header(*self.crumb)
+            try:
+                with self.opener.open(req, timeout=5) as resp:
+                    item = re.search(r"/queue/item/(\d+)/", resp.headers["Location"]).group(1)
+                break
+            except urllib.error.HTTPError:
+                raise
+            except OSError as exc:
+                last = exc
+        else:
+            raise ConnectionError(str(last))
+        return wait(f"{job} queue item {item} to start", lambda: (self.get_json(f"/queue/item/{item}/api/json?tree=executable[number]")
+                                                                   .get("executable") or {}).get("number"), timeout, 0.1)
+
     def build(self, job: str, number: int) -> dict:
         return self.get_json(f"/job/{job}/{number}/api/json?tree=building,result,duration")
 
