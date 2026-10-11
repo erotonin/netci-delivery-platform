@@ -759,6 +759,7 @@ python3 lab/spike/chaos_poweroff.py --runs 3 --job once-probe --failure node-han
 | Plugin | `make plugin` (JenkinsRule, SpotBugs) | Dispatch, `netciOnce` |
 | Luật cảnh báo | `deploy/helm/netci/ci/test-rules.sh` | promtool |
 | Chaos trên lab | `lab/spike/chaos_poweroff.py` | Mất điện hay máy treo thật, Jenkins thật, build 240 s |
+| Soak | `lab/spike/soak.py --hours 3 --seed N` | Lỗi ngẫu nhiên liên tiếp nhiều giờ, kiểm bất biến sau mỗi lượt |
 | Probe chuyên đề | `agent_probe.py` (handover, hang, partition), `queue_crash_probe.py`, `webhook_probe.py`, `headroom_probe.py`, `logs_during_takeover.py`, `many_volumes_probe.py` | Từng cơ chế |
 | Quy mô | `KWOK_DIR=... lab/scale/run.sh 100 300 5` | Supervisor thật với 100–600 cell |
 | Preemption | `lab/scale/preemption.py --rounds 5` | Scheduler thật |
@@ -780,6 +781,7 @@ từ cùng một hiểu lầm với code thì sẽ pass và chẳng chứng minh
 | Preemption | 5/5 → 0/5 build bị giết khi có PDB | `preemption-budget-*.json` |
 | Cell có `JENKINS_HOME` hỏng | Phát hiện sau 12 s, restart pod 1 s sau | ADR-067 |
 | Log trong lúc tiếp quản | Loki trả đủ log tới thời điểm sập | ADR-068 |
+| Soak 3 giờ, 38 lỗi ngẫu nhiên liên tiếp | 38/38 PASS: mọi build SUCCESS, không mất tick, đúng 1 marker; giữa các lượt mọi Lease đúng pod, không còn taint, mọi node Ready, mọi volume healthy. Fence 2,3–3,9 s khi mất điện, 16,5–20,5 s khi treo máy (chờ Lease 15 s), khoảng 25 s khi leader supervisor cũng chết; build chạy tiếp sau 34–67 s (trung vị 43 s) | `soak-20261011T125323Z.json` |
 
 ### 11.3 Đọc một file bằng chứng chaos
 

@@ -21,6 +21,8 @@ Changelog and releases use Semantic Versioning once the project reaches 1.0.0.
 - **netci-queue**: `netci_runs_accept_to_start_seconds` is the difference of the database's two
   timestamps, no longer the queue process's clock minus the database's.
 - CI checks both charts and every alert on each push.
+- **Soak** (`lab/spike/soak.py`): 3 h of random faults back to back on the lab, 38/38 rounds PASS
+  with every invariant held between them.
 
 ### Fixed - 2026-10-09: many volumes at once, and a pod deleted while it renewed (ADR-070)
 - **Safety.** When fencing stopped because another cell on the machine still renewed its Lease

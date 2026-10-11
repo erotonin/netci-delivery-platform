@@ -1,0 +1,427 @@
+{
+  "scenario": "soak",
+  "seed": 20261012,
+  "hours": 3.0,
+  "started": "2026-10-11T12:53:23+00:00",
+  "rounds": [
+    {
+      "round": 1,
+      "fault": "power-loss+supervisor-leader",
+      "seconds": 331,
+      "exit": 0,
+      "verdict": "PASS",
+      "evidence": [],
+      "invariantsBroken": []
+    },
+    {
+      "round": 2,
+      "fault": "pod-delete",
+      "seconds": 476,
+      "exit": 0,
+      "verdict": "PASS",
+      "evidence": [
+        "lab/evidence/spike-resume-pod-delete-20261011T195855.json"
+      ],
+      "invariantsBroken": []
+    },
+    {
+      "round": 3,
+      "fault": "power-loss",
+      "seconds": 287,
+      "exit": 0,
+      "verdict": "PASS",
+      "evidence": [],
+      "invariantsBroken": []
+    },
+    {
+      "round": 4,
+      "fault": "power-loss",
+      "seconds": 301,
+      "exit": 0,
+      "verdict": "PASS",
+      "evidence": [],
+      "invariantsBroken": []
+    },
+    {
+      "round": 5,
+      "fault": "pod-delete",
+      "seconds": 490,
+      "exit": 0,
+      "verdict": "PASS",
+      "evidence": [
+        "lab/evidence/spike-resume-pod-delete-20261011T201640.json"
+      ],
+      "invariantsBroken": []
+    },
+    {
+      "round": 6,
+      "fault": "hung-machine",
+      "seconds": 283,
+      "exit": 0,
+      "verdict": "PASS",
+      "evidence": [],
+      "invariantsBroken": []
+    },
+    {
+      "round": 7,
+      "fault": "power-loss",
+      "seconds": 283,
+      "exit": 0,
+      "verdict": "PASS",
+      "evidence": [],
+      "invariantsBroken": []
+    },
+    {
+      "round": 8,
+      "fault": "power-loss",
+      "seconds": 284,
+      "exit": 0,
+      "verdict": "PASS",
+      "evidence": [],
+      "invariantsBroken": []
+    },
+    {
+      "round": 9,
+      "fault": "power-loss",
+      "seconds": 286,
+      "exit": 0,
+      "verdict": "PASS",
+      "evidence": [],
+      "invariantsBroken": []
+    },
+    {
+      "round": 10,
+      "fault": "power-loss",
+      "seconds": 286,
+      "exit": 0,
+      "verdict": "PASS",
+      "evidence": [],
+      "invariantsBroken": []
+    },
+    {
+      "round": 11,
+      "fault": "postgresql-restart",
+      "seconds": 80,
+      "exit": 0,
+      "verdict": "PASS",
+      "evidence": [
+        "dependency-pg-restart-20261011T134835Z.json"
+      ],
+      "invariantsBroken": []
+    },
+    {
+      "round": 12,
+      "fault": "hung-machine",
+      "seconds": 285,
+      "exit": 0,
+      "verdict": "PASS",
+      "evidence": [],
+      "invariantsBroken": []
+    },
+    {
+      "round": 13,
+      "fault": "power-loss",
+      "seconds": 286,
+      "exit": 0,
+      "verdict": "PASS",
+      "evidence": [],
+      "invariantsBroken": []
+    },
+    {
+      "round": 14,
+      "fault": "hung-machine",
+      "seconds": 285,
+      "exit": 0,
+      "verdict": "PASS",
+      "evidence": [],
+      "invariantsBroken": []
+    },
+    {
+      "round": 15,
+      "fault": "hung-machine",
+      "seconds": 285,
+      "exit": 0,
+      "verdict": "PASS",
+      "evidence": [],
+      "invariantsBroken": []
+    },
+    {
+      "round": 16,
+      "fault": "power-loss+supervisor-leader",
+      "seconds": 284,
+      "exit": 0,
+      "verdict": "PASS",
+      "evidence": [],
+      "invariantsBroken": []
+    },
+    {
+      "round": 17,
+      "fault": "jvm-kill",
+      "seconds": 468,
+      "exit": 0,
+      "verdict": "PASS",
+      "evidence": [
+        "lab/evidence/spike-resume-jvm-kill-20261011T211342.json"
+      ],
+      "invariantsBroken": []
+    },
+    {
+      "round": 18,
+      "fault": "power-loss",
+      "seconds": 283,
+      "exit": 0,
+      "verdict": "PASS",
+      "evidence": [],
+      "invariantsBroken": []
+    },
+    {
+      "round": 19,
+      "fault": "postgresql-restart",
+      "seconds": 68,
+      "exit": 0,
+      "verdict": "PASS",
+      "evidence": [
+        "dependency-pg-restart-20261011T142614Z.json"
+      ],
+      "invariantsBroken": []
+    },
+    {
+      "round": 20,
+      "fault": "postgresql-restart",
+      "seconds": 69,
+      "exit": 0,
+      "verdict": "PASS",
+      "evidence": [
+        "dependency-pg-restart-20261011T142722Z.json"
+      ],
+      "invariantsBroken": []
+    },
+    {
+      "round": 21,
+      "fault": "hung-machine",
+      "seconds": 284,
+      "exit": 0,
+      "verdict": "PASS",
+      "evidence": [],
+      "invariantsBroken": []
+    },
+    {
+      "round": 22,
+      "fault": "jvm-kill",
+      "seconds": 479,
+      "exit": 0,
+      "verdict": "PASS",
+      "evidence": [
+        "lab/evidence/spike-resume-jvm-kill-20261011T213317.json"
+      ],
+      "invariantsBroken": []
+    },
+    {
+      "round": 23,
+      "fault": "power-loss+supervisor-leader",
+      "seconds": 284,
+      "exit": 0,
+      "verdict": "PASS",
+      "evidence": [],
+      "invariantsBroken": []
+    },
+    {
+      "round": 24,
+      "fault": "power-loss",
+      "seconds": 287,
+      "exit": 0,
+      "verdict": "PASS",
+      "evidence": [],
+      "invariantsBroken": []
+    },
+    {
+      "round": 25,
+      "fault": "jvm-kill",
+      "seconds": 464,
+      "exit": 0,
+      "verdict": "PASS",
+      "evidence": [
+        "lab/evidence/spike-resume-jvm-kill-20261011T215048.json"
+      ],
+      "invariantsBroken": []
+    },
+    {
+      "round": 26,
+      "fault": "power-loss",
+      "seconds": 287,
+      "exit": 0,
+      "verdict": "PASS",
+      "evidence": [],
+      "invariantsBroken": []
+    },
+    {
+      "round": 27,
+      "fault": "power-loss+supervisor-leader",
+      "seconds": 286,
+      "exit": 0,
+      "verdict": "PASS",
+      "evidence": [],
+      "invariantsBroken": []
+    },
+    {
+      "round": 28,
+      "fault": "power-loss+supervisor-leader",
+      "seconds": 285,
+      "exit": 0,
+      "verdict": "PASS",
+      "evidence": [],
+      "invariantsBroken": []
+    },
+    {
+      "round": 29,
+      "fault": "postgresql-restart",
+      "seconds": 75,
+      "exit": 0,
+      "verdict": "PASS",
+      "evidence": [
+        "dependency-pg-restart-20261011T151251Z.json"
+      ],
+      "invariantsBroken": []
+    },
+    {
+      "round": 30,
+      "fault": "power-loss+supervisor-leader",
+      "seconds": 282,
+      "exit": 0,
+      "verdict": "PASS",
+      "evidence": [],
+      "invariantsBroken": []
+    },
+    {
+      "round": 31,
+      "fault": "power-loss",
+      "seconds": 286,
+      "exit": 0,
+      "verdict": "PASS",
+      "evidence": [],
+      "invariantsBroken": []
+    },
+    {
+      "round": 32,
+      "fault": "power-loss",
+      "seconds": 287,
+      "exit": 0,
+      "verdict": "PASS",
+      "evidence": [],
+      "invariantsBroken": []
+    },
+    {
+      "round": 33,
+      "fault": "power-loss",
+      "seconds": 284,
+      "exit": 0,
+      "verdict": "PASS",
+      "evidence": [],
+      "invariantsBroken": []
+    },
+    {
+      "round": 34,
+      "fault": "power-loss",
+      "seconds": 287,
+      "exit": 0,
+      "verdict": "PASS",
+      "evidence": [],
+      "invariantsBroken": []
+    },
+    {
+      "round": 35,
+      "fault": "power-loss",
+      "seconds": 284,
+      "exit": 0,
+      "verdict": "PASS",
+      "evidence": [],
+      "invariantsBroken": []
+    },
+    {
+      "round": 36,
+      "fault": "hung-machine",
+      "seconds": 286,
+      "exit": 0,
+      "verdict": "PASS",
+      "evidence": [],
+      "invariantsBroken": []
+    },
+    {
+      "round": 37,
+      "fault": "power-loss+supervisor-leader",
+      "seconds": 297,
+      "exit": 0,
+      "verdict": "PASS",
+      "evidence": [],
+      "invariantsBroken": []
+    },
+    {
+      "round": 38,
+      "fault": "jvm-kill",
+      "seconds": 459,
+      "exit": 0,
+      "verdict": "PASS",
+      "evidence": [
+        "lab/evidence/spike-resume-jvm-kill-20261011T225223.json"
+      ],
+      "invariantsBroken": []
+    }
+  ],
+  "summary": {
+    "rounds": 38,
+    "passed": 38,
+    "byFault": {
+      "power-loss": [
+        "PASS",
+        "PASS",
+        "PASS",
+        "PASS",
+        "PASS",
+        "PASS",
+        "PASS",
+        "PASS",
+        "PASS",
+        "PASS",
+        "PASS",
+        "PASS",
+        "PASS",
+        "PASS",
+        "PASS"
+      ],
+      "power-loss+supervisor-leader": [
+        "PASS",
+        "PASS",
+        "PASS",
+        "PASS",
+        "PASS",
+        "PASS",
+        "PASS"
+      ],
+      "hung-machine": [
+        "PASS",
+        "PASS",
+        "PASS",
+        "PASS",
+        "PASS",
+        "PASS"
+      ],
+      "jvm-kill": [
+        "PASS",
+        "PASS",
+        "PASS",
+        "PASS"
+      ],
+      "pod-delete": [
+        "PASS",
+        "PASS"
+      ],
+      "postgresql-restart": [
+        "PASS",
+        "PASS",
+        "PASS",
+        "PASS"
+      ]
+    }
+  },
+  "verdict": "PASS"
+}
