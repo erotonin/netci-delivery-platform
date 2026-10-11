@@ -49,6 +49,8 @@ class NetciCloudTest {
     /** How many of the next granted claims get no agent and are reported failed, as the fabric does for a broken sandbox. */
     private final AtomicInteger dead = new AtomicInteger();
     private final Map<String, String> states = new ConcurrentHashMap<>();
+    /** How many of the next granted claims take their binding but never connect an agent (a sandbox cut off from the controller). */
+    private final AtomicInteger silent = new AtomicInteger();
 
     /** A fabric whose sandboxes are agent processes started on claim, as netci-sandbox would. */
     @BeforeEach
@@ -109,6 +111,8 @@ class NetciCloudTest {
         granted.incrementAndGet();
         if (dead.getAndDecrement() > 0) {
             states.put(id, "failed"); // granted, and then given up: no agent will ever connect
+        } else if (silent.getAndDecrement() > 0) {
+            states.put(id, "bound"); // the binding taken, and no agent ever arrives
         } else {
             states.put(id, "claimed");
             agents.put(id, startAgent(c.getString("controller"), c.getString("agent"), c.getString("secret")));
@@ -211,6 +215,25 @@ class NetciCloudTest {
         r.assertBuildStatusSuccess(b);
         assertTrue(seconds < 60, "the build waited " + seconds + " s: the dead claim was waited out (connect timeout 120 s)");
         assertTrue(granted.get() >= 2, "granted " + granted.get());
+        waitForNoSandboxNodes();
+        assertEquals(granted.get(), releases.size(), "a granted claim was not released");
+    }
+
+    /**
+     * A sandbox that took its binding but whose agent never reaches the controller (the lab froze
+     * one; a network cut does the same): the agent connects within a second of its binding, so a
+     * claim bound for 20 s with no agent is given up and Jenkins asks again.
+     */
+    @Test
+    void aBoundClaimWhoseAgentNeverArrivesIsGivenUp() throws Exception {
+        silent.set(1);
+        FreeStyleProject p = r.createFreeStyleProject("after-a-silent-sandbox");
+        p.setAssignedLabel(Label.get("netci-linux"));
+        long t0 = System.nanoTime();
+        FreeStyleBuild b = p.scheduleBuild2(0).get(100, java.util.concurrent.TimeUnit.SECONDS);
+        long seconds = java.util.concurrent.TimeUnit.NANOSECONDS.toSeconds(System.nanoTime() - t0);
+        r.assertBuildStatusSuccess(b);
+        assertTrue(seconds < 50, "the build waited " + seconds + " s for an agent that never came");
         waitForNoSandboxNodes();
         assertEquals(granted.get(), releases.size(), "a granted claim was not released");
     }

@@ -13,6 +13,7 @@ import jenkins.model.Jenkins;
  */
 public final class NetciLauncher extends JNLPLauncher {
     private static final long ASK_EVERY = TimeUnit.SECONDS.toNanos(2);
+    private static final long BOUND_CONNECT = TimeUnit.SECONDS.toNanos(20);
 
     public NetciLauncher() {
         super();
@@ -49,6 +50,7 @@ public final class NetciLauncher extends JNLPLauncher {
             }
             long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(cloud.getConnectTimeoutSeconds());
             long ask = System.nanoTime() + ASK_EVERY;
+            long boundSince = 0;
             while (!computer.isOnline()) {
                 if (System.nanoTime() > deadline) {
                     throw new IOException("the sandbox did not connect within " + cloud.getConnectTimeoutSeconds() + " s");
@@ -67,6 +69,16 @@ public final class NetciLauncher extends JNLPLauncher {
                     }
                     if (state != null && !state.startsWith("claimed") && !state.startsWith("bound")) {
                         throw new IOException("the fabric gave the claimed sandbox up: " + state);
+                    }
+                    // Its agent connects within a second of taking the binding. One that has not in
+                    // 20 s cannot reach this controller (lab: a frozen sandbox; a network cut does
+                    // the same): give it up rather than wait for the retention strategy's minute.
+                    if (state != null && state.startsWith("bound")) {
+                        if (boundSince == 0) {
+                            boundSince = System.nanoTime();
+                        } else if (System.nanoTime() - boundSince > BOUND_CONNECT) {
+                            throw new IOException("the sandbox took its binding but its agent did not connect within 20 s");
+                        }
                     }
                 }
                 Thread.sleep(200);
