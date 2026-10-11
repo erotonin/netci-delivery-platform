@@ -261,6 +261,20 @@ func (s *Store) Transition(ctx context.Context, id uuid.UUID, from State, u Upda
 	return tx.Commit(ctx)
 }
 
+// AcceptToStart is how long the run took from being accepted to its build existing, from the
+// two timestamps the database wrote. The dispatcher's own clock is not the one that wrote
+// accepted_at: a machine resumed from a pause runs minutes behind until NTP notices (ADR-071).
+func (s *Store) AcceptToStart(ctx context.Context, id uuid.UUID) (float64, error) {
+	var secs *float64
+	if err := s.Pool.QueryRow(ctx, `SELECT extract(epoch FROM started_at - accepted_at)::float8 FROM runs WHERE id = $1`, id).Scan(&secs); err != nil {
+		return 0, err
+	}
+	if secs == nil {
+		return 0, fmt.Errorf("run %s has not started", id)
+	}
+	return *secs, nil
+}
+
 // Retry records a failed attempt and when to try again; the state is unchanged.
 func (s *Store) Retry(ctx context.Context, id uuid.UUID, state State, cause error, after time.Duration) error {
 	msg := cause.Error()

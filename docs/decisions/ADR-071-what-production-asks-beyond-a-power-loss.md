@@ -35,6 +35,8 @@ This round put each of those on the lab, and every one found something.
    - A claim bound 20 s with no agent online is given up by the plugin.
 7. **The fabric times claims on the database's clock**, not its own: claimed_at is the database's,
    and a machine that resumed 197 s behind made the fabric give up every claim.
+   netci-queue's accept-to-start metric is now the difference of the database's own two
+   timestamps too (`runqueue.Store.AcceptToStart`).
 8. **CI checks the charts and the alerts** on every push (`ci/charts.sh`,
    `deploy/helm/netci/ci/test-rules.sh`).
 
@@ -69,7 +71,6 @@ This round put each of those on the lab, and every one found something.
 
 ## Not shown
 
-- netci-queue's accept-to-start metric still subtracts the database's accepted_at from the process's clock (a metric only; the fabric's two did too and no longer do, 333c14a).
 - The fabric is still within 0.4 s of the Kubernetes plugin on an idle lab with cached images; about
   2.5 s of both goes from the agent's connection to its first step (the remoting handshake).
 - The soak (lab/spike/soak.py, hours of mixed faults) is reported with its own evidence.

@@ -288,6 +288,46 @@ func TestARunGoesFromAcceptedToFinishedThroughItsController(t *testing.T) {
 	}
 }
 
+// The time from accepted to started is the database's: both ends are timestamps it wrote. The
+// trigger stands for its clock being an hour on from the dispatcher's (the test cannot move either
+// clock); measured on the dispatcher's clock, the run would have taken a few milliseconds.
+func TestAcceptToStartIsMeasuredOnTheDatabasesClock(t *testing.T) {
+	s, f := testStore(t), newFake()
+	ctx := context.Background()
+	if _, err := s.Pool.Exec(ctx, `CREATE FUNCTION skew_started() RETURNS trigger LANGUAGE plpgsql AS $$
+		BEGIN IF OLD.started_at IS NULL AND NEW.started_at IS NOT NULL THEN NEW.started_at := NEW.started_at + interval '1 hour'; END IF;
+		RETURN NEW; END $$;
+		CREATE TRIGGER skew_started BEFORE UPDATE ON runs FOR EACH ROW EXECUTE FUNCTION skew_started()`); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		s.Pool.Exec(context.Background(), `DROP TRIGGER skew_started ON runs; DROP FUNCTION skew_started()`) //nolint:errcheck
+	})
+	reg := prometheus.NewRegistry()
+	d := dispatcher(s, f, 10, reg)
+	r := accept(t, s, "payments/api")
+	d.Tick(ctx)
+	f.start(r.ID.String())
+	d.Tick(ctx)
+	if got := state(t, s, r); got.State != Started {
+		t.Fatalf("%+v", got)
+	}
+	mfs, err := reg.Gather()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, mf := range mfs {
+		if mf.GetName() == "netci_runs_accept_to_start_seconds" {
+			h := mf.GetMetric()[0].GetHistogram()
+			if h.GetSampleCount() != 1 || h.GetSampleSum() < 3600 || h.GetSampleSum() > 3660 {
+				t.Fatalf("observed %d runs, %.1f s", h.GetSampleCount(), h.GetSampleSum())
+			}
+			return
+		}
+	}
+	t.Fatal("no netci_runs_accept_to_start_seconds")
+}
+
 func TestARunLostWithACrashedControllersQueueIsDispatchedAgainAndRunsOnce(t *testing.T) {
 	s, f := testStore(t), newFake()
 	reg := prometheus.NewRegistry()

@@ -152,7 +152,11 @@ func (d *Dispatcher) apply(ctx context.Context, c Cell, r *Run, st *Status, deta
 				NextAttempt: d.Poll, Detail: map[string]any{"build": st.Build.Number}}) {
 				return
 			}
-			d.Metrics.acceptToStart.WithLabelValues(c.Name).Observe(time.Since(r.AcceptedAt).Seconds())
+			if secs, err := d.Store.AcceptToStart(ctx, r.ID); err == nil {
+				d.Metrics.acceptToStart.WithLabelValues(c.Name).Observe(secs)
+			} else {
+				d.Log.Warn("accept-to-start not measured", "cell", c.Name, "run", r.ID, "error", err)
+			}
 			r.State = Started
 		}
 		if !st.Build.Building {

@@ -18,6 +18,8 @@ Changelog and releases use Semantic Versioning once the project reaches 1.0.0.
   sandbox; `GET /v1/claims/{id}`; the plugin stops waiting for a claim the fabric gave up, or one
   bound 20 s without an agent; claims are timed on the database's clock (a machine 197 s behind made
   the fabric give all of them up). A build past two broken sandboxes: 53 s; one build had waited 353 s.
+- **netci-queue**: `netci_runs_accept_to_start_seconds` is the difference of the database's two
+  timestamps, no longer the queue process's clock minus the database's.
 - CI checks both charts and every alert on each push.
 
 ### Fixed - 2026-10-09: many volumes at once, and a pod deleted while it renewed (ADR-070)
