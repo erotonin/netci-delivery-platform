@@ -26,6 +26,7 @@
    connects; the image pull and the pod start happened before anyone was waiting.
 4. After the build, the agent's retention terminates the node. The plugin calls
    `DELETE /v1/claims/{id}` and the fabric deletes the pod. A sandbox serves one build.
+   (Since ADR-071, `GET /v1/claims/{id}` tells the claiming cell what became of its claim.)
 
 **A sandbox proves who it is with its own pod.** The pod gets a projected ServiceAccount token
 with audience `netci-fabric` and a 10-minute lifetime, and no other API credential

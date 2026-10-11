@@ -24,8 +24,10 @@ against real Jenkins, with the evidence file named; "tested" means automated tes
 | A step that started in the last second is not re-run | `netciOnce(key) { ... }` records the block's start in PostgreSQL, outside `JENKINS_HOME`; a block started before under a lost state is refused, and the guard fails closed (ADR-065) | **Lab**: 51 power-offs under a running `netciOnce` block, each resumed with one marker and never refused; a second attempt with another nonce got 409 from the live queue. **Tested**: JenkinsRule |
 | A takeover is never stuck for want of room, and costs no running build when there is another way | Controllers outrank builds (priority classes); running builds carry a disruption budget, which the scheduler's preemption respects whenever other room exists; a cell no node can take does not hold its fenced machine off; the supervisor reports, before any loss, a cell whose only room is a running build's (ADR-069) | **Lab**: a takeover stranded for 22 min was found, and the fixed supervisor recovered it in 41 s; `NetciCellWithoutHeadroom` fired when the only room was a build's, and cleared when the build ended (`headroom-running-build-*.json`). **Real kube-scheduler** (kwok): without the budget a running build was preempted 5/5, with it 0/5; with builds on every machine the controller was still placed 2/2 |
 | A controller whose `JENKINS_HOME` fails is restarted | The cell agent writes to `JENKINS_HOME` every 5 s; three failures in a row are reported on the Lease and the supervisor restarts that pod, so that the volume is mounted again, on any storage (ADR-067) | **Lab**: `JENKINS_HOME` made unwritable under a running controller; reported after 12 s, pod restarted 1 s later |
+| Upgrades lose nothing | A planned restart is not a failure: the agent keeps the Lease until Jenkins exits, then releases it | **Lab**: rollback and upgrade of every component during a 240 s netciOnce build: SUCCESS, every queued run once, no supervisor action, UIs down 19-42 s (`upgrade-*.json`) |
+| A failing dependency is refused, not pretended | Readiness follows the database; netciOnce fails closed; nothing is fenced on an unknown power state | **Lab**: PostgreSQL restarted and down 90 s, a BMC unreachable when a machine died (`dependency-*.json`) |
 | Configuration changes need no restart | The cell agent applies a changed JCasC ConfigMap to the running controller; jobs new in JCasC exist from the first start | **Lab**: applied in 81 s with the same pod and no restart; a job declared only in JCasC was there after a restart, with no reload |
-| A failure that needs a person is seen | 15 Prometheus alerts, each with a runbook entry, including no supervisor or queue running at all; a Grafana dashboard; every labelled series starts at 0 so the first event after a start counts | **Lab**, kube-prometheus-stack (`lab/monitoring.sh`): all 8 netCI targets up, every rule healthy; with every supervisor replica removed, `NetciSupervisorNotLeading` fired after 96 s and cleared 61 s after they returned; all 23 dashboard queries returned data through Grafana once runs and a sandbox claim had happened. **Tested**: promtool unit tests (`deploy/helm/netci/ci/test-rules.sh`) |
+| A failure that needs a person is seen | 16 Prometheus alerts, each with a runbook entry, including no supervisor or queue running at all; a Grafana dashboard; every labelled series starts at 0 so the first event after a start counts | **Lab**, kube-prometheus-stack (`lab/monitoring.sh`): all 8 netCI targets up, every rule healthy; with every supervisor replica removed, `NetciSupervisorNotLeading` fired after 96 s and cleared 61 s after they returned; all 23 dashboard queries returned data through Grafana once runs and a sandbox claim had happened. **Tested**: promtool unit tests (`deploy/helm/netci/ci/test-rules.sh`) |
 
 ## Builds on the agent fabric
 
@@ -33,7 +35,8 @@ against real Jenkins, with the evidence file named; "tested" means automated tes
 |---|---|---|
 | Each build gets a fresh, isolated sandbox | One pod per build, destroyed after it, with limits and a NetworkPolicy (DNS, the fabric, the controllers and addresses outside the cluster only). Isolation by trust: `standard` pools run in a user namespace on the machine's kernel; `untrusted` pools run each build in its own virtual machine (Kata Containers). A pool whose runtime the cluster lacks stops the fabric at start: no silent fallback to the shared kernel | **Lab**: `uid_map` shows container root mapped to an unprivileged host uid (`fabric-agents-*.json`); four `untrusted` builds ran in four VMs (guest kernel 6.18.35, machines 6.8.0-142), each discarded after its build, ~10 s with a warm sandbox like `standard` (`untrusted-sandboxes-20261002.json`); from both kinds of sandbox, netCI's PostgreSQL, netci-queue, the API servers, a kubelet and Prometheus were unreachable while fabric builds succeeded; a pool naming a missing RuntimeClass stopped the new replica and the running ones kept serving |
 | The sandbox is bound late to whichever controller needs it | Warm pods long-poll the fabric; the claim carries the node's inbound secret, never stored | **Lab**: binding 0.01 s after the claim, agent connected 0.5 s later |
-| Faster than the Kubernetes plugin | — | **Not shown.** On an idle lab with cached images it is slower (5.9 s vs 4.4 s median); see ADR-064 |
+| A broken warm sandbox does not cost a build its wait | A warm sandbox that is not ready is never handed out; a warm claim not bound in 15 s fails its sandbox; the controller asks what became of its claim and stops waiting when it was given up, or after 20 s bound without an agent; claims are timed on the database's clock (ADR-071) | **Lab**: a build past two frozen warm sandboxes finished in 52.8 s; before, one build waited 353 s (`fabric-broken-sandbox-*.json`) |
+| Faster than the Kubernetes plugin | — | **Not shown.** On an idle lab with cached images they are within 0.4 s (4.9 s vs 4.4 s median); about 2.5 s of both is the agent's remoting handshake (`fabric-timeline-*.json`, ADR-064, ADR-071) |
 | The fleet is sized ahead of demand; hosts are recycled | — | Not built |
 
 ## Layout
@@ -45,7 +48,7 @@ jenkins/plugin/ the netCI Jenkins plugin (Java): idempotent dispatch, fabric clo
 deploy/         Helm charts (platform, cell) and the supervisor's manifest
 lab/            KVM + k3s + Longhorn lab, probes and chaos runs; evidence in lab/evidence/
 jenkins/        controller image; plugins.txt generated from toolchain/versions.yaml
-docs/decisions/ ADRs; 060-070 define this architecture, 001-059 are history
+docs/decisions/ ADRs; 060-071 define this architecture, 001-059 are history
 docs/TRINH-BAY-TOAN-DIEN-NETCI.md  the whole project explained, in Vietnamese
 ```
 
@@ -73,6 +76,7 @@ deploy/helm/netci/ci/test-rules.sh   # promtool checks and unit tests of the ale
 - [ADR-068 — build logs readable during a takeover](docs/decisions/ADR-068-build-logs-readable-during-a-takeover.md)
 - [ADR-069 — fencing with real BMCs, at scale, without costing a running build](docs/decisions/ADR-069-fencing-with-real-bmcs-at-scale.md)
 - [ADR-070 — cell pods go after the storage settles](docs/decisions/ADR-070-cell-pods-go-after-the-storage-settles.md)
+- [ADR-071 — upgrades, failing dependencies, cluster DNS, start time, a fabric that heals](docs/decisions/ADR-071-what-production-asks-beyond-a-power-loss.md)
 
 Installing it: [docs/INSTALL.md](docs/INSTALL.md) (prerequisites, images, both charts, the
 checks before anyone depends on it). Operating it: [the runbook](docs/RUNBOOK.md) (every alert,

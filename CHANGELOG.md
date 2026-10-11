@@ -5,6 +5,21 @@ Changelog and releases use Semantic Versioning once the project reaches 1.0.0.
 
 ## [Unreleased]
 
+### Fixed - 2026-10-11: upgrades, failing dependencies, cluster DNS, start time, the fabric (ADR-071)
+- **Upgrades and rollbacks** of every component during a running netciOnce build lose nothing and
+  fence nothing (`lab/spike/upgrade_probe.py`).
+- **PostgreSQL or a BMC failing**: netciOnce fails closed, the intake refuses, the supervisor fences
+  nothing while a machine's power state is unknown (`lab/spike/dependency_probe.py`).
+- **Cluster DNS on one machine** stopped a takeover's storage and agents resolving names: new alert
+  `NetciClusterDNSOnOneMachine`; INSTALL requires two DNS replicas.
+- **Takeovers**: agents reach the new controller as soon as it is up (6.25 s -> ~2 s), and a
+  controller no longer unzips its 86 plugins at each start (9.3 -> 7.0 s for a restart).
+- **Fabric**: a broken warm sandbox is never handed out; a warm claim not bound in 15 s fails its
+  sandbox; `GET /v1/claims/{id}`; the plugin stops waiting for a claim the fabric gave up, or one
+  bound 20 s without an agent; claims are timed on the database's clock (a machine 197 s behind made
+  the fabric give all of them up). A build past two broken sandboxes: 53 s; one build had waited 353 s.
+- CI checks both charts and every alert on each push.
+
 ### Fixed - 2026-10-09: many volumes at once, and a pod deleted while it renewed (ADR-070)
 - **Safety.** When fencing stopped because another cell on the machine still renewed its Lease
   (a wrong node-to-machine mapping), the recovery deleted that running controller's pod a second
