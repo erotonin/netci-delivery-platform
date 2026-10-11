@@ -517,6 +517,14 @@ netciOnce('deploy-prod') {
 - Pod bận mang nhãn `netci.io/busy`, có PDB `minAvailable: 1000000`, nên preemption tránh build đang
   chạy.
 - NetworkPolicy: sandbox chỉ ra được DNS, fabric, controller và địa chỉ ngoài cụm.
+- **Sandbox hỏng không làm build phải chờ** (ADR-071):
+  - sandbox ấm mà pod không còn Ready thì bị đánh dấu `failed` và thay mới, không bao giờ được giao;
+  - claim vào sandbox ấm mà 15 s chưa nhận binding (bình thường mất 0,01 s) thì sandbox bị coi là
+    hỏng; claim phải tạo pod mới vẫn được 2 phút;
+  - `GET /v1/claims/{id}` cho cell biết claim của mình ra sao; plugin hỏi mỗi 2 s trong lúc chờ và
+    dừng ngay khi fabric đã bỏ claim, hoặc khi claim đã `bound` 20 s mà agent chưa tới;
+  - fabric đo thời gian bằng **đồng hồ của PostgreSQL** (mọi mốc trong DB đều theo đồng hồ đó),
+    không bằng đồng hồ của chính nó.
 
 ### 8.8 Ưu tiên và chỗ trống
 
@@ -627,7 +635,8 @@ Script này làm các việc sau:
 - cài server đầu với `--cluster-init`, hai server sau với `--server https://<ip1>:6443`;
 - tắt traefik và servicelb;
 - `--tls-san` cả ba IP;
-- token nằm trong một file, không lộ trên dòng lệnh.
+- token nằm trong một file, không lộ trên dòng lệnh;
+- chạy **2 bản CoreDNS** (k3s mặc định chỉ có 1; mất máy chứa nó là mất DNS của cả cụm).
 
 Tuning Longhorn và timing control plane (ADR-066, ADR-067):
 
@@ -794,6 +803,10 @@ số marker `netciOnce` (phải bằng 1).
 | Không có log trong Grafana | Loki container trên host chưa chạy | `docker ps`, `lab/monitoring.sh install` |
 | `pkill -f <mẫu>` giết luôn shell của mình | Mẫu có trong chính dòng lệnh | Dùng `pgrep -f "[c]haos..."` rồi kill theo PID |
 | Supervisor dùng mật khẩu BMC cũ | (đã sửa) cấu hình chỉ đọc lúc khởi động | Bản mới tự khởi động lại khi Secret đổi |
+| Sau khi máy chủ khởi động lại, cả 3 node NotReady, log k3s báo `x509: certificate ... is before <giờ>` | Máy chủ khởi động kép với Windows (RTC giữ giờ địa phương): VM khởi động với đồng hồ nhanh khoảng 7 giờ, k3s cấp chứng chỉ agent "từ tương lai", rồi NTP chỉnh giờ về đúng | Trên từng node: dừng k3s, dời các `/var/lib/rancher/k3s/agent/*.crt` (và `.key`) có `notBefore` ở tương lai, khởi động k3s. Rồi xoá các pod kẹt `CreateContainerError` ("failed to reserve container name") và pod engine-image/manager của Longhorn không ready (manager thì từng cái một) |
+| Một VM chậm vài phút sau khi được resume | VM bị pause thì đồng hồ dừng; timesyncd không nhận ra cho tới lần đồng bộ kế tiếp (tới 34 phút) | `sudo systemctl restart systemd-timesyncd` trong VM; kiểm bằng `date -u` so với máy chủ |
+| Đẩy ảnh controller lên Harbor bị lỗi 500, VM bị pause | `push_image.sh` ghi file tar của ảnh vào `/tmp` trước (khoảng 1,4 GB), ext4 giữ 10 GB cho root | Giữ đĩa trống trên 15 GB trước khi đẩy; giải phóng nhanh bằng `crictl rmi --prune` và `fstrim` trong từng VM |
+| Build docker bị lỗi `network bridge not found` | Docker trên máy chủ không có mạng bridge | `docker build --network host` (và `docker run --network host`) |
 
 ### 12.2 Lệnh chẩn đoán
 
@@ -851,6 +864,23 @@ Mỗi bài học theo cùng một khuôn: hệ thống đúng trong điều ki�
     10 s (5/5). Sửa bằng settle 3 s và toleration 30 s để taint-eviction không chạy trước. Trên đường
     sửa còn tìm ra **một lỗi an toàn**: recovery xoá pod của cell vẫn đang gia hạn Lease. Cũng ghi
     thẳng rằng cải thiện ở mức cả cuộc tiếp quản **chưa chứng minh được**, vì nằm trong độ dao động.
+13. **Một điểm chết ngoài netCI: CoreDNS chỉ một bản** (ADR-071). k3s chạy một CoreDNS; máy chứa nó
+    mất điện thì cả cụm không phân giải được tên trong suốt cuộc tiếp quản, và volume chuyển mất
+    60 s thay vì khoảng 15 s. Sửa: chạy 2 bản trên 2 máy; supervisor cảnh báo
+    `NetciClusterDNSOnOneMachine` khi DNS chỉ còn trên một máy.
+14. **Endpoint chờ Ready làm agent chậm 6 s.** Jenkins đã sẵn sàng nhưng pod chưa Ready (startupProbe
+    5 s một lần), rồi endpoint còn phải lan tới mọi node. Sửa: Service nội bộ dùng
+    `publishNotReadyAddresses` (Jenkins trả 503 không kèm `X-Jenkins-Session` cho tới khi sẵn sàng,
+    nên client không nối quá sớm) và startupProbe 1 s. Kết quả: khoảng 2 s.
+15. **Mỗi lần khởi động Jenkins giải nén lại 86 plugin.** Sửa: ảnh giải nén sẵn lúc build; cell agent
+    trỏ pluginroot vào đó và đặt mtime khớp. Restart: 9,3 → 7,0 s.
+16. **Sandbox ấm "chết" vẫn được giao**, mỗi lần tốn tới 300 s; có build chờ 353 s. Sửa ở cả fabric và
+    plugin (8.7).
+17. **Hai đồng hồ trong một phép trừ.** `claimed_at` theo giờ của DB, reconciler trừ bằng giờ của
+    chính nó; một VM chậm 197 s sau khi bị pause làm fabric huỷ mọi claim. Sửa: chỉ dùng giờ của DB.
+    Nguyên tắc: **đừng bao giờ trừ hai mốc thời gian lấy từ hai máy khác nhau.**
+18. **Nâng cấp, DB chết, BMC mất mạng: thiết kế đã đúng, giờ đã có số đo** (ADR-071): không mất
+    build, không fence nhầm, khối `netciOnce` fail closed khi DB tắt 90 s.
 
 ---
 
@@ -862,8 +892,9 @@ Mỗi bài học theo cùng một khuôn: hệ thống đúng trong điều ki�
 - **Chưa fence một server vật lý thật** qua iDRAC/iLO. Hành vi BMC mới chỉ được mô phỏng theo tài
   liệu và báo cáo lỗi của hãng.
 - **Quy mô với storage thật**: kwok đo phần control plane; storage chuyển *nhiều* volume mới đo tới 8.
-- Fabric chưa nhanh hơn Kubernetes plugin trên lab nhàn rỗi (5,9 s so với 4,4 s); co giãn host theo
-  dự báo và tái chế host **chưa làm**.
+- Fabric chưa nhanh hơn Kubernetes plugin trên lab nhàn rỗi: chênh 0,4 s (4,9 s so với 4,4 s), vì
+  khoảng 2,5 s của cả hai là bắt tay remoting giữa agent và controller. Co giãn host theo dự báo và
+  tái chế host **chưa làm**.
 - Mọi số liệu đều từ lab 3 VM, nơi mọi máy đồng thời là control plane. Production nên tách riêng.
 
 ---
