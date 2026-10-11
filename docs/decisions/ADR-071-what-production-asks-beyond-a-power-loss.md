@@ -69,7 +69,7 @@ This round put each of those on the lab, and every one found something.
 
 ## Not shown
 
-- Two metrics (claim-to-bind, busy seconds) still subtract the database's time from the process's.
+- netci-queue's accept-to-start metric still subtracts the database's accepted_at from the process's clock (a metric only; the fabric's two did too and no longer do, 333c14a).
 - The fabric is still within 0.4 s of the Kubernetes plugin on an idle lab with cached images; about
   2.5 s of both goes from the agent's connection to its first step (the remoting handshake).
 - The soak (lab/spike/soak.py, hours of mixed faults) is reported with its own evidence.
