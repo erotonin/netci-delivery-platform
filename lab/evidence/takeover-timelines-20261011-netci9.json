@@ -1,0 +1,62 @@
+{
+  "scenario": "takeover-timelines",
+  "series": "chaos 29 (2026-10-11): controller image 2.555.3-netci9 (plugins unzipped in the image) and netCI 6887e30",
+  "secondsFromPowerLoss": [
+    {
+      "node": "netci-lab-2",
+      "lease": 27.4,
+      "jenkinsFullyUp": 37.7,
+      "podReady": 37.8,
+      "agentConnected": 39.8,
+      "resumed": 41.7,
+      "agentAfterFullyUp": 2.1
+    },
+    {
+      "node": "netci-lab-3",
+      "lease": 25.4,
+      "jenkinsFullyUp": 33.9,
+      "podReady": 33.8,
+      "agentConnected": 35.8,
+      "resumed": 38.1,
+      "agentAfterFullyUp": 1.9
+    },
+    {
+      "node": "netci-lab-1",
+      "lease": 24.0,
+      "jenkinsFullyUp": 33.6,
+      "podReady": 33.8,
+      "agentConnected": 35.8,
+      "resumed": 42.7,
+      "agentAfterFullyUp": 2.2
+    }
+  ],
+  "leaseToFullyUp": [
+    10.3,
+    8.5,
+    9.6
+  ],
+  "before": {
+    "series": "chaos 28, the same day, image netci7",
+    "leaseToFullyUp": [
+      9.2,
+      12.4,
+      10.4,
+      13.0
+    ]
+  },
+  "plannedRestart": {
+    "gateToFullyUp": {
+      "netci7": [
+        9.3,
+        9.4
+      ],
+      "netci9 first start (85 archives re-timed, 0.9 s)": [
+        8.3,
+        7.6
+      ],
+      "netci9 steady": [
+        6.96
+      ]
+    }
+  }
+}
