@@ -181,7 +181,23 @@ func guard(log *slog.Logger, args []string) int {
 			if len(removed) > 0 {
 				log.Warn("removed plugins the controller's image does not carry", "component", "guard", "plugins", removed)
 			}
-			return err
+			if err != nil {
+				return err
+			}
+			// So that Jenkins finds the plugins the image unzipped when it was built, instead of
+			// unzipping them again (cellagent.LinkPluginRoot, cellagent.AlignPluginTimes).
+			root, image := getenv("NETCI_PLUGIN_ROOT", "/var/cache/jenkins/plugins"), getenv("NETCI_IMAGE_PLUGIN_ROOT", "/usr/share/jenkins/pluginroot")
+			if linked, err := cellagent.LinkPluginRoot(root, image); err != nil {
+				log.Warn("could not link the plugin root to the image's unzipped plugins; Jenkins unzips them", "component", "guard", "error", err)
+			} else if linked {
+				log.Info("plugin root linked to the image's unzipped plugins", "component", "guard", "root", root, "image", image)
+			}
+			if n, err := cellagent.AlignPluginTimes(home, ref); err != nil {
+				log.Warn("could not align the plugins' times with the image's; Jenkins unzips them again", "component", "guard", "error", err)
+			} else if n > 0 {
+				log.Info("plugins identical to the image's given its times", "component", "guard", "plugins", n)
+			}
+			return nil
 		}
 	}
 	code, err := g.Run(context.Background(), signals)

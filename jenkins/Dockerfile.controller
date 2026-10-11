@@ -25,4 +25,21 @@ RUN for f in /usr/share/jenkins/ref/plugins/*.jpi; do \
 # this plugin belongs to the image, whatever its version says.
 COPY plugin/target/netci.hpi /usr/share/jenkins/ref/plugins/netci.jpi.override
 
+# The plugins unzipped into the image, so that a controller does not unzip every one of them at
+# every start -- about 1.2 s of each start, takeovers included. The cell agent links the pod's plugin
+# root to /usr/share/jenkins/pluginroot when it exists (cellagent.LinkPluginRoot). Jenkins skips a plugin whose archive has the time it recorded
+# when it unzipped it (.timestamp2), and the cell agent gives the archives in JENKINS_HOME the
+# image's times (cellagent.AlignPluginTimes). Jenkins itself unzips them here, from copies that
+# keep the image's times, so the result is exactly what it would make at a start; a plugin that
+# differs is unzipped at start as before.
+RUN set -eu; h="$(mktemp -d)"; mkdir -p "$h/plugins" /usr/share/jenkins/pluginroot; \
+    for f in /usr/share/jenkins/ref/plugins/*; do cp -p "$f" "$h/plugins/$(basename "${f%.override}")"; done; \
+    JENKINS_HOME="$h" java -Djenkins.install.runSetupWizard=false -jar /usr/share/jenkins/jenkins.war \
+      --httpPort=18080 --httpListenAddress=127.0.0.1 --webroot="$h/war" --pluginroot=/usr/share/jenkins/pluginroot \
+      >"$h/log" 2>&1 & pid=$!; \
+    for i in $(seq 1 300); do grep -q "fully up and running" "$h/log" && break; kill -0 "$pid" || break; sleep 1; done; \
+    grep -q "fully up and running" "$h/log" || { tail -40 "$h/log"; exit 1; }; \
+    kill "$pid"; wait "$pid" || true; rm -rf "$h"; \
+    chown -R jenkins:jenkins /usr/share/jenkins/pluginroot
+
 USER jenkins
