@@ -9,6 +9,7 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	discoveryv1 "k8s.io/api/discovery/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -201,7 +202,12 @@ type HeadroomWatch struct {
 	Events   EventSink
 	Metrics  *Metrics
 	Log      *slog.Logger
-	short    map[string]bool
+	// DNSService is the cluster DNS Service, "<namespace>/<name>"; empty: not checked. A takeover
+	// needs names resolved -- the storage reaching its manager, the agent its new controller -- and
+	// the lab lost its only CoreDNS with a cell's machine: the volume moved in 60 s instead of ~15.
+	DNSService string
+	short      map[string]bool
+	dnsShort   bool
 }
 
 // Run checks until ctx is done.
@@ -264,6 +270,40 @@ func (w *HeadroomWatch) check(ctx context.Context) error {
 		ns, name, _ := strings.Cut(r.Cell, "/")
 		w.Log.Warn("a cell has no headroom for a takeover", "cell", r.Cell, "reason", r.Reason)
 		w.Events.Event(ObjectRef{Kind: "StatefulSet", Namespace: ns, Name: name}, true, "NoTakeoverHeadroom", r.Reason)
+	}
+	return w.checkDNS(ctx)
+}
+
+// checkDNS counts the machines with a ready server behind the cluster DNS Service.
+func (w *HeadroomWatch) checkDNS(ctx context.Context) error {
+	ns, name, ok := strings.Cut(w.DNSService, "/")
+	if !ok || ns == "" || name == "" {
+		return nil
+	}
+	slices, err := w.Client.DiscoveryV1().EndpointSlices(ns).List(ctx, metav1.ListOptions{
+		LabelSelector: discoveryv1.LabelServiceName + "=" + name})
+	if err != nil {
+		return fmt.Errorf("cluster DNS: %w", err)
+	}
+	machines := map[string]bool{}
+	for _, sl := range slices.Items {
+		if sl.Labels[discoveryv1.LabelServiceName] != name {
+			continue // the selector is the server's; checked here too
+		}
+		for _, e := range sl.Endpoints {
+			// An unset Ready is ready (EndpointConditions); a server whose node is unknown counts
+			// for no machine.
+			if (e.Conditions.Ready == nil || *e.Conditions.Ready) && e.NodeName != nil && *e.NodeName != "" {
+				machines[*e.NodeName] = true
+			}
+		}
+	}
+	w.Metrics.SetClusterDNS(len(machines))
+	was := w.dnsShort
+	w.dnsShort = len(machines) < 2
+	if w.dnsShort && !was && w.Leading != nil && w.Leading() {
+		w.Log.Warn("cluster DNS answers from fewer than two machines: losing one stops every takeover from resolving names until DNS is back",
+			"service", w.DNSService, "machines", len(machines))
 	}
 	return nil
 }

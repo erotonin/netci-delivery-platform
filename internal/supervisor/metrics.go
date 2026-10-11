@@ -17,6 +17,7 @@ type Metrics struct {
 	leading         prometheus.Gauge
 	headroom        *prometheus.GaugeVec
 	sharing         prometheus.Gauge
+	clusterDNS      prometheus.Gauge
 }
 
 // NewMetrics registers the supervisor's metrics on r.
@@ -49,9 +50,12 @@ func NewMetrics(r prometheus.Registerer) *Metrics {
 			Help: "0 when no other machine could take the cell's controller if its machine were lost."}, []string{"cell"}),
 		sharing: prometheus.NewGauge(prometheus.GaugeOpts{Name: "netci_supervisor_cells_sharing_a_machine",
 			Help: "Cells whose controller shares its machine with another cell's: lost together with it."}),
+		clusterDNS: prometheus.NewGauge(prometheus.GaugeOpts{Name: "netci_supervisor_cluster_dns_machines",
+			Help: "Machines with a ready cluster DNS server. Below 2, losing that machine stops name resolution for the whole takeover. -1: not checked."}),
 	}
+	m.clusterDNS.Set(-1)
 	r.MustRegister(m.actions, m.alerts, m.leaseMoved, m.observeErrors, m.resets, m.fenceSeconds, m.takeoverSeconds, m.observeSeconds, m.cells, m.lost, m.leading,
-		m.headroom, m.sharing)
+		m.headroom, m.sharing, m.clusterDNS)
 	return m
 }
 
@@ -72,6 +76,9 @@ func (m *Metrics) SetHeadroom(cell string, fits bool) {
 	}
 	m.headroom.WithLabelValues(cell).Set(v)
 }
+
+// SetClusterDNS records on how many machines a cluster DNS server is ready.
+func (m *Metrics) SetClusterDNS(machines int) { m.clusterDNS.Set(float64(machines)) }
 
 // SetSharing records how many cells share a machine with another cell.
 func (m *Metrics) SetSharing(n int) { m.sharing.Set(float64(n)) }

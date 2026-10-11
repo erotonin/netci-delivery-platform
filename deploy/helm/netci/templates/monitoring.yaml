@@ -84,6 +84,12 @@ spec:
           labels: {severity: info}
           annotations:
             summary: "{{ "{{" }} $value {{ "}}" }} cells' controllers share a machine and would be lost together with it. Moving one restarts its controller: do it at a quiet time (delete its pod; it prefers a machine without a cell)."
+        - alert: NetciClusterDNSOnOneMachine
+          expr: max(netci_supervisor_cluster_dns_machines) >= 0 and max(netci_supervisor_cluster_dns_machines) < 2
+          for: 10m
+          labels: {severity: warning}
+          annotations:
+            summary: "Cluster DNS answers from {{ "{{" }} $value {{ "}}" }} machine(s): losing it stops every takeover from resolving names (the storage, the agents) until DNS is back. Run two or more replicas on different machines."
         - alert: NetciSupervisorSlowObservations
           expr: histogram_quantile(0.99, sum(rate(netci_supervisor_observation_seconds_bucket[10m])) by (le)) > 0.5
           for: 10m

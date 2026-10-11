@@ -95,6 +95,34 @@ roleRef:
   kind: Role
   name: netci-supervisor-apiservers
   apiGroup: rbac.authorization.k8s.io
+{{- with .Values.supervisor.clusterDNSService }}
+---
+# The cluster DNS Service's endpoints, to tell when DNS answers from one machine only
+# (NetciClusterDNSOnOneMachine): read only, and only these.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: netci-supervisor-cluster-dns
+  namespace: {{ (splitList "/" .) | first }}
+rules:
+  - apiGroups: [discovery.k8s.io]
+    resources: [endpointslices]
+    verbs: [list]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: netci-supervisor-cluster-dns
+  namespace: {{ (splitList "/" .) | first }}
+subjects:
+  - kind: ServiceAccount
+    name: netci-supervisor
+    namespace: {{ $.Release.Namespace }}
+roleRef:
+  kind: Role
+  name: netci-supervisor-cluster-dns
+  apiGroup: rbac.authorization.k8s.io
+{{- end }}
 ---
 apiVersion: policy/v1
 kind: PodDisruptionBudget
@@ -191,6 +219,8 @@ spec:
               value: {{ .Values.supervisor.power.offTimeout | quote }}
             - name: NETCI_STORAGE_SETTLE
               value: {{ .Values.supervisor.storageSettle | quote }}
+            - name: NETCI_CLUSTER_DNS_SERVICE
+              value: {{ .Values.supervisor.clusterDNSService | quote }}
           ports:
             - name: metrics
               containerPort: 9090

@@ -104,3 +104,22 @@ tests:
       - eval_time: 4m
         alertname: NetciFenceLeaseMoved
         exp_alerts: [{exp_labels: {severity: critical, pod: a}}]
+
+  - name: cluster DNS on one machine, then on two; not checked raises nothing
+    interval: 1m
+    input_series:
+      - {series: 'netci_supervisor_cluster_dns_machines{pod="a"}', values: '1x15 2x15'}
+      - {series: 'netci_supervisor_cluster_dns_machines{pod="b"}', values: '-1x30'}
+    alert_rule_test:
+      - {eval_time: 5m, alertname: NetciClusterDNSOnOneMachine, exp_alerts: []}
+      - eval_time: 12m
+        alertname: NetciClusterDNSOnOneMachine
+        exp_alerts: [{exp_labels: {severity: warning}}]
+      - {eval_time: 25m, alertname: NetciClusterDNSOnOneMachine, exp_alerts: []}
+
+  - name: cluster DNS not checked
+    interval: 1m
+    input_series:
+      - {series: 'netci_supervisor_cluster_dns_machines{pod="a"}', values: '-1x20'}
+    alert_rule_test:
+      - {eval_time: 15m, alertname: NetciClusterDNSOnOneMachine, exp_alerts: []}

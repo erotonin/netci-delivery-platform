@@ -105,6 +105,17 @@ gather cells, because they spread by preference, not by rule.
 - **Act:** at a quiet time, `kubectl -n <cell> delete pod jenkins-0`. This restarts that
   controller (about 30 s; running builds resume), and it prefers a machine without a cell.
 
+### NetciClusterDNSOnOneMachine (warning)
+Cluster DNS (`supervisor.clusterDNSService`, `kube-system/kube-dns` by default) has ready servers
+on fewer than two machines. A takeover resolves names all the way: the storage's CSI plugin its
+manager, the agents their new controller. In the lab the only CoreDNS went with the machine a
+cell ran on, and the volume moved in 60 s instead of ~15.
+- **Check:** `kubectl -n kube-system get pods -l k8s-app=kube-dns -o wide`.
+- **Act:** run two or more replicas on different machines
+  (`kubectl -n kube-system scale deploy coredns --replicas=2`; k3s's manifest spreads them across
+  hosts and does not reset the count). A distribution that manages CoreDNS itself has its own
+  setting for this.
+
 ### A controller restarted for its JENKINS_HOME (`PodRestarted` event)
 The cell agent could not write to `JENKINS_HOME` three times in a row, and the supervisor
 restarted the pod so that the volume would be mounted again (ADR-067). The event gives the error.

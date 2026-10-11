@@ -212,7 +212,8 @@ func run(log *slog.Logger) error {
 		return err
 	}
 	go (&supervisor.HeadroomWatch{Client: hrClient, Interval: headroomEvery, Leading: leading.Load,
-		Events: &supervisor.KubeEvents{Client: hrClient, Instance: pod, Log: log}, Metrics: metrics, Log: log}).Run(ctx)
+		Events: &supervisor.KubeEvents{Client: hrClient, Instance: pod, Log: log}, Metrics: metrics, Log: log,
+		DNSService: clusterDNSService()}).Run(ctx)
 	// A leader beside a cell's controller hands over to a replica on a machine without one, at
 	// most once in 5 minutes (supervisor.YieldTo); with no replica there but a machine free, it
 	// first has the standby recreated, at most once in 10 minutes (supervisor.Rebalance).
@@ -352,6 +353,14 @@ func sshFencer() (*fence.SSH, error) {
 		return nil, fmt.Errorf("fence host key %s: want one public key line (\"ssh-ed25519 AAAA...\"): %w", hostKeyFile, err)
 	}
 	return &fence.SSH{Addr: addr, User: user, Signer: signer, HostKey: hostKey, Timeout: 3 * time.Second}, nil
+}
+
+// clusterDNSService is NETCI_CLUSTER_DNS_SERVICE; set and empty turns the check off.
+func clusterDNSService() string {
+	if v, ok := os.LookupEnv("NETCI_CLUSTER_DNS_SERVICE"); ok {
+		return v
+	}
+	return "kube-system/kube-dns"
 }
 
 func getenv(key, def string) string {

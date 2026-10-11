@@ -43,6 +43,11 @@ supervisor:
   # (5 of 5). The cells' Leases are released at fencing, so nothing else waits. "0" for storage
   # that does not need it.
   storageSettle: 3s
+  # The cluster DNS Service, "<namespace>/<name>": the supervisor reports when it answers from
+  # fewer than two machines (NetciClusterDNSOnOneMachine). A takeover resolves names all the way --
+  # the storage reaching its manager, the agent its new controller -- and the lab lost its only
+  # CoreDNS with a cell's machine: the volume moved in 60 s instead of ~15. Empty: not checked.
+  clusterDNSService: kube-system/kube-dns
 
 queue:
   enabled: true

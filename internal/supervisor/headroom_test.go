@@ -12,8 +12,10 @@ import (
 	"github.com/prometheus/client_golang/prometheus/testutil"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	discoveryv1 "k8s.io/api/discovery/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes/fake"
 )
@@ -203,5 +205,54 @@ func TestTheWatchReportsACellWithoutHeadroom(t *testing.T) {
 	_ = w.check(context.Background())
 	if n := events.count("NoTakeoverHeadroom"); n != 1 {
 		t.Fatalf("reported %d times; once until it changes", n)
+	}
+}
+
+func dnsSlice(name string, endpoints ...discoveryv1.Endpoint) *discoveryv1.EndpointSlice {
+	return &discoveryv1.EndpointSlice{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "kube-system",
+		Labels: map[string]string{discoveryv1.LabelServiceName: "kube-dns"}}, AddressType: discoveryv1.AddressTypeIPv4, Endpoints: endpoints}
+}
+
+func dnsEndpoint(node string, ready bool) discoveryv1.Endpoint {
+	return discoveryv1.Endpoint{Addresses: []string{"10.42.0.1"}, NodeName: &node, Conditions: discoveryv1.EndpointConditions{Ready: &ready}}
+}
+
+// The lab lost its only CoreDNS with the machine a cell ran on: for the whole takeover nothing
+// resolved a name -- not Longhorn's CSI plugin reaching its manager, not the agent reaching the
+// controller -- and the volume moved in 60 s instead of ~15. Before any loss, the watch says when
+// cluster DNS answers from fewer than two machines.
+func TestClusterDNSOnOneMachineIsReported(t *testing.T) {
+	logs := &strings.Builder{}
+	check := func(dnsService string, slices ...runtime.Object) *Metrics {
+		t.Helper()
+		m := NewMetrics(prometheus.NewRegistry())
+		w := &HeadroomWatch{Client: fake.NewClientset(slices...), Interval: time.Hour, Leading: func() bool { return true },
+			Events: &fakeEvents{}, Metrics: m, DNSService: dnsService, Log: slog.New(slog.NewTextHandler(logs, nil))}
+		if err := w.check(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		return m
+	}
+	dns := func(m *Metrics) float64 { return testutil.ToFloat64(m.clusterDNS) }
+
+	if v := dns(check("kube-system/kube-dns", dnsSlice("a", dnsEndpoint("lab-1", true), dnsEndpoint("lab-1", true)))); v != 1 {
+		t.Fatalf("two servers on one machine counted as %v machines", v)
+	}
+	if !strings.Contains(logs.String(), "cluster DNS") {
+		t.Fatalf("the leader did not say so: %s", logs)
+	}
+	if v := dns(check("kube-system/kube-dns", dnsSlice("a", dnsEndpoint("lab-1", true)), dnsSlice("b", dnsEndpoint("lab-2", true)))); v != 2 {
+		t.Fatalf("servers on two machines, across slices, counted as %v", v)
+	}
+	if v := dns(check("kube-system/kube-dns", dnsSlice("a", dnsEndpoint("lab-1", true), dnsEndpoint("lab-2", false)))); v != 1 {
+		t.Fatalf("a server that is not ready counted: %v", v)
+	}
+	other := dnsSlice("c", dnsEndpoint("lab-2", true))
+	other.Labels[discoveryv1.LabelServiceName] = "not-dns"
+	if v := dns(check("kube-system/kube-dns", dnsSlice("a", dnsEndpoint("lab-1", true)), other)); v != 1 {
+		t.Fatalf("another Service's endpoints counted: %v", v)
+	}
+	if v := dns(check("")); v != -1 {
+		t.Fatalf("not configured: %v, want -1 (not checked)", v)
 	}
 }

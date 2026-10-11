@@ -63,6 +63,14 @@ up() {
   kubectl -n longhorn-system rollout status deploy/longhorn-driver-deployer --timeout=600s >/dev/null
   kubectl -n longhorn-system wait --for=condition=Ready pod -l app=longhorn-manager --timeout=600s >/dev/null
   log "Longhorn ready; storage classes: $(kubectl get sc -o name | tr '\n' ' ')"
+  # Cluster DNS on more than one machine. k3s ships one CoreDNS replica; the lab lost it with a
+  # cell's machine, and for the whole takeover nothing resolved a name -- Longhorn's CSI plugin
+  # its manager, the agent its controller: the volume moved in 60 s instead of ~15. k3s's
+  # manifest spreads replicas across hosts and sets no replica count, so this survives its
+  # re-applying the manifest.
+  kubectl -n kube-system scale deploy coredns --replicas=2 >/dev/null
+  kubectl -n kube-system rollout status deploy coredns --timeout=180s >/dev/null
+  log "CoreDNS: $(kubectl -n kube-system get pods -l k8s-app=kube-dns -o jsonpath='{range .items[*]}{.spec.nodeName} {end}')"
 }
 
 case "${1:-}" in
