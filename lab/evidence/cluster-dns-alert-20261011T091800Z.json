@@ -1,0 +1,21 @@
+{
+  "scenario": "cluster-dns-alert",
+  "started": "2026-10-11T09:18:00+00:00",
+  "before": [
+    "2",
+    "2"
+  ],
+  "metric1AfterSeconds": 40,
+  "pendingAfterSeconds": 50,
+  "firingAfterSeconds": 650,
+  "leaderLog": [
+    "{\"time\":\"2026-10-11T09:18:49.842696168Z\",\"level\":\"WARN\",\"msg\":\"cluster DNS answers from fewer than two machines: losing one stops every takeover from resolving names until DNS is back\",\"service\":\"kube"
+  ],
+  "clearedAfterSeconds": 30,
+  "after": [
+    "2",
+    "2"
+  ],
+  "verdict": "PASS",
+  "note": "run by the same steps from a scratch script before it became lab/spike/dns_alert_probe.py"
+}
