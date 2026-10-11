@@ -25,6 +25,7 @@ import datetime as dt
 import json
 import os
 import random
+import re
 import subprocess
 import sys
 import time
@@ -96,7 +97,9 @@ def main() -> int:
         t0 = time.monotonic()
         r = subprocess.run([sys.executable, str(SPIKE / cmd[0]), *cmd[1:]], env={**os.environ, **extra},
                            capture_output=True, text=True, timeout=5400)
+        # probe.py and the dependency probe print "evidence: <file>"; chaos_poweroff.py puts it in its JSON.
         evidence = [line.split("evidence:")[1].strip() for line in r.stdout.splitlines() if line.startswith("evidence:")]
+        evidence += re.findall(r'"evidence": "(chaos-poweroff-[^"]+)"', r.stdout)[-1:]
         rnd_facts = {"round": len(facts["rounds"]) + 1, "fault": name, "seconds": round(time.monotonic() - t0),
                      "exit": r.returncode, "verdict": verdict_of(name, r.stdout, r.returncode), "evidence": evidence[-1:]}
         try:

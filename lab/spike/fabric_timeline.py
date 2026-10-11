@@ -69,6 +69,7 @@ def run_once(j: probe.Jenkins, job: str) -> dict:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--runs", type=int, default=5)
+    ap.add_argument("--burst", type=int, default=0, help="then this many builds of each job at once, --runs times")
     args = ap.parse_args()
     started = dt.datetime.now(UTC)
     j = probe.Jenkins()
@@ -77,7 +78,17 @@ def main() -> int:
         for job in results:
             results[job].append(run_once(j, job))
             time.sleep(5)  # the warm pool refills, as between builds
-    facts: dict = {"scenario": "fabric-timeline", "started": started.isoformat(timespec="seconds"), "runs": args.runs, "builds": results}
+    if args.burst:
+        from concurrent.futures import ThreadPoolExecutor
+        for job in ("fabric-probe", "k8s-probe"):
+            key = f"{job} (burst of {args.burst})"
+            results[key] = []
+            for _ in range(args.runs):
+                with ThreadPoolExecutor(args.burst) as ex:
+                    results[key] += list(ex.map(lambda _: run_once(probe.Jenkins(), job), range(args.burst)))
+                time.sleep(30)  # the warm pool refills before the next burst
+    facts: dict = {"scenario": "fabric-timeline", "started": started.isoformat(timespec="seconds"), "runs": args.runs,
+                   "burst": args.burst, "builds": results}
     for job, rs in results.items():
         facts[job] = {k: statistics.median([r["fromTrigger"][k] for r in rs if r["fromTrigger"].get(k) is not None])
                       for k in rs[0]["fromTrigger"] if any(r["fromTrigger"].get(k) is not None for r in rs)}
