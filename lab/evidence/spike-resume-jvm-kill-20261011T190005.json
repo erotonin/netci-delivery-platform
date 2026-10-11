@@ -1,0 +1,43 @@
+{
+  "scenario": "resume",
+  "failure": "jvm-kill",
+  "seconds": 240,
+  "job": "once-probe",
+  "build": 1,
+  "ticksBeforeFailure": 20,
+  "agentNode": "netci-lab-3",
+  "agentPod": "spike-ws-7p9gq",
+  "agentLog": "lab/evidence/agent-spike-ws-7p9gq.log",
+  "controllerNodeBefore": "netci-lab-1",
+  "controllerNodeAfter": "netci-lab-1",
+  "result": "SUCCESS",
+  "reachedStageAfter": true,
+  "ticksSeen": 241,
+  "ticksMissing": [],
+  "resumed": true,
+  "consoleTail": [
+    "[Pipeline] }",
+    "[Pipeline] // stage",
+    "[Pipeline] stage",
+    "[Pipeline] { (after)",
+    "[Pipeline] echo",
+    "reached the stage after the long step",
+    "[Pipeline] }",
+    "[Pipeline] // stage",
+    "[Pipeline] }",
+    "[Pipeline] // node",
+    "[Pipeline] End of Pipeline",
+    "Finished: SUCCESS"
+  ],
+  "once": {
+    "markers": 1,
+    "firstStarts": 1,
+    "refused": false
+  },
+  "timings_s": {
+    "jenkinsUp": 9.5,
+    "resumed": 13.1
+  },
+  "startedAt": "20261011T190005",
+  "jenkinsVersion": "2.555.3"
+}

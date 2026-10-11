@@ -264,7 +264,10 @@ def restore(kind: str, facts: dict) -> None:
 
 
 def ticks(text: str) -> list[int]:
-    return [int(m) for m in re.findall(r"^tick (\d+) ", text, re.M)]
+    # A line may start with the timestamper's "[2026-10-11T12:47:38.347Z] " (every Pipeline has
+    # timestamps in the lab since fabric_timeline.py): without it, no tick was ever found and a
+    # three-hour soak recorded every power-off as a probe timeout.
+    return [int(m) for m in re.findall(r"^(?:\[[^\]]*\] )?tick (\d+) ", text, re.M)]
 
 
 def scenario_resume(args) -> dict:

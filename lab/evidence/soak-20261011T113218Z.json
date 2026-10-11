@@ -1,0 +1,325 @@
+{
+  "scenario": "soak",
+  "seed": 20261011,
+  "hours": 3.0,
+  "started": "2026-10-11T11:32:18+00:00",
+  "rounds": [
+    {
+      "round": 1,
+      "fault": "power-loss+supervisor-leader",
+      "seconds": 332,
+      "exit": 1,
+      "verdict": "FAIL",
+      "evidence": [],
+      "invariantsBroken": [],
+      "stdoutTail": [
+        "    },",
+        "    \"jenkinsUp\": {",
+        "      \"values\": [],",
+        "      \"median\": null,",
+        "      \"max\": null",
+        "    },",
+        "    \"resumed\": {",
+        "      \"values\": [],",
+        "      \"median\": null,",
+        "      \"max\": null",
+        "    }",
+        "  },",
+        "  \"verdict\": \"FAIL\",",
+        "  \"evidence\": \"chaos-poweroff-20261011T113219Z.json\"",
+        "}"
+      ],
+      "stderrTail": []
+    },
+    {
+      "round": 2,
+      "fault": "power-loss+supervisor-leader",
+      "seconds": 336,
+      "exit": 1,
+      "verdict": "FAIL",
+      "evidence": [],
+      "invariantsBroken": [],
+      "stdoutTail": [
+        "    },",
+        "    \"jenkinsUp\": {",
+        "      \"values\": [],",
+        "      \"median\": null,",
+        "      \"max\": null",
+        "    },",
+        "    \"resumed\": {",
+        "      \"values\": [],",
+        "      \"median\": null,",
+        "      \"max\": null",
+        "    }",
+        "  },",
+        "  \"verdict\": \"FAIL\",",
+        "  \"evidence\": \"chaos-poweroff-20261011T113755Z.json\"",
+        "}"
+      ],
+      "stderrTail": []
+    },
+    {
+      "round": 3,
+      "fault": "power-loss",
+      "seconds": 331,
+      "exit": 1,
+      "verdict": "FAIL",
+      "evidence": [],
+      "invariantsBroken": [],
+      "stdoutTail": [
+        "    },",
+        "    \"jenkinsUp\": {",
+        "      \"values\": [],",
+        "      \"median\": null,",
+        "      \"max\": null",
+        "    },",
+        "    \"resumed\": {",
+        "      \"values\": [],",
+        "      \"median\": null,",
+        "      \"max\": null",
+        "    }",
+        "  },",
+        "  \"verdict\": \"FAIL\",",
+        "  \"evidence\": \"chaos-poweroff-20261011T114331Z.json\"",
+        "}"
+      ],
+      "stderrTail": []
+    },
+    {
+      "round": 4,
+      "fault": "power-loss",
+      "seconds": 331,
+      "exit": 1,
+      "verdict": "FAIL",
+      "evidence": [],
+      "invariantsBroken": [],
+      "stdoutTail": [
+        "    },",
+        "    \"jenkinsUp\": {",
+        "      \"values\": [],",
+        "      \"median\": null,",
+        "      \"max\": null",
+        "    },",
+        "    \"resumed\": {",
+        "      \"values\": [],",
+        "      \"median\": null,",
+        "      \"max\": null",
+        "    }",
+        "  },",
+        "  \"verdict\": \"FAIL\",",
+        "  \"evidence\": \"chaos-poweroff-20261011T114903Z.json\"",
+        "}"
+      ],
+      "stderrTail": []
+    },
+    {
+      "round": 5,
+      "fault": "power-loss+supervisor-leader",
+      "seconds": 331,
+      "exit": 1,
+      "verdict": "FAIL",
+      "evidence": [],
+      "invariantsBroken": [],
+      "stdoutTail": [
+        "    },",
+        "    \"jenkinsUp\": {",
+        "      \"values\": [],",
+        "      \"median\": null,",
+        "      \"max\": null",
+        "    },",
+        "    \"resumed\": {",
+        "      \"values\": [],",
+        "      \"median\": null,",
+        "      \"max\": null",
+        "    }",
+        "  },",
+        "  \"verdict\": \"FAIL\",",
+        "  \"evidence\": \"chaos-poweroff-20261011T115434Z.json\"",
+        "}"
+      ],
+      "stderrTail": []
+    },
+    {
+      "round": 6,
+      "fault": "jvm-kill",
+      "seconds": 457,
+      "exit": 0,
+      "verdict": "PASS",
+      "evidence": [
+        "lab/evidence/spike-resume-jvm-kill-20261011T190005.json"
+      ],
+      "invariantsBroken": []
+    },
+    {
+      "round": 7,
+      "fault": "jvm-kill",
+      "seconds": 496,
+      "exit": 0,
+      "verdict": "PASS",
+      "evidence": [
+        "lab/evidence/spike-resume-jvm-kill-20261011T190742.json"
+      ],
+      "invariantsBroken": []
+    },
+    {
+      "round": 8,
+      "fault": "pod-delete",
+      "seconds": 489,
+      "exit": 0,
+      "verdict": "PASS",
+      "evidence": [
+        "lab/evidence/spike-resume-pod-delete-20261011T191559.json"
+      ],
+      "invariantsBroken": []
+    },
+    {
+      "round": 9,
+      "fault": "power-loss+supervisor-leader",
+      "seconds": 331,
+      "exit": 1,
+      "verdict": "FAIL",
+      "evidence": [],
+      "invariantsBroken": [],
+      "stdoutTail": [
+        "    },",
+        "    \"jenkinsUp\": {",
+        "      \"values\": [],",
+        "      \"median\": null,",
+        "      \"max\": null",
+        "    },",
+        "    \"resumed\": {",
+        "      \"values\": [],",
+        "      \"median\": null,",
+        "      \"max\": null",
+        "    }",
+        "  },",
+        "  \"verdict\": \"FAIL\",",
+        "  \"evidence\": \"chaos-poweroff-20261011T122408Z.json\"",
+        "}"
+      ],
+      "stderrTail": []
+    },
+    {
+      "round": 10,
+      "fault": "bmc-unreachable",
+      "seconds": 301,
+      "exit": 1,
+      "verdict": "FAIL",
+      "evidence": [
+        "dependency-bmc-outage-20261011T122939Z.json"
+      ],
+      "invariantsBroken": [],
+      "stdoutTail": [
+        "{",
+        " \"scenario\": \"bmc-outage\",",
+        " \"started\": \"2026-10-11T12:29:39+00:00\",",
+        " \"tag\": \"bmc-outage-20261011T122939\",",
+        " \"build\": 117,",
+        " \"error\": \"timed out waiting for the build to tick 20\",",
+        " \"verdict\": \"FAIL\"",
+        "}",
+        "evidence: dependency-bmc-outage-20261011T122939Z.json"
+      ],
+      "stderrTail": []
+    },
+    {
+      "round": 11,
+      "fault": "hung-machine",
+      "seconds": 331,
+      "exit": 1,
+      "verdict": "FAIL",
+      "evidence": [],
+      "invariantsBroken": [],
+      "stdoutTail": [
+        "    },",
+        "    \"jenkinsUp\": {",
+        "      \"values\": [],",
+        "      \"median\": null,",
+        "      \"max\": null",
+        "    },",
+        "    \"resumed\": {",
+        "      \"values\": [],",
+        "      \"median\": null,",
+        "      \"max\": null",
+        "    }",
+        "  },",
+        "  \"verdict\": \"FAIL\",",
+        "  \"evidence\": \"chaos-poweroff-20261011T123441Z.json\"",
+        "}"
+      ],
+      "stderrTail": []
+    },
+    {
+      "round": 12,
+      "fault": "postgresql-restart",
+      "seconds": 78,
+      "exit": 0,
+      "verdict": "PASS",
+      "evidence": [
+        "dependency-pg-restart-20261011T124012Z.json"
+      ],
+      "invariantsBroken": []
+    },
+    {
+      "round": 13,
+      "fault": "power-loss+supervisor-leader",
+      "seconds": 331,
+      "exit": 1,
+      "verdict": "FAIL",
+      "evidence": [],
+      "invariantsBroken": [],
+      "stdoutTail": [
+        "    },",
+        "    \"jenkinsUp\": {",
+        "      \"values\": [],",
+        "      \"median\": null,",
+        "      \"max\": null",
+        "    },",
+        "    \"resumed\": {",
+        "      \"values\": [],",
+        "      \"median\": null,",
+        "      \"max\": null",
+        "    }",
+        "  },",
+        "  \"verdict\": \"FAIL\",",
+        "  \"evidence\": \"chaos-poweroff-20261011T124130Z.json\"",
+        "}"
+      ],
+      "stderrTail": []
+    }
+  ],
+  "summary": {
+    "rounds": 13,
+    "passed": 4,
+    "byFault": {
+      "power-loss": [
+        "FAIL",
+        "FAIL"
+      ],
+      "power-loss+supervisor-leader": [
+        "FAIL",
+        "FAIL",
+        "FAIL",
+        "FAIL",
+        "FAIL"
+      ],
+      "hung-machine": [
+        "FAIL"
+      ],
+      "jvm-kill": [
+        "PASS",
+        "PASS"
+      ],
+      "pod-delete": [
+        "PASS"
+      ],
+      "postgresql-restart": [
+        "PASS"
+      ],
+      "bmc-unreachable": [
+        "FAIL"
+      ]
+    }
+  },
+  "verdict": "FAIL"
+}

@@ -1,0 +1,24 @@
+{
+  "scenario": "pg-restart",
+  "started": "2026-10-11T12:40:12+00:00",
+  "tag": "pg-restart-20261011T124012",
+  "databaseDownAfterSeconds": 0.6,
+  "build": 119,
+  "databaseBackAfterSeconds": 26.9,
+  "buildResult": "SUCCESS",
+  "blockRan": true,
+  "markers": 1,
+  "consoleTail": [
+    "[2026-10-11T12:40:37.170Z] [Pipeline] netciOnce",
+    "[2026-10-11T12:40:51.201Z] netciOnce('deploy'): first start in this build -- running it",
+    "[2026-10-11T12:41:22.015Z] [Pipeline] // netciOnce"
+  ],
+  "runs": {
+    "accepted": 10,
+    "refusedClearly": 9,
+    "otherFailures": [],
+    "finishedSuccess": 10,
+    "notExactlyOnce": {}
+  },
+  "verdict": "PASS"
+}
