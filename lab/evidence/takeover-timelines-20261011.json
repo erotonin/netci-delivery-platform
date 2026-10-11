@@ -1,0 +1,51 @@
+{
+  "scenario": "takeover-timelines",
+  "series": "chaos 28 (2026-10-11), cell chart with publishNotReadyAddresses and a 1 s startupProbe, CoreDNS on two machines",
+  "secondsFromPowerLoss": [
+    {
+      "node": "netci-lab-1",
+      "lease": 17.7,
+      "jenkinsFullyUp": 26.9,
+      "podReady": 26.6,
+      "agentConnected": null,
+      "resumed": 40.8,
+      "agentAfterFullyUp": null
+    },
+    {
+      "node": "netci-lab-2",
+      "lease": 26.9,
+      "jenkinsFullyUp": 39.3,
+      "podReady": 39.8,
+      "agentConnected": 40.8,
+      "resumed": 43.8,
+      "agentAfterFullyUp": 1.5
+    },
+    {
+      "node": "netci-lab-3",
+      "lease": 17.4,
+      "jenkinsFullyUp": 27.8,
+      "podReady": 27.9,
+      "agentConnected": 29.9,
+      "resumed": 35.6,
+      "agentAfterFullyUp": 2.1
+    },
+    {
+      "node": "netci-lab-1",
+      "lease": 21.4,
+      "jenkinsFullyUp": 34.4,
+      "podReady": 35.0,
+      "agentConnected": 37.0,
+      "resumed": 43.3,
+      "agentAfterFullyUp": 2.6
+    }
+  ],
+  "before": {
+    "source": "chaos 25 (2026-10-09T10:06:57Z), one run, the chart before",
+    "jenkinsFullyUp": 30.1,
+    "podReady": 33.3,
+    "agentConnected": 36.4,
+    "agentAfterFullyUp": 6.25,
+    "why": "the startupProbe asked every 5 s (Ready 3.3 s after fully up), then the endpoint reached every node (2.8 s)"
+  },
+  "note": "agentConnected is read from the agent's own log (1 s resolution); run 1's log stream ended at the power loss (followed through the lost machine's API server), fixed in lab/spike/probe.py since"
+}

@@ -1,0 +1,95 @@
+{
+  "scenario": "resume",
+  "failure": "node-poweroff-supervised",
+  "seconds": 240,
+  "job": "once-probe",
+  "build": 100,
+  "ticksBeforeFailure": 45,
+  "agentNode": "netci-lab-3",
+  "agentPod": "spike-ws-wp805",
+  "agentLog": "lab/evidence/agent-spike-ws-wp805.log",
+  "controllerNodeBefore": "netci-lab-2",
+  "leaseHolderBefore": "jenkins-0/dc41ce56-586f-4d8f-9a38-adbb93bafa77",
+  "supervisorBefore": {
+    "leader": "netci-supervisor-6bbcf645c9-sdmjk",
+    "netci-supervisor-6bbcf645c9-hwc4b": {
+      "node": "netci-lab-2",
+      "leading": 0.0,
+      "observation_resets_total": 1.0,
+      "observe_errors_total": 0.0
+    },
+    "netci-supervisor-6bbcf645c9-sdmjk": {
+      "node": "netci-lab-1",
+      "leading": 1.0,
+      "observation_resets_total": 1.0,
+      "observe_errors_total": 0.0
+    }
+  },
+  "leadersBefore": {
+    "controller-manager": "netci-lab-1",
+    "scheduler": "netci-lab-1",
+    "csi-attacher": "netci-lab-1"
+  },
+  "failureAt": "2026-10-10T04:09:44.415+00:00",
+  "supervisorAfter": {
+    "leader": "netci-supervisor-6bbcf645c9-2qrfj",
+    "netci-supervisor-6bbcf645c9-2qrfj": {
+      "node": "netci-lab-3",
+      "leading": 1.0,
+      "observation_resets_total": 1.0,
+      "observe_errors_total": 0.0
+    },
+    "netci-supervisor-6bbcf645c9-sdmjk": {
+      "node": "netci-lab-1",
+      "leading": 0.0,
+      "observation_resets_total": 1.0,
+      "observe_errors_total": 0.0
+    }
+  },
+  "controllerNodeAfter": "netci-lab-1",
+  "result": "SUCCESS",
+  "reachedStageAfter": true,
+  "ticksSeen": 241,
+  "ticksMissing": [],
+  "resumed": true,
+  "consoleTail": [
+    "[Pipeline] }",
+    "[Pipeline] // stage",
+    "[Pipeline] stage",
+    "[Pipeline] { (after)",
+    "[Pipeline] echo",
+    "reached the stage after the long step",
+    "[Pipeline] }",
+    "[Pipeline] // stage",
+    "[Pipeline] }",
+    "[Pipeline] // node",
+    "[Pipeline] End of Pipeline",
+    "Finished: SUCCESS"
+  ],
+  "once": {
+    "markers": 1,
+    "firstStarts": 1,
+    "refused": false
+  },
+  "timings_s": {
+    "fenced": 2.8,
+    "leaseTaken": 62.6,
+    "jenkinsUp": 83.1,
+    "resumed": 86.0
+  },
+  "nodeRestoredBySupervisor": true,
+  "supervisorEvents": [
+    "2026-10-10T04:09:49Z Fenced: machine netci-lab-2 confirmed off while fencing cell-a/jenkins; lease released",
+    "2026-10-09T10:07:18Z TakeoverComplete: jenkins-0/ce49de28-8584-4854-88d6-f06029858377 holds the lease (epoch 178) 21.0s after the last renewal by jenkins-0/3c825001-719b-456c-95dd-95662ecce750",
+    "2026-10-09T10:07:02Z Fenced: machine netci-lab-2 confirmed off while fencing cell-a/jenkins; lease released",
+    "2026-10-09T10:27:16Z Fenced: machine netci-lab-3 confirmed off in 417ms; lease released, node netci-lab-3 out of service (1.323s in all); the cells' pods are deleted once the storage has settled",
+    "2026-10-09T10:22:58Z TakeoverComplete: jenkins-0/32d799c4-63ee-4678-b3c9-11d571204fb8 holds the lease (epoch 181) 18.0s after the last renewal by jenkins-0/767e2651-7249-4688-af64-d8ff7958d131",
+    "2026-10-09T10:22:45Z Fenced: machine netci-lab-1 confirmed off while fencing cell-a/jenkins; lease released",
+    "2026-10-09T09:51:31Z SupervisorAlert: the controller stopped renewing and the power state of netci-lab-1 is unknown: not fencing on a guess",
+    "2026-10-09T10:17:49Z TakeoverComplete: jenkins-0/767e2651-7249-4688-af64-d8ff7958d131 holds the lease (epoch 180) 21.0s after the last renewal by jenkins-0/29721ed1-278b-402d-a216-5474ca87d172",
+    "2026-10-09T10:17:31Z Fenced: machine netci-lab-2 confirmed off in 188ms; lease released, node netci-lab-2 out of service (464ms in all); the cells' pods are deleted once the storage has settled",
+    "2026-10-09T10:22:55Z NoTakeoverHeadroom: no other machine could take the controller if netci-lab-3 were lost: [netci-lab-1: not Ready netci-lab-2: 1930m CPU and 2008272Ki memory left for 1040m and 2112Mi]"
+  ],
+  "startedAt": "20261010T110844",
+  "jenkinsVersion": "2.555.3"
+}

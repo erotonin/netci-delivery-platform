@@ -1,0 +1,66 @@
+{
+  "scenario": "chaos-poweroff",
+  "started": "2026-10-11T09:30:27.037160+00:00",
+  "runs": [
+    {
+      "run": 1,
+      "crashAtTick": 18,
+      "probeExit": 0,
+      "evidence": "spike-resume-node-poweroff-supervised-20261011T163057.json",
+      "node": "netci-lab-1",
+      "result": "SUCCESS",
+      "resumed": true,
+      "ticksMissing": [],
+      "timings_s": {
+        "fenced": 3.1,
+        "leaseTaken": 17.7,
+        "jenkinsUp": 28.5,
+        "resumed": 40.8
+      },
+      "job": "once-probe",
+      "once": {
+        "markers": 1,
+        "firstStarts": 1,
+        "refused": false
+      },
+      "nodeRestoredBySupervisor": true,
+      "machineAfterFencing": null,
+      "neighbourNode": "netci-lab-2",
+      "neighbourColocated": false,
+      "neighbourJenkinsRestarted": false,
+      "neighbourLeaseLosses": 0,
+      "neighbourHeldAgain": false
+    }
+  ],
+  "summary": {
+    "fenced": {
+      "values": [
+        3.1
+      ],
+      "median": 3.1,
+      "max": 3.1
+    },
+    "leaseTaken": {
+      "values": [
+        17.7
+      ],
+      "median": 17.7,
+      "max": 17.7
+    },
+    "jenkinsUp": {
+      "values": [
+        28.5
+      ],
+      "median": 28.5,
+      "max": 28.5
+    },
+    "resumed": {
+      "values": [
+        40.8
+      ],
+      "median": 40.8,
+      "max": 40.8
+    }
+  },
+  "verdict": "PASS"
+}

@@ -177,6 +177,13 @@ def fail(kind: str, facts: dict) -> dict[str, float]:
         fault = "destroy" if kind == "node-poweroff-supervised" else "suspend"
         subprocess.run(["virsh", "-c", "qemu:///system", fault, node], check=True, capture_output=True)
         t["failure"] = now()
+        # A second fault at once (lab/spike/soak.py): the supervisor's leader dies too, wherever it
+        # runs, and its standby must take the fencing over.
+        if os.environ.get("NETCI_ALSO_KILL_SUPERVISOR_LEADER") == "1":
+            lead = kubectl("-n", "netci-system", "get", "lease", "netci-supervisor", "-o", "jsonpath={.spec.holderIdentity}", check=False)
+            if lead:
+                kubectl("-n", "netci-system", "delete", "pod", lead, "--wait=false", check=False)
+                facts["supervisorLeaderKilled"] = lead
         # The wall-clock time too (the timings are monotonic): to line them up with the
         # supervisor's log and the cluster's events.
         facts["failureAt"] = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="milliseconds")
@@ -278,8 +285,12 @@ def scenario_resume(args) -> dict:
     facts["agentPod"] = agent
     EVIDENCE.mkdir(parents=True, exist_ok=True)
     agent_log = EVIDENCE / f"agent-{agent}.log"
-    # Followed from now until the pod goes: what the agent did while its controller was gone.
-    subprocess.Popen(["kubectl", "-n", NS, "logs", "-f", agent], stdout=agent_log.open("w"), stderr=subprocess.STDOUT)
+    # Followed from now until the pod goes: what the agent did while its controller was gone --
+    # through the API server of a machine that is not about to fail (the default one did, and the
+    # log stopped at the power loss).
+    spare = next((ip for n, ip in NODES.items() if n != controller_node()), None)
+    follow = ["kubectl", *([f"--server=https://{spare}:6443"] if spare else []), "-n", NS, "logs", "-f", agent]
+    subprocess.Popen(follow, stdout=agent_log.open("w"), stderr=subprocess.STDOUT)
     facts["agentLog"] = str(agent_log.relative_to(ROOT))
     t = fail(args.failure, facts)
     j.after_restart()

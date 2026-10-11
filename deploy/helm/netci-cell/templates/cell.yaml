@@ -213,12 +213,14 @@ spec:
               port: 8080
             periodSeconds: 2
             failureThreshold: 3
+          # Asked every second: readiness waits for this, and at 5 s a takeover's controller stayed
+          # unready for up to 5 s after Jenkins was up (lab: 3.3 s). Still 10 minutes in all.
           startupProbe:
             httpGet:
               path: /login
               port: 8080
-            periodSeconds: 5
-            failureThreshold: 120
+            periodSeconds: 1
+            failureThreshold: 600
           livenessProbe:
             httpGet:
               path: /login
@@ -300,12 +302,20 @@ spec:
           requests:
             storage: {{ .Values.storage.size }}
 ---
+# The controller's address for its agents, sandboxes and netci-queue's dispatcher. It names the
+# pod from the moment it has an address, ready or not: Jenkins answers 503, without a session,
+# until it is fully up, and every one of these clients retries -- the agents' wrappers restart
+# an agent only when they see a new X-Jenkins-Session. Waiting for readiness instead cost a
+# takeover the probe's interval and the endpoint's propagation to every node (lab: 6.1 s from
+# "fully up" to the build's agent connecting). Through the ingress, people see Jenkins' own
+# "getting ready" page meanwhile; jenkins-ui, the NodePort, still waits for readiness.
 apiVersion: v1
 kind: Service
 metadata:
   name: jenkins
   namespace: {{ .Release.Namespace }}
 spec:
+  publishNotReadyAddresses: true
   selector:
     app: jenkins
   ports:
