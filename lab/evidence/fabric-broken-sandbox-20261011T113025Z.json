@@ -1,0 +1,29 @@
+{
+  "scenario": "fabric-broken-sandbox",
+  "started": "2026-10-11T11:30:25+00:00",
+  "unready": {
+    "pod": "sbx-8e299cd968d14d2c",
+    "failedAfterSeconds": 1.9,
+    "row": "failed the warm pod is no longer ready"
+  },
+  "frozen": [
+    "sbx-ca9c09f1dd6845ac on netci-lab-3, pid 126574",
+    "sbx-d7c2a61d685a4d37 on netci-lab-1, pid 199285"
+  ],
+  "build": {
+    "number": 47,
+    "result": "SUCCESS",
+    "triggerToDoneSeconds": 52.8
+  },
+  "fabricLog": [
+    "11:30:37.633 claimed sbx-ca9c09f1dd6845ac  warm=True",
+    "11:31:03.462 claimed sbx-d7c2a61d685a4d37  warm=True",
+    "11:31:18.686 sandbox failed sbx-d7c2a61d685a4d37 a warm sandbox did not take its binding within 15s warm=",
+    "11:31:23.462 claimed sbx-d4be26e798be4b1a  warm=True"
+  ],
+  "frozenRows": {
+    "sbx-ca9c09f1dd6845ac": "deleted released by the controller",
+    "sbx-d7c2a61d685a4d37": "deleted a warm sandbox did not take its binding within 15s"
+  },
+  "verdict": "PASS"
+}
