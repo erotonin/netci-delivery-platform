@@ -506,3 +506,25 @@ func TestAFabricWhoseClockIsAheadOfTheDatabaseKeepsAFreshClaim(t *testing.T) {
 		t.Fatalf("a claim made a moment ago was given up: %v", st)
 	}
 }
+
+func TestDurationsAreMeasuredOnTheDatabasesClock(t *testing.T) {
+	w := newWorld(t, 1, 2)
+	w.tick()
+	w.start()
+	w.tick()
+	_, c := w.req("POST", "/v1/claims", "cell-b-token", claimBody("a"))
+	id := uuid.MustParse(c["id"].(string))
+	if _, err := w.store.Pool.Exec(context.Background(), `UPDATE sandboxes SET claimed_at = now() - interval '30 seconds' WHERE id = $1`, id); err != nil {
+		t.Fatal(err)
+	}
+	secs, err := w.store.SecondsSince(context.Background(), id, "claimed")
+	if err != nil || secs < 29.5 || secs > 31 {
+		t.Fatalf("claimed %v s ago (%v), want 30", secs, err)
+	}
+	if _, err := w.store.SecondsSince(context.Background(), id, "bound"); err == nil {
+		t.Fatal("a claim never bound has no bound age")
+	}
+	if _, err := w.store.SecondsSince(context.Background(), id, "created; DROP TABLE sandboxes"); err == nil {
+		t.Fatal("an unknown mark was accepted")
+	}
+}

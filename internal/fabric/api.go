@@ -208,7 +208,9 @@ func (a *API) release(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if sb.BoundAt != nil {
-			a.Metrics.busySeconds.WithLabelValues(sb.Pool).Observe(time.Since(*sb.BoundAt).Seconds())
+			if secs, err := a.Store.SecondsSince(r.Context(), id, "bound"); err == nil {
+				a.Metrics.busySeconds.WithLabelValues(sb.Pool).Observe(secs)
+			}
 		}
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -312,7 +314,9 @@ func (a *API) binding(w http.ResponseWriter, r *http.Request) {
 	}
 	if sb.State == Claimed {
 		if err := a.Store.Transition(r.Context(), sb.ID, Claimed, Bound, "", ""); err == nil && sb.ClaimedAt != nil {
-			a.Metrics.claimToBind.WithLabelValues(sb.Pool).Observe(time.Since(*sb.ClaimedAt).Seconds())
+			if secs, err := a.Store.SecondsSince(r.Context(), sb.ID, "claimed"); err == nil {
+				a.Metrics.claimToBind.WithLabelValues(sb.Pool).Observe(secs)
+			}
 		}
 	}
 	writeJSON(w, http.StatusOK, bd)

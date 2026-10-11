@@ -202,6 +202,24 @@ func (s *Store) SetPodUID(ctx context.Context, id uuid.UUID, uid string) error {
 }
 
 // Get returns one sandbox.
+// SecondsSince is how long ago, on the database's clock, the sandbox was claimed ("claimed") or
+// bound ("bound"): durations from its timestamps are measured on the clock that wrote them.
+func (s *Store) SecondsSince(ctx context.Context, id uuid.UUID, mark string) (float64, error) {
+	column := map[string]string{"claimed": "claimed_at", "bound": "bound_at"}[mark]
+	if column == "" {
+		return 0, fmt.Errorf("no such mark %q", mark)
+	}
+	var secs *float64
+	err := s.Pool.QueryRow(ctx, `SELECT extract(epoch FROM now() - `+column+`)::float8 FROM sandboxes WHERE id = $1`, id).Scan(&secs)
+	if err != nil {
+		return 0, err
+	}
+	if secs == nil {
+		return 0, fmt.Errorf("sandbox %s was never %s", id, mark)
+	}
+	return *secs, nil
+}
+
 // Now is the database's time: the clock every timestamp of the store is written in.
 func (s *Store) Now(ctx context.Context) (time.Time, error) {
 	var t time.Time
