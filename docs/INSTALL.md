@@ -79,6 +79,12 @@ API server was lost, and Longhorn may delete the new controller.
   changes without a restart.
 - **Values**: `image.controller`, `netci.repository`/`netci.digest`, `storage.className`, `ui.ingress`
   (or `ui.nodePort`), `kubernetesPlugin.enabled` if builds use the Kubernetes plugin.
+- **`storage.className`: a replicated RWO class mounted with `commit=1`**, on machines whose
+  writeback is 1 s (`vm.dirty_expire_centisecs=100`, `vm.dirty_writeback_centisecs=100`). That loses at
+  most ~1 s of the controller's writes to a power loss and costs nothing measurable (ADR-060). A class
+  mounted `sync,dirsync` is safer by that second and much slower: ~4x a build's time in ADR-060, and on
+  the lab each Pipeline step's end took ~4 s and a 120 s step finished 100-150 s late after a takeover
+  (`demo-power-loss-20261012T042727Z.json`, `...T043318Z.json`, against 1 s on `commit=1`).
 - **Build logs to Loki** (optional): `logShipping.enabled`, `logShipping.lokiUrl`, and
   `logShipping.image` (Fluent Bit pinned by digest; `values.yaml` names the tested one). During
   a takeover, read a build's log in Grafana: `{cell="<namespace>", job="<job>"} | build="<n>"`.
