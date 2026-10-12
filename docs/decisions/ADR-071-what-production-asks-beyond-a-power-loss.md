@@ -72,8 +72,14 @@ This round put each of those on the lab, and every one found something.
 
 ## Not shown
 
-- The fabric is still within 0.4 s of the Kubernetes plugin on an idle lab with cached images; about
-  2.5 s of both goes from the agent's connection to its first step (the remoting handshake).
+- The fabric is not faster than the Kubernetes plugin per build: median 4.7 s against 4.1 s one at
+  a time, 5.6 s against 4.8 s four at a time (`fabric-timeline-20261012T022726Z.json`, cells on two
+  machines, images cached). Under bursts its tail was shorter: 1 of 17 builds over 15 s against 6 of
+  16; a small sample. Those slow builds of both lost ~15 s either before the agent connected or
+  before the first `sh` step ran: Jenkins' and remoting's, not found here.
+- Measured with both controllers on one machine (lab-3, 84% memory, after takeovers), every build
+  of both took ~9 s and some 20-48 s; latency figures need the cells apart (RUNBOOK
+  NetciCellsShareAMachine).
 - The soak never drew the BMC-unreachable fault (weight 1 of 12); that case is measured on its own
   (`dependency-bmc-outage-*.json`). A first soak stopped at round 2 on a defect of the harness, not of
   netCI (the timestamper's prefix hid the build's ticks from the probe): `soak-20261011T113218Z.json`.

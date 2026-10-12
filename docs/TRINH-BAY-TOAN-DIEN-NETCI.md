@@ -894,8 +894,11 @@ Mỗi bài học theo cùng một khuôn: hệ thống đúng trong điều ki�
 - **Chưa fence một server vật lý thật** qua iDRAC/iLO. Hành vi BMC mới chỉ được mô phỏng theo tài
   liệu và báo cáo lỗi của hãng.
 - **Quy mô với storage thật**: kwok đo phần control plane; storage chuyển *nhiều* volume mới đo tới 8.
-- Fabric chưa nhanh hơn Kubernetes plugin trên lab nhàn rỗi: chênh 0,4 s (4,9 s so với 4,4 s), vì
-  khoảng 2,5 s của cả hai là bắt tay remoting giữa agent và controller. Co giãn host theo dự báo và
+- Fabric chưa nhanh hơn Kubernetes plugin tính theo từng build: trung vị 4,7 s so với 4,1 s khi chạy
+  lần lượt, 5,6 s so với 4,8 s khi 4 build cùng lúc. Khi dồn dập, đuôi của fabric ngắn hơn (1/17 build
+  quá 15 s so với 6/16), nhưng mẫu còn nhỏ. Các build chậm của cả hai mất khoảng 15 s trước khi agent
+  kết nối hoặc trước bước `sh` đầu tiên: đó là phần của Jenkins/remoting, chưa tìm ra nguyên nhân.
+  Lưu ý: chỉ đo khi hai controller ở hai máy khác nhau; dồn chung một máy thì mọi build chậm gấp đôi. Co giãn host theo dự báo và
   tái chế host **chưa làm**.
 - Mọi số liệu đều từ lab 3 VM, nơi mọi máy đồng thời là control plane. Production nên tách riêng.
 
