@@ -897,7 +897,10 @@ Mỗi bài học theo cùng một khuôn: hệ thống đúng trong điều ki�
 - Fabric chưa nhanh hơn Kubernetes plugin tính theo từng build: trung vị 4,7 s so với 4,1 s khi chạy
   lần lượt, 5,6 s so với 4,8 s khi 4 build cùng lúc. Khi dồn dập, đuôi của fabric ngắn hơn (1/17 build
   quá 15 s so với 6/16), nhưng mẫu còn nhỏ. Các build chậm của cả hai mất khoảng 15 s trước khi agent
-  kết nối hoặc trước bước `sh` đầu tiên: đó là phần của Jenkins/remoting, chưa tìm ra nguyên nhân.
+  kết nối hoặc trước bước `sh` đầu tiên. **Đã tìm ra (ADR-072)**: mỗi agent mới phải tải khoảng 19 MB jar
+  của controller qua channel. Sandbox giờ được nạp sẵn jar cache từ một image (`jarCache` của pool): khi
+  dồn dập, fabric đạt trung vị 4,82 s, không build nào quá 6 s (Kubernetes plugin 6,17 s); khi chạy lần
+  lượt, fabric vẫn chậm hơn khoảng 0,7 s.
   Lưu ý: chỉ đo khi hai controller ở hai máy khác nhau; dồn chung một máy thì mọi build chậm gấp đôi. Co giãn host theo dự báo và
   tái chế host **chưa làm**.
 - Mọi số liệu đều từ lab 3 VM, nơi mọi máy đồng thời là control plane. Production nên tách riêng.

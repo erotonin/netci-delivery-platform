@@ -77,7 +77,7 @@ This round put each of those on the lab, and every one found something.
   a time, 5.6 s against 4.8 s four at a time (`fabric-timeline-20261012T022726Z.json`, cells on two
   machines, images cached). Under bursts its tail was shorter: 1 of 17 builds over 15 s against 6 of
   16; a small sample. Those slow builds of both lost ~15 s either before the agent connected or
-  before the first `sh` step ran: Jenkins' and remoting's, not found here.
+  before the first `sh` step ran: found since (ADR-072), the controller's jars fetched by each new agent.
 - Measured with both controllers on one machine (lab-3, 84% memory, after takeovers), every build
   of both took ~9 s and some 20-48 s; latency figures need the cells apart (RUNBOOK
   NetciCellsShareAMachine).

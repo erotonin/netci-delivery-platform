@@ -49,6 +49,9 @@ Values: `deploy/helm/netci/ci/lab-values.yaml` is a complete example. Configurat
 - `queue.config`: cells, routes, clients, hooks. A client gets `jobs` to trigger runs and
   `once: true` to record `netciOnce` markers; give each controller a client with `once` only.
 - `fabric.config`: pools, and the cells allowed to claim sandboxes.
+  A pool's `jarCache` (optional, by digest) is an image built with `jenkins/Dockerfile.agent-jars` from your
+  controller image: sandboxes then start with its jars cached instead of fetching ~19 MB over the agent's
+  channel (ADR-072). Rebuild it with each controller image; a stale one only means the agent fetches the rest.
 - `queue.ingress`: HTTPS for webhooks. The chart refuses an ingress without a TLS secret.
 
 ```bash

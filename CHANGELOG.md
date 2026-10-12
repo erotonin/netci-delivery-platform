@@ -5,6 +5,13 @@ Changelog and releases use Semantic Versioning once the project reaches 1.0.0.
 
 ## [Unreleased]
 
+### Changed - 2026-10-12: sandboxes start with the controller's jars (ADR-072)
+- Where some builds' ~15 s went, on the fabric and the Kubernetes plugin alike: a fresh agent fetches ~19 MB
+  of the controller's jars over its channel (`lab/spike/agent_delay_probe.py`, a thread dump of the controller).
+- `jenkins/Dockerfile.agent-jars` builds an agent jar cache from a controller image; a fabric pool's `jarCache`
+  (by digest) is copied into each sandbox's agent before it is warm. Lab: fabric bursts 5.6 s -> 4.82 s median,
+  worst 20.5 s -> 5.97 s.
+
 ### Fixed - 2026-10-11: upgrades, failing dependencies, cluster DNS, start time, the fabric (ADR-071)
 - **Upgrades and rollbacks** of every component during a running netciOnce build lose nothing and
   fence nothing (`lab/spike/upgrade_probe.py`).
