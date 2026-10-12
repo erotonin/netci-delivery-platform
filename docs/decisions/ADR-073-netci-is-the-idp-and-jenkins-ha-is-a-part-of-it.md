@@ -42,8 +42,9 @@ the IDP was to be deleted.
 
 The IDP's gates on the merged tree, against a test database of its own (port 55434; 55432 is
 `netci-p0-pg`, which is kept untouched): migrations and `schema.sql`, `pyflakes`,
-`docker compose config`, the full pytest suite, the portal's tests and build; and the Go gate.
-Results are in the commit that restores the files.
+`docker compose config`, pytest 62 + 1479 passed (1477 at first and one failure, the controller tag's
+drift; then the fix and the new HA-lab test), the portal's 120 tests and build; `make check` and
+`ci/charts.sh`. The restoring commit's message says 1478: one short, corrected here.
 
 ## Rejected
 
