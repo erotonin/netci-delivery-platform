@@ -1,0 +1,16 @@
+# One virtual address for netCI's ingress (scripts/corp/ingress.sh), announced over L2 on the
+# kind network by whichever node MetalLB's speakers elect: a company puts a load balancer or VIP
+# in front of its ingress; this is that, on one machine. Outside Docker's allocation range
+# (it assigns from the bottom of 172.17.0.0/16).
+apiVersion: metallb.io/v1beta1
+kind: IPAddressPool
+metadata: {name: netci-ingress, namespace: metallb-system}
+spec:
+  addresses: ["172.17.255.200/32"]
+  autoAssign: false
+---
+apiVersion: metallb.io/v1beta1
+kind: L2Advertisement
+metadata: {name: netci-ingress, namespace: metallb-system}
+spec:
+  ipAddressPools: [netci-ingress]

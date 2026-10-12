@@ -1,0 +1,10 @@
+# The netCI Go image (Dockerfile at the root) uses this allow-list, through BuildKit's per-Dockerfile
+# ignore file; .dockerignore is the IDP images' (backend, worker), which build from the root too.
+# An allow-list: the image needs the two binaries and nothing else. Everything not named here
+# never reaches the Docker daemon -- notably .netci-gate, where the lab's secrets live.
+*
+!bin/linux-amd64/cell-agent
+!bin/linux-amd64/supervisor
+!bin/linux-amd64/netci-queue
+!bin/linux-amd64/netci-fabric
+!bin/linux-amd64/netci-sandbox

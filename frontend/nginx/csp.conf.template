@@ -1,0 +1,7 @@
+# Rendered into /tmp at start-up like api-upstream.conf. The browser exchanges the SSO
+# authorization code for a token by calling the identity provider directly (PKCE), so
+# connect-src must name that one origin. With only 'self' the login round trip came back
+# with a code and the portal could not redeem it: "SSO login failed: Failed to fetch".
+# NETCI_OIDC_ORIGIN is empty unless OIDC is configured; the Helm chart derives it from
+# auth.oidc.issuer and refuses anything that is not a bare scheme://host[:port].
+add_header Content-Security-Policy "default-src 'self'; base-uri 'self'; connect-src 'self' ${NETCI_OIDC_ORIGIN}; font-src 'self' data:; frame-ancestors 'none'; img-src 'self' data:; object-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'" always;

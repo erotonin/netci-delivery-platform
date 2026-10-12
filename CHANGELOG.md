@@ -5,6 +5,15 @@ Changelog and releases use Semantic Versioning once the project reaches 1.0.0.
 
 ## [Unreleased]
 
+### Changed - 2026-10-12: netCI is the IDP again, with Jenkins HA as a part of it (ADR-073)
+- Every file the HA rebuild deleted is restored from `netci-0.3-cd-portal` (569 files: backend,
+  portal, API, templates, sample apps, the IDP's scripts, deploy, Jenkins and infra files, tests,
+  evidence); the IDP documents are back in `docs/`. README is the IDP's; Jenkins HA is
+  `docs/JENKINS-HA.md`. Makefile, CI, `.dockerignore` and the controller image serve both.
+- The controller image carries the IDP's shared library again, and every reference to it
+  (toolchain, the IDP's corp lab, the HA lab) is `2.555.3-netci12`; a contract test now holds the
+  HA lab to the declaration too, which had drifted (netci11 against netci7).
+
 ### Changed - 2026-10-12: sandboxes start with the controller's jars (ADR-072)
 - Where some builds' ~15 s went, on the fabric and the Kubernetes plugin alike: a fresh agent fetches ~19 MB
   of the controller's jars over its channel (`lab/spike/agent_delay_probe.py`, a thread dump of the controller).

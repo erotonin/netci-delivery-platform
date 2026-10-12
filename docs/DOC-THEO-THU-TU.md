@@ -74,12 +74,15 @@ cấp máy chạy build) bao quanh Jenkins mã nguồn mở. Nó phải ngang Cl
 (không mất build, không mất hàng đợi, không chạy trùng), đủ chất lượng production, có thể bán được.
 Phần lõi viết bằng Go, plugin Jenkins viết bằng Java.
 
-### 1.3 Câu chuyện của chính đề tài
+### 1.3 Đề tài gồm những gì
 
-Đề tài đi qua hai giai đoạn, và lần chuyển hướng là một bài học (Phần 11):
-1. **netCI 0.3 — một Internal Developer Platform (IDP)**: portal cho developer, CD bằng Temporal, ký
-   ảnh, SBOM… Chạy được trên lab, nhưng không chữa nỗi đau thật.
-2. **netCI 0.4 — HA và agent fabric cho Jenkins** (nhánh hiện tại): chữa đúng nỗi đau ở 1.1.
+netCI là một **Internal Developer Platform (IDP)**: bài toán lớn. Developer dùng portal để đưa module
+lên, build, ký ảnh, kiểm SBOM, deploy có phê duyệt (Phần 11). Mọi build của IDP chạy trên Jenkins,
+nên Jenkins sập là cả IDP đứng.
+
+**HA cho Jenkins** là bài toán con, và là phần đang được đi sâu nhất (Phần 2–10, 12–16): chữa đúng nỗi
+đau ở 1.1. Hai phần nằm chung một repo (ADR-073). Việc nối IDP vào lớp HA, tức là build của IDP đi qua
+hàng đợi bền tới các cell sống sót khi mất máy, đang làm.
 
 ## 2. Nền tảng 1 — Jenkins từ con số 0
 
@@ -506,7 +509,7 @@ sudo k3s kubectl get nodes
 
 # Bước 2 — Hiểu netCI
 
-> **Tuần 2.** Yêu cầu, tiêu chí, lựa chọn công nghệ, kiến trúc, các luồng từng giây (phần 8 và 9 là trọng tâm), từng thành phần, và vì sao bỏ bản IDP cũ.
+> **Tuần 2.** Yêu cầu, tiêu chí, lựa chọn công nghệ, kiến trúc, các luồng từng giây (phần 8 và 9 là trọng tâm), từng thành phần, và phần IDP, bài toán lớn mà HA là một phần.
 
 ## 5. Từ nỗi đau thành yêu cầu
 
@@ -921,9 +924,10 @@ khối `netciOnce`, mỗi lần đúng một marker, không lần nào bị từ
 Log build sang Loki qua Fluent Bit (ADR-068): xem trong Grafana bằng
 `{cell="cell-b", job="<job>"} | build="<n>"`, kể cả lúc cell đang bị tiếp quản.
 
-## 11. Phần IDP cũ (netCI 0.3) và vì sao bỏ
+## 11. Phần IDP của netCI (bài toán lớn)
 
-Trước khi chuyển hướng, netCI là một **Internal Developer Platform** (tag `netci-0.3-cd-portal`):
+netCI là một **Internal Developer Platform**. Mã nằm ở `backend/`, `frontend/`, `api/`, `templates/`,
+`sample-apps/`; cách chạy ở `README.md` và `QUICKSTART.md`:
 - **Backend** Python (FastAPI, psycopg 3), PostgreSQL là nguồn sự thật lúc xử lý request.
 - **Portal** React 19 + Vite, SSO qua **Keycloak** (OIDC).
 - **CD** bằng **Temporal** (workflow bền): deploy qua SSH, canary, blue/green, rollback.
@@ -933,10 +937,15 @@ Trước khi chuyển hướng, netCI là một **Internal Developer Platform** 
 
 Đã chạy thật trên lab (onboarding, build 9 stage, đẩy registry, `cosign verify`, deploy qua SSH, SSO).
 
-**Vì sao bỏ (ADR-060, ADR-062)**: công ty *đã* deploy bằng Jenkins. Nỗi đau thật là Jenkins sập thì mất
-việc, không phải thiếu portal. Backend một tiến trình Python với `main.py` khoảng 7 000 dòng trộn mọi mối
-quan tâm. Repo được dựng lại bằng Go quanh bài toán HA. Giữ lại `toolchain/versions.yaml`, ảnh controller,
-GitLab, Harbor của lab, mọi ADR. **Bài học**: dám bỏ một sản phẩm chạy được khi nó không giải đúng nỗi đau.
+**Quan hệ với Jenkins HA.** Mọi build của IDP chạy trên Jenkins, nên Jenkins là điểm chết của cả IDP.
+Có một giai đoạn, repo được dựng lại chỉ quanh bài toán HA và phần IDP bị gỡ ra (ADR-060, ADR-062). Đó là
+một bước đi sai, đã được sửa (ADR-073): IDP là bài toán lớn, HA là một phần của nó, và cả hai nằm chung
+một repo. Việc còn lại là nối hai phần: build của IDP đi qua netci-queue (nhận bền, gửi không trùng,
+`netciOnce`) tới các cell, thay vì gọi thẳng một Jenkins.
+
+Cổng kiểm của IDP (ADR-073): migration và `schema.sql`, `pyflakes backend/app/`, `docker compose config`,
+toàn bộ pytest, test và build của portal. Test chạy trên một PostgreSQL riêng; không bao giờ trên DB của
+stack đang chạy.
 
 
 ---
@@ -1063,6 +1072,8 @@ Cách tìm cũng giống nhau: dựng lại đúng điều kiện thật, đo, v
 ## ADR-060: Jenkins cells, a global queue outside Jenkins, and fenced takeover
 
 Status: Proposed (2026-10-01); decisions 1 and 5 revised by the spike the same day. Supersedes the product scope of ADR-001..059: netCI no longer
+
+> Amended 2026-10-12 by ADR-073: netCI is the IDP again, and the HA layer is a part of it; the product-scope sentence below no longer holds.
 deploys (the organisation deploys with Jenkins) and no longer ships a portal. Those ADRs stay
 as history; the mechanisms reused from them are named below.
 
@@ -2561,7 +2572,7 @@ Cột "Gợi ý" là ý chính; tự diễn đạt bằng lời của mình, và
 | Đưa lên production cần gì thêm? | Diễn tập trên server và BMC thật; control plane tách khỏi máy chạy cell; PostgreSQL HA; storage của tổ chức; registry của tổ chức (INSTALL.md) |
 | Chi phí vận hành? | Supervisor đo được 0,16 core và 53 MiB khi theo dõi 600 cell. Chart yêu cầu cho supervisor, queue, fabric mỗi bản 50m CPU và 64 MiB (giới hạn 192–256 MiB), 2 bản mỗi loại; mỗi cell thêm một sidecar nhỏ |
 | Có bán được không, khác biệt là gì? | HA cho Jenkins mã nguồn mở mà không đổi Jenkinsfile, có bằng chứng chaos, fail closed. Thiếu: diễn tập phần cứng thật, co giãn máy, tài liệu hỗ trợ khách hàng |
-| Sao bỏ bản IDP 0.3 đã chạy được? | Nó không chữa nỗi đau thật: công ty đã deploy bằng Jenkins, nỗi đau là Jenkins sập. Dám bỏ một sản phẩm chạy được khi nó không giải đúng vấn đề |
+| IDP và Jenkins HA liên quan thế nào? | netCI là IDP (portal, build, ký ảnh, SBOM, deploy có phê duyệt). Mọi build của nó chạy trên Jenkins, nên Jenkins sập là IDP đứng: HA cho Jenkins là bài toán con, đi sâu nhất. Nối hai phần: build của IDP đi qua hàng đợi bền tới các cell (ADR-073) |
 | Em tự làm phần nào, có dùng AI không? | **Trả lời trung thực.** Nói rõ mình dùng công cụ AI thế nào (viết code, chạy thử nghiệm, soạn tài liệu), mình đã quyết định những gì, kiểm chứng ra sao. Quan trọng nhất là chứng minh được mình hiểu và giải thích được từng phần: đó là mục đích của mục BV7 |
 
 ---

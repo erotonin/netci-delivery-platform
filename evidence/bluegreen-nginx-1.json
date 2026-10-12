@@ -1,0 +1,67 @@
+{
+  "schemaVersion": "1.0",
+  "startedAt": "2026-09-16T11:55:04.173297+00:00",
+  "module": "hello-kubernetes",
+  "samplesPerStep": 200,
+  "observations": [
+    {
+      "label": "while the colour deploys (nothing switched yet)",
+      "expectedPercent": 0,
+      "observedPercent": 0.0,
+      "answersByDigest": {
+        "sha256:e8bedb337484346a0180df02418dec4f5c6f2e20f18470d6122bb9ad19231d6d": 200
+      },
+      "errors": 0,
+      "matched": true
+    },
+    {
+      "label": "healthy -> ingress switched to green",
+      "expectedPercent": 100,
+      "observedPercent": 100.0,
+      "answersByDigest": {
+        "sha256:e5fc87874cc1c5342254dcc9cef82b865a367e7f8dd63f190426bbee481aed7a": 200
+      },
+      "errors": 0,
+      "matched": true,
+      "routerStatus": {
+        "applicationId": "b30ed723-50ea-4210-b045-78576e2eeb89",
+        "environment": "prod",
+        "router": "nginx-ingress",
+        "activeColor": "green",
+        "updatedAt": "2026-09-16T11:55:19.031442+00:00",
+        "canaryWeight": 0,
+        "baselineWeight": 100,
+        "canaryRules": {},
+        "canaryRelease": "absent"
+      }
+    }
+  ],
+  "applicationId": "b30ed723-50ea-4210-b045-78576e2eeb89",
+  "servingBefore": "sha256:e8bedb337484346a0180df02418dec4f5c6f2e20f18470d6122bb9ad19231d6d",
+  "newDigest": "sha256:e5fc87874cc1c5342254dcc9cef82b865a367e7f8dd63f190426bbee481aed7a",
+  "host": "hello-kubernetes.prod.netci.local",
+  "productionRequestId": "78f476b2-7eb8-47c5-94e5-bc209ff71f25",
+  "deploymentId": "144313c1-3bd8-47d6-8268-d105debfec3a",
+  "colour": "green",
+  "servingColourBefore": "unknown",
+  "switchBack": {
+    "status": 409,
+    "body": {
+      "code": "TRAFFIC_SWITCH_REFUSED",
+      "message": "colour blue of application b30ed723-50ea-4210-b045-78576e2eeb89 in prod: expected one Service in prod, found 0 (deploy the colour first)",
+      "correlationId": "71fb5ec8-c667-475b-a3db-9b6e3f849a34",
+      "detail": {
+        "code": "TRAFFIC_SWITCH_REFUSED",
+        "message": "colour blue of application b30ed723-50ea-4210-b045-78576e2eeb89 in prod: expected one Service in prod, found 0 (deploy the colour first)"
+      }
+    }
+  },
+  "switchBackNote": "no previous colour release exists (first blue/green after a rolling release); the router refused rather than switch to nothing",
+  "helmReleases": [
+    "hello-kubernetes",
+    "hello-kubernetes-green"
+  ],
+  "finishedAt": "2026-09-16T11:55:20.051049+00:00",
+  "result": "passed",
+  "failures": []
+}

@@ -2,6 +2,8 @@
 
 Status: Accepted (2026-10-01).
 
+> Amended 2026-10-12 by ADR-073: decision 2 is reversed; every file it removed is restored beside the HA layer.
+
 ## Context
 
 ADR-060 and ADR-061 change what netCI is: a high-availability layer and an agent fabric for

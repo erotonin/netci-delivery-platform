@@ -1,0 +1,17 @@
+netCI {{ .Chart.AppVersion }} is installed as "{{ .Release.Name }}" in {{ .Release.Namespace }}.
+
+Portal and API:   {{ include "netci.externalUrl" . }}   (API under /api)
+Jenkins reports:  {{ include "netci.callbackUrl" . }}
+
+1. Wait for the API. Its init container applies the schema first:
+     kubectl -n {{ .Release.Namespace }} rollout status deploy/{{ include "netci.fullname" . }}-api
+
+2. Ask netCI whether every integration answers -- Jenkins, Temporal, DCIM, cosign.
+   "ready": false names what is missing; it is not a failure of the install.
+     kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "netci.fullname" . }}-api 8000:8000
+     curl -s localhost:8000/readyz | python3 -m json.tool
+
+3. If you have not yet, check the Jenkins controller itself:
+     python3 scripts/jenkins_preflight.py --url <controller url> --user <service account>
+
+Nothing here is live-verified until a pipeline has run end to end through this install.

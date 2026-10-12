@@ -1,87 +1,280 @@
-# netCI — High availability and an agent fabric for open-source Jenkins
+# netCI Delivery Platform
 
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
-netCI turns several open-source Jenkins controllers into one system that does not lose work
-when a controller dies, and runs builds in isolated sandboxes on a VM fleet. It does not replace
-Jenkins: teams keep their Jenkinsfiles, plugins and the Jenkins UI. The previous product (portal,
-Temporal CD, catalog) is at the tag `netci-0.3-cd-portal`.
+netCI is open-source software licensed under Apache-2.0. See
+[CONTRIBUTING.md](CONTRIBUTING.md), [SECURITY.md](SECURITY.md) and the
+[third-party inventory](THIRD_PARTY_NOTICES.md) before contributing or
+redistributing a release.
 
-Every claim below says how it is known. "Lab" means a run on the KVM + k3s + Longhorn lab
-against real Jenkins, with the evidence file named; "tested" means automated tests only.
+> Live-data policy: a normal installation starts empty and never substitutes demo
+> systems, servers, pipeline history or metrics. Set `NETCI_DEMO_DATA=true` only for
+> an explicit demo/test run. Acceptance evidence checked into `evidence/` records a
+> historical execution; run the release profile again to certify the current commit.
 
-## When a controller's machine loses power
+Local reference implementation của một delivery platform API-first: developer khai báo application từ Custom Portal hoặc Backstage, Jenkins thực hiện CI trên agent ephemeral, còn netCI/Temporal điều phối CD tới Docker, Kubernetes hoặc Systemd.
 
-| Guarantee | How | Status |
-|---|---|---|
-| The controller is taken over without a person | Each cell holds a Lease. When it goes unrenewed for 3 s, the Cell Supervisor asks the machine's power controller (SSH agent for libvirt, Redfish for servers). Once the machine is confirmed off, it releases the Lease and takes the node out of service, and Kubernetes starts the controller elsewhere on the replicated `JENKINS_HOME` | **Lab**: 81 unattended power-offs, every build resumed and finished SUCCESS, at most 1 log line lost. With the control plane at upstream timings (as on machines apart from the cells): fenced 2.7-3.8 s, build resumed after 41-50 s, median 43 s, in the latest series of 6, where every power loss also took two or three control-plane and storage leaders. With k3s's own timings, where every machine is also a control-plane node, the build resumed after 42-83 s. **Hung machines** (running, answering nothing), powered off by the supervisor through Redfish (sushy-tools' emulator in front of the VMs): 6/6 SUCCESS, machine off 19-22 s after the hang, build resumed after 69-83 s, including 3 runs where both cells were on the hung machine. **Through a BMC that behaves like a real one** (1.5 s a request, busy once, power state 8 s late): 3/3 hung machines taken over; this showed the old 20 s off-timeout was too short (now 60 s). **At scale** (kwok, a real API server and scheduler, the real supervisor and lease code): 600 cells on 200 machines observed in 0.1 s, a lost machine fenced in 2.7-2.9 s; before a fix found there, 300 cells took 11.9 s per observation and 12-17 s to fence. **Many volumes at once** (8 cells on one machine, real Longhorn volumes): moved as fast as one, every fsynced write present afterwards; the pod deleted first used to wait ~10 s for Longhorn (5 of 5), now its pods go once the storage has settled (ADR-070). ADR-060, ADR-069 and ADR-070 have the series and their evidence |
-| Running Pipeline builds continue, each step once | Pipeline durability, bounded writeback (≤ 1 s), agents that reconnect to the new controller | **Lab**: 240 s builds finished SUCCESS after every power-off, steps not re-run, at most 1 of 240 log lines lost |
-| A failure never takes down a healthy cell | Lease timings that outlast a control-plane stall (15 s / 10 s), renewals retried on fresh connections | **Lab**: the neighbouring cell kept its Lease and its Jenkins (run 6); found and fixed after run 5 broke it |
-| Two controllers never write one `JENKINS_HOME` | The agent kills Jenkins within 10 s of losing the Lease; a guard kills it if the agent itself hangs; the supervisor releases a Lease only after confirming the machine off, conditionally on its version, and never deletes the pod of a cell that still renews (a wrong node-to-machine mapping; found and fixed in ADR-070) | **Lab**: agent hang 3.5 s, API partition 3.2 s (4 s deadline then); **tested**: every rule has a test that fails when the rule is removed |
-| Queued builds are not lost | Runs live in PostgreSQL; the netCI plugin dispatches idempotently under Jenkins' queue lock | **Lab**: JVM killed under 6 queued items — 5 netCI runs each ran once, the direct trigger was lost (`queue-crash-*.json`) |
-| Webhooks are not lost or doubled | GitLab/GitHub deliveries authenticated and keyed by their delivery id | **Lab**: real GitLab push → Jenkins in 8.9 s; a resent delivery made no second run (`webhook-gitlab-*.json`) |
-| Build logs readable during a takeover | Fluent Bit beside each controller copies every build log to Loki as Jenkins writes it; read in Grafana while the cell is down. Runs submitted through netci-queue are in PostgreSQL. Nothing runs inside Jenkins and builds are not slowed (ADR-068) | **Lab**, 3 power-offs mid-build with Loki on its own failure domain: Jenkins down 50-95 s, and throughout Loki returned every line of the running build up to the crash; afterwards all 240 lines, 1-2 of them twice at the crash, none lost. Failures on the way, kept as evidence: Loki on the lost machine, and a takeover that preempted the build's own agent (fixed in the headroom check) |
-| A step that started in the last second is not re-run | `netciOnce(key) { ... }` records the block's start in PostgreSQL, outside `JENKINS_HOME`; a block started before under a lost state is refused, and the guard fails closed (ADR-065) | **Lab**: 51 power-offs under a running `netciOnce` block, each resumed with one marker and never refused; a second attempt with another nonce got 409 from the live queue. **Tested**: JenkinsRule |
-| A takeover is never stuck for want of room, and costs no running build when there is another way | Controllers outrank builds (priority classes); running builds carry a disruption budget, which the scheduler's preemption respects whenever other room exists; a cell no node can take does not hold its fenced machine off; the supervisor reports, before any loss, a cell whose only room is a running build's (ADR-069) | **Lab**: a takeover stranded for 22 min was found, and the fixed supervisor recovered it in 41 s; `NetciCellWithoutHeadroom` fired when the only room was a build's, and cleared when the build ended (`headroom-running-build-*.json`). **Real kube-scheduler** (kwok): without the budget a running build was preempted 5/5, with it 0/5; with builds on every machine the controller was still placed 2/2 |
-| A controller whose `JENKINS_HOME` fails is restarted | The cell agent writes to `JENKINS_HOME` every 5 s; three failures in a row are reported on the Lease and the supervisor restarts that pod, so that the volume is mounted again, on any storage (ADR-067) | **Lab**: `JENKINS_HOME` made unwritable under a running controller; reported after 12 s, pod restarted 1 s later |
-| Upgrades lose nothing | A planned restart is not a failure: the agent keeps the Lease until Jenkins exits, then releases it | **Lab**: rollback and upgrade of every component during a 240 s netciOnce build: SUCCESS, every queued run once, no supervisor action, UIs down 19-42 s (`upgrade-*.json`) |
-| A failing dependency is refused, not pretended | Readiness follows the database; netciOnce fails closed; nothing is fenced on an unknown power state | **Lab**: PostgreSQL restarted and down 90 s, a BMC unreachable when a machine died (`dependency-*.json`) |
-| Faults one after another do not wear it down | Each fault leaves the cluster as it found it; nothing accumulates | **Lab**: 3 h soak, 38 random faults back to back (power loss, hung machine, the supervisor's leader killed with a machine, JVM killed, PostgreSQL restarted, pod deleted): 38/38 builds SUCCESS, every invariant held between rounds (`soak-20261011T125323Z.json`) |
-| Configuration changes need no restart | The cell agent applies a changed JCasC ConfigMap to the running controller; jobs new in JCasC exist from the first start | **Lab**: applied in 81 s with the same pod and no restart; a job declared only in JCasC was there after a restart, with no reload |
-| A failure that needs a person is seen | 16 Prometheus alerts, each with a runbook entry, including no supervisor or queue running at all; a Grafana dashboard; every labelled series starts at 0 so the first event after a start counts | **Lab**, kube-prometheus-stack (`lab/monitoring.sh`): all 8 netCI targets up, every rule healthy; with every supervisor replica removed, `NetciSupervisorNotLeading` fired after 96 s and cleared 61 s after they returned; all 23 dashboard queries returned data through Grafana once runs and a sandbox claim had happened. **Tested**: promtool unit tests (`deploy/helm/netci/ci/test-rules.sh`) |
+> Evidence đã commit cho thấy một lần chạy trước đây hoàn tất **11 acceptance gate** trên Ubuntu 24.04. Đây không phải lời chứng nhận tự động cho commit hiện tại: `release-checklist.yaml` định nghĩa gate, còn một lần chạy release profile mới mới là bằng chứng hiện hành. Nếu thiếu Docker/Linux/credential, gate phải báo blocked/fail thay vì kế thừa màu xanh cũ.
 
-## Builds on the agent fabric
+## Output cần bàn giao
 
-| Guarantee | How | Status |
-|---|---|---|
-| Each build gets a fresh, isolated sandbox | One pod per build, destroyed after it, with limits and a NetworkPolicy (DNS, the fabric, the controllers and addresses outside the cluster only). Isolation by trust: `standard` pools run in a user namespace on the machine's kernel; `untrusted` pools run each build in its own virtual machine (Kata Containers). A pool whose runtime the cluster lacks stops the fabric at start: no silent fallback to the shared kernel | **Lab**: `uid_map` shows container root mapped to an unprivileged host uid (`fabric-agents-*.json`); four `untrusted` builds ran in four VMs (guest kernel 6.18.35, machines 6.8.0-142), each discarded after its build, ~10 s with a warm sandbox like `standard` (`untrusted-sandboxes-20261002.json`); from both kinds of sandbox, netCI's PostgreSQL, netci-queue, the API servers, a kubelet and Prometheus were unreachable while fabric builds succeeded; a pool naming a missing RuntimeClass stopped the new replica and the running ones kept serving |
-| The sandbox is bound late to whichever controller needs it | Warm pods long-poll the fabric; the claim carries the node's inbound secret, never stored | **Lab**: binding 0.01 s after the claim, agent connected 0.5 s later |
-| A broken warm sandbox does not cost a build its wait | A warm sandbox that is not ready is never handed out; a warm claim not bound in 15 s fails its sandbox; the controller asks what became of its claim and stops waiting when it was given up, or after 20 s bound without an agent; claims are timed on the database's clock (ADR-071) | **Lab**: a build past two frozen warm sandboxes finished in 52.8 s; before, one build waited 353 s (`fabric-broken-sandbox-*.json`) |
-| Faster than the Kubernetes plugin | Sandboxes start with the controller's jars in their agent's cache (a pool's `jarCache`, ADR-072) | **Lab, in bursts**: 4.82 s median, none over 6 s of 18, against 6.17 s. **One at a time not shown**: 3.88 s against 3.17 s (`fabric-timeline-20261012T034419Z.json`) |
-| The fleet is sized ahead of demand; hosts are recycled | — | Not built |
+Một bản hoàn chỉnh phải chứng minh được:
 
-## Layout
+- Reproducible: controller, plugin và job được dựng lại từ Git/JCasC.
+- Isolated: mỗi build có agent/workspace riêng và cleanup ở cả success/failure/cancel.
+- Extensible: cùng domain contract deploy được qua Docker, Kubernetes và Systemd adapter.
+- Governed: artifact bất biến có SBOM, scan, signature, approval, audit và rollback.
+- Measurable: có source event, DORA metrics, benchmark và failure-drill evidence.
 
-```
-cmd/            Go binaries: cell-agent, supervisor, netci-queue, netci-fabric, netci-sandbox
-internal/       lease, cellagent, fence (SSH, Redfish), supervisor, runqueue, fabric, sandbox
-jenkins/plugin/ the netCI Jenkins plugin (Java): idempotent dispatch, fabric cloud
-deploy/         Helm charts (platform, cell) and the supervisor's manifest
-lab/            KVM + k3s + Longhorn lab, probes and chaos runs; evidence in lab/evidence/
-jenkins/        controller image; plugins.txt generated from toolchain/versions.yaml
-docs/decisions/ ADRs; 060-071 define this architecture, 001-059 are history
-docs/TRINH-BAY-TOAN-DIEN-NETCI.md  the whole project explained, in Vietnamese
+Luồng chính:
+
+```text
+Portal / Backstage -> netCI API -> admission (quota, supersede) -> Jenkins (CI, shared library)
+                                            -> ephemeral CI agent (namespace riêng mỗi project)
+                                            -> immutable artifact digest + SBOM + scan + chữ ký
+                                            -> callback evidence -> policy gate
+                                            -> Temporal worker (CD): verify -> approval -> deploy
+                                            -> Docker | Kubernetes | Systemd -> health -> rollback
 ```
 
-## Build and test
+## Hiện trạng (2026-09-29)
+
+- **Pipeline dùng chung (ADR-058, amended).** Trang **Pipelines** liệt kê và tạo pipeline CI
+  dùng chung:
+  - bấm một stage bên trái thì code của nó được nối vào **một script** bên phải;
+  - bên cạnh có khung xem trước dạng Jenkinsfile declarative, sinh ở browser;
+  - module mới chỉ cần chọn pipeline theo tên;
+  - developer, reviewer hoặc platform-admin tạo pipeline hoặc lưu phiên bản mới thì phiên bản đó
+    **có hiệu lực ngay**, không qua bước duyệt; mọi thao tác đều có audit;
+  - chỉ bắt buộc stage `build` và `publish`;
+  - mỗi run ghim tên, phiên bản và sha256 của script;
+  - block do người dùng viết chạy trong builder **không có credential**.
+
+  Chữ ký, provenance và SBOM vẫn được kiểm lúc deploy.
+- **CI là Jenkins, CD là netCI/Temporal** (ADR-004, ADR-043). Jenkins không deploy.
+- **netCI quyết định toolchain (ADR-056, ADR-059).** `toolchain/versions.yaml` khai báo:
+  - phiên bản syft, trivy, cosign, buildah;
+  - image controller Jenkins (2.555.3 LTS, base ghim digest);
+  - **đủ 85 plugin**; `jenkins/plugins.txt` được sinh ra từ đó (`scripts/toolchain_sync.py`).
+
+  Controller có plugin lệch khai báo, hoặc không đọc được danh sách plugin, sẽ không nhận build.
+- **Portal (giao diện tiếng Anh):**
+  - Core Delivery: Dashboard, Systems & Pipelines, Pipelines, Production Requests, Service Catalog
+    (Services, Previews, Resources);
+  - Platform & Governance: Release Calendar (lịch tháng/tuần/danh sách), Servers, Toolchain;
+  - trang khác: Release Plan (DAG nhiều module), Scorecards, CI Cost.
+  - Đã bỏ: tab Golden Path Templates và trang Vulnerabilities.
+- **Ba cách chạy netCI:**
+  - lab systemd trên một máy (`netci_live`);
+  - Helm trên kind (`deploy/helm/netci-platform`);
+  - **lab mô phỏng công ty** `netci-corp`: cụm 3+3 node, GitLab, Harbor, một controller Jenkins có
+    backup/failover bằng Velero, ingress HA sau VIP. Xem [infra/corp/README.md](infra/corp/README.md)
+    và [runbook](docs/RUNBOOK-CORP-LAB.md).
+- **Chưa kiểm chứng live:** pipeline dùng chung có block tự viết, và cổng kiểm plugin trên
+  controller 2.555.3. Cụm corp cần chạy `scripts/corp/pin_node_ips.sh` rồi `scripts/corp/up.sh`
+  sau lần khởi động lại máy ngày 2026-09-29.
+
+## Gate nào đã chạy thật
+
+Mỗi gate dưới đây chạy command thật trên hạ tầng thật và ghi `evidence/<gate>.json` gồm command, timestamp, exit code, output và từng assertion kèm verdict. Gate exit non-zero khi một assertion fail.
+
+| Gate | Chứng minh điều gì |
+|---|---|
+| `make kind-up` | Cluster build có namespace, RBAC controller chỉ giới hạn ở pod trong `netci-build`, không service account nào tự mount token, không có cluster-admin |
+| `make security-test` | Artifact đã ký + scan sạch được cho phép; ba trường hợp bị từ chối: có CVE HIGH/CRITICAL có bản vá, thiếu chữ ký, evidence thuộc digest khác |
+| `make e2e-container` | Build → registry digest → SBOM/scan/sign → policy → approval → Ansible deploy → health → promote → rollback, với digest đang chạy được đọc lại từ service |
+| `make e2e-kubernetes` | Cùng digest được promote lên kind qua Helm; image của pod được đọc lại từ cluster; rollback dùng Helm revision, không build lại |
+| `make e2e-systemd` | Binary Go đã ký → unit systemd → symlink `current` → restart → health → rollback, kèm so khớp digest của binary đã cài |
+| `make dora-dashboard` | Bốn metric được tính lại độc lập từ `/delivery-events` và so với dashboard; recovery gắn đúng deployment đã fail |
+
+Ngoài ra `make test-durability` chạy trên PostgreSQL thật: khôi phục sau restart, event bền vững, idempotency sống qua restart, và hai process cùng ghi một transition thì chỉ một thắng.
+
+## Những gì chạy được trên Windows
+
+Windows là môi trường phát triển portable, không phải môi trường nghiệm thu runtime Linux.
+
+```powershell
+py -3 scripts/doctor.py --profile windows
+py -3 scripts/validate_release.py --profile windows --execute
+```
+
+Gate Windows kiểm tra Git/Python/Node/npm, syntax và schema, catalog invariant, frontend component tests/typecheck/build, backend unit/contract tests, tài liệu và tính nhất quán của release checklist. Xem [QUICKSTART.md](QUICKSTART.md) để chạy API và Portal.
+
+## Runtime target
+
+| Runtime | Adapter | Target local |
+|---|---|---|
+| Docker/Compose | `DockerRuntimeAdapter` | Ubuntu VM riêng qua SSH/Ansible |
+| Kubernetes | `KubernetesRuntimeAdapter` | kind; namespaces `dev`, `staging`, `prod` |
+| Systemd | `SystemdRuntimeAdapter` | Ubuntu VM thật có systemd qua SSH/Ansible |
+
+## Portal trong browser thật
+
+Unit test mock `netciClient`, nên chúng chứng minh component xử lý đúng **một câu trả lời
+cho trước**. Chúng không chứng minh được Portal và API *đồng ý với nhau* về câu trả lời đó
+— đổi tên field, đổi status code, hay một endpoint giờ đòi role đều pass unit test và fail
+trước mặt người dùng. Đó là khoảng trống mà `frontend/e2e/` lấp.
 
 ```bash
-make check                       # vet, gofmt, Go tests with -race, toolchain drift
-NETCI_QUEUE_TEST_DATABASE_URL=... make check-pg   # the same, refusing to skip the PostgreSQL tests
-make plugin                      # the Jenkins plugin, JenkinsRule tests and SpotBugs
-make image                       # the scratch image with every Go binary (clean tree only)
-ci/charts.sh                     # both Helm charts lint, render and refuse what they must
-deploy/helm/netci/ci/test-rules.sh   # promtool checks and unit tests of the alerts
+make lab-up                                   # cần một netCI đang chạy thật
+NETCI_API_URL=http://127.0.0.1:8100 npm --prefix frontend run test:e2e
 ```
 
-## Decisions
+Bao gồm cả **axe accessibility scan**. Lần chạy đầu tiên tìm ra 22 node vi phạm tương phản
+màu WCAG AA — không phải lỗi mới, mà là lỗi chưa ai đo: các giá trị xám được viết cứng rải
+rác trong CSS, trôi dần khỏi token `--muted`/`--subtle`. Đã sửa bằng cách gộp chúng về
+token và làm token đủ đậm để đạt AA. Với một tập đoàn, accessibility thường là yêu cầu bắt
+buộc khi mua sắm, nên đây không phải chi tiết thẩm mỹ.
 
-- [ADR-060 — cells, global queue, fenced takeover](docs/decisions/ADR-060-jenkins-cells-global-queue-and-takeover.md) (with the lab runs)
-- [ADR-061 — agent fabric](docs/decisions/ADR-061-agent-fabric-isolated-sandboxes-on-vm-hosts.md)
-- [ADR-062 — repository rebuilt in Go](docs/decisions/ADR-062-repository-rebuilt-in-go-around-jenkins-ha.md)
-- [ADR-063 — durable run queue, idempotent dispatch](docs/decisions/ADR-063-durable-run-queue-and-idempotent-dispatch.md)
-- [ADR-064 — agent fabric v1](docs/decisions/ADR-064-agent-fabric-v1-warm-sandboxes-late-binding.md)
-- [ADR-065 — netciOnce](docs/decisions/ADR-065-once-blocks-guard-steps-against-re-execution.md)
-- [ADR-066 — API clients survive the death of an API server](docs/decisions/ADR-066-api-clients-survive-the-death-of-an-api-server.md)
-- [ADR-067 — netCI restarts a cell whose JENKINS_HOME fails](docs/decisions/ADR-067-netci-restarts-a-cell-whose-jenkins-home-fails.md)
-- [ADR-068 — build logs readable during a takeover](docs/decisions/ADR-068-build-logs-readable-during-a-takeover.md)
-- [ADR-069 — fencing with real BMCs, at scale, without costing a running build](docs/decisions/ADR-069-fencing-with-real-bmcs-at-scale.md)
-- [ADR-070 — cell pods go after the storage settles](docs/decisions/ADR-070-cell-pods-go-after-the-storage-settles.md)
-- [ADR-071 — upgrades, failing dependencies, cluster DNS, start time, a fabric that heals](docs/decisions/ADR-071-what-production-asks-beyond-a-power-loss.md)
+## CI của chính netCI
 
-Installing it: [docs/INSTALL.md](docs/INSTALL.md) (prerequisites, images, both charts, the
-checks before anyone depends on it). Operating it: [the runbook](docs/RUNBOOK.md) (every alert,
-what to check, what to do) and [deploy/helm](deploy/helm/README.md). How it compares with
-CloudBees CI HA and Medik8s, and the work it rests on: [docs/research/HA-LANDSCAPE.md](docs/research/HA-LANDSCAPE.md).
+netCI gate thay đổi của người khác; `.github/workflows/ci.yml` gate thay đổi của chính
+netCI. Nó chạy profile `portable` trong `release-checklist.yaml` — **cùng một danh sách
+check, gọi theo cùng một cách**, nên xanh trên CI và `make release-portable` xanh ở máy có
+nghĩa giống hệt nhau. Không có danh sách bước thứ hai để lệch khỏi checklist.
 
-Apache-2.0. See [CONTRIBUTING.md](CONTRIBUTING.md) and [SECURITY.md](SECURITY.md).
+```bash
+make release-portable   # chính xác những gì job `portable` trên CI chạy
+```
+
+Ba job:
+
+| Job | Chạy gì | Vì sao tách ra |
+|---|---|---|
+| `portable` | profile `portable` + pyflakes | chỉ cần Python và Node, chạy được ở mọi nơi |
+| `database` | migrate từ DB rỗng, `--check-schema`, test durability, **backup + restore** | các test này **skip** khi không có PostgreSQL, nên CI là nơi duy nhất chúng chạy mọi lần |
+| `portal-browser` | Playwright + axe, với API và PostgreSQL thật | unit test mock client nên không bắt được Portal và API lệch nhau |
+| `supply-chain` | verifier chữ ký + OIDC với **cosign thật** | verifier tự skip khi thiếu cosign; thiếu job này thì suite xanh mà không chứng minh gì |
+
+11 acceptance gate **không** nằm trên CI: chúng cần kind cluster, hai Jenkins controller,
+registry và Backstage. Một workflow giả vờ chạy chúng chính là false green mà dự án này
+sinh ra để chống. Chạy bằng `make release-ubuntu` trên host có lab.
+
+## Các lệnh chính trên Ubuntu
+
+```bash
+make doctor          # gồm cả giới hạn fs.inotify và Python lib mà Ansible cần
+make validate
+make test
+make lab-up          # PostgreSQL đã migrate + registry + API
+make kind-up
+make gates           # security-test, ba E2E và dora-dashboard
+
+# Các gate cần Jenkins thật: hai controller dựng từ JCasC, git server và shared agent.
+bash scripts/jenkins_lab.sh up
+source .netci-gate/jenkins/lab.env
+make jenkins-ci-loop jenkins-rebuild-gate failure-drill benchmark
+
+# Gate cuối cần một Backstage instance thật.
+bash scripts/backstage_lab.sh up
+make backstage-test
+
+make gates-all       # tất cả, khi cả hai lab đã chạy
+make release-ubuntu
+```
+
+Sau khi sửa shared library hoặc `jenkins/casc/*.yaml`, dùng `bash scripts/jenkins_lab.sh publish` để controller đang chạy đọc lại config — không cần dựng lại từ đầu.
+
+`make release-ubuntu` cố ý fail nếu một required gate vẫn có trạng thái `blocked` trong `release-checklist.yaml`. Hiện không còn gate nào blocked. Không đổi gate sang `ready` cho đến khi command chạy thật và kiểm tra evidence thật.
+
+Xem [QUICKSTART](QUICKSTART.md) cho lab trên host không có bridge network, và [troubleshooting](docs/troubleshooting.md) cho các ràng buộc host mà thông báo lỗi không nói ra.
+
+## Boundary
+
+- Portal và Backstage chỉ gọi netCI API; không gọi Jenkins trực tiếp.
+- Jenkins sở hữu checkout/test/build/SBOM/scan/sign/publish, không sở hữu application/deployment identity.
+- netCI sở hữu policy, approval, audit, promotion, deploy, health check và rollback.
+- Staging và production dùng cùng artifact digest; không rebuild khi promote.
+- Core domain không import SDK/CLI của Jenkins, Temporal, Docker, Helm hoặc Systemd.
+- Engine thật nằm sau seam có thể cấu hình: `NETCI_CI_MODE` (`none`|`jenkins`), `NETCI_CD_MODE` (`none`|`temporal`), `NETCI_AUTH_MODE` (`none`|`token`|`oidc`) và `NETCI_SIGNATURE_VERIFY_MODE` (`none`|`cosign`). `none` chỉ hợp lệ khi `NETCI_ENVIRONMENT=local`: netCI ghi nhận trạng thái và không giả vờ đã chạy build. Ngoài local, process fail-fast nếu auth, CI, CD, security evidence hoặc deploy-time signature verification bị tắt.
+- **netCI tự kiểm chữ ký lúc deploy** khi bật `cosign`, thay vì tin vào boolean `signature.verified` do chính CI ghi về công việc của mình.
+- **Actor luôn lấy từ credential đã xác thực**, không lấy từ request body. Vì vậy `actor`/`requestedBy`/`createdBy` đã bị bỏ khỏi API: một field mà server nhận rồi âm thầm bỏ qua còn tệ hơn là không có.
+- State, source event, audit và log được ghi trong **cùng một transaction**, nên không thể có trường hợp trạng thái đã đổi nhưng DORA event bị mất.
+
+## Xác thực và phân quyền
+
+Mọi tuyên bố về governance của netCI chỉ có giá trị nếu platform biết ai đang gọi. Vì vậy
+actor được lấy từ credential, và `require_environment_permission` — vốn được viết ra nhưng
+chưa từng được gọi — nay là control thật.
+
+```bash
+# Local: không cần credential, nhưng netCI chỉ phục vụ loopback. Quên cấu hình xác thực
+# không thể biến thành một netCI mở ra ngoài mạng.
+NETCI_AUTH_MODE=none
+
+# Pilot hoặc machine-to-machine: token lưu dưới dạng hash SHA-256.
+NETCI_AUTH_MODE=token NETCI_AUTH_TOKENS_FILE=/etc/netci/tokens.yaml
+python scripts/netci_token.py issue --subject dana --name "Dana Developer" --role developer
+
+# Production: dùng identity provider của tập đoàn — người vào/ra theo directory.
+NETCI_AUTH_MODE=oidc
+NETCI_OIDC_ISSUER=https://login.microsoftonline.com/<tenant>/v2.0
+NETCI_OIDC_AUDIENCE=api://netci
+NETCI_OIDC_ROLE_MAP=netci-admins=platform-admin,release-managers=reviewer,engineers=developer
+```
+
+| Role | Được làm gì |
+|---|---|
+| `viewer` | đọc mọi thứ, không sửa gì |
+| `developer` | tạo application/system, chạy pipeline dev/staging, tạo và sửa pipeline dùng chung |
+| `reviewer` | như developer, cộng thêm production: chạy, approve, reject |
+| `platform-admin` | như reviewer, cộng quản trị platform; **không bị giới hạn theo team** |
+| `pipeline` | chỉ báo *kết quả* build/deploy — không bao giờ cấp cho người |
+
+Role nói **được làm loại việc gì**; team nói **được làm lên application nào**. Mỗi
+application có `ownerTeam`, mỗi principal có danh sách team. Chỉ thành viên của team đó
+(hoặc platform-admin) mới chạy được pipeline, approve deployment hay rollback của nó — đọc
+thì không giới hạn, vì nhìn thấy trạng thái toàn hệ thống có ích và ít rủi ro hơn nhiều so
+với hành động.
+
+Application chưa có owner vẫn chạy như cũ, nên có thể áp dụng ownership dần. Khi mọi
+application đã có owner, bật `NETCI_REQUIRE_APPLICATION_OWNER=true`: application không có
+owner trở thành chỉ platform-admin dùng được, và application mới bắt buộc khai team.
+
+Ba ràng buộc đáng chú ý:
+
+- **Người tạo production run không được tự approve.** netCI so `pipeline_runs.started_by`
+  với người approve và từ chối nếu trùng (`SEPARATION_OF_DUTIES`).
+- **Endpoint máy là của máy.** platform-admin không post được CI result, và pipeline key
+  không approve được deployment — cả hai chiều đều không có cửa sau.
+- **`/healthz` báo `engines.auth`**, nên nhìn từ bên ngoài biết ngay hệ thống có bật xác
+  thực hay không.
+
+Chi tiết, gồm cả cách nối OIDC và các forgery mà verifier từ chối:
+[security model](docs/security-model.md) và [ADR-011](docs/decisions/ADR-011-authentication-seam.md).
+
+## Jenkins HA (bài toán con, đang đi sâu)
+
+netCI chạy build trên Jenkins. Phần **Jenkins HA** làm cho Jenkins mã nguồn mở không mất việc khi
+mất máy: build đang chạy chạy tiếp trên controller khác, hàng đợi bền trong PostgreSQL, bước
+`netciOnce` không chạy hai lần, không bao giờ có hai controller cùng ghi một `JENKINS_HOME`, và
+sandbox build cô lập trên fleet VM. Đã kiểm chứng trên lab KVM + k3s + Longhorn: hơn 80 lần rút
+điện, soak 3 giờ 38/38.
+
+- Tổng quan, bảo đảm và bằng chứng: [docs/JENKINS-HA.md](docs/JENKINS-HA.md)
+- Trình bày toàn diện (tiếng Việt): [docs/TRINH-BAY-TOAN-DIEN-NETCI.md](docs/TRINH-BAY-TOAN-DIEN-NETCI.md);
+  đọc theo thứ tự: [docs/DOC-THEO-THU-TU.md](docs/DOC-THEO-THU-TU.md)
+- Quyết định: ADR-060 đến ADR-072 trong [docs/decisions/](docs/decisions/)
+- Mã: `cmd/`, `internal/` (Go), `jenkins/plugin/` (Java), `deploy/helm/`, `lab/`; `make check`
+
+## Tài liệu
+
+- [Giải thích kiến trúc hiện tại từ bài toán đến code chạy thật](docs/GIAI-THICH-KIEN-TRUC-HIEN-TAI.md) — tài liệu bắt đầu nên đọc để hiểu toàn bộ project và ranh giới “source hỗ trợ live”/“môi trường đã live”.
+
+- [Architecture](docs/architecture.md)
+- [Domain model](docs/domain-model.md)
+- [API contract](docs/api-contract.md)
+- [State machine](docs/state-machine.md)
+- [Security model](docs/security-model.md)
+- [DORA metrics](docs/dora-metrics.md)
+- [Assumptions](docs/assumptions.md)
+- [Troubleshooting](docs/troubleshooting.md)
+- [Architecture decisions](docs/decisions/ADR-001-system-boundary.md) — 59 ADR trong `docs/decisions/`
+- [Shared pipelines (ADR-058)](docs/decisions/ADR-058-shared-pipelines-one-script-two-person-approval.md)
+  và [Jenkins controller và plugin (ADR-059)](docs/decisions/ADR-059-netci-decides-the-jenkins-controller-and-plugins.md)
+- [Lab mô phỏng công ty](infra/corp/README.md) và [runbook vận hành](docs/RUNBOOK-CORP-LAB.md)
+- [Context đầy đủ để vẽ sơ đồ kiến trúc](docs/diagrams/NETCI-CONTEXT-FOR-DIAGRAMS.md)
+
+## Không được coi là evidence hoàn thành
+
+Static validator, screenshot đơn lẻ, file `sample.json`, command chỉ `echo`, hoặc file được tạo sau khi đặt biến `*_READY` không chứng minh E2E. Evidence nghiệm thu phải có command, commit SHA, application/run/deployment ID, artifact digest, timestamps, raw log/JSON và kết luận pass/fail.

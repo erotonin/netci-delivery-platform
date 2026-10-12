@@ -1,0 +1,95 @@
+{
+  "timestamp": "2026-09-07T19:18:07.970911+00:00",
+  "commitSha": "5a314b819a2911825d99ff6137c60a27fcf98cd6",
+  "imageDigest": "sha256:netci-production-image-digest-unpinned",
+  "environment": "production-acceptance",
+  "summary": {
+    "pass": 2,
+    "fail": 0,
+    "blocked": 7,
+    "total": 9
+  },
+  "verdict": "BLOCKED",
+  "gates": [
+    {
+      "gate": "persistence_across_api_restart",
+      "status": "BLOCKED",
+      "reason": "No database configured (DATABASE_URL or NETCI_TEST_DATABASE_URL is empty)",
+      "duration_seconds": 0.0,
+      "details": {}
+    },
+    {
+      "gate": "oidc_role_and_team",
+      "status": "BLOCKED",
+      "reason": "OIDC is not configured (NETCI_AUTH_MODE != 'oidc' or NETCI_OIDC_ISSUER missing)",
+      "duration_seconds": 0.0,
+      "details": {
+        "authMode": "token",
+        "oidcIssuer": ""
+      }
+    },
+    {
+      "gate": "dcim_inventory_lookup",
+      "status": "BLOCKED",
+      "reason": "DCIM not configured (NETCI_DCIM_BASE_URL is not set)",
+      "duration_seconds": 0.0,
+      "details": {}
+    },
+    {
+      "gate": "jenkins_checkout_build_push",
+      "status": "BLOCKED",
+      "reason": "Jenkins CI is not configured (NETCI_CI_MODE != 'jenkins')",
+      "duration_seconds": 0.0,
+      "details": {
+        "ciMode": "none"
+      }
+    },
+    {
+      "gate": "sbom_trivy_cosign_verification",
+      "status": "BLOCKED",
+      "reason": "Cosign signature verification is not enabled (NETCI_SIGNATURE_VERIFY_MODE != 'cosign')",
+      "duration_seconds": 0.0,
+      "details": {
+        "verifyMode": "none"
+      }
+    },
+    {
+      "gate": "temporal_workflow_restart_resume",
+      "status": "BLOCKED",
+      "reason": "Temporal CD is not configured (NETCI_CD_MODE != 'temporal')",
+      "duration_seconds": 0.0,
+      "details": {
+        "cdMode": "none"
+      }
+    },
+    {
+      "gate": "ansible_host_and_target_namespace",
+      "status": "PASS",
+      "reason": "Server-side deployment target and namespace parameters strictly managed",
+      "duration_seconds": 0.0,
+      "details": {
+        "enforcement": "BuildInputValidator + managed deployment parameters"
+      }
+    },
+    {
+      "gate": "deployment_failure_and_rollback",
+      "status": "PASS",
+      "reason": "Two-phase rollback lifecycle (in_progress -> rolled_back/rollback_failed) and DORA recovery event enforced",
+      "duration_seconds": 1e-06,
+      "details": {
+        "intermediateStates": [
+          "rollback_in_progress",
+          "rolled_back",
+          "rollback_failed"
+        ]
+      }
+    },
+    {
+      "gate": "backup_and_restore_verification",
+      "status": "BLOCKED",
+      "reason": "DATABASE_URL not configured for backup drill",
+      "duration_seconds": 0.0,
+      "details": {}
+    }
+  ]
+}

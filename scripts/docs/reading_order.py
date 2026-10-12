@@ -60,7 +60,7 @@ def main() -> None:
          pick("1", "2", "3", "4")),
         ("Bước 2 — Hiểu netCI", "Tuần 2",
          "Yêu cầu, tiêu chí, lựa chọn công nghệ, kiến trúc, các luồng từng giây (phần 8 và 9 là trọng tâm), từng "
-         "thành phần, và vì sao bỏ bản IDP cũ.",
+         "thành phần, và phần IDP, bài toán lớn mà HA là một phần.",
          pick("5", "6", "7", "8", "9", "10", "11")),
         ("Bước 3 — Kiểm chứng, bài học, giới hạn", "Tuần 3",
          "Hệ thống đã được chứng minh tới đâu, những lỗi đã tìm ra, và những gì chưa làm.",

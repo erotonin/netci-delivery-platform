@@ -1,6 +1,8 @@
 # ADR-060: Jenkins cells, a global queue outside Jenkins, and fenced takeover
 
 Status: Proposed (2026-10-01); decisions 1 and 5 revised by the spike the same day. Supersedes the product scope of ADR-001..059: netCI no longer
+
+> Amended 2026-10-12 by ADR-073: netCI is the IDP again, and the HA layer is a part of it; the product-scope sentence below no longer holds.
 deploys (the organisation deploys with Jenkins) and no longer ships a portal. Those ADRs stay
 as history; the mechanisms reused from them are named below.
 

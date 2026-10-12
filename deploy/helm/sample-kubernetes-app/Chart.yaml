@@ -1,0 +1,6 @@
+apiVersion: v2
+name: sample-kubernetes-app
+description: netCI Kubernetes delivery sample
+version: 0.1.0
+appVersion: "0.1.0"
+type: application

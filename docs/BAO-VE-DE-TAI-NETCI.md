@@ -237,7 +237,7 @@ Cột "Gợi ý" là ý chính; tự diễn đạt bằng lời của mình, và
 | Đưa lên production cần gì thêm? | Diễn tập trên server và BMC thật; control plane tách khỏi máy chạy cell; PostgreSQL HA; storage của tổ chức; registry của tổ chức (INSTALL.md) |
 | Chi phí vận hành? | Supervisor đo được 0,16 core và 53 MiB khi theo dõi 600 cell. Chart yêu cầu cho supervisor, queue, fabric mỗi bản 50m CPU và 64 MiB (giới hạn 192–256 MiB), 2 bản mỗi loại; mỗi cell thêm một sidecar nhỏ |
 | Có bán được không, khác biệt là gì? | HA cho Jenkins mã nguồn mở mà không đổi Jenkinsfile, có bằng chứng chaos, fail closed. Thiếu: diễn tập phần cứng thật, co giãn máy, tài liệu hỗ trợ khách hàng |
-| Sao bỏ bản IDP 0.3 đã chạy được? | Nó không chữa nỗi đau thật: công ty đã deploy bằng Jenkins, nỗi đau là Jenkins sập. Dám bỏ một sản phẩm chạy được khi nó không giải đúng vấn đề |
+| IDP và Jenkins HA liên quan thế nào? | netCI là IDP (portal, build, ký ảnh, SBOM, deploy có phê duyệt). Mọi build của nó chạy trên Jenkins, nên Jenkins sập là IDP đứng: HA cho Jenkins là bài toán con, đi sâu nhất. Nối hai phần: build của IDP đi qua hàng đợi bền tới các cell (ADR-073) |
 | Em tự làm phần nào, có dùng AI không? | **Trả lời trung thực.** Nói rõ mình dùng công cụ AI thế nào (viết code, chạy thử nghiệm, soạn tài liệu), mình đã quyết định những gì, kiểm chứng ra sao. Quan trọng nhất là chứng minh được mình hiểu và giải thích được từng phần: đó là mục đích của mục BV7 |
 
 ---

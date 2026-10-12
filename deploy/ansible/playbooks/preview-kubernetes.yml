@@ -1,0 +1,157 @@
+---
+# Pull-request preview environments (ADR-049): deploy a PR's published digest into its own
+# namespace, or tear that namespace down. Separate from deploy-kubernetes.yml on purpose:
+# that playbook refuses any namespace but dev/staging/prod, and nothing here may loosen it.
+# What this one may touch is narrower still -- a namespace named preview-<module>-pr-<n>,
+# which it creates labelled netci.io/preview=true, and deletes only if it carries that
+# label. A typo, a bug or a hostile parameter cannot make it delete `prod`.
+- name: Deploy or remove a pull-request preview on Kubernetes
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    netci_kubeconfig: "{{ kubeconfig | default(lookup('env', 'KUBECONFIG'), true) }}"
+    netci_kube_context: "{{ kube_context | default('kind-netci-local') }}"
+    netci_action: "{{ preview_action | default('deploy') }}"
+    netci_namespace: "{{ preview_namespace | default('') }}"
+    netci_release: "{{ preview_release | default('') }}"
+    netci_chart_path: "{{ chart_path | default(playbook_dir ~ '/../../helm/sample-kubernetes-app') }}"
+    netci_image_repository: >-
+      {{ (image_repository | default(''))
+         | regex_replace('^[^/]+/', image_pull_host ~ '/') if (image_pull_host | default('')) else
+         (image_repository | default('')) }}
+    netci_artifact_digest: "{{ artifact_digest | default('') }}"
+    netci_workload_name: "{{ netci_release }}-sample-kubernetes-app"
+  pre_tasks:
+    - name: Refuse anything that is not a preview
+      ansible.builtin.assert:
+        that:
+          - netci_action in ['deploy', 'teardown']
+          - netci_namespace is match('^preview-[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?-pr-[0-9]{1,9}$')
+          - netci_namespace | length <= 63
+          - netci_release is match('^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?-pr-[0-9]{1,9}$')
+        fail_msg: "a preview needs action deploy|teardown, a preview-<module>-pr-<n> namespace and a <module>-pr-<n> release"
+    - name: Validate the immutable artifact for a deploy
+      when: netci_action == 'deploy'
+      ansible.builtin.assert:
+        that:
+          - netci_artifact_digest is match('^sha256:[0-9a-f]{64}$')
+          - netci_image_repository | length > 0
+          - netci_image_repository is not search('@')
+          - netci_image_repository is not search(':[Ll][Aa][Tt][Ee][Ss][Tt]$')
+        fail_msg: "a preview deploys a verified sha256 digest of an untagged repository"
+  tasks:
+    # Read first, then create. Creating first would be an apply: an existing namespace
+    # without the label would simply *gain* it, and the check after would pass.
+    - name: Read the preview namespace, if it exists
+      when: netci_action == 'deploy'
+      kubernetes.core.k8s_info:
+        kind: Namespace
+        name: "{{ netci_namespace }}"
+        kubeconfig: "{{ netci_kubeconfig if netci_kubeconfig | length > 0 else omit }}"
+        context: "{{ netci_kube_context }}"
+      register: preview_ns
+    - name: An existing namespace must already be a netCI preview
+      when: netci_action == 'deploy' and preview_ns.resources | length == 1
+      ansible.builtin.assert:
+        that:
+          - preview_ns.resources[0].metadata.labels['netci.io/preview'] | default('') == 'true'
+        fail_msg: "{{ netci_namespace }} exists without netci.io/preview=true; it is not netCI's to use"
+    - name: Create the preview namespace, labelled as a preview
+      when: netci_action == 'deploy' and preview_ns.resources | length == 0
+      kubernetes.core.k8s:
+        state: present
+        kubeconfig: "{{ netci_kubeconfig if netci_kubeconfig | length > 0 else omit }}"
+        context: "{{ netci_kube_context }}"
+        definition:
+          apiVersion: v1
+          kind: Namespace
+          metadata:
+            name: "{{ netci_namespace }}"
+            labels:
+              netci.io/preview: "true"
+              netci.io/release: "{{ netci_release }}"
+    - name: Deploy the preview release atomically
+      when: netci_action == 'deploy'
+      kubernetes.core.helm:
+        name: "{{ netci_release }}"
+        chart_ref: "{{ netci_chart_path }}"
+        release_namespace: "{{ netci_namespace }}"
+        create_namespace: false
+        kubeconfig: "{{ netci_kubeconfig if netci_kubeconfig | length > 0 else omit }}"
+        kube_context: "{{ netci_kube_context }}"
+        release_values:
+          environment: preview
+          image: {repository: "{{ netci_image_repository }}", digest: "{{ netci_artifact_digest }}"}
+          netci: {releaseName: "{{ netci_release }}", applicationId: "{{ application_id | default('') }}", track: stable}
+          canary: {enabled: false, weight: 0}
+        wait: true
+        wait_timeout: 180s
+        atomic: true
+        history_max: 3
+    - name: Read the deployed workload
+      when: netci_action == 'deploy'
+      kubernetes.core.k8s_info:
+        api_version: apps/v1
+        kind: Deployment
+        name: "{{ netci_workload_name }}"
+        namespace: "{{ netci_namespace }}"
+        kubeconfig: "{{ netci_kubeconfig if netci_kubeconfig | length > 0 else omit }}"
+        context: "{{ netci_kube_context }}"
+      register: preview_workload
+    - name: Verify the preview runs the requested digest
+      when: netci_action == 'deploy'
+      ansible.builtin.assert:
+        that:
+          - preview_workload.resources | length == 1
+          - (preview_workload.resources[0].status.availableReplicas | default(0)) >= 1
+          - preview_workload.resources[0].spec.template.spec.containers[0].image is search(netci_artifact_digest ~ '$')
+        fail_msg: "the preview release is up but does not run {{ netci_artifact_digest }}"
+    # The URL is what the cluster serves, read back from its Ingress -- or nothing. The
+    # worker takes the line below as the preview's URL; it never composes one.
+    - name: Read the preview's ingress
+      when: netci_action == 'deploy'
+      kubernetes.core.k8s_info:
+        api_version: networking.k8s.io/v1
+        kind: Ingress
+        namespace: "{{ netci_namespace }}"
+        kubeconfig: "{{ netci_kubeconfig if netci_kubeconfig | length > 0 else omit }}"
+        context: "{{ netci_kube_context }}"
+      register: preview_ingress
+    - name: Report the preview URL
+      when: netci_action == 'deploy' and preview_ingress.resources | length > 0
+      ansible.builtin.debug:
+        msg: "NETCI_PREVIEW_URL={{ 'https' if (preview_ingress.resources[0].spec.tls | default([]) | length > 0) else 'http' }}://{{ preview_ingress.resources[0].spec.rules[0].host }}"
+
+    - name: Read the namespace before removing anything
+      when: netci_action == 'teardown'
+      kubernetes.core.k8s_info:
+        kind: Namespace
+        name: "{{ netci_namespace }}"
+        kubeconfig: "{{ netci_kubeconfig if netci_kubeconfig | length > 0 else omit }}"
+        context: "{{ netci_kube_context }}"
+      register: teardown_ns
+    - name: Only a labelled preview namespace is ever deleted
+      when: netci_action == 'teardown' and teardown_ns.resources | length == 1
+      ansible.builtin.assert:
+        that:
+          - teardown_ns.resources[0].metadata.labels['netci.io/preview'] | default('') == 'true'
+        fail_msg: "{{ netci_namespace }} is not labelled netci.io/preview=true; refusing to delete it"
+    - name: Remove the preview release
+      when: netci_action == 'teardown' and teardown_ns.resources | length == 1
+      kubernetes.core.helm:
+        name: "{{ netci_release }}"
+        release_namespace: "{{ netci_namespace }}"
+        state: absent
+        wait: true
+        kubeconfig: "{{ netci_kubeconfig if netci_kubeconfig | length > 0 else omit }}"
+        kube_context: "{{ netci_kube_context }}"
+    - name: Delete the preview namespace
+      when: netci_action == 'teardown' and teardown_ns.resources | length == 1
+      kubernetes.core.k8s:
+        state: absent
+        kind: Namespace
+        name: "{{ netci_namespace }}"
+        wait: true
+        kubeconfig: "{{ netci_kubeconfig if netci_kubeconfig | length > 0 else omit }}"
+        context: "{{ netci_kube_context }}"

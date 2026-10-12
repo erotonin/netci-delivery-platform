@@ -6,6 +6,7 @@ node_modules/
 dist/
 .env
 .env.*
+!.env.example
 *.log
 *.pem
 *.key
@@ -14,10 +15,12 @@ dist/
 .idea/
 .vscode/
 
-# Lab secrets, VM disks and generated keys: never committed.
+# Gate and lab working directories: secrets, VM disks, generated keys, build outputs. Evidence
+# files under evidence/ and lab/evidence/ are deliberately committed; what produced them is not.
 .netci-gate/
 lab/.state/
 bin/
+sample-apps/*/dist/
 
 # Runtime data
 postgres-data/

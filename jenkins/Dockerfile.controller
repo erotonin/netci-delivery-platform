@@ -19,6 +19,20 @@ RUN for f in /usr/share/jenkins/ref/plugins/*.jpi; do \
     && diff -u /tmp/declared /tmp/installed \
     && rm /tmp/installed /tmp/declared
 
+# The Jenkins library retriever requires a real SCM repository. Snapshot the
+# checked-in library into the controller image so JCasC can fetch branch main
+# without any UI setup or mutable controller-home state.
+COPY --chown=jenkins:jenkins shared-library/ /opt/netci-shared-library/
+# The snapshot is created as the jenkins user that owns the files. Running git as
+# root over a jenkins-owned tree trips git's dubious-ownership guard, and marking the
+# path safe for root would hide that guard rather than satisfy it.
+RUN su jenkins -s /bin/sh -c '\
+      git -C /opt/netci-shared-library init --initial-branch=main \
+      && git -C /opt/netci-shared-library add . \
+      && git -C /opt/netci-shared-library \
+         -c user.name="netCI build" -c user.email="netci@localhost" \
+         commit -m "Snapshot netCI shared library"'
+
 # netCI's own plugin (ADR-063), built from this repository at the same commit (make plugin);
 # outside the check above, which is about the plugins Jenkins publishes. ".override": the image's
 # start script copies a plugin over an existing JENKINS_HOME only when its version is newer, and
