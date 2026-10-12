@@ -1,0 +1,105 @@
+{
+  "scenario": "fabric-timeline",
+  "started": "2026-10-12T02:39:41+00:00",
+  "runs": 3,
+  "burst": 0,
+  "builds": {
+    "fabric-probe": [
+      {
+        "build": 127,
+        "result": "SUCCESS",
+        "agent": "netci-standard-ed140eaf",
+        "triggerToDone": 5.36,
+        "fromTrigger": {
+          "started": 0.32,
+          "runningOn": 4.07,
+          "stepOutput": 5.26,
+          "finished": 5.36,
+          "claimed": 1.53
+        }
+      },
+      {
+        "build": 128,
+        "result": "SUCCESS",
+        "agent": "netci-standard-256046ac",
+        "triggerToDone": 4.11,
+        "fromTrigger": {
+          "started": 0.15,
+          "runningOn": 2.77,
+          "stepOutput": 4.02,
+          "finished": 4.11,
+          "claimed": 0.75
+        }
+      },
+      {
+        "build": 129,
+        "result": "SUCCESS",
+        "agent": "netci-standard-68921795",
+        "triggerToDone": 19.94,
+        "fromTrigger": {
+          "started": 0.15,
+          "runningOn": 18.71,
+          "stepOutput": 19.86,
+          "finished": 19.94,
+          "claimed": 2.33
+        }
+      }
+    ],
+    "k8s-probe": [
+      {
+        "build": 85,
+        "result": "SUCCESS",
+        "agent": "spike-ws-l5skr",
+        "triggerToDone": 4.62,
+        "fromTrigger": {
+          "started": 0.15,
+          "runningOn": 3.65,
+          "stepOutput": 4.5,
+          "finished": 4.62
+        }
+      },
+      {
+        "build": 86,
+        "result": "SUCCESS",
+        "agent": "spike-ws-mrwqh",
+        "triggerToDone": 3.86,
+        "fromTrigger": {
+          "started": 0.15,
+          "runningOn": 2.96,
+          "stepOutput": 3.77,
+          "finished": 3.86
+        }
+      },
+      {
+        "build": 87,
+        "result": "SUCCESS",
+        "agent": "spike-ws-5mlvb",
+        "triggerToDone": 3.55,
+        "fromTrigger": {
+          "started": 0.14,
+          "runningOn": 2.79,
+          "stepOutput": 3.48,
+          "finished": 3.55
+        }
+      }
+    ]
+  },
+  "fabric-probe": {
+    "started": 0.15,
+    "runningOn": 4.07,
+    "stepOutput": 5.26,
+    "finished": 5.36,
+    "claimed": 1.53,
+    "triggerToDone": 5.36,
+    "distinctBuilds": 3
+  },
+  "k8s-probe": {
+    "started": 0.15,
+    "runningOn": 2.96,
+    "stepOutput": 3.77,
+    "finished": 3.86,
+    "triggerToDone": 3.86,
+    "distinctBuilds": 3
+  },
+  "verdict": "PASS"
+}

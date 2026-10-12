@@ -53,6 +53,7 @@ This round put each of those on the lab, and every one found something.
 | Jenkins start, gate open to fully up | Planned restart 6.96 s against 9.3-9.4 s; takeovers 8.5-10.3 s against 9.2-13.0 s | the same |
 | A build past two broken warm sandboxes (frozen) | SUCCESS in 52.8 s; before the changes, each could cost 300 s (one build waited 353 s) | `fabric-broken-sandbox-*.json` |
 | Soak: 3 h of random faults back to back, seed 20261012 (power loss 15, power loss + supervisor leader 7, hung machine 6, JVM killed 4, PostgreSQL restarted 4, pod deleted 2) | 38/38 rounds PASS: every netciOnce build SUCCESS with no tick lost and one marker; after each round every Lease held by its own pod, no taint left, every node Ready, every volume healthy, a supervisor leader. Fenced 2.3-3.9 s after a power loss, 16.5-20.5 s after a hang (the Lease's 15 s), ~25 s when the supervisor's leader died too; build resumed 34-67 s (median 43) | `soak-20261011T125323Z.json` and each round's own |
+| The image with both clock fixes on the lab (netci@sha256:134e2db8…, rolled by `lab/helm-install.sh`) | fabric builds SUCCESS; claim to bind 0.27 s mean; accept to start 22.7 s mean for 5 runs of queue-probe-short, whose quiet period is 20 s | `fabric-timeline-20261012T023941Z.json`, Prometheus |
 | Every fix | Tests that failed before and pass now: Go (supervisor, fabric on PostgreSQL, cell agent) and the plugin (JenkinsRule) | the commits |
 
 ## Found on the way
