@@ -216,3 +216,66 @@ func TestASandboxAlreadyOverNeverStartsAnAgent(t *testing.T) {
 		t.Fatal("started an agent for a released sandbox")
 	}
 }
+
+// The pool's jar cache is in the agent's own cache before the sandbox is warm, so no claim waits
+// for it; only entries named as remoting names them are copied, never a link, never over a file.
+func TestTheJarCacheIsSeededBeforeTheSandboxIsWarm(t *testing.T) {
+	f, _, srv, dir := setup(t)
+	f.bindAt = 1 << 30 // stays warm
+	src, work := t.TempDir(), t.TempDir()
+	write := func(path, body string) {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	good := "C2/6DEE0DB71344F5159FEBFCD6E52613.jar"
+	kept := "8E/A458BAC35ACEF97AC0CB8355EFA97F.jar"
+	link := "07/198DAB77FCEB7268E5FD0E29A30C1C.jar"
+	write(filepath.Join(src, good), "commons-lang")
+	write(filepath.Join(src, kept), "from the image")
+	write(filepath.Join(src, "zz", "6DEE0DB71344F5159FEBFCD6E52613.jar"), "not a cache dir")
+	write(filepath.Join(src, "C2", "notes.txt"), "not a cache entry")
+	if err := os.MkdirAll(filepath.Join(src, "07"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(dir, "token"), filepath.Join(src, link)); err != nil {
+		t.Fatal(err)
+	}
+	cache := filepath.Join(work, "remoting", "jarCache")
+	write(filepath.Join(cache, kept), "already here")
+
+	b := boot(t, srv, dir)
+	b.WorkDir, b.JarCache = work, src
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- b.Run(ctx) }()
+	eventually(t, "warm", func() bool { _, err := os.Stat(b.ReadyFile); return err == nil })
+	read := func(rel string) string { s, _ := os.ReadFile(filepath.Join(cache, rel)); return string(s) }
+	if got := read(good); got != "commons-lang" {
+		t.Fatalf("the cached jar was not seeded before warm: %q", got)
+	}
+	if got := read(kept); got != "already here" {
+		t.Fatalf("a jar already in the agent's cache was overwritten: %q", got)
+	}
+	for _, rel := range []string{link, "zz/6DEE0DB71344F5159FEBFCD6E52613.jar", "C2/notes.txt"} {
+		if _, err := os.Lstat(filepath.Join(cache, rel)); err == nil {
+			t.Fatalf("%s is not a cache entry and was copied", rel)
+		}
+	}
+	cancel()
+	<-done
+}
+
+// A missing or unreadable cache costs the sandbox nothing but the jars it then fetches.
+func TestASandboxWithoutItsJarCacheStillRuns(t *testing.T) {
+	_, _, srv, dir := setup(t)
+	b := boot(t, srv, dir)
+	b.WorkDir, b.JarCache = t.TempDir(), filepath.Join(dir, "no-such-cache")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = b.Run(ctx) }()
+	eventually(t, "the agent started", func() bool { return len(starts(dir)) == 1 })
+}

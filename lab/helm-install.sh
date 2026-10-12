@@ -5,6 +5,8 @@
 #   NETCI_IMAGE=172.17.0.1:8930/netci/netci@sha256:<digest> [FENCE=redfish] [MONITORING=on] lab/helm-install.sh
 #
 # MONITORING=on adds the PodMonitors, alerts and dashboard (needs lab/monitoring.sh install first).
+# AGENT_JARS=172.17.0.1:8930/netci/jenkins-agent-jars@sha256:<digest> gives the fabric's runc pools that
+# jar cache (jenkins/Dockerfile.agent-jars, ADR-072); the Kata pool is left without it.
 #
 # Values come from what the lab scripts generated (.netci-gate/lab/{queue,fabric}/config.json:
 # token hashes only) and go to .netci-gate/lab/helm/, never into the repository. Objects that
@@ -22,13 +24,16 @@ REPO="${NETCI_IMAGE%@*}" DIGEST="${NETCI_IMAGE#*@}"
 CONTROLLER="$(python3 -c 'import yaml,sys; d=yaml.safe_load(open(sys.argv[1])); print(d["image"]["controller"])' "${ROOT}/deploy/helm/netci-cell/ci/lab-values.yaml")"
 mkdir -m 700 -p "${H}"
 
-python3 - "${STATE}" "${H}/netci.yaml" <<'PY'
+python3 - "${STATE}" "${H}/netci.yaml" "${AGENT_JARS:-}" <<'PY'
 import json, sys, yaml
-state, out = sys.argv[1], sys.argv[2]
+state, out, agent_jars = sys.argv[1], sys.argv[2], sys.argv[3]
 queue = json.load(open(f"{state}/queue/config.json"))
 fabric = json.load(open(f"{state}/fabric/config.json"))
 for k in ("namespace", "serviceAccount", "audience", "bootstrapImage", "fabricUrl", "priorityClass"):
     fabric.pop(k, None)  # the chart decides these
+for pool in fabric["pools"]:
+    if agent_jars and not pool.get("runtimeClass"):
+        pool["jarCache"] = agent_jars
 cells = sorted(queue["cells"])
 yaml.safe_dump({
     "imagePullSecrets": [{"name": "harbor-pull"}],

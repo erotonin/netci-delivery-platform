@@ -1,0 +1,20 @@
+# The jars a Jenkins agent fetches from its controller over its channel, by where they are in the
+# controller image (ADR-072). A fresh agent fetched these 15 (~19 MB) on the lab, connecting and
+# running a Pipeline `sh` step (lab/spike/agent_delay_probe.py, then its jarCache matched to the
+# controller's files). Each line must match exactly one file, or the image is not built.
+#   war:<pattern inside jenkins.war>      plugin:<short name> (that plugin's own jar)
+war:WEB-INF/lib/jenkins-core-[0-9]*.jar
+war:WEB-INF/lib/stapler-[0-9]*.jar
+war:WEB-INF/lib/spring-core-[0-9]*.jar
+war:WEB-INF/lib/spring-security-core-[0-9]*.jar
+war:WEB-INF/lib/ant-[0-9]*.jar
+war:WEB-INF/lib/commons-lang-2*.jar
+war:WEB-INF/lib/commons-io-[0-9]*.jar
+war:WEB-INF/lib/commons-fileupload2-core-[0-9]*.jar
+war:WEB-INF/lib/localizer-[0-9]*.jar
+war:WEB-INF/lib/memory-monitor-[0-9]*.jar
+plugin:durable-task
+plugin:workflow-api
+plugin:credentials-binding
+plugin:timestamper
+plugin:kubernetes

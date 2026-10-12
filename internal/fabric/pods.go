@@ -3,6 +3,7 @@ package fabric
 import (
 	"fmt"
 	"regexp"
+	"strings"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -27,7 +28,16 @@ type Pool struct {
 	// UserNamespace: the sandbox's root is not root on the host (hostUsers: false).
 	UserNamespace bool              `json:"userNamespace"`
 	NodeSelector  map[string]string `json:"nodeSelector,omitempty"`
+	// JarCache: an image, pinned by digest, holding a Jenkins agent's remoting jar cache under
+	// /jarCache for the controllers this pool serves (jenkins/Dockerfile.agent-jars). It is mounted
+	// read-only and copied into the sandbox's work directory before it is warm. Without it every
+	// sandbox fetches ~19 MB of the controller's jars over the agent channel as it connects and at
+	// its first step: in bursts on the lab that cost 1.3 s a build, and some builds 15 s (ADR-072).
+	JarCache string `json:"jarCache,omitempty"`
 }
+
+// jarCacheMount is where a pool's JarCache image is mounted in its sandboxes.
+const jarCacheMount = "/netci-jar-cache"
 
 var poolName = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,30}[a-z0-9])?$`)
 
@@ -41,6 +51,10 @@ func (p Pool) validate() error {
 		return fmt.Errorf("pool %s has no image", p.Name)
 	case p.Warm < 0 || p.Max <= 0 || p.Warm > p.Max:
 		return fmt.Errorf("pool %s: need 0 <= warm <= max and max > 0", p.Name)
+	case p.JarCache != "" && !strings.Contains(p.JarCache, "@sha256:"):
+		// The agent loads a cached jar by its name and never checks it: the image must be the
+		// one that was built, not whatever a tag points at now.
+		return fmt.Errorf("pool %s: jarCache must be pinned by digest", p.Name)
 	}
 	for _, q := range []string{p.CPU, p.Memory, p.Disk} {
 		if _, err := resource.ParseQuantity(q); err != nil {
@@ -180,6 +194,13 @@ func (ps PodSettings) pod(sb *Sandbox, p Pool) *corev1.Pod {
 				}}},
 			},
 		},
+	}
+	if p.JarCache != "" {
+		agent := &pod.Spec.Containers[0]
+		agent.Env = append(agent.Env, corev1.EnvVar{Name: "NETCI_JAR_CACHE", Value: jarCacheMount + "/jarCache"})
+		agent.VolumeMounts = append(agent.VolumeMounts, corev1.VolumeMount{Name: "jar-cache", MountPath: jarCacheMount, ReadOnly: true})
+		pod.Spec.Volumes = append(pod.Spec.Volumes, corev1.Volume{Name: "jar-cache", VolumeSource: corev1.VolumeSource{
+			Image: &corev1.ImageVolumeSource{Reference: p.JarCache, PullPolicy: corev1.PullIfNotPresent}}})
 	}
 	if p.RuntimeClass != "" {
 		pod.Spec.RuntimeClassName = &p.RuntimeClass

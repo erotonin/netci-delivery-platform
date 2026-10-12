@@ -8,11 +8,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"syscall"
 	"time"
@@ -42,6 +44,10 @@ type Bootstrap struct {
 	Retry       time.Duration
 	// SecretTTL: the secret file is removed this long after the agent started (it reads it once).
 	SecretTTL time.Duration
+	// JarCache, when set, is a read-only remoting jar cache (the pool's jarCache image) copied into
+	// WorkDir's before the sandbox is warm: the agent then loads the controller's jars from disk
+	// instead of fetching ~19 MB of them over its channel while it connects (ADR-072).
+	JarCache string
 }
 
 // ErrOver: the fabric says this sandbox's build is over.
@@ -50,6 +56,7 @@ var errOver = errors.New("sandbox released")
 // Run waits for the binding and keeps the agent running until the sandbox is released or ctx
 // ends. It returns nil when released.
 func (b *Bootstrap) Run(ctx context.Context) error {
+	b.seedJarCache()
 	bd, err := b.waitBinding(ctx)
 	if errors.Is(err, errOver) {
 		return nil
@@ -107,6 +114,74 @@ func (b *Bootstrap) waitBinding(ctx context.Context) (Binding, error) {
 		case <-time.After(b.Retry):
 		}
 	}
+}
+
+// A remoting jar cache entry: <first byte of the checksum>/<the rest>.jar, in upper-case hex.
+var (
+	cacheDir  = regexp.MustCompile(`^[0-9A-F]{2}$`)
+	cacheFile = regexp.MustCompile(`^[0-9A-F]{30}\.jar$`)
+)
+
+// seedJarCache copies JarCache into the agent's own jar cache. Only entries named as remoting
+// names them, regular files, and nothing already there; a failure is logged and leaves the agent
+// to fetch what is missing, as it would without a cache.
+func (b *Bootstrap) seedJarCache() {
+	if b.JarCache == "" {
+		return
+	}
+	start := time.Now()
+	dst := filepath.Join(b.WorkDir, "remoting", "jarCache")
+	dirs, err := os.ReadDir(b.JarCache)
+	if err != nil {
+		b.Log.Warn("no jar cache to seed from", "dir", b.JarCache, "error", err)
+		return
+	}
+	files, bytes := 0, int64(0)
+	for _, d := range dirs {
+		if !d.IsDir() || !cacheDir.MatchString(d.Name()) {
+			continue
+		}
+		entries, err := os.ReadDir(filepath.Join(b.JarCache, d.Name()))
+		if err != nil {
+			continue
+		}
+		for _, e := range entries {
+			if !e.Type().IsRegular() || !cacheFile.MatchString(e.Name()) {
+				continue
+			}
+			n, err := copyNew(filepath.Join(b.JarCache, d.Name(), e.Name()), filepath.Join(dst, d.Name(), e.Name()))
+			if err != nil {
+				b.Log.Warn("jar cache entry not seeded", "entry", d.Name()+"/"+e.Name(), "error", err)
+				continue
+			}
+			files, bytes = files+1, bytes+n
+		}
+	}
+	b.Log.Info("jar cache seeded", "jars", files, "bytes", bytes, "seconds", time.Since(start).Seconds())
+}
+
+// copyNew copies src to dst, which must not exist yet.
+func copyNew(src, dst string) (int64, error) {
+	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+		return 0, err
+	}
+	in, err := os.Open(src)
+	if err != nil {
+		return 0, err
+	}
+	defer in.Close()
+	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+	if err != nil {
+		return 0, err
+	}
+	n, err := io.Copy(out, in)
+	if cerr := out.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		_ = os.Remove(dst)
+	}
+	return n, err
 }
 
 func (b *Bootstrap) ready() {

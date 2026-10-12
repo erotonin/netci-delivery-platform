@@ -1,0 +1,27 @@
+# A Jenkins agent's remoting jar cache for one controller image (ADR-072): mounted read-only into
+# fabric sandboxes (a pool's jarCache), and copied into each agent's own cache before it is warm.
+#   docker build -f jenkins/Dockerfile.agent-jars \
+#     --build-arg CONTROLLER_IMAGE=<the controller image, by digest> -t <repo>/jenkins-agent-jars:<tag> jenkins/
+ARG CONTROLLER_IMAGE
+FROM ${CONTROLLER_IMAGE} AS cache
+USER root
+COPY agent-jars /tmp/agent-jars
+RUN set -eu; w="$(mktemp -d)"; cd "$w"; \
+    unzip -q /usr/share/jenkins/jenkins.war 'WEB-INF/lib/*.jar' -d war; \
+    remoting="$(ls war/WEB-INF/lib/remoting-[0-9]*.jar)"; \
+    jars=""; \
+    for line in $(grep -v '^#' /tmp/agent-jars/agent-jars.txt); do \
+      case "$line" in \
+        war:*) set -- war/${line#war:} ;; \
+        plugin:*) set -- "/usr/share/jenkins/pluginroot/${line#plugin:}/WEB-INF/lib/${line#plugin:}.jar" ;; \
+        *) echo "unknown entry $line"; exit 1 ;; \
+      esac; \
+      [ "$#" -eq 1 ] && [ -f "$1" ] || { echo "$line matches $# files: $*"; exit 1; }; \
+      jars="$jars $1"; \
+    done; \
+    javac -d classes -cp "$remoting" /tmp/agent-jars/hudson/remoting/NetciAgentJarCache.java; \
+    java -cp "$remoting:classes" hudson.remoting.NetciAgentJarCache /jarCache $jars; \
+    chmod -R a+rX /jarCache; rm -rf "$w"
+
+FROM scratch
+COPY --from=cache /jarCache /jarCache

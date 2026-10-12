@@ -39,7 +39,7 @@ func main() {
 		FabricURL: os.Getenv("NETCI_FABRIC_URL"), TokenFile: getenv("NETCI_FABRIC_TOKEN", "/var/run/secrets/netci/token"),
 		Java: getenv("NETCI_JAVA", "java"), AgentJar: getenv("NETCI_AGENT_JAR", "/usr/share/jenkins/agent.jar"),
 		WorkDir: getenv("NETCI_WORKDIR", "/home/jenkins/agent"), SecretDir: getenv("NETCI_SECRET_DIR", "/tmp"),
-		ReadyFile: getenv("NETCI_READY_FILE", "/tmp/netci-ready"),
+		ReadyFile: getenv("NETCI_READY_FILE", "/tmp/netci-ready"), JarCache: os.Getenv("NETCI_JAR_CACHE"),
 		// Longer than the fabric's long poll.
 		Client: &http.Client{Timeout: 45 * time.Second}, Log: log,
 		SessionPoll: 2 * time.Second, Retry: 2 * time.Second, SecretTTL: 10 * time.Second,
