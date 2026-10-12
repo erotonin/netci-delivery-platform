@@ -121,6 +121,9 @@ sau khi rút điện.
 **Dùng cell-b**, không dùng cell-a. Cell-a mount `sync,dirsync` (cấu hình đối chứng): mỗi bước Pipeline mất
 khoảng 4 s, và build demo kết thúc muộn 100–150 s sau khi tiếp quản (đã đo; INSTALL khuyến nghị `commit=1`).
 
+> **Hướng dẫn demo thủ công từng bước** (gồm cả hàng đợi, fabric, Loki, cảnh báo): `docs/HUONG-DAN-DEMO-THU-CONG.md`.
+> Trước giờ demo ít nhất 30 phút: `python3 lab/demo/power_loss_demo.py --arrange-only`.
+
 ### 4.3 Chạy
 
 ```bash
@@ -244,7 +247,8 @@ Cột "Gợi ý" là ý chính; tự diễn đạt bằng lời của mình, và
 Nói trước thì hội đồng thấy mình hiểu giới hạn; để hội đồng tự tìm ra thì mất điểm.
 
 1. **UI Jenkins tắt 40–60 s khi tiếp quản**: giới hạn của thiết kế "một người ghi". Bù lại: log vẫn đọc được
-   qua Loki, trigger vẫn vào hàng đợi bền, build vẫn chạy tiếp.
+   qua Loki, trigger vẫn vào hàng đợi bền (trừ khi PostgreSQL của queue chết cùng máy: lab chỉ có một bản, và
+   queue **từ chối** chứ không làm mất run trong khoảng 45–70 s đó), build vẫn chạy tiếp.
 2. **Chưa thử trên server và BMC thật**: hành vi BMC được mô phỏng theo tài liệu và báo cáo lỗi của hãng
    (chậm, 503, báo trạng thái trễ). Việc đầu tiên khi có phần cứng là diễn tập.
 3. **Lab nhỏ**: 3 VM, mọi máy là control plane. Quy mô 600 cell đo bằng kwok, không có storage thật.

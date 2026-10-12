@@ -3,7 +3,7 @@
 the middle of a build, and the screen narrates, second by second, what netCI and Kubernetes do until
 the build carries on and finishes.
 
-    python3 lab/demo/power_loss_demo.py [--cell cell-b] [--duration 120] [--yes]
+    python3 lab/demo/power_loss_demo.py [--cell cell-b] [--duration 120] [--yes] [--arrange | --arrange-only]
 
 Before it starts it checks what a demo needs (every node Ready, a supervisor leader, the cells on
 different machines, two cluster DNS servers) and stops if one is missing. Without --yes it waits for
@@ -27,6 +27,10 @@ ap = argparse.ArgumentParser()
 ap.add_argument("--cell", default="cell-b")
 ap.add_argument("--duration", type=int, default=120, help="how long the build's sh step runs, in seconds")
 ap.add_argument("--yes", action="store_true", help="cut the power without waiting for Enter")
+ap.add_argument("--arrange-only", action="store_true", help="lay the lab out and check it, without cutting any power")
+ap.add_argument("--arrange", action="store_true",
+                help="first lay the lab out for the demo: the Kata machine free of cells, the two cells on the other two, "
+                     "PostgreSQL away from the demo cell's controller (planned restarts, nodes cordoned meanwhile)")
 args = ap.parse_args()
 os.environ["NETCI_CELL"] = args.cell
 os.environ.setdefault("NETCI_CELL_PORT", {"cell-a": "30080", "cell-b": "30081"}.get(args.cell, "30080"))
@@ -47,6 +51,50 @@ def ready(node: str) -> bool:
     return k("get", "node", node, "-o", "jsonpath={.status.conditions[?(@.type=='Ready')].status}", check=False) == "True"
 
 
+def node_of(ns: str, pod: str) -> str:
+    return k("-n", ns, "get", "pod", pod, "-o", "jsonpath={.spec.nodeName}", check=False)
+
+
+def move(ns: str, pod: str, to: str, nodes: list[str]) -> None:
+    """A planned restart of ns/pod onto `to`: every other node cordoned until it is Ready there."""
+    if node_of(ns, pod) == to:
+        return
+    print(f"  {ns}/{pod}: → {to}")
+    others = [n for n in nodes if n != to]
+    old = k("-n", ns, "get", "pod", pod, "-o", "jsonpath={.metadata.uid}")
+    try:
+        for n in others:
+            k("cordon", n)
+        k("-n", ns, "delete", "pod", pod, "--wait=false")
+        probe.wait(f"{pod} Ready on {to}", lambda: k("-n", ns, "get", "pod", pod, "-o", "jsonpath={.metadata.uid}", check=False) not in ("", old)
+                   and "false" not in k("-n", ns, "get", "pod", pod, "-o", "jsonpath={.status.containerStatuses[*].ready}", check=False)
+                   and k("-n", ns, "get", "pod", pod, "-o", "jsonpath={.status.containerStatuses[*].ready}", check=False) != "", 600, 2)
+    finally:
+        for n in others:
+            k("uncordon", n, check=False)
+
+
+def arrange() -> None:
+    """The Kata machine free of cells (the untrusted pool runs only there), the cells on the other two, and
+    PostgreSQL not on the demo cell's machine: the queue then takes runs throughout the takeover (it refuses
+    them while its only database is down, as with any machine that carries it)."""
+    nodes = k("get", "nodes", "-o", "jsonpath={.items[*].metadata.name}").split()
+    kata = k("get", "nodes", "-l", "katacontainers.io/kata-runtime=true", "-o", "jsonpath={.items[*].metadata.name}").split()
+    rest = [n for n in nodes if n not in kata] or nodes
+    other = "cell-a" if args.cell == "cell-b" else "cell-b"
+    print("== Sắp xếp lab cho demo")
+    move(other, "jenkins-0", rest[0], nodes)
+    move(args.cell, "jenkins-0", rest[-1], nodes)
+    if node_of("netci-system", "netci-pg-0") == rest[-1]:
+        move("netci-system", "netci-pg-0", rest[0], nodes)
+    probe.wait("warm sandboxes", lambda: all(int(x or 0) >= 1 for x in k(
+        "-n", "netci-system", "exec", "netci-pg-0", "--", "psql", "-U", "netci", "-d", "netci", "-tAc",
+        "SELECT count(*) FROM sandboxes WHERE state = 'warm' GROUP BY pool ORDER BY pool", check=False).split()) and
+        len(k("-n", "netci-system", "exec", "netci-pg-0", "--", "psql", "-U", "netci", "-d", "netci", "-tAc",
+              "SELECT DISTINCT pool FROM sandboxes WHERE state = 'warm'", check=False).split()) >= 2, 600, 5)
+    print("  ✓ sandbox ấm có ở mọi pool")
+
+
 def preflight() -> str:
     nodes = k("get", "nodes", "-o", "jsonpath={.items[*].metadata.name}").split()
     problems = [f"{n} chưa Ready" for n in nodes if not ready(n)]
@@ -58,6 +106,19 @@ def preflight() -> str:
     dns = set(k("-n", "kube-system", "get", "pods", "-l", "k8s-app=kube-dns", "-o", "jsonpath={.items[*].spec.nodeName}").split())
     if len(dns) < 2:
         problems.append("DNS cụm chỉ trên một máy")
+    pg = node_of("netci-system", "netci-pg-0")
+    if pg == where[args.cell]:
+        print(f"  ! PostgreSQL ở cùng máy {pg} với controller của {args.cell}: trong lúc tiếp quản queue sẽ từ chối run "
+              "(nó chỉ có một CSDL). Chạy với --arrange để tách ra.")
+    try:
+        firing = sorted({a["labels"]["alertname"] for a in json.loads(subprocess.run(
+            ["curl", "-s", "--max-time", "5", f"http://{list(probe.NODES.values())[0]}:30909/api/v1/alerts"],
+            capture_output=True, text=True).stdout)["data"]["alerts"]
+            if a["state"] == "firing" and a["labels"]["alertname"].startswith("Netci")})
+    except Exception:  # noqa: BLE001 - Prometheus is for the audience, not a precondition
+        firing = ["(không đọc được Prometheus)"]
+    if firing:
+        print(f"  ! Cảnh báo đang bắn trước demo: {', '.join(firing)} (xem RUNBOOK; --arrange gỡ phần lớn)")
     for p in problems:
         print("  ✗", p)
     if problems:
@@ -68,8 +129,13 @@ def preflight() -> str:
 
 def main() -> int:
     global T0
+    if args.arrange or args.arrange_only:
+        arrange()
     print("== Kiểm tra trước demo")
     node = preflight()
+    if args.arrange_only:
+        print("Lab đã sẵn sàng. Cảnh báo về sandbox hỏng tự hết sau 30 phút kể từ lần hỏng cuối.")
+        return 0
     j = probe.Jenkins()
     n = j.trigger("once-probe", {"DURATION": str(args.duration)})
     print(f"== Build once-probe #{n} trên {args.cell} (controller ở {node}); chờ nó chạy ...")

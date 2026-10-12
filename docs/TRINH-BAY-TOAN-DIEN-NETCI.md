@@ -1291,6 +1291,9 @@ Cách tìm cũng giống nhau: dựng lại đúng điều kiện thật, đo, v
 
 - **UI Jenkins tắt khoảng 40–60 s khi tiếp quản**: giới hạn của thiết kế "một người ghi". Phần của netCI là
   khoảng 3 s; còn lại là storage và Jenkins khởi động. Log vẫn đọc được qua Loki, trigger vẫn vào hàng đợi.
+- **PostgreSQL của queue chỉ có một bản trên lab**: nếu nó nằm trên đúng máy bị mất, queue **từ chối** run (503
+  hoặc không kết nối được) trong lúc PostgreSQL chuyển máy, đo được khoảng 45–70 s; không mất run nào đã nhận,
+  nhưng bên gửi phải gửi lại. `[Prod]` PostgreSQL phải HA.
 - **Chưa fence một server vật lý thật** qua iDRAC/iLO; hành vi BMC mới được mô phỏng theo tài liệu và báo
   cáo lỗi của hãng.
 - **Quy mô với storage thật**: kwok đo phần control plane; storage chuyển nhiều volume mới đo tới 8.

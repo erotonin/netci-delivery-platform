@@ -1,0 +1,19 @@
+{
+  "scenario": "demo-power-loss",
+  "started": "2026-10-12T05:41:00+00:00",
+  "cell": "cell-b",
+  "node": "netci-lab-2",
+  "build": 159,
+  "result": "SUCCESS",
+  "secondsAfterPowerLoss": {
+    "released": 4.1,
+    "fenced": 4.1,
+    "newpod": 6.7,
+    "placed": 6.7,
+    "lease": 26.7,
+    "up": 37.5,
+    "resumed": 37.6
+  },
+  "ticksMissing": [],
+  "onceMarkers": "1"
+}
