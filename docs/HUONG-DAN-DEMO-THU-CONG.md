@@ -17,9 +17,9 @@
 
 ---
 
-## 0. Chuẩn bị
+## DM0. Chuẩn bị
 
-### 0.1 Hôm trước
+### DM0.1 Hôm trước
 
 ```bash
 cd ~/netci-delivery-platform
@@ -35,7 +35,7 @@ netci-queue-pg`, `lab/redfish.sh start`, kiểm Loki).
 
 Tập toàn bộ luồng ít nhất một lần, và **quay màn hình** lần tập đó làm phương án dự phòng.
 
-### 0.2 Trước giờ demo **ít nhất 30 phút**
+### DM0.2 Trước giờ demo **ít nhất 30 phút**
 
 ```bash
 python3 lab/demo/power_loss_demo.py --arrange-only
@@ -60,7 +60,7 @@ kubectl get pods -A -o wide | grep -E "jenkins-0|netci-pg-0"
 # netci-system netci-pg-0 ... netci-lab-1   (miễn là KHÁC máy của cell-b)
 ```
 
-### 0.3 Mật khẩu: đăng nhập trước, đừng chiếu lên màn hình
+### DM0.3 Mật khẩu: đăng nhập trước, đừng chiếu lên màn hình
 
 | Ở đâu | User | Mật khẩu nằm trong file |
 |---|---|---|
@@ -74,7 +74,7 @@ Trong terminal chiếu, chỉ dùng `$(cat ...)` như các lệnh bên dưới, 
 > Jenkins trả lời ở cả ba IP (`.211`, `.212`, `.213`, cổng 30081), nên vẫn mở được khi một máy chết. Dùng
 > `.211` trong trình duyệt nếu demo rút điện lab-2.
 
-### 0.4 Các cửa sổ
+### DM0.4 Các cửa sổ
 
 | Cửa sổ | Mở gì |
 |---|---|
@@ -85,7 +85,7 @@ Trong terminal chiếu, chỉ dùng `$(cat ...)` như các lệnh bên dưới, 
 
 ---
 
-## 1. Hệ thống đang chạy (1,5 phút)
+## DM1. Hệ thống đang chạy (1,5 phút)
 
 Cửa sổ A:
 
@@ -103,9 +103,9 @@ kubectl get pods -A -o wide | grep jenkins-0
 Cửa sổ C: mở Jenkins, cho thấy các job (`once-probe`, `fabric-probe`, `queue-probe-short`).
 
 Có thể gặp: trong `kubectl get pods -A` có một pod `sbx-…` ở trạng thái Pending của pool `untrusted`. Đó là
-pool Kata, chỉ chạy trên lab-3, đang chờ chỗ. Không liên quan tới luồng demo; nếu bị hỏi, xem mục 7.
+pool Kata, chỉ chạy trên lab-3, đang chờ chỗ. Không liên quan tới luồng demo; nếu bị hỏi, xem mục DM7.
 
-## 2. Hàng đợi bền và không trùng (1,5 phút)
+## DM2. Hàng đợi bền và không trùng (1,5 phút)
 
 Cửa sổ A, gửi **cùng một khoá idempotency hai lần**:
 
@@ -136,7 +136,7 @@ curl -s $Q/v1/runs/<id> -H "Authorization: Bearer $TOKEN"; echo
 Trạng thái đi từ `accepted` sang `dispatched`, rồi `finished` với `buildNumber` và `result: SUCCESS`, sau khoảng
 25 s. Job này cố ý có quiet period 20 s. Cửa sổ C: build đó hiện trong `queue-probe-short`.
 
-## 3. Sandbox của fabric (1,5 phút)
+## DM3. Sandbox của fabric (1,5 phút)
 
 Cửa sổ A:
 
@@ -166,9 +166,9 @@ kubectl -n netci-system exec netci-pg-0 -- psql -U netci -d netci -c \
   "SELECT pod, state, cell, agent, reason FROM sandboxes WHERE claimed_at > now() - interval '5 minutes' ORDER BY claimed_at"
 ```
 
-## 4. Rút điện (4 phút)
+## DM4. Rút điện (4 phút)
 
-### 4.1 Khởi động build dài
+### DM4.1 Khởi động build dài
 
 Cửa sổ C: job `once-probe` → **Build with Parameters** → `DURATION` = `180` → Build. Mở console: mỗi giây một
 dòng `tick N`.
@@ -176,13 +176,13 @@ dòng `tick N`.
 **Nói**: *"Build này chạy một bước sh 180 giây bên trong `netciOnce`, giống một bước deploy không được phép
 chạy hai lần."*
 
-### 4.2 Tìm máy của controller
+### DM4.2 Tìm máy của controller
 
 ```bash
 kubectl -n cell-b get pod jenkins-0 -o wide        # cột NODE, ví dụ netci-lab-2
 ```
 
-### 4.3 Rút điện
+### DM4.3 Rút điện
 
 Đợi console tới khoảng tick 15, rồi ở cửa sổ A:
 
@@ -203,7 +203,7 @@ Theo dõi cửa sổ B. Mốc thời gian dưới đây là của lần chạy t
 Mốc thời gian dao động theo việc máy chết còn mang theo gì: trong các lần tập, Lease mới ở giây 20–52, Jenkins
 lên ở giây 30–62. Đừng hứa trước một con số chính xác.
 
-### 4.4 Trong lúc Jenkins đang chết (giây 8–30): hai điều Jenkins thường không làm được
+### DM4.4 Trong lúc Jenkins đang chết (giây 8–30): hai điều Jenkins thường không làm được
 
 **a) Vẫn nhận run** (cửa sổ A):
 
@@ -216,7 +216,7 @@ Kết quả thật: `HTTP 202`, `state: accepted`. Run này sẽ chạy khi cont
 
 **Nói**: *"Jenkins đang chết, nhưng hàng đợi bền vẫn nhận việc."*
 
-> Chỉ đúng khi PostgreSQL không chết cùng máy (bước 0.2 lo việc đó). Nếu nó chết cùng máy, lệnh trên trả 503
+> Chỉ đúng khi PostgreSQL không chết cùng máy (bước DM0.2 lo việc đó). Nếu nó chết cùng máy, lệnh trên trả 503
 > hoặc lỗi kết nối trong khoảng 45–70 s: queue từ chối chứ không làm mất. Lab chỉ có một PostgreSQL; production
 > phải chạy nó HA.
 
@@ -230,7 +230,7 @@ Kết quả thật: các dòng tới `tick 14`, đúng lúc mất điện.
 
 **Nói**: *"Log được đẩy ra Loki ngay khi Jenkins ghi, nên đọc được kể cả khi controller đang được chuyển."*
 
-### 4.5 Build chạy tiếp
+### DM4.5 Build chạy tiếp
 
 Khi trang Jenkins mở lại, vào lại console của build (cửa sổ C). Sẽ thấy:
 
@@ -247,9 +247,9 @@ và các tick **không đứt quãng**.
 **Nói**: *"Bước sh vẫn chạy trên agent suốt lúc controller chết. Controller mới chỉ nối lại với nó, không chạy
 lại."*
 
-## 5. Sau sự cố (2 phút)
+## DM5. Sau sự cố (2 phút)
 
-### 5.1 Build xong, đúng một lần
+### DM5.1 Build xong, đúng một lần
 
 Console kết thúc bằng `Finished: SUCCESS`. Kiểm marker của `netciOnce` (thay số build):
 
@@ -268,7 +268,7 @@ curl -s $Q/v1/runs/<id> -H "Authorization: Bearer $TOKEN"; echo
 # "state":"finished","buildNumber":131,…,"result":"SUCCESS"
 ```
 
-### 5.2 Supervisor đã làm gì
+### DM5.2 Supervisor đã làm gì
 
 ```bash
 kubectl get events -A --field-selector source=netci-supervisor --sort-by=.lastTimestamp \
@@ -288,7 +288,7 @@ Unfenced           the machine is running again and its node is Ready
 - *"Supervisor xác nhận máy tắt trong 176 ms rồi mới chuyển."*
 - *"Sau khi mọi thứ của cell đã rời máy chết, nó tự bật máy lại và gỡ taint khi máy Ready."*
 
-### 5.3 Cảnh báo
+### DM5.3 Cảnh báo
 
 Grafana dashboard `netCI`, hoặc:
 
@@ -302,15 +302,15 @@ Trong lúc lab-2 tắt, lần chạy thật có `NetciCellWithoutHeadroom: pendi
 điều đó."*
 
 Có thể thấy thêm `NetciCellsShareAMachine` nếu sau tiếp quản hai cell ở chung một máy. Đó là cảnh báo đúng:
-chúng sẽ chết cùng nhau. Cách xử lý là bước 0.2.
+chúng sẽ chết cùng nhau. Cách xử lý là bước DM0.2.
 
-### 5.4 Máy tự bật lại
+### DM5.4 Máy tự bật lại
 
 Cửa sổ B: `netci-lab-2` trở lại `Ready`, taint biến mất, sau khoảng 2 phút kể từ lúc rút điện.
 
 ---
 
-## 6. Rút gọn: nếu chỉ có 3 phút
+## DM6. Rút gọn: nếu chỉ có 3 phút
 
 ```bash
 python3 lab/demo/power_loss_demo.py --cell cell-b --duration 120
@@ -323,21 +323,21 @@ Có thể thêm `--arrange` để nó tự sắp xếp lab trước, nhưng mấ
 
 ---
 
-## 7. Khi có trục trặc
+## DM7. Khi có trục trặc
 
 | Hiện tượng | Nguyên nhân | Làm |
 |---|---|---|
 | Lệnh `curl` có `?tree=...[...]` không trả gì | `curl` hiểu `[ ]` là mẫu glob | Thêm `-g` (`curl -sg …`), hoặc dùng giao diện web |
 | Chờ "tick" mãi bằng `grep "^tick"` | Console của cell-b có tiền tố giờ `[2026-…Z] tick 15` | Bỏ `^`: `grep "tick 15 "` |
-| Queue trả 503 / lỗi kết nối lúc tiếp quản | PostgreSQL chết cùng máy | Bước 0.2; hoặc giải thích: từ chối chứ không mất, production chạy PostgreSQL HA |
-| Pod `sbx-…` của pool `untrusted` Pending; cảnh báo `NetciFabric…` bắn | Pool Kata chỉ chạy trên lab-3 và lab-3 hết chỗ (thường do một cell nằm đó) | Bước 0.2, và chờ 30 phút cho cảnh báo tự hết |
+| Queue trả 503 / lỗi kết nối lúc tiếp quản | PostgreSQL chết cùng máy | Bước DM0.2; hoặc giải thích: từ chối chứ không mất, production chạy PostgreSQL HA |
+| Pod `sbx-…` của pool `untrusted` Pending; cảnh báo `NetciFabric…` bắn | Pool Kata chỉ chạy trên lab-3 và lab-3 hết chỗ (thường do một cell nằm đó) | Bước DM0.2, và chờ 30 phút cho cảnh báo tự hết |
 | Jenkins chậm lên hơn mọi lần (60 s) | Máy chết mang theo cả leader của control plane hay storage, hoặc nhiều volume cùng chuyển | Bình thường trong biên độ đã đo (34–67 s); nói thẳng như vậy |
 | Build trên **cell-a** xong muộn 100–150 s | cell-a mount `sync,dirsync` (cấu hình đối chứng): mỗi bước Pipeline mất khoảng 4 s | Luôn demo trên **cell-b** |
 | Sau demo hai cell ở chung một máy | Tiếp quản đặt controller vào máy còn chỗ | Chạy lại `--arrange-only` trước lần demo sau |
 | Máy bị rút điện không lên lại sau 5 phút | Supervisor chưa bật lại | `kubectl get events -A --field-selector source=netci-supervisor`; bật tay: `virsh -c qemu:///system start netci-lab-2` |
 | Mạng hội trường không vào được lab | — | Chiếu video quay lần tập, mở file bằng chứng trong `lab/evidence/` |
 
-## 8. Sau buổi demo
+## DM8. Sau buổi demo
 
 ```bash
 python3 lab/demo/power_loss_demo.py --arrange-only     # đưa lab về sắp xếp chuẩn cho lần sau
