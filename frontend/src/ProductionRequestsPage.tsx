@@ -1052,11 +1052,13 @@ export function ProductionRequestsPage({ systemId }: { systemId: string }) {
   const { notify } = usePortalFeedback()
   // Who the *server* says we are. The Portal never decides this for itself, and this is
   // used only to show the separation-of-duties rule before the click rather than after.
+  // Null when the server is not separating duties (authentication off: every caller is the
+  // same subject and may approve), or the Portal would refuse what the API accepts.
   const [viewerSubject, setViewerSubject] = useState<string | null>(null)
   useEffect(() => {
     let active = true
     whoami()
-      .then((identity) => { if (active) setViewerSubject(identity.principal.subject) })
+      .then((identity) => { if (active) setViewerSubject(identity.separationOfDuties ? identity.principal.subject : null) })
       .catch(() => { if (active) setViewerSubject(null) })
     return () => { active = false }
   }, [])

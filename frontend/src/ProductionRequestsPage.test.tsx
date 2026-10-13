@@ -191,13 +191,13 @@ describe('separation of duties in the browser', () => {
     if (restore) vi.mocked(client.listProductionRequests).mockImplementation(restore as never)
   })
 
-  async function openDetailsAs(subject: string) {
+  async function openDetailsAs(subject: string, separationOfDuties = true) {
     const client = await import('./api/netciClient')
     // The server decides who we are; the Portal only reflects it.
     vi.mocked(client.whoami).mockResolvedValue({
       principal: { subject, displayName: subject, email: '', roles: ['reviewer'], teams: [], method: 'oidc' },
       authMode: 'oidc',
-      separationOfDuties: true,
+      separationOfDuties,
     } as never)
 
     render(
@@ -218,5 +218,17 @@ describe('separation of duties in the browser', () => {
   it('leaves Approve enabled for a different reviewer', async () => {
     const approve = await openDetailsAs('rae')
     await waitFor(() => expect((approve as HTMLButtonElement).disabled).toBe(false))
+  })
+
+  it('does not show a rule the server is not enforcing', async () => {
+    // With authentication off every caller is the same subject and the server lets them
+    // approve (separationOfDuties: false). Disabling the button then refused every approval
+    // in the Portal while the API would have accepted it.
+    const client = await import('./api/netciClient')
+    const approve = await openDetailsAs('alice', false)
+    await waitFor(() => expect(vi.mocked(client.whoami)).toHaveBeenCalled())
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect((approve as HTMLButtonElement).disabled).toBe(false)
+    expect(approve.getAttribute('title')).toBeNull()
   })
 })
