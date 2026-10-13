@@ -10,12 +10,24 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-DEFAULT_LEDGER_PATH = Path("/home/deployer/netci-delivery-platform/storage/audit_ledger.jsonl")
+def default_ledger_path() -> Path:
+    """`NETCI_AUDIT_LEDGER_PATH`, else `storage/` of the checkout this module runs from.
+
+    Read per call, not at import. It was a fixed /home/deployer/... path, so on any other
+    machine -- a container, the Kubernetes install -- every append failed (a warning each
+    time) and the ledger recorded nothing.
+    """
+
+    configured = os.getenv("NETCI_AUDIT_LEDGER_PATH", "").strip()
+    return Path(configured) if configured else Path(__file__).resolve().parents[2] / "storage" / "audit_ledger.jsonl"
+
+
 _LEDGER_LOCK = threading.Lock()
 GENESIS_HASH = "0" * 64
 
@@ -36,7 +48,7 @@ def append_audit_entry(
     ledger_path: Path | None = None,
 ) -> dict[str, Any]:
     """Append a new tamper-evident record to the local disk text audit ledger."""
-    path = ledger_path or DEFAULT_LEDGER_PATH
+    path = ledger_path or default_ledger_path()
     path.parent.mkdir(parents=True, exist_ok=True)
 
     with _LEDGER_LOCK:
@@ -118,7 +130,7 @@ def verify_audit_ledger(
     immutability against root/disk attacks requires external hash anchoring, object lock (WORM),
     and replication.
     """
-    path = ledger_path or DEFAULT_LEDGER_PATH
+    path = ledger_path or default_ledger_path()
     if not path.exists():
         return True, "Ledger does not exist yet (clean state)"
 
@@ -178,7 +190,7 @@ def verify_audit_ledger(
 
 def read_audit_entries(limit: int = 100, ledger_path: Path | None = None) -> list[dict[str, Any]]:
     """Read latest audit records from local text ledger."""
-    path = ledger_path or DEFAULT_LEDGER_PATH
+    path = ledger_path or default_ledger_path()
     if not path.exists():
         return []
 

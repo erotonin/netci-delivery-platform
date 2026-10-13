@@ -26,6 +26,7 @@ from app.adapters.agent_daemon import NetCiAgentDaemon, validate_command_policy
 from app.audit_ledger import (
     LedgerCorrupted,
     append_audit_entry,
+    default_ledger_path,
     read_audit_entries,
     verify_audit_ledger,
 )
@@ -282,6 +283,18 @@ def test_edge_agent_command_allowlist_security():
 # -----------------------------------------------------------------------------
 # 6. Local Disk Append-Only Audit Ledger & Tamper Detection
 # -----------------------------------------------------------------------------
+
+def test_the_ledger_path_is_configured_not_one_machines_home(tmp_path, monkeypatch):
+    """It was /home/deployer/netci-delivery-platform/...: on any other machine (a container,
+    the Kubernetes install) every append failed and the ledger quietly recorded nothing."""
+    monkeypatch.delenv("NETCI_AUDIT_LEDGER_PATH", raising=False)
+    repo = Path(__file__).resolve().parents[2]
+    assert default_ledger_path() == repo / "storage" / "audit_ledger.jsonl"
+    monkeypatch.setenv("NETCI_AUDIT_LEDGER_PATH", str(tmp_path / "ledger.jsonl"))
+    append_audit_entry(action="a", actor="t", correlation_id="c", payload={})
+    assert [e["action"] for e in read_audit_entries()] == ["a"]
+    assert verify_audit_ledger()[0] is True
+
 
 def test_local_disk_audit_ledger_tamper_evident():
     """Verify that audit records are written to local disk plain text JSONL format

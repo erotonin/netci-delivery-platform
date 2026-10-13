@@ -2,7 +2,9 @@ import { expect, test, type Page } from '@playwright/test'
 import * as path from 'path'
 import { separationOfDuties } from './live'
 
-const ARTIFACT_DIR = '/home/deployer/.gemini/antigravity-cli/brain/2fb6e3dc-998c-4b70-bff7-692b77c81866'
+// Screenshots of the journey, kept with the run's other output (test-results/ is git-ignored).
+// This was a directory in one developer's home, which existed nowhere else and failed on CI.
+const ARTIFACT_DIR = process.env.NETCI_E2E_SCREENSHOTS ?? path.join('test-results', 'screenshots')
 
 async function ssoLogin(page: Page, username: string, password = 'netci-lab-only') {
   await page.goto('/#/login')
