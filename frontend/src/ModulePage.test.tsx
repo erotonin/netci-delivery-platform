@@ -17,6 +17,8 @@ vi.mock('./api/netciClient', async (importOriginal) => {
     ] }),
     getModuleGitRefs: vi.fn().mockResolvedValue({ moduleId: 'notification-worker', repositoryUrl: 'https://git.example/notification-worker.git', branches: [{ name: 'main', sha: 'a'.repeat(40) }], tags: [], error: null }),
     getDora: vi.fn(),
+    detectDrift: vi.fn(),
+    listConfigRevisions: vi.fn(),
     getModuleDeliveryRules: vi.fn().mockResolvedValue({
       moduleId: 'notification-worker', defaulted: true, forkPullRequests: 'ignore',
       triggers: [
@@ -30,7 +32,7 @@ vi.mock('./api/netciClient', async (importOriginal) => {
   }
 })
 
-import { getDora } from './api/netciClient'
+import { detectDrift, getDora, listConfigRevisions } from './api/netciClient'
 import { ModulePage } from './ModulePage'
 import { PortalFeedbackProvider } from './PortalFeedback'
 
@@ -93,5 +95,27 @@ describe('ModulePage pipeline contract', () => {
     expect(within(picker).getByText(/feat: batch notifications/)).toBeTruthy()
     await user.selectOptions(picker, 'c'.repeat(40))
     expect((screen.getByPlaceholderText('7–64 hex characters') as HTMLInputElement).value).toBe('c'.repeat(40))
+  })
+
+  it('says drift was not verified when nothing could be compared, instead of "In Sync"', async () => {
+    // The API answers hasDrift null when no deployment reached an environment and no
+    // inventory was asked about a server. The panel drew a green "Configuration In Sync" and
+    // "DCIM verified all configured target hosts" over that.
+    const user = userEvent.setup()
+    vi.mocked(listConfigRevisions).mockResolvedValue({ moduleId: 'notification-worker', items: [] } as never)
+    vi.mocked(detectDrift).mockResolvedValue({
+      moduleId: 'notification-worker', activeRevisionId: null, configVersion: 1, hasDrift: null,
+      unobservedEnvironments: ['prod'], deploymentDrift: [],
+      dcimDrift: [{ environment: 'prod', server: 'prod-host', dcimStatus: 'unconfigured', message: 'DCIM provider is unconfigured; target validation bypassed', drifted: null }],
+    })
+
+    render(<PortalFeedbackProvider><ModulePage moduleId="notification-worker" onSettings={vi.fn()} /></PortalFeedbackProvider>)
+    await screen.findByRole('heading', { name: 'Notification Worker' })
+    await user.click(screen.getByRole('tab', { name: 'Configuration' }))
+
+    expect(await screen.findByText('Drift Not Verified')).toBeTruthy()
+    expect(screen.queryByText('Configuration In Sync')).toBeNull()
+    expect(screen.getByText(/No deployment has reached prod/)).toBeTruthy()
+    expect(screen.getByText(/prod-host/)).toBeTruthy()
   })
 })

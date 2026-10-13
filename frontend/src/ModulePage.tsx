@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import {
   ArrowLeft, Box, Check, CheckCircle2, Code2, Copy, ExternalLink, GitBranch,
   History, MoreHorizontal, Play, Plus, RotateCcw, Settings, ShieldAlert, Sliders,
-  TerminalSquare, XCircle, Zap, ZoomIn, ZoomOut,
+  CircleHelp, TerminalSquare, XCircle, Zap, ZoomIn, ZoomOut,
 } from 'lucide-react'
 import {
   approveConfigRevision, approvePipelineRun, cancelPipelineRun, createModuleVersion, detectDrift,
@@ -881,7 +881,11 @@ function ConfigTab({ moduleId }: { moduleId: string }) {
       const report = await detectDrift(moduleId)
       setDriftReport(report)
       // The banner below says it; a toast on every visit was noise.
-      if (announce) notify(report.hasDrift ? 'Configuration drift detected between active revision and running state / NetBox.' : 'No configuration drift detected.', report.hasDrift ? 'error' : 'success')
+      if (announce) {
+        if (report.hasDrift === true) notify('Configuration drift detected between active revision and running state / NetBox.', 'error')
+        else if (report.hasDrift === false) notify('No configuration drift detected.', 'success')
+        else notify('Drift could not be verified: nothing running, or no inventory, to compare against.', 'info')
+      }
     } catch (error) {
       notify(error instanceof Error ? error.message : 'Unable to run drift detection.', 'error')
     } finally {
@@ -1092,20 +1096,27 @@ function ConfigTab({ moduleId }: { moduleId: string }) {
         </div>
       </div>
 
-      {driftReport && (
-        <section className="panel" style={{ marginBottom: 20, borderLeft: driftReport.hasDrift ? '4px solid #ef4444' : '4px solid #10b981' }}>
+      {driftReport && (() => {
+        // Three answers, not two: "not drifted" needs something to have been compared. With no
+        // deployment in an environment, or no inventory asked about a server, the honest answer
+        // is that drift was not verified -- this panel used to show a green "In Sync" then.
+        const state = driftReport.hasDrift === true ? 'drift' : driftReport.hasDrift === false ? 'sync' : 'unknown'
+        const color = state === 'drift' ? '#ef4444' : state === 'sync' ? '#10b981' : '#d97706'
+        const unchecked = driftReport.dcimDrift.filter(d => d.drifted === null)
+        return (
+        <section className="panel" style={{ marginBottom: 20, borderLeft: `4px solid ${color}` }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-              <span style={{ color: driftReport.hasDrift ? '#ef4444' : '#10b981' }}>
-                {driftReport.hasDrift ? <XCircle size={20} /> : <CheckCircle2 size={20} />}
+              <span style={{ color }}>
+                {state === 'drift' ? <XCircle size={20} /> : state === 'sync' ? <CheckCircle2 size={20} /> : <CircleHelp size={20} />}
               </span>
-              <strong>{driftReport.hasDrift ? 'Configuration Drift Detected' : 'Configuration In Sync'}</strong>
+              <strong>{state === 'drift' ? 'Configuration Drift Detected' : state === 'sync' ? 'Configuration In Sync' : 'Drift Not Verified'}</strong>
             </div>
             <small style={{ color: 'var(--text-muted)' }}>
               Targeting active revision #{activeRev?.revisionNumber ?? '—'}
             </small>
           </div>
-          {driftReport.hasDrift ? (
+          {state === 'drift' && (
             <div style={{ fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
               {driftReport.deploymentDrift.filter(d => d.drifted).map((d, i) => (
                 <div key={`dep-${i}`} style={{ marginBottom: 4 }}>
@@ -1118,13 +1129,29 @@ function ConfigTab({ moduleId }: { moduleId: string }) {
                 </div>
               ))}
             </div>
-          ) : (
+          )}
+          {state === 'sync' && (
             <p style={{ margin: 0, fontSize: '0.88rem', color: 'var(--text-muted)' }}>
               No deployed servers drift from the active revision, and DCIM verified all configured target hosts (inventory state, not liveness probe).
             </p>
           )}
+          {(state !== 'sync') && (driftReport.unobservedEnvironments.length > 0 || unchecked.length > 0) && (
+            <div style={{ fontSize: '0.88rem', color: 'var(--text-muted)', marginTop: state === 'drift' ? 8 : 0 }}>
+              {driftReport.unobservedEnvironments.length > 0 && (
+                <div style={{ marginBottom: 4 }}>
+                  • No deployment has reached {driftReport.unobservedEnvironments.join(', ')} yet: nothing running there to compare.
+                </div>
+              )}
+              {unchecked.map((d, i) => (
+                <div key={`unchecked-${i}`} style={{ marginBottom: 4 }}>
+                  • <strong>{d.environment} target host ({d.server})</strong>: not checked -- {d.message}
+                </div>
+              ))}
+            </div>
+          )}
         </section>
-      )}
+        )
+      })()}
 
       {activeRev && (
         <section className="panel" style={{ marginBottom: 24, padding: 18 }}>

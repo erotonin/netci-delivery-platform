@@ -86,6 +86,8 @@ from .coordinator import ReleasePlanCoordinator
 #: Rolling window every DORA figure is computed over. Stated in the response so a
 #: number on screen can never be read without the period it belongs to.
 DORA_WINDOW_DAYS = 30
+# DCIM answers that mean no inventory was consulted: a target is not refused, nor checked.
+DCIM_NOT_CHECKED = frozenset({"unconfigured", "unknown"})
 
 
 DB_URI_REGEX = re.compile(
@@ -1300,7 +1302,17 @@ class PortalService:
                 servers = list(target.get("servers") or [])
                 for server in servers:
                     validation = self.dcim_catalog.validate_target(module.system_id, module.id, env, server)
-                    if not validation.valid:
+                    if validation.status in DCIM_NOT_CHECKED:
+                        # "Valid" here means only "not refused": no inventory was asked, so
+                        # whether the server drifted is not known. It used to say false.
+                        dcim_drifts.append({
+                            "environment": env,
+                            "server": server,
+                            "dcimStatus": validation.status,
+                            "message": validation.message,
+                            "drifted": None,
+                        })
+                    elif not validation.valid:
                         dcim_drifts.append({
                             "environment": env,
                             "server": server,
@@ -1317,12 +1329,23 @@ class PortalService:
                             "drifted": False,
                         })
 
-            has_drift = any(item.get("drifted") for item in deployment_drifts) or any(item.get("drifted") for item in dcim_drifts)
+            # True when something drifted; false only when everything was compared; otherwise
+            # unknown. "No drift" over environments nothing was deployed to, or servers no
+            # inventory was asked about, drew a green "In Sync" over a state nobody had checked.
+            unobserved = sorted({str(t.get("environment") or "") for t in module.deployment_config} - set(latest_by_env))
+            items = deployment_drifts + dcim_drifts
+            if any(item["drifted"] is True for item in items):
+                has_drift: bool | None = True
+            elif unobserved or any(item["drifted"] is None for item in items):
+                has_drift = None
+            else:
+                has_drift = False
             return {
                 "moduleId": module_id,
                 "activeRevisionId": active_id,
                 "configVersion": module.config_version,
                 "hasDrift": has_drift,
+                "unobservedEnvironments": unobserved,
                 "deploymentDrift": deployment_drifts,
                 "dcimDrift": dcim_drifts,
             }

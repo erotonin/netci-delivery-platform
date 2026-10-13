@@ -926,7 +926,47 @@ paths:
       parameters:
         - $ref: '#/components/parameters/ModuleId'
       responses:
-        '200': { description: Configuration and DCIM drift report }
+        '200':
+          description: >-
+            Configuration and DCIM drift report. hasDrift is true when something drifted,
+            false only when every environment had a deployment to compare and every server
+            was checked against an inventory, and null otherwise (not checked is not in sync).
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [moduleId, activeRevisionId, configVersion, hasDrift, unobservedEnvironments, deploymentDrift, dcimDrift]
+                properties:
+                  moduleId: { type: string }
+                  activeRevisionId: { type: string, nullable: true }
+                  configVersion: { type: integer }
+                  hasDrift: { type: boolean, nullable: true }
+                  unobservedEnvironments:
+                    description: Environments with no deployment that reached its target, so nothing to compare.
+                    type: array
+                    items: { type: string }
+                  deploymentDrift:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        environment: { type: string }
+                        deploymentId: { type: string }
+                        status: { type: string }
+                        runningConfigRevisionId: { type: string, nullable: true }
+                        desiredConfigRevisionId: { type: string, nullable: true }
+                        drifted: { type: boolean }
+                        reason: { type: string }
+                  dcimDrift:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        environment: { type: string }
+                        server: { type: string }
+                        dcimStatus: { type: string }
+                        message: { type: string }
+                        drifted: { type: boolean, nullable: true, description: null when no inventory was consulted }
         '404': { $ref: '#/components/responses/NotFound' }
   /servers/health:
     get:

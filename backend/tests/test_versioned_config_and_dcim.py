@@ -581,6 +581,22 @@ def test_a_failed_deployment_is_not_reported_as_configuration_drift(auth_client)
     drift = client.get("/modules/hello-container/drift", headers=headers_for("dana")).json()
     dev = [d for d in drift["deploymentDrift"] if d["environment"] == "dev"]
     assert len(dev) == 1 and dev[0]["drifted"] is True and dev[0]["deploymentId"] == str(healthy.id)
+    assert drift["hasDrift"] is True
+    assert "dev" not in drift["unobservedEnvironments"]
+
+
+def test_drift_that_was_not_checked_is_unknown_not_in_sync(auth_client):
+    """With no deployment that reached a target and no DCIM to ask, nothing was compared.
+    The report said hasDrift false, each DCIM row drifted false beside "validation bypassed",
+    and the Portal drew a green "Configuration In Sync" over it."""
+
+    client, headers_for = auth_client
+    drift = client.get("/modules/hello-container/drift", headers=headers_for("dana")).json()
+    assert drift["deploymentDrift"] == []
+    assert sorted(drift["unobservedEnvironments"]) == ["dev", "prod", "staging"]
+    assert drift["dcimDrift"] and all(d["drifted"] is None for d in drift["dcimDrift"])
+    assert all(d["dcimStatus"] == "unconfigured" for d in drift["dcimDrift"])
+    assert drift["hasDrift"] is None
 
 
 def test_a_retry_deploys_the_configuration_that_is_active_now(auth_client):

@@ -213,7 +213,8 @@ export type ConfigDriftItem = {
   server?: string
   dcimStatus?: string
   message?: string
-  drifted: boolean
+  /** null: not checked (no inventory was asked), which is not the same as not drifted. */
+  drifted: boolean | null
   reason?: string
 }
 
@@ -221,7 +222,10 @@ export type ConfigDriftReport = {
   moduleId: string
   activeRevisionId: string | null
   configVersion: number
-  hasDrift: boolean
+  /** true: something drifted. false: everything was compared and matched. null: not verified. */
+  hasDrift: boolean | null
+  /** Environments no deployment has reached, so there is nothing running to compare. */
+  unobservedEnvironments: string[]
   deploymentDrift: ConfigDriftItem[]
   dcimDrift: ConfigDriftItem[]
 }
