@@ -2522,6 +2522,12 @@ paths:
     post:
       operationId: validateKubernetesAdmission
       summary: Kubernetes Dynamic Admission Controller webhook validating container images
+      description: >-
+        Called by the kube-apiserver, which authenticates with a bearer token from its
+        AdmissionConfiguration kubeconfig, compared with NETCI_ADMISSION_WEBHOOK_TOKEN(_FILE).
+        Outside NETCI_ENVIRONMENT=local an unconfigured secret answers 503 to every caller.
+      security:
+        - AdmissionWebhookBearer: []
       requestBody:
         required: true
         content:
@@ -2537,6 +2543,8 @@ paths:
               schema:
                 type: object
                 additionalProperties: true
+        '401': { description: "ADMISSION_WEBHOOK_UNAUTHORIZED: no bearer token, or not the webhook's" }
+        '503': { description: 'ADMISSION_WEBHOOK_NOT_CONFIGURED: outside local, no webhook secret is set' }
 
   /catalog/services:
     post:
@@ -3654,6 +3662,10 @@ paths:
 
 components:
   securitySchemes:
+    AdmissionWebhookBearer:
+      type: http
+      scheme: bearer
+      description: The shared secret the kube-apiserver presents for the admission webhook.
     PipelineBearer:
       type: http
       scheme: bearer

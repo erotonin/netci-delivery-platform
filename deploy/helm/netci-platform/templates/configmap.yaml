@@ -149,6 +149,9 @@ data:
   NETCI_DCIM_BASE_URL: {{ required "dcim.baseUrl is required when dcim.provider is set" .Values.dcim.baseUrl | quote }}
   NETCI_DCIM_API_TOKEN_FILE: /run/secrets/netci-app/dcim-api-token
   {{- end }}
+  {{- if .Values.admission.webhook.enabled }}
+  NETCI_ADMISSION_WEBHOOK_TOKEN_FILE: /run/secrets/netci-app/admission-webhook-token
+  {{- end }}
 
   # progressive delivery
   {{- if .Values.traffic.router }}

@@ -39,6 +39,7 @@ secrets:
   cosignPublicKey: ""          # the public half of the key the pipeline signs with
   jenkinsApiTokens: {}         # {A: "<token for controllers[id=A]>"}
   dcimApiToken: ""             # only when dcim.provider is set
+  admissionWebhookToken: ""    # only when admission.webhook.enabled; 32+ random characters
   # Commit statuses and pull-request comments (ADR-048), sent by the outbox. Without the
   # token for a provider, its statuses dead-letter -- visible, never silently "sent".
   githubToken: ""              # repo:status + pull request comments on the modules' repositories
@@ -161,6 +162,15 @@ verification:
   # verification fails closed, and canaries cannot be analysed -- only advanced on an
   # audited overrideReason.
   prometheusUrl: ""
+
+# ---------------------------------------------------------------- admission webhook
+# /admission/validate answers a cluster's ValidatingWebhook for every pod. The kube-apiserver
+# authenticates with a bearer token from its AdmissionConfiguration kubeconfig (cluster-level,
+# outside this chart); netCI compares it with secrets.admissionWebhookToken. Off: the endpoint
+# answers 503 to every caller -- it never admits an unauthenticated review.
+admission:
+  webhook:
+    enabled: false
 
 # ---------------------------------------------------------------- inventory: DCIM
 dcim:

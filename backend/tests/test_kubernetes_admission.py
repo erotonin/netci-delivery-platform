@@ -186,6 +186,47 @@ def test_admission_http_endpoint_webhook():
     assert res["response"]["allowed"] is True
 
 
+def _decisions_for(digest: str) -> int:
+    from app import main
+
+    with main.database.transaction() as session:
+        return len(session.policy_decisions_paginated(target_id=digest, limit=100)[0])
+
+
+def test_outside_local_admission_without_a_configured_webhook_secret_refuses_and_records_nothing(monkeypatch):
+    """The endpoint took any caller: whoever reached the API could write a policy decision
+    per request, under a digest of their choosing, and learn which digests netCI holds
+    evidence for. Outside local, an unconfigured secret is a refusal, never an admission."""
+    monkeypatch.setenv("NETCI_ENVIRONMENT", "production")
+    monkeypatch.delenv("NETCI_ADMISSION_WEBHOOK_TOKEN", raising=False)
+    monkeypatch.delenv("NETCI_ADMISSION_WEBHOOK_TOKEN_FILE", raising=False)
+    digest = "sha256:" + uuid4().hex * 2
+    resp = TestClient(app).post("/admission/validate", json=_build_admission_review_request(
+        image=f"registry.example.com/app@{digest}", namespace="prod"))
+    assert resp.status_code == 503
+    assert resp.json()["detail"]["code"] == "ADMISSION_WEBHOOK_NOT_CONFIGURED"
+    assert _decisions_for(digest) == 0
+
+
+def test_the_webhook_secret_is_required_and_compared(monkeypatch, tmp_path):
+    secret = tmp_path / "admission-token"
+    secret.write_text("s3cret-admission-token-0123456789\n")
+    monkeypatch.setenv("NETCI_ENVIRONMENT", "production")
+    monkeypatch.setenv("NETCI_ADMISSION_WEBHOOK_TOKEN_FILE", str(secret))
+    client = TestClient(app)
+    digest = "sha256:" + uuid4().hex * 2
+    review = _build_admission_review_request(image=f"registry.example.com/app@{digest}", namespace="dev")
+    for headers in ({}, {"Authorization": "Bearer wrong"}, {"Authorization": "s3cret-admission-token-0123456789"}):
+        resp = client.post("/admission/validate", json=review, headers=headers)
+        assert resp.status_code == 401, headers
+        assert resp.json()["detail"]["code"] == "ADMISSION_WEBHOOK_UNAUTHORIZED"
+    assert _decisions_for(digest) == 0
+    ok = client.post("/admission/validate", json=review,
+                     headers={"Authorization": "Bearer s3cret-admission-token-0123456789"})
+    assert ok.status_code == 200 and ok.json()["response"]["allowed"] is True
+    assert _decisions_for(digest) == 1
+
+
 def test_admission_does_not_scan_every_pipeline_run_to_resolve_a_digest():
     """Admission asked "which run produced this digest?" by loading the whole table.
 

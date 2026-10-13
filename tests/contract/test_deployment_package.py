@@ -250,3 +250,21 @@ def test_without_a_ledger_volume_no_path_is_pointed_at_the_read_only_image():
     assert rendered.returncode == 0, rendered.stderr
     assert "NETCI_AUDIT_LEDGER_PATH" not in rendered.stdout
     assert not [d for d in _docs(rendered) if d["kind"] == "PersistentVolumeClaim"]
+
+
+@needs_helm
+def test_the_admission_webhook_secret_is_a_mounted_file_and_required_when_enabled():
+    off = _render("-f", str(EXAMPLE))
+    assert off.returncode == 0 and "NETCI_ADMISSION_WEBHOOK_TOKEN" not in off.stdout
+    # The chart's own Secret (the lab uses existingSecret), with the values it always requires.
+    own_secret = ("-f", str(EXAMPLE), "--set", "existingSecret=", "--set", "secrets.databaseUrl=postgresql://x",
+                  "--set", "secrets.workloadTokenKeys=k1:" + "y" * 40, "--set", "secrets.cosignPublicKey=pub",
+                  "--set", "secrets.jenkinsApiTokens.A=t", "--set", "secrets.jenkinsApiTokens.B=t")
+    assert _render(*own_secret).returncode == 0, _render(*own_secret).stderr
+    missing = _render(*own_secret, "--set", "admission.webhook.enabled=true")
+    assert missing.returncode != 0 and "admissionWebhookToken" in missing.stderr
+    on = _render("-f", str(EXAMPLE), "--set", "admission.webhook.enabled=true",
+                 "--set", "secrets.admissionWebhookToken=" + "x" * 40)
+    assert on.returncode == 0, on.stderr
+    assert "NETCI_ADMISSION_WEBHOOK_TOKEN_FILE: /run/secrets/netci-app/admission-webhook-token" in on.stdout
+    assert "  NETCI_ADMISSION_WEBHOOK_TOKEN:" not in on.stdout

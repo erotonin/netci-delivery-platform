@@ -6068,10 +6068,38 @@ def set_resource_quota(
     return resource_quota_json(record)
 
 
+def _admission_webhook_secret() -> str:
+    path = os.getenv("NETCI_ADMISSION_WEBHOOK_TOKEN_FILE", "").strip()
+    if path:
+        with open(path, encoding="utf-8") as handle:
+            return handle.read().strip()
+    return os.getenv("NETCI_ADMISSION_WEBHOOK_TOKEN", "").strip()
+
+
 @app.post("/admission/validate", status_code=status.HTTP_200_OK)
 def validate_kubernetes_admission(
     payload: dict[str, Any],
+    authorization: str | None = Header(default=None),
 ) -> dict[str, Any]:
+    """The cluster's admission webhook. The kube-apiserver authenticates with a bearer token
+    from its AdmissionConfiguration kubeconfig; netCI compares it with
+    NETCI_ADMISSION_WEBHOOK_TOKEN(_FILE).
+
+    It took any caller before: whoever reached the API could write a policy decision per
+    request under a digest of their choosing, and learn which digests netCI holds evidence
+    for. Outside local, an unconfigured secret refuses (503) -- the cluster's failurePolicy
+    then decides, and Fail is the setting that keeps the check -- never admits.
+    """
+
+    secret = _admission_webhook_secret()
+    if not secret:
+        if not is_local_runtime():
+            raise HTTPException(status_code=503, detail={
+                "code": "ADMISSION_WEBHOOK_NOT_CONFIGURED",
+                "message": "set NETCI_ADMISSION_WEBHOOK_TOKEN_FILE; without it no caller can be told from the cluster"})
+    elif not hmac.compare_digest(_bearer(authorization).encode(), secret.encode()):
+        raise HTTPException(status_code=401, detail={
+            "code": "ADMISSION_WEBHOOK_UNAUTHORIZED", "message": "admission review without the webhook's bearer token"})
     with database.transaction() as session:
         return AdmissionController.handle_admission_review(session, payload)
 
