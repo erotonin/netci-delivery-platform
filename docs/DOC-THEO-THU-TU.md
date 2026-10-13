@@ -509,7 +509,7 @@ sudo k3s kubectl get nodes
 
 # Bước 2 — Hiểu netCI
 
-> **Tuần 2.** Yêu cầu, tiêu chí, lựa chọn công nghệ, kiến trúc, các luồng từng giây (phần 8 và 9 là trọng tâm), từng thành phần, và phần IDP, bài toán lớn mà HA là một phần.
+> **Tuần 2.** Yêu cầu, tiêu chí, lựa chọn công nghệ, kiến trúc, các luồng từng giây (phần 8 và 9 là trọng tâm), từng thành phần, phần IDP (bài toán lớn mà HA là một phần), và active-active: UI/API không bao giờ tắt.
 
 ## 5. Từ nỗi đau thành yêu cầu
 
@@ -947,6 +947,60 @@ Cổng kiểm của IDP (ADR-073): migration và `schema.sql`, `pyflakes backend
 toàn bộ pytest, test và build của portal. Test chạy trên một PostgreSQL riêng; không bao giờ trên DB của
 stack đang chạy.
 
+## 11b. Active-active: UI/API Jenkins không bao giờ tắt
+
+Cell (mục 8–10) giữ được build khi máy của controller chết, nhưng **UI của controller đó tắt** cho
+tới khi takeover xong (40–80 s). Mentor yêu cầu UI/API không bao giờ tắt, kiểu CloudBees nhưng không
+chịu các giới hạn của CloudBees. Hạ tầng của mentor: Pipeline only, agent JNLP (inbound) trên một VM
+lớn, storage chủ yếu `local-path`, có Longhorn, được phép dùng LB riêng, plugin riêng, PostgreSQL.
+
+**Vì sao không dùng một JENKINS_HOME dùng chung (cách của CloudBees).** Lab đã thử (ADR-074):
+- không có gì điều phối thì hai Jenkins trên một home cho ra build "tàng hình" và cập nhật bị ghi đè
+  lặng lẽ;
+- trên Longhorn RWX, máy chạy NFS server chết thì **mọi** replica bị treo ghi 61 s cùng lúc.
+
+Vì vậy chọn **mỗi replica một home riêng** trên đĩa của chính máy nó, giữ cho giống nhau qua PostgreSQL
+(ADR-076). Máy nào chết thì chỉ mất replica đó, đĩa của replica kia không bị ảnh hưởng.
+
+**Các mảnh ghép, mỗi mảnh giải một nỗi đau:**
+
+| Mảnh | Làm gì | Vì sao cần |
+|---|---|---|
+| HAProxy trên mọi máy + VIP (kube-vip) | Một địa chỉ cho người dùng; health check mỗi giây; request hỏng được gửi lại sang replica kia | Bản thân LB cũng không được là điểm chết |
+| netci-homesync (Go, trên PostgreSQL) | Mỗi job/user một dòng có version; ghi bằng compare-and-set; một luồng thay đổi mà mọi replica theo | Database xếp thứ tự các lần ghi; copy file thì không |
+| Plugin: khoá trước khi sửa | Một lần sửa trên UI giữ khoá của item, bắt kịp mọi thay đổi trước, rồi mới lưu | Không bao giờ sửa từ nội dung cũ (lỗi E4 ở phase 0) |
+| User đồng bộ + cookie phiên ký chung (ADR-077) | Mật khẩu, API token, seed giống nhau; cookie HMAC cho phép replica kia dựng lại phiên với quyền từ realm | Replica chết thì người dùng vẫn đăng nhập; token tạo ở r0 dùng được ở r1 |
+| Một chủ cho mỗi job + đặt trước số build (ADR-078) | Lease có epoch; số build ghi vào PostgreSQL trước khi build nhận số | Số build 1, 2, 3 không trùng; cron chạy trên mọi replica nhưng chỉ build một lần |
+| Nhận nuôi build đang chạy (ADR-079) | Build được sao chép mỗi 3 s; replica có agent của build nhận nuôi khi fence xác nhận chủ cũ đã chết; nạp lại run là nó tự resume | Build không mất khi replica chết |
+
+**Đo trên lab** (KVM + k3s, 3 máy; các file nằm trong `lab/evidence/`):
+
+| Câu hỏi | Kết quả |
+|---|---|
+| UI/API khi một máy mất điện | Máy replica: 0–2 s. Máy giữ VIP: 6 s. Cả hai trên một máy: 2–4 s |
+| Người đã đăng nhập | Vẫn đăng nhập ở replica kia (máy mất điện, pod bị giết) |
+| Job tạo ở r0 có ở r1 sau | Trung vị 231 ms |
+| 40 lần sửa đồng thời trên 2 replica | 25 nhận, 15 bị từ chối có lý do, không mất lần nào, hai bên hội tụ |
+| Build đang chạy, giết pod chủ | Nhận nuôi sau 4,3 s, SUCCESS, đủ 90/90 dòng, không dòng nào hai lần |
+| Build đang chạy, mất điện máy chủ | Nhận nuôi sau 49,5 s, SUCCESS, đủ 90/90 dòng, build vẫn xong đúng giờ |
+
+**Giới hạn, nói thẳng:**
+- PostgreSQL của kho phải HA. Một lần nó nằm trên máy chết, nên việc sửa và nhận nuôi phải chờ khoảng 80 s.
+- Chưa đồng bộ view, đổi tên và di chuyển item.
+- Một POST gửi từ trang do replica đã chết phục vụ sẽ hỏng crumb CSRF một lần; tải lại trang là được.
+- Fence trong lab là góc nhìn của Kubernetes. Một máy bị cô lập mạng mà vẫn sống thì phải có fence
+  bằng nguồn điện (Redfish) như cell đang làm.
+- Mỗi agent thuộc một replica tại một thời điểm, nên năng lực build được chia theo agent của từng replica.
+
+**Những thứ chỉ test mới thấy, và đã được sửa** (ADR-076–079 có đủ):
+- HAProxy xoá cookie mà plugin đặt (cần `preserve`).
+- POST bị chuyển hướng sang replica khác thì hỏng crumb CSRF (nên phải chuyển tiếp phía server).
+- Pipeline là flyweight task, nên `canTake` không được gọi (phải dùng `canRun`).
+- `build.xml` của Pipeline đang chạy vẫn ghi `SUCCESS` (dấu hiệu đúng là `completed=false`).
+- Tên agent trong log là một ConsoleNote.
+- HAProxy giữ tunnel của agent tới máy chết suốt một giờ.
+- Kết nối có sẵn trong pool cứ rơi vào API server của máy chết.
+
 
 ---
 
@@ -1067,7 +1121,7 @@ Cách tìm cũng giống nhau: dựng lại đúng điều kiện thật, đo, v
 
 # Bước 4 — Các quyết định kiến trúc (ADR, tiếng Anh)
 
-> **Tuần 3.** Mỗi ADR ghi một quyết định: bối cảnh, quyết định, bằng chứng, phương án bị loại. Thứ tự: 060 (quan trọng nhất), 063 (hàng đợi), 065 (netciOnce), 061 và 064 (fabric), rồi 066–072, mỗi cái một bài học cụ thể.
+> **Tuần 3.** Mỗi ADR ghi một quyết định: bối cảnh, quyết định, bằng chứng, phương án bị loại. Thứ tự: 060 (quan trọng nhất), 063 (hàng đợi), 065 (netciOnce), 061 và 064 (fabric), rồi 066–072, mỗi cái một bài học cụ thể; cuối cùng 074 và 076–079: active-active, từ cái gì hỏng khi dùng chung một home tới nhận nuôi build đang chạy.
 
 ## ADR-060: Jenkins cells, a global queue outside Jenkins, and fenced takeover
 
@@ -2320,6 +2374,550 @@ controller's log, and when the controller first calls each agent online. It foun
 - **Every jar of the controller** (~200 MB): ten times the copy for jars no agent was seen fetching.
 - **Turning durable-task's watching on**: it changes how every step's output reaches Jenkins, for a
   wait whose cause was the jars, not the polling.
+
+## ADR-074: Active-active Jenkins on one JENKINS_HOME -- what breaks, and the plan
+
+- Status: superseded in its storage decision by ADR-076 (the mentor's answers: Pipeline only, inbound
+  agents, storage mostly local-path). Phases 0 and 1 stand as evidence.
+- Date: 2026-10-13
+- Refines: ADR-060 (one writer per cell), ADR-071 (UI unavailable during a takeover)
+
+### Context
+
+The project's mentor asks that Jenkins' UI and API never go down, with as few of CloudBees'
+active/active limits as possible, on Viettel's infrastructure. What is known of it:
+- controllers on Kubernetes;
+- agents on one large OpenStack VM with many executors and labels;
+- builds never on a controller;
+- 3 VMs or nodes on separate hosts may be had;
+- our own load balancer, plugin and PostgreSQL are allowed.
+
+Still open: whether jobs are Pipeline or Freestyle, whether agents connect over SSH or inbound,
+and what shared file system there is. The lab is to cover each case.
+(Answered 2026-10-13: Pipeline only; inbound JNLP agents; mostly local-path, Longhorn present. See ADR-076.)
+
+CloudBees runs several replicas of a controller on one `JENKINS_HOME` on a shared file system,
+keeps live state in Hazelcast, needs sticky sessions, and has a replica adopt a dead one's
+builds. Its documented limits:
+- non-Pipeline builds are aborted when their replica ends;
+- one executor per agent;
+- `build` and `lock` restricted;
+- REST answers from one replica.
+
+What open-source Jenkins does with a shared home and nothing coordinating it had to be seen
+first.
+
+### Phase 0: two controllers, one home, no coordination
+
+`lab/aa/phase0.yaml` and `lab/aa/phase0_probe.py`: namespace `aa-lab`, a Longhorn RWX volume
+(NFS), replicas r1 and r2 of the lab's controller image on different machines, JCasC-defined jobs.
+
+| # | Experiment | Result | Evidence |
+|---|---|---|---|
+| F1 | Both started together, plugins unzipped into `JENKINS_HOME/plugins` (Jenkins' default) | Each deleted the other's unzipped files: r1 55 SEVERE, 13 plugins failed; r2 failed to load configuration-as-code, so JCasC never ran and neither had a job | `aa-phase0-startup-20261013T020719Z.json` |
+| E1 | Both started, plugins and WAR unzipped on each pod's own disk | Both up in 51 s, both see the jobs. Nothing stops a second controller on a home | `aa-phase0-20261013T021729Z.json` |
+| E2 | A build run on r1 | r2 does not know it (404) although it is on disk; r2's job shows no build | same |
+| E3 | The same job triggered on both at once | Numbers 2 and 3, no collision in two runs; each replica sees only its own builds | same |
+| E4 | A description set on r1, then the job disabled on r2 | Lost update: `config.xml` holds r2's save with an empty description; r1 still shows its own in memory | same |
+| E5 | r1 killed in a build's 8th second | r2 does not see the build. After r2 restarted, it loaded the build from disk and resumed it ("Resuming build ... after Jenkins restart"). The step's process had run on r1's built-in node and died with it, so the build waits for it | same |
+
+What it shows:
+- **Jenkins keeps everything in one JVM's memory** (jobs, builds, numbers, configuration) and
+  treats disk as its own. A shared home without coordination gives every kind of divergence:
+  invisible builds, lost updates, and nothing stopping two writers.
+- **Adoption exists.** A controller that loads a running Pipeline from disk resumes it. This is the
+  mechanism to use. It runs only at start, it needs the build's previous owner provably stopped
+  (or the build runs twice), and it needs the step's process on an agent the adopter can reach.
+
+### Phase 1: the shared home's cost, and what it does when its machine dies
+
+`lab/aa/phase1_storage_probe.py`: on the replica that is *not* on the share-manager's machine, 4 KiB
+writes with `fsync` every 0.2 s, on the home and on the pod's own disk; then a writer loop on the home
+and the replica's `/login` asked every 0.5 s while the machine running Longhorn's share-manager (the
+NFS server of the RWX volume) loses power (`virsh destroy`). One run per setting.
+
+| Setting | Write latency, home vs local (median / p99 ms) | Writes stalled after power loss | `/login` failures | Evidence |
+|---|---|---|---|---|
+| Longhorn default | 8.0 / 15.0 vs 4.5 / 15.1 | **133.7 s** | 0 of 496 | `aa-phase1-storage-20261013T023735Z.json` |
+| `rwx-volume-fast-failover=true` | 8.9 / 17.1 vs 4.9 / 18.4 | **61.0 s** | 0 of 497 | `aa-phase1-storage-20261013T024510Z.json` |
+
+What it shows:
+- **Steady state is not the problem.** A synced write to the home costs about twice the local disk,
+  a few milliseconds; Jenkins' own saves are not on a hot path where that matters.
+- **The failover is.** Every writer on the home blocks until the share-manager is up on another
+  machine: about a minute even with fast failover. `/login` kept answering only because it never
+  touches the home. Any request that reads or saves a build, a job or a log would hang as long, on
+  *every* replica at once, since they share the one NFS server. That is an outage of the UI in all
+  but name. So Longhorn RWX alone does not meet "the UI never goes down".
+- So point 8 below: the controllers must not block on the home. What the home holds stays there, but
+  a replica must keep serving while the home is away, and the storage choice must be measured the
+  same way for each option the mentor's site may have (an HA NAS over NFS, CephFS with a standby
+  MDS), with the probe above.
+- Kept: `rwx-volume-fast-failover=true` on the lab's Longhorn. It halves the stall and costs nothing
+  measured.
+
+### Decision: the design the next phases build
+
+1. **Nothing that is not state on the shared home.** WAR, unzipped plugins and caches are on each
+   replica's own disk (F1).
+2. **PostgreSQL coordinates, as Hazelcast does for CloudBees** (netCI already runs one):
+   - replica membership with leases and epochs (as cells hold theirs);
+   - the owner of each running build;
+   - build numbers allocated atomically per job;
+   - a per-item lock for configuration writes;
+   - change notifications (`LISTEN`/`NOTIFY`), so replicas reload an item another replica changed.
+3. **One owner per build.** netci-queue dispatches each run to one replica. Requests for a build's
+   pages go to its owner (the load balancer asks), so its live state is never read from a replica
+   that does not hold it.
+4. **Adoption after fencing.** When a replica stops renewing, its machine or pod is fenced first
+   (the supervisor and fence code, ADR-060 and ADR-069). Only then does a surviving replica take
+   its builds and resume them from the home, without restarting itself.
+5. **Agents outside the replicas.** The large VM's executors become single-executor agents with the
+   same labels: same capacity, one connection per build. Each agent reconnects to whichever replica
+   owns its build; SSH and inbound agents are both to be covered.
+6. **Our own load balancer** (HAProxy): sticky sessions, health checks, and build URLs routed to
+   their owner.
+7. **Every CloudBees limit is to be removed or measured**:
+   - one executor per agent: point 5, with no loss of capacity;
+   - `build` and `lock`: tracked in PostgreSQL;
+   - REST answers from one replica: merged by the proxy;
+   - Freestyle: cannot resume in Jenkins at all, so it is re-run from the start and that is said
+     plainly.
+
+8. **Requests do not wait on the shared home** (phase 1). Reads a replica can answer from memory
+   are answered from memory; a request that needs the home while it is away gets a bounded wait and
+   an honest error, never a hang; the load balancer's health check tells "this replica is stuck on
+   storage" from "this replica is down", so a storage stall does not look like every replica dying.
+   Which store the mentor's site has decides how long the home is away; the probe measures it.
+
+### Phases
+
+| Phase | What | Pass |
+|---|---|---|
+| 0 | Uncoordinated replicas | Done: the table above |
+| 1 | The shared file system's latency, and its failover when the machine holding it dies (Longhorn RWX now; NFS and CephFS options) | Done for Longhorn RWX: it does not, alone (61 s stall); NFS and CephFS still to measure |
+| 2 | Load balancer + replicas serving the UI; a machine loses power | UI and API probed every second, none failing (or within the mentor's bound) |
+| 3 | PostgreSQL coordination: ownership, numbers, configuration; adoption without restart | A running build on a dead replica carries on, every step once |
+| 4 | Agents (single-executor, SSH and inbound), cron and polling once per cluster, `build`, `lock` | Each correct with a replica lost |
+| 5 | Chaos and soak, as for the cells | Evidence in `lab/evidence/` |
+
+### Rejected
+
+- **Two `JENKINS_HOME` copies synchronised file by file** (rsync, lsyncd, DRBD dual-primary). Two
+  JVMs writing the same XML files diverge, as E4 shows on one home. Copying the files does not order
+  the writes.
+- **Restarting the surviving replica to adopt** (what E5 did). Its users and its own builds would see
+  it go down, which is what active-active is for.
+
+## ADR-076: Active-active on replicated homes, not on one shared home
+
+- Status: accepted (design; phases 2-6 below build and test it -- none of it is established yet)
+- Date: 2026-10-13
+- Supersedes: ADR-074's storage decision ("one JENKINS_HOME on a shared file system").
+  ADR-074's phase 0 and phase 1 results stand and are the reason for this one.
+
+### Context
+
+The mentor answered the three open questions (2026-10-13):
+- **Jobs are Pipeline only.** No Freestyle; every build is a durable Pipeline that can resume.
+- **Agents are inbound (JNLP).** They connect to the controller, not the controller to them.
+- **Storage is mostly `local-path`; Longhorn exists.** A node-local disk is the normal case;
+  a ReadWriteMany volume would have to come from Longhorn's share-manager.
+
+What ADR-074 measured on a shared home (Longhorn RWX):
+- **Phase 0:** nothing coordinates two Jenkins on one home (invisible builds, lost config updates).
+- **Phase 1:** when the machine running the share-manager (the volume's NFS server) loses power,
+  every write to the home blocks for **61 s even with fast failover** (134 s by default). That
+  blocks *every* replica at once, because they share the one NFS server.
+
+So with a shared home, one machine's death becomes a disk stall on all replicas, and the store
+it needs is not the one the site mostly uses.
+
+### Decision
+
+**Each replica has its own `JENKINS_HOME` on its own node's disk (`local-path`). The homes are
+kept the same by replicating Jenkins' objects through PostgreSQL, not by copying files.**
+
+A machine's death then takes one replica and its disk; the other replicas' disks are untouched
+and they keep answering. This is also the problem as first posed: two homes that are the same,
+not necessarily one home.
+
+ADR-074 rejected "two homes synchronised file by file" (rsync, lsyncd, DRBD), because copying
+files does not order two writers' saves. This is not that. PostgreSQL orders every change:
+- **Configuration** (jobs, folders, views): an item's `config.xml` is written to PostgreSQL first,
+  under a per-item version (compare-and-set). The losing writer of a concurrent edit is refused
+  and reloads; it is never silently overwritten (ADR-074 E4 was that silent overwrite). Other
+  replicas reload the item on `LISTEN/NOTIFY`. Our own plugin does this (allowed by the mentor).
+- **Global configuration and secrets** come from JCasC plus one `secrets/` set given to every
+  replica. They must be byte-identical: an inbound agent's secret is an HMAC under them.
+- **Build numbers** come from a PostgreSQL sequence per job, so two replicas never take one number.
+- **Builds have one owner** (the replica netci-queue dispatched to). A finished build's record
+  (`build.xml`, log, flow nodes) is published to PostgreSQL; the others materialise it, so every
+  replica shows the full history.
+- **A running build** is replicated as it runs (Pipeline writes `program.dat` and flow nodes at
+  each step). When its owner stops renewing its lease, the owner is fenced first (supervisor and
+  fence, ADR-060/069), then a survivor materialises the latest state and resumes the build.
+  Pipeline only (the mentor's answer) is what makes this possible at all.
+- **Inbound agents use WebSocket**: the same agent jar with `-webSocket`, through the load
+  balancer. Checked in the running Jenkins 2.555.3 core: the agent sends `Node-Name` and
+  `Secret-Key` on the `/wsagents/` upgrade, so HAProxy routes each agent to the replica that owns
+  it. Over TCP JNLP (port 50000) the name is inside the protocol and the balancer cannot route it;
+  that mode is to be measured as the alternative, not assumed.
+  The `Secret-Key` header must never be logged, and must travel over TLS outside the lab.
+- **The UI and API**: two HAProxy instances behind a VIP (kube-vip in the lab; on OpenStack an
+  Octavia balancer or a VIP on allowed-address-pairs -- a question for the site). Sticky
+  sessions; any replica answers lists and finished builds; a running build's pages go to its owner.
+
+### What it costs, said plainly
+
+- A finished build appears on the other replicas after it is published: a lag to measure, not zero.
+- A running build on a dead replica pauses from the death until fencing and adoption complete.
+  The UI stays up meanwhile; that build's own page says it is being adopted.
+- Our plugin hooks Jenkins' save and build lifecycle. Jenkins upgrades must be tested against it,
+  as with any plugin that does this (CloudBees' does too).
+
+### Phase 2: the UI and API through an HA balancer (done)
+
+`lab/aa/phase2.yaml`, `lab/aa/phase2_probe.py`: two replicas on `local-path`, an HAProxy per machine,
+the VIP 192.168.122.240 held by kube-vip. Three probes every 0.5 s through the VIP, 2 s timeout:
+`/login`, the API with basic auth, and a session signed in through the form. One power loss
+(`virsh destroy`) per scenario, observed for 150 s. **One sample each**: these are what happened,
+not a distribution.
+
+| Run | Scenario | Failures (login / API / session) | Longest outage |
+|---|---|---|---|
+| v1: `externalTrafficPolicy: Cluster`, 2 HAProxy | a replica's machine | 5 / 5 / 4 | 4-6 s |
+| v1 | the VIP's machine | 5 / 5 / 5 | 8-10 s |
+| v2: `Local` | a replica's machine | 1 / 0 / 1 | 2 s |
+| v2 | the VIP's machine | 7 / 7 / 7 | 14 s |
+| v2 | the VIP's and the session's replica's machine | 15 / 16 / 15 | 30-32 s |
+| **v3: `Local`, an HAProxy per machine, kube-vip on its own API server** | a replica's machine | 1 / 0 / 1 | **2 s** |
+| v3 | the VIP's machine (with a replica on it) | 3 / 3 / 3 | **6 s** |
+| v3 | the VIP's and the session's replica's machine | 1 / 2 / 1 | **2-4 s** |
+| **netci15** (users replicated, shared sign-in, ADR-077) | a replica's machine, the session's replica on it | 0 / 1 / 1 | **0-2 s; the session stayed signed in as admin on r1** |
+| netci15 | the VIP's machine | 3 / 3 / 3 | 6 s; session kept |
+
+What each change fixed, from the evidence:
+- `Cluster` let kube-proxy on the VIP's machine send requests to a balancer on a machine that had
+  just died, until its endpoint was removed. `Local` keeps traffic on the VIP's machine.
+- kube-vip renewed its lease through the `kubernetes` Service, which still listed the dead
+  machine's API server: each call landing there hung 10 s (`error retrieving resource lock`), so the
+  VIP took 14-30 s to move instead of the lease's 3 s. Pointing kube-vip at its own machine's API
+  server (every lab machine is a control-plane node) removed that.
+- An HAProxy on every machine leaves every surviving machine able to take the VIP under `Local`.
+
+What it does not fix yet, said plainly:
+- ~~A signed-in session is lost when its replica dies~~: fixed by ADR-077 (users replicated, a shared
+  signed cookie); measured with netci15 above (`aa-phase2-20261013T151003Z.json`).
+- The few seconds that remain are the 2 s client timeout of requests already sent to the dead
+  machine, plus the 3 s VIP lease. Shorter timings are possible and were not tried.
+- On OpenStack the VIP needs the port's allowed-address-pairs (or an Octavia balancer instead):
+  a question for the site.
+
+### Phase 3: the homes kept the same (done)
+
+`lab/aa/phase3.yaml`, `lab/aa/phase3_probe.py`: netci-homesync (two, on the lab's PostgreSQL) and the
+plugin on both replicas (controller `2.555.3-netci15`). Each client pinned to one replica through the
+VIP. Evidence `aa-phase3-20261013T150720Z.json`.
+
+| # | Experiment | Result |
+|---|---|---|
+| T1 | A job created on r0: until r1 has it (10 samples) | median **231 ms**, max 545 ms, none missing |
+| T2 | ADR-074 E4 again: description on r0, then disabled on r1 | **No lost update**: both replicas have both changes |
+| T3 | 40 description edits at once, half on each replica | 25 accepted, 15 refused with "being changed on replica ..." (409), none lost silently; both end on the same accepted edit |
+| T4 | A job deleted on r1 | gone from r0 in 0.16 s |
+| T5 | netci-homesync scaled to 0 | edits refused (503, with the reason), reads served (200); after it returned, an edit in 0.3 s and on r1 in 1.4 s |
+| T6 | r1 down while r0 creates 3 jobs and edits one | r1 back in 20 s with every change |
+| T7 | An API token minted on r0 (users replicated, ADR-077) | accepted on r1 after 0.05 s; revoked on r0, refused on r1 after 0.8 s |
+| T8 | Signed in through the form on r0, r0's pod killed | 59 of 60 polls answered by r1, **all signed in as admin**, no failure |
+
+The first run (`aa-phase3-20261013T101804Z.json`) found a real gap: a job created from XML
+(POST createItem with a config.xml) is written and loaded without a save, so it was never published
+-- ten jobs on r0, none on r1. Fixed (f52639b); the unit test now goes through that API. On the next
+start, r0's bootstrap published those jobs and both replicas listed the same 18.
+
+### Phase 4: builds with two replicas (done; ADR-078)
+
+`lab/aa/phase4_probe.py` on netci17. Which replica ran a build is the store's record of who
+published it. Evidence `aa-phase4-20261013T161858Z.json`.
+
+| # | Experiment | Result |
+|---|---|---|
+| P1 | 3 builds on the owner r0 | #1, #2, #3, all by jenkins-0; listed on r1 after 104-229 ms, console included |
+| P2 | "Build now" on r1 for r0's job, with r1's crumb | 201; built on jenkins-0 as #4, and not also on r1 |
+| P3 | A job triggered every minute, on both replicas, for 3 minutes | 3 builds, #1-#3, one owner built them all, both replicas list the same |
+| P4 | r0's pod killed, "Build now" on r1 | refused with the owner's name (409) until r0's lease expired; at 13.8 s r1 built #5 -- numbers continued |
+
+The first two runs found what unit tests could not: HAProxy removed the routing cookie the replica
+set (`preserve` fixes it), and a redirected POST was refused by the owner because its CSRF crumb
+belonged to the first replica's session -- so build requests are now made on the owner by the first
+replica (ADR-078 point 4). Both runs are kept as evidence.
+
+### Phases
+
+| Phase | What | Pass |
+|---|---|---|
+| 2 | HAProxy + VIP before two replicas on `local-path`; the VIP's machine, a replica's machine, both, lose power | Done: 2-6 s, one sample per scenario (above); sessions are lost with their replica |
+| 3 | Configuration (and users) through PostgreSQL: concurrent edits on two replicas | Done (above) |
+| 4 | Build numbers and finished builds replicated | Done (above) |
+| 5 | Running builds replicated; adoption after fencing; WebSocket agents routed by name | Done (ADR-079): pod killed 4.3 s, machine lost 49.5 s, SUCCESS, every tick once |
+| 6 | Chaos and soak | Evidence in `lab/evidence/` |
+
+### Rejected
+
+- **One shared home on Longhorn RWX** (ADR-074's plan): phase 1's 61 s stall hits all replicas at
+  once, and RWX is not what the site mostly runs. Kept as the measured alternative for a site with
+  an HA NAS, where the same probe would decide.
+- **Copying homes file by file**: see ADR-074.
+- **A home per replica on Longhorn RWO, moved on failure**: that is the cell takeover of ADR-060;
+  it keeps builds but not the UI, which is what active-active is for.
+
+## ADR-077: A sign-in that survives its replica
+
+- Status: accepted; measured in the lab (ADR-076 phase 3, T7 and T8: a token minted on r0 accepted by r1 in
+  0.05 s; a person signed in on r0 still signed in on r1 after r0's pod was killed, 59 of 60 polls)
+- Date: 2026-10-13
+- Refines: ADR-076 (replicated homes)
+
+### Context
+
+ADR-076 phase 2 measured the UI through the balancer staying up when a machine dies, but the
+person signed in on the dead replica was **anonymous** on the other one: Jenkins keeps a session in
+one JVM's memory. The balancer's sticky cookie only names a replica; it cannot carry a session that
+replica no longer has.
+
+Two more things were missing for the replicas to look like one Jenkins to their users:
+- **Users were not replicated.** An API token minted on r0 was refused by r1, and a script going
+  through the VIP reaches either at random. A password changed on one was unknown to the other.
+- Each replica had its own **user seed** (Jenkins' per-user secret behind "Invalidate sessions"),
+  so nothing could be bound to it on both.
+
+### Decision
+
+1. **Users are replicated through netci-homesync** like items, under `@users/<id>`: a user's
+   `config.xml` (password hash, API token hashes, seed, properties) is published on save and
+   applied on the other replicas. Posts to a user's pages take that user's lock, so two replicas
+   minting tokens for one user at once cannot drop one of them.
+2. **`NETCI_SESSION`, a cookie every replica can verify.** A signed-in browser session (one with an
+   HTTP session -- API-token calls have none and get no cookie) is given a cookie holding the user's
+   id, issue and expiry times, and the SHA-256 of the user's seed, signed with HMAC-SHA256 under a key
+   every replica is given (`NETCI_SESSION_KEY_FILE`, at least 32 bytes, from a Secret).
+   - A replica with no session for the request but a valid cookie signs the user in again, with
+     **the authorities its security realm gives that user now** (`User.impersonate2()`): the cookie
+     names a user and carries no authority.
+   - Refused: a bad signature, another key, expired, issued in the future, a user that no longer
+     exists, a seed that changed (Jenkins' "Invalidate sessions", replicated with the user). A
+     cookie that does not verify is cleared rather than re-checked on every request.
+   - **Idle lifetime 1 hour by default** (`NETCI_SESSION_TTL_SECONDS`), renewed once half of it has
+     passed while the person is active: it ends like a session, not like a days-long "remember me".
+   - Sign-out clears it on the `/logout` request itself, before Jenkins handles it, and never
+     re-issues it there. (The first version cleared it from Jenkins' logout listener; the unit test
+     showed the next page signed the person straight back in.)
+   - `HttpOnly`, `SameSite=Lax`, `Secure` under HTTPS. Off unless the key is configured.
+
+### What it costs, said plainly
+
+- A **POST** sent with a page loaded from the dead replica carries a CSRF crumb bound to the old
+  session and is refused once (403); reloading the page fixes it. GETs are transparent.
+- The key is a shared secret: whoever holds it can sign a session for any user. It lives in a
+  Kubernetes Secret mounted only into the controllers, as `secrets/` already does.
+- A realm that cannot look a user up by name (some SSO set-ups) cannot restore from the cookie;
+  the person is sent to sign in again, as before.
+
+### Rejected
+
+- **Replicating the servlet session** (Jetty's session data stores): Jenkins' sessions hold
+  objects that are not designed to be serialised across JVMs, and it would put every session write
+  on the network path of every request.
+- **Forcing Jenkins' own "remember me"**: lasts days and is off unless the person ticks the box;
+  the property needed is "survives a failover", not "survives closing the browser".
+- **Sticky sessions alone**: they pin a person to a replica, which is exactly what fails here.
+
+## ADR-078: One owner per job; build numbers reserved before a build starts
+
+- Status: accepted for the numbering (store and plugin built and tested); finished-build replication,
+  routing and adoption are still design
+- Date: 2026-10-13
+- Refines: ADR-076
+
+### Context
+
+After ADR-076 phase 3 the replicas hold the same jobs and users, but each still builds on its own:
+- each home keeps its own `nextBuildNumber`, so r0 and r1 would both run build #5 of a job;
+- a finished build exists only in the home that ran it, so the other replica's job page lacks it;
+- a running build's live state (its execution, its console) is in one JVM.
+
+The mentor's constraints that matter here: Pipeline only (durable), inbound agents, no builds on a
+controller.
+
+### Decision
+
+1. **One owner per job at a time**, holding a lease in netci-homesync (PostgreSQL), with an epoch
+   that grows on every change of hands (the fencing token). Only the owner starts builds of the job.
+   A job is claimed by the replica that is asked to build it and has no live owner; the owner
+   renews while it is alive. Numbers then stay what people expect: 1, 2, 3 per job.
+2. **A number is reserved before the build takes it.** Jenkins assigns a build its number when the
+   executor creates the run, after any plugin could intervene, so the reservation happens one step
+   earlier, when the queue decides the item may run (`QueueTaskDispatcher.canRun`): the owner
+   records `(job, next number)` in the store under its lease epoch, and only then lets the item
+   start. Not `canTake`: a Pipeline run is a flyweight task, started without any dispatcher's
+   `canTake` being asked -- the unit test showed no number reserved through it. While a reservation is not yet consumed by a started run, other items of that job
+   wait ("waiting for a build number"), so the run takes exactly the reserved number. A replica
+   that lost its lease cannot reserve, so it cannot start a build -- a partitioned old owner stops
+   by itself. **Every number is used once**, including across a change of owner, which starts from
+   the store's highest reservation.
+3. **A finished build is published**: its directory (`build.xml`, the log, the flow nodes) to the
+   store; the other replicas write it into their home and call
+   `LazyBuildMixIn._getRuns().recognizeNumber(n)` (public in 2.555), so every replica lists every
+   build without reloading the job.
+4. **A running build's pages go to its owner**: a replica that does not have the build answers with
+   a redirect that sets the balancer's cookie to the owner (the sign-in follows, ADR-077; HAProxy's
+   cookie needs `preserve`, or it removes the cookie the replica sets). **A "Build now" on a
+   non-owner is made on the owner by that replica**, for the same person: redirecting the browser's
+   POST failed in the lab, because its CSRF crumb is bound to the first replica's session and the
+   owner answered 403. The first replica has checked the crumb; it calls the owner with the same
+   credential (an API token is valid everywhere, users being replicated) or a shared session it
+   signs for that person, takes the owner's own crumb, and relays the answer, with the owner's
+   Location rewritten to a path on the entry point.
+5. Logs of finished builds are kept in PostgreSQL in the lab, with a size limit that is enforced and
+   said; a site would put them in an object store (the corp lab has one).
+
+### Phase 5, built on this
+
+When a job's owner stops renewing, its machine or pod is fenced first (supervisor and fence,
+ADR-060/069); then a survivor takes the lease with a new epoch, writes the running build's
+replicated state into its home and resumes it. The agent running the step reconnects through the
+VIP and is routed by `Node-Name` to the new owner. That is where "a build is not lost when a
+machine dies" is decided, and it is measured there, not claimed here.
+
+### Phase 5 by hand: a running build continued by the surviving replica (done)
+
+`lab/aa/phase5_manual.py`, before any code automates it. `long` runs 90 one-second ticks in an `sh`
+step on agent-0 (an inbound agent, two executors, WebSocket through the VIP), started on r0. At
+tick 15 r0's copy of the running build is copied into r1's home; r0 is killed and its machine
+cordoned (dead, fenced). Evidence `aa-phase5-manual-20261013T164325Z.json`:
+
+- agent-0 reconnected through the VIP; r0 being down, the balancer gave it to r1 **after 4.5 s**;
+- on r1, the build's number made known (`recognizeNumber`) and the run loaded: it resumed itself
+  ("Resuming build ... Waiting for reconnection of agent-0 ... Ready to run") -- **r1 was not
+  restarted**;
+- it **finished SUCCESS** on r1: **90 ticks, none missing, none twice**, all on agent-0. The `sh`
+  process had kept running on the agent; r1 read its output on from the offset the copy held.
+
+What the first try taught (`aa-phase5-manual-20261013T164147Z.json`): loading the run is the whole
+adoption. Calling `onResume()` on its steps as well resumed them a second time ("Already
+resumed"), the `sh` step interrupted its process, and the build failed.
+
+What automation must add, from this: the running build replicated while it runs (here: one copy by
+hand); adoption only once the old owner is fenced (here: killed and cordoned by hand); and a
+returning replica must not resume, from its stale copy, a build that was adopted elsewhere (here:
+its copy was replaced by hand before it came back).
+
+### Phase 5 automated (ADR-079)
+
+What was done by hand above is done by the replicas: a killed pod's build adopted in 4.3 s, a dead
+machine's in 49.5 s, both SUCCESS with every tick once, neither resumed again by the replica that
+came back (`aa-phase5-20261013T192242Z.json`, ADR-079 has the table).
+
+### Rejected
+
+- **Numbers striped by replica** (r0 odd, r1 even): no coordination needed, but numbers that jump
+  and change meaning when a replica is added.
+- **Reserving the number after the build has it** (`RunListener.onInitialize`): too late -- if the
+  record failed, a new owner could take the same number.
+- **Any replica builds any job, numbers from a database sequence**: Jenkins gives a plugin no hook
+  between "this item starts" and "this run has number N" other than the queue's dispatch step,
+  which this design uses; without an owner, two replicas' dispatches would still race for one
+  job's next number.
+
+## ADR-079: Adopting a running build when its replica dies
+
+- Status: accepted; measured in the lab (below)
+- Date: 2026-10-13
+- Refines: ADR-078
+
+### Context
+
+By hand (ADR-078 phase 5): a Pipeline running on r0, copied into r1's home, r0 killed: loading the
+run on r1 resumed it, the agent reconnected to r1 through the VIP, and the build finished with every
+line once. Three things were done by hand that a replica must do itself:
+1. the copy of the running build;
+2. the decision that r0 is dead, so that continuing its build cannot run it twice;
+3. on r0's return, not resuming its stale copy of a build r1 has taken.
+
+### Decision
+
+1. **A running build is replicated while it runs**: its directory (program, flow nodes, log) is
+   published as `@running/<job>/<n>` every 3 s when it changed, and deleted when the build is
+   finalised (the finished build is then `@builds/...`). The other replicas only **record** that it
+   exists; they never write it into their home, because loading it there would resume it.
+2. **Adoption needs the runner gone and a claim.** The runner is the replica that last wrote the
+   build's copy. A replica adopts it when the runner is itself (it restarted: the old process is
+   gone) or the fence says the runner is gone since that copy; it claims the build by writing the
+   copy again under its own name, compare-and-set (of two replicas trying, one wins), writes it into
+   its home, makes the number known and loads the run, which resumes itself. Lab fence: the
+   Kubernetes API says the runner's pod is gone, being deleted, not running, its container started
+   after the copy (a new process), or its node not Ready.
+   **Not the job's lease.** The first design required it. The lease decides who starts builds and
+   reserves numbers, and it moved to the other replica for a new build (#8) while #7 waited for
+   adoption with its agent on the first replica: #7 was stuck between the two for good.
+2b. **A build follows its agent.** It is adopted only where the agent it is using (the last
+   `Running on X` of its log, if that node block has not closed) is online. The name is read with
+   the console notes removed: in the log file it is a hyperlink note, and read raw it named no agent
+   any replica had -- nothing was adopted in the second lab run.
+2c. **An idle agent visiting another replica goes home** when its home answers, so the next build of
+   a job owned by the home has its agents (both agents had ended on one replica once). The first lab run had
+   the dead replica come back in 9 s and take its own build back while its agent had reconnected to
+   the other replica; the build waited for that agent for good.
+3. **A replica that starts finds its own running builds suspect**: before Jenkins loads its jobs,
+   each build directory whose build.xml says `<completed>false</completed>` is moved aside. Before
+   loading, not after: a job lists its numbers as it loads, and a number listed while its directory
+   was away stayed unloadable (`recognizeNumber` keeps an entry it already has). And not "no
+   `<result>`": a running Pipeline's build.xml already says `SUCCESS`, its initial value. Those builds come back only through
+   adoption (2) -- by this replica or another, whichever takes the lease -- so a build is resumed in
+   one place, from the latest replicated copy.
+
+### Measured (the lab, netci22, `lab/aa/phase5_probe.py`, `aa-phase5-20261013T192242Z.json`)
+
+`long`, 90 one-second ticks in an `sh` step on agent-0 (inbound, WebSocket through the VIP), owned by
+r0. Nothing done by hand after the death; the adoption time is the adopting replica's own log line.
+
+| Death of the owner | Adopted by | Adopted after | Result | Ticks | Returning replica |
+|---|---|---|---|---|---|
+| its pod killed (no grace) | jenkins-1 | **4.3 s** | SUCCESS, 74.5 s after the death | 90, none missing, none twice | lists it SUCCESS, did not resume it |
+| its machine's power cut | jenkins-1 | **49.5 s** | SUCCESS, 76.2 s after the death | 90, none missing, none twice | lists it SUCCESS, did not resume it |
+
+After a machine's death the build still finished when it would have: the `sh` process ran on the
+agent throughout, and the adopter read its output on. The 49.5 s are Kubernetes taking the dead
+node to NotReady, which is what the lab's fence waits for; a power fence (Redfish) is faster.
+
+Found on the way, each kept as evidence and fixed: the agent's name read from the raw log (a
+console note) matched nothing; adoption waited on the job's lease, which had moved for a new build
+(#7 stuck while #8 ran); a fast-returning replica took its build back while its agent was on the
+other; HAProxy kept an agent's tunnel to a dead machine open for an hour; the fence's pooled
+connection kept landing on the dead API server; an agent was sent home from a build just adopted
+for it. Once, the lab's PostgreSQL was on the lost machine: the store answered 503 for ~80 s and
+adoption waited for it -- the store must be HA.
+
+### What it costs, said plainly
+
+- **The fence decides correctness.** A pod that Kubernetes reports gone is gone on a live node; a
+  machine that is partitioned but alive is not proven dead by the API. A site fences the machine
+  (Redfish power-off, as the supervisor does for cells, ADR-060/069); the lab's Kubernetes check
+  covers a killed pod and a dead machine, not a partition.
+- An agent is connected to one replica at a time. A build adopted while its agent is still held by
+  an old owner that is alive waits for the agent ("Waiting for reconnection"), it is not run twice
+  on the agent.
+- The build is paused from the owner's death to the adoption: the lease (15 s) plus the fence.
+- A copy is at most 3 s old (a replica stopping on purpose publishes a last one); it is published
+  only once the build has a build.xml -- the first copy, a bare log, could not be loaded by anyone.
+  The `sh` step reads its output on from the offset the program holds.
+
+### Rejected
+
+- **Resuming on every replica and letting one win**: the losers would have run controller-side
+  steps already.
+- **Calling `onResume()` after loading the run**: a second resumption; it failed the build by hand.
 
 
 ---

@@ -37,6 +37,7 @@ Quy ước: **[Lab]** là cách làm trên lab 3 VM của đề tài; **[Prod]**
 9. Các luồng chính, từng giây một
 10. Các thành phần, đi sâu
 11. Phần IDP của netCI (bài toán lớn)
+11b. Active-active: UI/API Jenkins không bao giờ tắt
 12. Dựng lại từ đầu, theo đúng thứ tự
 13. Kiểm chứng: test, chaos, soak, quy mô
 14. Vận hành và xử lý sự cố
@@ -983,6 +984,60 @@ toàn bộ pytest, test và build của portal. Test chạy trên một PostgreS
 stack đang chạy.
 
 ---
+
+## 11b. Active-active: UI/API Jenkins không bao giờ tắt
+
+Cell (mục 8–10) giữ được build khi máy của controller chết, nhưng **UI của controller đó tắt** cho
+tới khi takeover xong (40–80 s). Mentor yêu cầu UI/API không bao giờ tắt, kiểu CloudBees nhưng không
+chịu các giới hạn của CloudBees. Hạ tầng của mentor: Pipeline only, agent JNLP (inbound) trên một VM
+lớn, storage chủ yếu `local-path`, có Longhorn, được phép dùng LB riêng, plugin riêng, PostgreSQL.
+
+**Vì sao không dùng một JENKINS_HOME dùng chung (cách của CloudBees).** Lab đã thử (ADR-074):
+- không có gì điều phối thì hai Jenkins trên một home cho ra build "tàng hình" và cập nhật bị ghi đè
+  lặng lẽ;
+- trên Longhorn RWX, máy chạy NFS server chết thì **mọi** replica bị treo ghi 61 s cùng lúc.
+
+Vì vậy chọn **mỗi replica một home riêng** trên đĩa của chính máy nó, giữ cho giống nhau qua PostgreSQL
+(ADR-076). Máy nào chết thì chỉ mất replica đó, đĩa của replica kia không bị ảnh hưởng.
+
+**Các mảnh ghép, mỗi mảnh giải một nỗi đau:**
+
+| Mảnh | Làm gì | Vì sao cần |
+|---|---|---|
+| HAProxy trên mọi máy + VIP (kube-vip) | Một địa chỉ cho người dùng; health check mỗi giây; request hỏng được gửi lại sang replica kia | Bản thân LB cũng không được là điểm chết |
+| netci-homesync (Go, trên PostgreSQL) | Mỗi job/user một dòng có version; ghi bằng compare-and-set; một luồng thay đổi mà mọi replica theo | Database xếp thứ tự các lần ghi; copy file thì không |
+| Plugin: khoá trước khi sửa | Một lần sửa trên UI giữ khoá của item, bắt kịp mọi thay đổi trước, rồi mới lưu | Không bao giờ sửa từ nội dung cũ (lỗi E4 ở phase 0) |
+| User đồng bộ + cookie phiên ký chung (ADR-077) | Mật khẩu, API token, seed giống nhau; cookie HMAC cho phép replica kia dựng lại phiên với quyền từ realm | Replica chết thì người dùng vẫn đăng nhập; token tạo ở r0 dùng được ở r1 |
+| Một chủ cho mỗi job + đặt trước số build (ADR-078) | Lease có epoch; số build ghi vào PostgreSQL trước khi build nhận số | Số build 1, 2, 3 không trùng; cron chạy trên mọi replica nhưng chỉ build một lần |
+| Nhận nuôi build đang chạy (ADR-079) | Build được sao chép mỗi 3 s; replica có agent của build nhận nuôi khi fence xác nhận chủ cũ đã chết; nạp lại run là nó tự resume | Build không mất khi replica chết |
+
+**Đo trên lab** (KVM + k3s, 3 máy; các file nằm trong `lab/evidence/`):
+
+| Câu hỏi | Kết quả |
+|---|---|
+| UI/API khi một máy mất điện | Máy replica: 0–2 s. Máy giữ VIP: 6 s. Cả hai trên một máy: 2–4 s |
+| Người đã đăng nhập | Vẫn đăng nhập ở replica kia (máy mất điện, pod bị giết) |
+| Job tạo ở r0 có ở r1 sau | Trung vị 231 ms |
+| 40 lần sửa đồng thời trên 2 replica | 25 nhận, 15 bị từ chối có lý do, không mất lần nào, hai bên hội tụ |
+| Build đang chạy, giết pod chủ | Nhận nuôi sau 4,3 s, SUCCESS, đủ 90/90 dòng, không dòng nào hai lần |
+| Build đang chạy, mất điện máy chủ | Nhận nuôi sau 49,5 s, SUCCESS, đủ 90/90 dòng, build vẫn xong đúng giờ |
+
+**Giới hạn, nói thẳng:**
+- PostgreSQL của kho phải HA. Một lần nó nằm trên máy chết, nên việc sửa và nhận nuôi phải chờ khoảng 80 s.
+- Chưa đồng bộ view, đổi tên và di chuyển item.
+- Một POST gửi từ trang do replica đã chết phục vụ sẽ hỏng crumb CSRF một lần; tải lại trang là được.
+- Fence trong lab là góc nhìn của Kubernetes. Một máy bị cô lập mạng mà vẫn sống thì phải có fence
+  bằng nguồn điện (Redfish) như cell đang làm.
+- Mỗi agent thuộc một replica tại một thời điểm, nên năng lực build được chia theo agent của từng replica.
+
+**Những thứ chỉ test mới thấy, và đã được sửa** (ADR-076–079 có đủ):
+- HAProxy xoá cookie mà plugin đặt (cần `preserve`).
+- POST bị chuyển hướng sang replica khác thì hỏng crumb CSRF (nên phải chuyển tiếp phía server).
+- Pipeline là flyweight task, nên `canTake` không được gọi (phải dùng `canRun`).
+- `build.xml` của Pipeline đang chạy vẫn ghi `SUCCESS` (dấu hiệu đúng là `completed=false`).
+- Tên agent trong log là một ConsoleNote.
+- HAProxy giữ tunnel của agent tới máy chết suốt một giờ.
+- Kết nối có sẵn trong pool cứ rơi vào API server của máy chết.
 
 ## 12. Dựng lại từ đầu, theo đúng thứ tự
 
