@@ -1,0 +1,75 @@
+{
+  "scenario": "aa-phase0",
+  "started": "2026-10-13T02:17:29+00:00",
+  "controller": "172.17.0.1:8930/netci/jenkins-controller@sha256:1177c784cd43b29608c72ca90eac8979acab9d86a8946cf43bfac0f1ff2c753e",
+  "E1": {
+    "bothUpAfterSeconds": 51,
+    "nodes": {
+      "r1": "netci-lab-2",
+      "r2": "netci-lab-1"
+    },
+    "jobsSeen": {
+      "r1": [
+        "quick",
+        "tick"
+      ],
+      "r2": [
+        "quick",
+        "tick"
+      ]
+    }
+  },
+  "E2": {
+    "r1Build": 1,
+    "r1Last": {
+      "_class": "org.jenkinsci.plugins.workflow.job.WorkflowRun",
+      "number": 1
+    },
+    "r2Last": null,
+    "r2BuildPage": 404,
+    "onDisk": "permalinks 1",
+    "nextBuildNumberFile": "2"
+  },
+  "E3": {
+    "r1Number": 2,
+    "r2Number": 3,
+    "sameNumber": false,
+    "onDisk": "permalinks 1 2 3",
+    "nextBuildNumberFile": "4",
+    "logOfThatNumber": "\u001b[8mha:////4MhXO8NvfldaCCoX5e95b2pWMLBOGeVrQQQXT9l+olvfAAAAox+LCAAAAAAAAP9tjTEOAiEURD9rLGwtPQSbWJkYK1tC4wmQRYQl/7PAult5Iq/mHSRuYuUkk8yb5r3esM4JTpQs9wZ7h1k7HsNo6+ITpf4WaOKerlwTZgqGSzNJ6sx5QUnFwBLWwErAxqAOlB3aAlvh1UO1QaFtLyXV7yigcd0AT2CimotK5Qtzgt197DLhz/NXAHOMBdihdv8BWkcFLbwAAAA=\u001b[0m[Pipeline] End of Pipeline|Finished: SUCCESS|",
+    "r1Result": "SUCCESS",
+    "r2Result": "SUCCESS"
+  },
+  "E4": {
+    "r2SawR1Description": "",
+    "configOnDiskAfterR2Saved": {
+      "description": "<description></description>",
+      "disabled": "<disabled>true</disabled>"
+    },
+    "r1StillShows": {
+      "_class": "org.jenkinsci.plugins.workflow.job.WorkflowJob",
+      "description": "set on r1",
+      "buildable": true
+    }
+  },
+  "E5": {
+    "build": 1,
+    "r2SeesItNow": 404,
+    "onDisk": "build.xml log log-index program.dat workflow",
+    "afterR2Restart": {
+      "build": {
+        "_class": "org.jenkinsci.plugins.workflow.job.WorkflowRun",
+        "building": true,
+        "result": null
+      },
+      "consoleTail": [
+        "+ echo tick 8 jenkins-r1-8c9c77dc-7nxf6",
+        "tick 8 jenkins-r1-8c9c77dc-7nxf6",
+        "+ sleep 1",
+        "Pausing (shutting down)",
+        "Resuming build at Tue Oct 13 02:19:22 UTC 2026 after Jenkins restart",
+        "Ready to run at Tue Oct 13 02:19:22 UTC 2026"
+      ]
+    }
+  }
+}

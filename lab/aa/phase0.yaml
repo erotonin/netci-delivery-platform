@@ -1,0 +1,164 @@
+# Active-active, phase 0: two Jenkins controllers on ONE JENKINS_HOME (a Longhorn RWX volume, NFS),
+# with nothing coordinating them. Not a design: an experiment to see, with evidence, what breaks
+# when two JVMs share a home (lab/aa/phase0_probe.py). Namespace aa-lab, away from the cells.
+apiVersion: v1
+kind: Namespace
+metadata: {name: aa-lab}
+---
+# Two replicas and 1 GiB: the lab's Longhorn disks have little schedulable room left (a 4 GiB volume
+# with three replicas failed "precheck new replica failed: insufficient storage").
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata: {name: longhorn-rwx-2}
+provisioner: driver.longhorn.io
+allowVolumeExpansion: true
+reclaimPolicy: Delete
+volumeBindingMode: Immediate
+parameters: {numberOfReplicas: "2", staleReplicaTimeout: "30"}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata: {name: shared-home, namespace: aa-lab}
+spec:
+  accessModes: [ReadWriteMany]
+  storageClassName: longhorn-rwx-2
+  resources: {requests: {storage: 1Gi}}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: casc, namespace: aa-lab}
+data:
+  jenkins.yaml: |
+    jenkins:
+      systemMessage: "netCI active-active lab, phase 0: two controllers, one JENKINS_HOME, no coordination"
+      numExecutors: 2          # phase 0 only: builds on the controller, so no agent is needed to see the effects
+      securityRealm:
+        local:
+          allowsSignup: false
+          users: [{id: admin, password: "${ADMIN_PASSWORD}"}]
+      authorizationStrategy: loggedInUsersCanDoAnything
+      # The lab's 1 GiB home is below Jenkins' default 1 GiB free-space threshold, which takes the node offline.
+      nodeMonitors:
+        - diskSpace: {freeSpaceThreshold: "100MiB", freeSpaceWarningThreshold: "200MiB"}
+        - tmpSpace: {freeSpaceThreshold: "100MiB", freeSpaceWarningThreshold: "200MiB"}
+    unclassified:
+      location: {url: "http://jenkins.aa-lab.svc.cluster.local:8080/"}
+    jobs:
+      - script: |
+          pipelineJob('tick') {
+            parameters { stringParam('DURATION', '60', 'seconds') }
+            definition { cps { sandbox(true); script('''node { sh 'for i in $(seq 1 ^${DURATION}); do echo "tick $i $(hostname)"; sleep 1; done' }''') } }
+          }
+          pipelineJob('quick') {
+            definition { cps { sandbox(true); script('''node { sh 'echo quick on $(hostname)' }''') } }
+          }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: jenkins-r1, namespace: aa-lab, labels: {app: jenkins, replica: r1}}
+spec:
+  replicas: 1
+  strategy: {type: Recreate}
+  selector: {matchLabels: {app: jenkins, replica: r1}}
+  template:
+    metadata: {labels: {app: jenkins, replica: r1}}
+    spec:
+      imagePullSecrets: [{name: harbor-pull}]
+      securityContext: {fsGroup: 1000, runAsUser: 1000, runAsGroup: 1000}
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector: {matchLabels: {app: jenkins}}
+              topologyKey: kubernetes.io/hostname
+      initContainers:
+        # A Longhorn RWX volume is an NFS export whose root belongs to root: the controller runs as 1000.
+        - name: own-home
+          image: CONTROLLER
+          command: [sh, -c, 'chown 1000:1000 /var/jenkins_home']
+          securityContext: {runAsUser: 0}
+          volumeMounts: [{name: home, mountPath: /var/jenkins_home}]
+      containers:
+        - name: jenkins
+          image: CONTROLLER
+          env:
+            - {name: CASC_JENKINS_CONFIG, value: /var/jenkins_config/jenkins.yaml}
+            - {name: JAVA_OPTS, value: "-Xms512m -Xmx900m -Djenkins.install.runSetupWizard=false"}
+            # Plugins and the WAR unzipped on the pod's own disk: two controllers unzipping into one shared
+            # JENKINS_HOME/plugins deleted each other's files and configuration-as-code failed to load
+            # (lab/evidence/aa-phase0-startup-*.json).
+            - {name: JENKINS_OPTS, value: "--webroot=/local/war --pluginroot=/local/plugins"}
+            - {name: ADMIN_PASSWORD, valueFrom: {secretKeyRef: {name: admin, key: password}}}
+          ports: [{containerPort: 8080}]
+          readinessProbe: {httpGet: {path: /login, port: 8080}, periodSeconds: 2, failureThreshold: 3}
+          resources: {requests: {cpu: 300m, memory: 1Gi}, limits: {memory: 1536Mi}}
+          volumeMounts:
+            - {name: home, mountPath: /var/jenkins_home}
+            - {name: casc, mountPath: /var/jenkins_config, readOnly: true}
+            - {name: local, mountPath: /local}
+      volumes:
+        - {name: local, emptyDir: {}}
+        - {name: home, persistentVolumeClaim: {claimName: shared-home}}
+        - {name: casc, configMap: {name: casc}}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: jenkins-r1, namespace: aa-lab}
+spec:
+  type: NodePort
+  selector: {app: jenkins, replica: r1}
+  ports: [{port: 8080, targetPort: 8080, nodePort: 30180}]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: jenkins-r2, namespace: aa-lab, labels: {app: jenkins, replica: r2}}
+spec:
+  replicas: 1
+  strategy: {type: Recreate}
+  selector: {matchLabels: {app: jenkins, replica: r2}}
+  template:
+    metadata: {labels: {app: jenkins, replica: r2}}
+    spec:
+      imagePullSecrets: [{name: harbor-pull}]
+      securityContext: {fsGroup: 1000, runAsUser: 1000, runAsGroup: 1000}
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector: {matchLabels: {app: jenkins}}
+              topologyKey: kubernetes.io/hostname
+      initContainers:
+        # A Longhorn RWX volume is an NFS export whose root belongs to root: the controller runs as 1000.
+        - name: own-home
+          image: CONTROLLER
+          command: [sh, -c, 'chown 1000:1000 /var/jenkins_home']
+          securityContext: {runAsUser: 0}
+          volumeMounts: [{name: home, mountPath: /var/jenkins_home}]
+      containers:
+        - name: jenkins
+          image: CONTROLLER
+          env:
+            - {name: CASC_JENKINS_CONFIG, value: /var/jenkins_config/jenkins.yaml}
+            - {name: JAVA_OPTS, value: "-Xms512m -Xmx900m -Djenkins.install.runSetupWizard=false"}
+            # Plugins and the WAR unzipped on the pod's own disk: two controllers unzipping into one shared
+            # JENKINS_HOME/plugins deleted each other's files and configuration-as-code failed to load
+            # (lab/evidence/aa-phase0-startup-*.json).
+            - {name: JENKINS_OPTS, value: "--webroot=/local/war --pluginroot=/local/plugins"}
+            - {name: ADMIN_PASSWORD, valueFrom: {secretKeyRef: {name: admin, key: password}}}
+          ports: [{containerPort: 8080}]
+          readinessProbe: {httpGet: {path: /login, port: 8080}, periodSeconds: 2, failureThreshold: 3}
+          resources: {requests: {cpu: 300m, memory: 1Gi}, limits: {memory: 1536Mi}}
+          volumeMounts:
+            - {name: home, mountPath: /var/jenkins_home}
+            - {name: casc, mountPath: /var/jenkins_config, readOnly: true}
+            - {name: local, mountPath: /local}
+      volumes:
+        - {name: local, emptyDir: {}}
+        - {name: home, persistentVolumeClaim: {claimName: shared-home}}
+        - {name: casc, configMap: {name: casc}}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: jenkins-r2, namespace: aa-lab}
+spec:
+  type: NodePort
+  selector: {app: jenkins, replica: r2}
+  ports: [{port: 8080, targetPort: 8080, nodePort: 30181}]

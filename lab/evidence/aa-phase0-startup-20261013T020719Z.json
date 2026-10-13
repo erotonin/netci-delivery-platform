@@ -1,0 +1,47 @@
+{
+  "scenario": "aa-phase0-startup",
+  "at": "2026-10-13T02:07:19+00:00",
+  "setup": "two controllers started together on one Longhorn RWX JENKINS_HOME, plugins unzipped into JENKINS_HOME/plugins (Jenkins' default)",
+  "replicas": {
+    "r1": {
+      "severeLines": 55,
+      "pluginsFailed": [
+        "Pipeline",
+        "Timestamper",
+        "asm-api",
+        "cloudbees-folder",
+        "commons-text-api",
+        "font-awesome-api",
+        "ionicons-api",
+        "jackson2-api",
+        "javax-activation-api",
+        "job-dsl",
+        "kubernetes-client-api",
+        "pipeline-stage-view",
+        "prism-api"
+      ],
+      "examples": [
+        "2026-10-13 02:04:30.499+0000 [id=38]\tSEVERE\tjenkins.InitReactorRunner$1#onTaskFailed: Failed Inspecting plugin /var/jenkins_home/plugins/asm-api.jpi",
+        "2026-10-13 02:04:31.442+0000 [id=38]\tSEVERE\tjenkins.InitReactorRunner$1#onTaskFailed: Failed Inspecting plugin /var/jenkins_home/plugins/cloudbees-folder.jpi",
+        "2026-10-13 02:04:31.965+0000 [id=38]\tSEVERE\tjenkins.InitReactorRunner$1#onTaskFailed: Failed Inspecting plugin /var/jenkins_home/plugins/commons-text-api.jpi",
+        "2026-10-13 02:04:33.602+0000 [id=35]\tSEVERE\tjenkins.InitReactorRunner$1#onTaskFailed: Failed Inspecting plugin /var/jenkins_home/plugins/font-awesome-api.jpi",
+        "2026-10-13 02:04:34.149+0000 [id=36]\tSEVERE\tjenkins.InitReactorRunner$1#onTaskFailed: Failed Inspecting plugin /var/jenkins_home/plugins/ionicons-api.jpi",
+        "2026-10-13 02:04:34.413+0000 [id=33]\tSEVERE\tjenkins.InitReactorRunner$1#onTaskFailed: Failed Inspecting plugin /var/jenkins_home/plugins/jackson2-api.jpi"
+      ]
+    },
+    "r2": {
+      "severeLines": 5,
+      "pluginsFailed": [
+        "prism-api"
+      ],
+      "examples": [
+        "2026-10-13 02:04:38.959+0000 [id=32]\tSEVERE\tjenkins.InitReactorRunner$1#onTaskFailed: Failed Inspecting plugin /var/jenkins_home/plugins/prism-api.jpi",
+        "2026-10-13 02:04:40.578+0000 [id=33]\tSEVERE\tjenkins.InitReactorRunner$1#onTaskFailed: Failed Loading plugin Configuration as Code Plugin v2121.v86fe99d4b_b_a_b_ (configuration-as-code)",
+        "2026-10-13 02:04:40.618+0000 [id=32]\tSEVERE\tjenkins.InitReactorRunner$1#onTaskFailed: Failed Loading plugin JUnit Plugin v1431.vc0d98912a_756 (junit)",
+        "2026-10-13 02:04:40.618+0000 [id=32]\tSEVERE\tjenkins.InitReactorRunner$1#onTaskFailed: Failed Loading plugin Matrix Project Plugin v917.v22eda_817646e (matrix-project)",
+        "2026-10-13 02:04:40.783+0000 [id=32]\tSEVERE\tjenkins.InitReactorRunner$1#onTaskFailed: Failed Loading plugin Jenkins Workspace Cleanup Plugin v0.49 (ws-cleanup)"
+      ]
+    }
+  },
+  "consequence": "configuration-as-code failed to load on r2, so JCasC never ran: neither replica had a job (E1 jobsSeen empty)"
+}
