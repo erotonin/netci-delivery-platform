@@ -8,6 +8,7 @@ providing tamper-evident immutable audit logs without external object storage.
 
 from __future__ import annotations
 
+import fcntl
 import hashlib
 import json
 import os
@@ -51,31 +52,34 @@ def append_audit_entry(
     path = ledger_path or default_ledger_path()
     path.parent.mkdir(parents=True, exist_ok=True)
 
-    with _LEDGER_LOCK:
+    # Reading the last record and appending the next must be one critical section across
+    # processes, not only threads: uvicorn workers, or API pods on one volume, each read seq N
+    # and wrote N+1 onto the same hash, forking the chain. flock is held on the open file
+    # from the read to the fsync; the thread lock covers threads sharing this process.
+    with _LEDGER_LOCK, open(path, "a+", encoding="utf-8") as f:
+        fcntl.flock(f, fcntl.LOCK_EX)
         last_hash = GENESIS_HASH
         last_seq = 0
-
-        if path.exists() and path.stat().st_size > 0:
-            with open(path, "r", encoding="utf-8") as f:
-                for line_idx, raw in enumerate(f, start=1):
-                    line = raw.strip()
-                    if not line:
-                        continue
-                    # A line this cannot parse is the very thing a tamper-evident
-                    # ledger exists to surface. Skipping it used to chain the new record
-                    # onto an earlier hash and reuse the damaged record's sequence
-                    # number, forking the chain quietly -- and `verify_audit_ledger`
-                    # would then report the corruption that this path had decided to
-                    # write over. Refuse instead; the caller treats a ledger append as
-                    # best effort, so refusing costs the entry, not the request.
-                    try:
-                        record = json.loads(line)
-                    except json.JSONDecodeError as exc:
-                        raise LedgerCorrupted(
-                            f"audit ledger {path} has an unreadable record at line {line_idx}: {exc}"
-                        ) from exc
-                    last_hash = record.get("hash", GENESIS_HASH)
-                    last_seq = int(record.get("seq", 0))
+        f.seek(0)
+        for line_idx, raw in enumerate(f, start=1):
+            line = raw.strip()
+            if not line:
+                continue
+            # A line this cannot parse is the very thing a tamper-evident
+            # ledger exists to surface. Skipping it used to chain the new record
+            # onto an earlier hash and reuse the damaged record's sequence
+            # number, forking the chain quietly -- and `verify_audit_ledger`
+            # would then report the corruption that this path had decided to
+            # write over. Refuse instead; the caller treats a ledger append as
+            # best effort, so refusing costs the entry, not the request.
+            try:
+                record = json.loads(line)
+            except json.JSONDecodeError as exc:
+                raise LedgerCorrupted(
+                    f"audit ledger {path} has an unreadable record at line {line_idx}: {exc}"
+                ) from exc
+            last_hash = record.get("hash", GENESIS_HASH)
+            last_seq = int(record.get("seq", 0))
 
         seq = last_seq + 1
         now_iso = datetime.now(timezone.utc).isoformat()
@@ -103,10 +107,10 @@ def append_audit_entry(
             "hash": current_hash,
         }
 
-        # Append to disk in plain text JSONL
-        with open(path, "a", encoding="utf-8") as f:
-            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
-
+        # Append to disk in plain text JSONL ("a+" writes at the end whatever was read).
+        f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+        f.flush()
+        os.fsync(f.fileno())
         return entry
 
 

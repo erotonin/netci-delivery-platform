@@ -1,0 +1,24 @@
+{{- $p := .Values.auditLedger.persistence -}}
+{{- if and $p.enabled (ne $p.accessMode "ReadWriteMany") (gt (int .Values.api.replicas) 1) -}}
+{{- fail (printf "auditLedger.persistence.accessMode is %s but api.replicas is %d: every API pod mounts the ledger volume, so it must be ReadWriteMany (or api.replicas 1, or auditLedger.persistence.enabled false)" $p.accessMode (int .Values.api.replicas)) -}}
+{{- end -}}
+{{- if and $p.enabled (not $p.existingClaim) }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "netci.fullname" . }}-audit-ledger
+  labels:
+    {{- include "netci.labels" . | nindent 4 }}
+    app.kubernetes.io/component: api
+  annotations:
+    # An audit trail must outlive an uninstall; deleting it is a decision, not a side effect.
+    helm.sh/resource-policy: keep
+spec:
+  accessModes: [{{ $p.accessMode }}]
+  {{- with $p.storageClass }}
+  storageClassName: {{ . }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ $p.size }}
+{{- end }}

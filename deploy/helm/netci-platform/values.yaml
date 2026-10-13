@@ -209,6 +209,20 @@ api:
   tolerations: []
   affinity: {}
 
+# The append-only, hash-chained ledger of the commands agents ran (supplementary: audit_events
+# in PostgreSQL is the record of authority). Without a volume the API can write only an
+# emptyDir and the ledger is gone with every restart, so it is on by default.
+# Each API pod keeps its own chain, ledger/<pod>.jsonl, on the one volume: two pods appending
+# one chain would fork it. So every API pod mounts the volume -- ReadWriteMany, unless
+# api.replicas is 1 (the chart refuses ReadWriteOnce with more than one pod).
+auditLedger:
+  persistence:
+    enabled: true
+    accessMode: ReadWriteMany
+    storageClass: ""      # "" = the cluster's default class
+    size: 1Gi
+    existingClaim: ""     # use this claim instead of creating one
+
 worker:
   replicas: 2
   resources:

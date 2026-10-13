@@ -296,6 +296,29 @@ def test_the_ledger_path_is_configured_not_one_machines_home(tmp_path, monkeypat
     assert verify_audit_ledger()[0] is True
 
 
+def _append_many(path: str, worker: int, count: int) -> None:
+    for i in range(count):
+        append_audit_entry(action="race", actor=f"w{worker}", correlation_id=str(i), payload={"i": i}, ledger_path=Path(path))
+
+
+def test_processes_appending_one_ledger_keep_one_chain(tmp_path):
+    """The lock was a threading.Lock: two processes (uvicorn workers, or API pods on one
+    volume) could both read seq N and both write N+1 on the previous hash, forking the chain."""
+    import multiprocessing
+
+    ledger = tmp_path / "ledger.jsonl"
+    ctx = multiprocessing.get_context("spawn")
+    procs = [ctx.Process(target=_append_many, args=(str(ledger), w, 40)) for w in range(4)]
+    for proc in procs:
+        proc.start()
+    for proc in procs:
+        proc.join(60)
+        assert proc.exitcode == 0
+    records = [json.loads(line) for line in ledger.read_text().splitlines()]
+    assert [r["seq"] for r in records] == list(range(1, 161))
+    assert verify_audit_ledger(ledger)[0] is True
+
+
 def test_local_disk_audit_ledger_tamper_evident():
     """Verify that audit records are written to local disk plain text JSONL format
     with SHA-256 hash chaining, and that any manual edit/tampering on disk is detected."""

@@ -196,3 +196,57 @@ def test_the_burn_rate_thresholds_follow_the_availability_target():
     assert "netci:api_error_ratio:rate6h > 0.06" in rendered
     # Health probes are not API traffic: counted, they would bury real failures.
     assert 'route!~"/livez|/healthz|/readyz|/metrics"' in rendered
+
+
+def _docs(rendered: subprocess.CompletedProcess[str]) -> list[dict]:
+    import yaml
+
+    return [doc for doc in yaml.safe_load_all(rendered.stdout) if doc]
+
+
+@needs_helm
+def test_the_audit_ledger_is_on_a_volume_that_outlives_the_pod_one_chain_per_pod():
+    """The API could write only an emptyDir: the hash-chained ledger of agent commands was
+    gone with every restart, and before that its path was a directory in one developer's
+    home, so nothing was recorded at all. Two pods appending one chain would fork it, so each
+    pod keeps its own file on the shared volume."""
+
+    rendered = _render("-f", str(EXAMPLE), "--set", "auditLedger.persistence.enabled=true")
+    assert rendered.returncode == 0, rendered.stderr
+    docs = _docs(rendered)
+    claim = next(d for d in docs if d["kind"] == "PersistentVolumeClaim")
+    assert claim["spec"]["accessModes"] == ["ReadWriteMany"]
+    assert claim["metadata"]["annotations"]["helm.sh/resource-policy"] == "keep"
+    api = next(d for d in docs if d["kind"] == "Deployment" and d["metadata"]["name"].endswith("-api"))
+    pod = api["spec"]["template"]["spec"]
+    container = next(c for c in pod["containers"] if c["name"] == "api")
+    env = {e["name"]: e for e in container["env"]}
+    assert env["POD_NAME"]["valueFrom"]["fieldRef"]["fieldPath"] == "metadata.name"
+    assert env["NETCI_AUDIT_LEDGER_PATH"]["value"] == "/var/lib/netci/ledger/$(POD_NAME).jsonl"
+    assert {"name": "audit-ledger", "mountPath": "/var/lib/netci/ledger"} in container["volumeMounts"]
+    volume = next(v for v in pod["volumes"] if v["name"] == "audit-ledger")
+    assert volume["persistentVolumeClaim"]["claimName"] == claim["metadata"]["name"]
+
+    existing = _render("-f", str(EXAMPLE), "--set", "auditLedger.persistence.enabled=true",
+                       "--set", "auditLedger.persistence.existingClaim=ledger-pvc")
+    assert existing.returncode == 0, existing.stderr
+    assert not [d for d in _docs(existing) if d["kind"] == "PersistentVolumeClaim"]
+    assert "claimName: ledger-pvc" in existing.stdout
+
+
+@needs_helm
+def test_the_chart_refuses_one_read_write_once_ledger_for_several_api_pods():
+    common = ("-f", str(EXAMPLE), "--set", "auditLedger.persistence.enabled=true",
+              "--set", "auditLedger.persistence.accessMode=ReadWriteOnce")
+    refused = _render(*common, "--set", "api.replicas=2")
+    assert refused.returncode != 0
+    assert "ReadWriteOnce" in refused.stderr
+    assert _render(*common, "--set", "api.replicas=1").returncode == 0
+
+
+@needs_helm
+def test_without_a_ledger_volume_no_path_is_pointed_at_the_read_only_image():
+    rendered = _render("-f", str(EXAMPLE), "--set", "auditLedger.persistence.enabled=false")
+    assert rendered.returncode == 0, rendered.stderr
+    assert "NETCI_AUDIT_LEDGER_PATH" not in rendered.stdout
+    assert not [d for d in _docs(rendered) if d["kind"] == "PersistentVolumeClaim"]

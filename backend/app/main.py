@@ -5750,7 +5750,9 @@ async def execute_agent_command(
     # Append to Local Disk Tamper-Evident Audit Ledger
     try:
         from .audit_ledger import append_audit_entry
-        append_audit_entry(
+        # Off the event loop: the append waits for the ledger's file lock and fsyncs.
+        await asyncio.to_thread(
+            append_audit_entry,
             action="agent.command_execute",
             actor=principal.subject,
             correlation_id=str(command.id),

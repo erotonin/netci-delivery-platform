@@ -70,6 +70,12 @@ spec:
             # kubectl keeps its discovery cache under $HOME; the root filesystem is
             # read-only, so $HOME is the scratch volume.
             - {name: HOME, value: /tmp}
+            {{- if .Values.auditLedger.persistence.enabled }}
+            - name: POD_NAME
+              valueFrom: {fieldRef: {fieldPath: metadata.name}}
+            # One chain per pod: two pods appending one file would fork it.
+            - {name: NETCI_AUDIT_LEDGER_PATH, value: "/var/lib/netci/ledger/$(POD_NAME).jsonl"}
+            {{- end }}
             {{- with .Values.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
@@ -99,6 +105,9 @@ spec:
           volumeMounts:
             - {name: app-secret, mountPath: /run/secrets/netci-app, readOnly: true}
             - {name: tmp, mountPath: /tmp}
+            {{- if .Values.auditLedger.persistence.enabled }}
+            - {name: audit-ledger, mountPath: /var/lib/netci/ledger}
+            {{- end }}
             {{- if .Values.registry.caConfigMap }}
             - {name: registry-ca, mountPath: /etc/netci/registry-ca, readOnly: true}
             {{- end }}
@@ -116,6 +125,11 @@ spec:
             defaultMode: 0400
         - name: tmp
           emptyDir: {}
+        {{- if .Values.auditLedger.persistence.enabled }}
+        - name: audit-ledger
+          persistentVolumeClaim:
+            claimName: {{ .Values.auditLedger.persistence.existingClaim | default (printf "%s-audit-ledger" (include "netci.fullname" .)) }}
+        {{- end }}
       {{- with .Values.api.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}
