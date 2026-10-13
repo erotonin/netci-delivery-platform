@@ -40,9 +40,28 @@ public final class PublishChanges {
         }
     }
 
-    /** An item was deleted here. */
+    /** Items created here, and deletions. */
     @Extension
-    public static final class OnDelete extends ItemListener {
+    public static final class OnCreateOrDelete extends ItemListener {
+        /**
+         * A job created from XML (POST createItem with a config.xml, a copy) is written to disk and
+         * loaded without a save, so the save listener never hears of it: the first lab run of
+         * phase 3 created ten jobs on one replica and none reached the other.
+         */
+        @Override
+        public void onCreated(Item created) {
+            HomeSync sync = HomeSync.get();
+            if (sync == null || !sync.ready() || HomeSync.APPLYING.get() || !(created instanceof AbstractItem item)) {
+                return;
+            }
+            try {
+                sync.publish(item.getFullName(), Files.readAllBytes(item.getConfigFile().getFile().toPath()),
+                        EditOrder.tokenFor(item.getFullName()));
+            } catch (IOException e) {
+                LOGGER.log(Level.SEVERE, "netCI homesync: cannot read the created " + item.getFullName() + " to publish it", e);
+            }
+        }
+
         @Override
         public void onDeleted(Item item) {
             HomeSync sync = HomeSync.get();

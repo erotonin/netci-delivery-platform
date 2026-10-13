@@ -87,6 +87,26 @@ class HomeSyncTest {
     }
 
     @Test
+    void aJobCreatedFromXmlThroughTheApiIsPublishedOnce(JenkinsRule j) throws Exception {
+        // POST createItem with a config.xml writes and loads the job without saving it: the save
+        // listener alone missed every such job in the first lab run.
+        ready();
+        j.jenkins.setCrumbIssuer(null); // the body is the config.xml, so no crumb parameter; CSRF is not what this tests
+        JenkinsRule.WebClient wc = j.createWebClient();
+        WebRequest req = new WebRequest(new URL(j.getURL(), "createItem?name=from-xml"), HttpMethod.POST);
+        req.setAdditionalHeader("Content-Type", "application/xml");
+        req.setRequestBody("<flow-definition plugin=\"workflow-job\"><description>made by xml</description>"
+                + "<keepDependencies>false</keepDependencies><properties/><triggers/><disabled>false</disabled></flow-definition>");
+        wc.getPage(req);
+        assertNotNull(j.jenkins.getItemByFullName("from-xml"));
+        await("the XML create published", () -> stored("from-xml") != null && stored("from-xml").contains("made by xml"));
+        Thread.sleep(500);
+        List<FakeHomeSync.Seen> puts = STORE.seen().stream().filter(s -> s.path().equals("from-xml")).toList();
+        assertEquals(1, puts.size(), "one create, one version: " + puts);
+        assertTrue(puts.get(0).lockToken() > 0, "the create was published without the new item's lock");
+    }
+
+    @Test
     void anotherReplicasChangeIsAppliedHereWithoutBeingPublishedBack(JenkinsRule j) throws Exception {
         ready();
         STORE.changeFrom("r1", "made-on-r1", "<flow-definition plugin=\"workflow-job\"><description>from r1</description>"

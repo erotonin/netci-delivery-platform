@@ -48,6 +48,8 @@ public final class HomeSync {
     final HomeSyncClient client;
     /** The version of each item this home holds, deleted ones included (a re-create starts there). */
     final Map<String, Long> versions = new ConcurrentHashMap<>();
+    /** The SHA-256 of what this home last published, or applied, for each item. */
+    final Map<String, String> published = new ConcurrentHashMap<>();
     /** Applying and publishing are one at a time, so the feed never interleaves with a publish. */
     final Object order = new Object();
 
@@ -207,9 +209,15 @@ public final class HomeSync {
     }
 
     private void publishInOrder(String path, byte[] content, long lockToken) {
+        // A create can be heard twice (created, then saved): the same content is one version, not two.
+        String sum = sha256(content);
+        if (versions.containsKey(path) && sum.equals(published.get(path))) {
+            return;
+        }
         long expect = versions.getOrDefault(path, 0L);
         try {
             versions.put(path, client.put(path, content, expect, lockToken));
+            published.put(path, sum);
         } catch (HomeSyncClient.Refused r) {
             LOGGER.severe(() -> "netCI homesync: this replica's change to " + path + " was refused (" + r.code
                     + (r.holder.isEmpty() ? "" : ", held by " + r.holder) + "): " + r.getMessage()
@@ -275,8 +283,21 @@ public final class HomeSync {
                 return;
             }
             versions.put(path, version);
+            if (content == null) {
+                published.remove(path);
+            } else {
+                published.put(path, sha256(content));
+            }
         } finally {
             APPLYING.set(false);
+        }
+    }
+
+    static String sha256(byte[] content) {
+        try {
+            return java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(content));
+        } catch (java.security.NoSuchAlgorithmException e) {
+            throw new IllegalStateException(e);
         }
     }
 

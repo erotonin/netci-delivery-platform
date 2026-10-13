@@ -11,6 +11,8 @@ spec:
     metadata: {labels: {app: homesync}}
     spec:
       imagePullSecrets: [{name: harbor-pull}]
+      # The image runs as 65532; the credentials file is readable by that group only.
+      securityContext: {runAsUser: 65532, runAsGroup: 65532, fsGroup: 65532, runAsNonRoot: true}
       affinity:
         podAntiAffinity:
           requiredDuringSchedulingIgnoredDuringExecution:
@@ -27,7 +29,7 @@ spec:
           readinessProbe: {httpGet: {path: /healthz, port: 8080}, periodSeconds: 2, failureThreshold: 2}
           resources: {requests: {cpu: 50m, memory: 32Mi}, limits: {memory: 128Mi}}
           volumeMounts: [{name: replicas, mountPath: /run/secrets/netci-homesync, readOnly: true}]
-      volumes: [{name: replicas, secret: {secretName: homesync-replicas, defaultMode: 0400}}]
+      volumes: [{name: replicas, secret: {secretName: homesync-replicas, defaultMode: 0440}}]
 ---
 apiVersion: v1
 kind: Service
