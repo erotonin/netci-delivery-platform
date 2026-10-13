@@ -24,6 +24,10 @@ line once. Three things were done by hand that a replica must do itself:
    running. Lab fence: the Kubernetes API says the owner's pod is gone, not running, being deleted,
    or on a node that is not Ready. Then it claims the job's lease (one winner, ADR-078), writes the
    latest copy into its home, makes the number known and loads the run, which resumes itself.
+2b. **A build follows its agent.** It is adopted only where the agent it is using (the last
+   `Running on X` of its log, if that node block has not closed) is online. The first lab run had
+   the dead replica come back in 9 s and take its own build back while its agent had reconnected to
+   the other replica; the build waited for that agent for good.
 3. **A replica that starts finds its own running builds suspect**: before Jenkins loads its jobs,
    each build directory whose build.xml says `<completed>false</completed>` is moved aside. Before
    loading, not after: a job lists its numbers as it loads, and a number listed while its directory

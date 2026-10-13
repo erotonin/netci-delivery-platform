@@ -116,3 +116,30 @@ spec:
           resources: {requests: {cpu: 100m, memory: 256Mi}, limits: {memory: 768Mi}}
           volumeMounts: [{name: secrets, mountPath: /run/secrets/agents, readOnly: true}]
       volumes: [{name: secrets, secret: {secretName: agent-secrets, defaultMode: 0440}}]
+---
+# The fence's view (ADR-079): read pods here and nodes, nothing else, nothing written.
+apiVersion: v1
+kind: ServiceAccount
+metadata: {name: jenkins, namespace: aa-p2}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: {name: jenkins-fence, namespace: aa-p2}
+rules: [{apiGroups: [""], resources: [pods], verbs: [get]}]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: {name: jenkins-fence, namespace: aa-p2}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: jenkins-fence}
+subjects: [{kind: ServiceAccount, name: jenkins, namespace: aa-p2}]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata: {name: netci-aa-fence-nodes}
+rules: [{apiGroups: [""], resources: [nodes], verbs: [get]}]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata: {name: netci-aa-fence-nodes}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: netci-aa-fence-nodes}
+subjects: [{kind: ServiceAccount, name: jenkins, namespace: aa-p2}]

@@ -231,6 +231,16 @@ public final class RunningBuilds {
                     sync.runningCopies.remove(path);
                     continue;
                 }
+                // The build follows its agent: adopted only where the agent it was using is online.
+                // A replica that came back fast took its own build while its agent had reconnected to
+                // the other replica, and the build waited for that agent for good (the lab's first run).
+                String agent = agentOf(copy.content());
+                if (agent != null) {
+                    hudson.model.Computer c = Jenkins.get().getComputer(agent);
+                    if (c == null || c.isOffline()) {
+                        continue;
+                    }
+                }
                 File aside = new File(job.getBuildDir(), SUSPECT + number);
                 if (mine && new File(aside, "build.xml").exists() && new File(aside, "program.dat").exists()) {
                     // This replica's own build, set aside at its start: its own last state on disk is
@@ -249,6 +259,32 @@ public final class RunningBuilds {
                 LOGGER.log(Level.SEVERE, "netCI homesync: adopting " + path + " failed", ex);
             }
         }
+    }
+
+    /**
+     * The agent a build is using, from its copy: the last "Running on X in" of its log, unless the
+     * node block it opened has closed since. Null when it is on no agent now.
+     */
+    static String agentOf(byte[] copy) throws IOException, InterruptedException {
+        File tmp = Files.createTempDirectory("netci-copy").toFile();
+        try {
+            new FilePath(tmp).untarFrom(new ByteArrayInputStream(copy), FilePath.TarCompression.GZIP);
+            File log = new File(tmp, "log");
+            return log.exists() ? agentInLog(Files.readString(log.toPath(), StandardCharsets.UTF_8)) : null;
+        } finally {
+            new FilePath(tmp).deleteRecursive();
+        }
+    }
+
+    static String agentInLog(String log) {
+        java.util.regex.Matcher m = java.util.regex.Pattern.compile("Running on (\\S+) in ").matcher(log);
+        String agent = null;
+        int at = -1;
+        while (m.find()) {
+            agent = m.group(1);
+            at = m.end();
+        }
+        return agent != null && log.indexOf("[Pipeline] // node", at) < 0 ? agent : null;
     }
 
     static void adopt(Job<?, ?> job, int number, byte[] copy) throws IOException, InterruptedException {

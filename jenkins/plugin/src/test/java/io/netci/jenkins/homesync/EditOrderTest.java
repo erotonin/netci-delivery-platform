@@ -38,6 +38,14 @@ class EditOrderTest {
     }
 
     @Test
+    void theAgentABuildIsOnIsTheLastNodeItEnteredAndHasNotLeft() {
+        assertEquals("agent-0", RunningBuilds.agentInLog("[Pipeline] node\nRunning on agent-0 in /w\n[Pipeline] {\n[Pipeline] sh\ntick 3\n"));
+        assertEquals("b", RunningBuilds.agentInLog("Running on a in /w\n[Pipeline] // node\nRunning on b in /w\ntick\n"));
+        assertNull(RunningBuilds.agentInLog("Running on a in /w\n[Pipeline] // node\n[Pipeline] echo\n"));
+        assertNull(RunningBuilds.agentInLog("[Pipeline] sleep\n"));
+    }
+
+    @Test
     void readsBuildsAndOtherPagesAreNotEdits() {
         assertNull(EditOrder.editedItem("GET", "/job/app/config.xml", null));
         assertNull(EditOrder.editedItem("POST", "/job/app/build", null));
