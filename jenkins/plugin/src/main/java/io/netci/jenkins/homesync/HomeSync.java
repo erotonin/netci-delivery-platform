@@ -5,6 +5,9 @@ import hudson.init.Initializer;
 import hudson.init.Terminator;
 import hudson.model.AbstractItem;
 import hudson.model.Item;
+import hudson.model.User;
+import hudson.util.AtomicFileWriter;
+import java.io.File;
 
 import hudson.security.ACL;
 import hudson.security.ACLContext;
@@ -32,8 +35,8 @@ import jenkins.model.ModifiableTopLevelItemGroup;
  * <p>Off unless {@code NETCI_HOMESYNC_URL} is set: a single controller (a cell) has no other home
  * to agree with.
  *
- * <p>What this does not do yet, said here rather than discovered: views, renames and moves are
- * not replicated; a folder's deletion removes its children here and on the others, but the
+ * <p>Items and users are replicated. What this does not do yet, said here rather than discovered:
+ * views, renames and moves are not replicated; a folder's deletion removes its children here and on the others, but the
  * children's own entries are not tombstoned in the store.
  */
 public final class HomeSync {
@@ -120,6 +123,11 @@ public final class HomeSync {
                 sleep(Duration.ofSeconds(2));
             } catch (InterruptedException e) {
                 return;
+            } catch (RuntimeException e) {
+                // The follower must outlive anything: if it died, this replica would silently stop
+                // taking the others' changes (it did once, on a user it could not create).
+                LOGGER.log(Level.SEVERE, "netCI homesync: the follower hit an unexpected error; continuing", e);
+                sleep(Duration.ofSeconds(2));
             }
         }
     }
@@ -164,6 +172,12 @@ public final class HomeSync {
                         publishInOrder(it.getFullName(), Files.readAllBytes(it.getConfigFile().getFile().toPath()), 0);
                     }
                 }
+                for (User u : User.getAll()) {
+                    byte[] config = local(userPath(u.getId()));
+                    if (config != null && !latest.containsKey(userPath(u.getId()))) {
+                        publishInOrder(userPath(u.getId()), config, 0);
+                    }
+                }
             }
         }
     }
@@ -175,7 +189,13 @@ public final class HomeSync {
                 // The latest content, which may be newer than this entry: later entries are then no-ops.
                 HomeSyncClient.Item item = client.get(c.path());
                 if (item.version() > versions.getOrDefault(c.path(), 0L)) {
-                    apply(c.path(), item.version(), item.content());
+                    try {
+                        apply(c.path(), item.version(), item.content());
+                    } catch (IOException | RuntimeException e) {
+                        // One change that cannot be applied must not stop the rest; it is said loudly.
+                        LOGGER.log(Level.SEVERE, "netCI homesync: could not apply " + c.path() + " version " + item.version()
+                                + "; this home now differs from the others for it", e);
+                    }
                 }
             }
             applied = c.seq();
@@ -259,10 +279,54 @@ public final class HomeSync {
     }
 
     /** Make this home's item what the store says: created, replaced, or deleted (content null). */
+    /**
+     * Users are kept the same too, under {@code @users/<id>}: a password, an API token, a user's seed
+     * made on one replica and missing on the other would make the replicas two Jenkins to their
+     * users -- a token minted on r0 refused by r1, which a script through the VIP reaches at random.
+     */
+    static final String USERS = "@users/";
+
+    static String userPath(String id) {
+        return USERS + id.replace("%", "%25").replace("/", "%2F");
+    }
+
+    static String userId(String path) {
+        return path.substring(USERS.length()).replace("%2F", "/").replace("%25", "%");
+    }
+
+    private void applyUser(String path, byte[] content) throws IOException {
+        String id = userId(path);
+        User u = User.getById(id, content != null);
+        if (content == null) {
+            if (u != null) {
+                u.delete();
+            }
+            return;
+        }
+        if (u.getUserFolder() == null || !new File(u.getUserFolder(), "config.xml").exists()) {
+            u.save(); // a user new here has no directory until it is first saved
+        }
+        File config = new File(u.getUserFolder(), "config.xml");
+        try (AtomicFileWriter w = new AtomicFileWriter(config.toPath(), java.nio.charset.StandardCharsets.UTF_8)) {
+            try {
+                w.write(new String(content, java.nio.charset.StandardCharsets.UTF_8));
+                w.commit();
+            } finally {
+                w.abort(); // a no-op after commit; removes the temporary file if writing failed
+            }
+        }
+        u.load();
+    }
+
     void apply(String path, long version, byte[] content) throws IOException, InterruptedException {
         APPLYING.set(true);
         try (ACLContext ignored = ACL.as2(ACL.SYSTEM2)) {
             Jenkins j = Jenkins.get();
+            if (path.startsWith(USERS)) {
+                applyUser(path, content);
+                recordApplied(path, version, content);
+                return;
+            }
             Item existing = j.getItemByFullName(path);
             if (content == null) {
                 if (existing != null) {
@@ -282,14 +346,18 @@ public final class HomeSync {
                 LOGGER.warning(() -> "netCI homesync: " + path + " is not an item this replica can update");
                 return;
             }
-            versions.put(path, version);
-            if (content == null) {
-                published.remove(path);
-            } else {
-                published.put(path, sha256(content));
-            }
+            recordApplied(path, version, content);
         } finally {
             APPLYING.set(false);
+        }
+    }
+
+    private void recordApplied(String path, long version, byte[] content) {
+        versions.put(path, version);
+        if (content == null) {
+            published.remove(path);
+        } else {
+            published.put(path, sha256(content));
         }
     }
 
@@ -318,6 +386,11 @@ public final class HomeSync {
 
     private static byte[] local(String path) {
         try (ACLContext ignored = ACL.as2(ACL.SYSTEM2)) {
+            if (path.startsWith(USERS)) {
+                User u = User.getById(userId(path), false);
+                File config = u == null ? null : new File(u.getUserFolder(), "config.xml");
+                return config != null && config.exists() ? Files.readAllBytes(config.toPath()) : null;
+            }
             Item it = Jenkins.get().getItemByFullName(path);
             if (it instanceof AbstractItem ai && ai.getConfigFile().exists()) {
                 return Files.readAllBytes(ai.getConfigFile().getFile().toPath());

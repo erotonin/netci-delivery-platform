@@ -1,0 +1,94 @@
+{
+  "scenario": "aa-phase3",
+  "started": "2026-10-13T10:18:04+00:00",
+  "T1": {
+    "samplesMs": [
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ],
+    "medianMs": null,
+    "maxMs": null,
+    "missing": 10
+  },
+  "T2": {
+    "describeOnR0": 200,
+    "disableOnR1": 200,
+    "r0": {
+      "_class": "org.jenkinsci.plugins.workflow.job.WorkflowJob",
+      "description": "set on r0",
+      "buildable": false
+    },
+    "r1": {
+      "_class": "org.jenkinsci.plugins.workflow.job.WorkflowJob",
+      "description": "set on r0",
+      "buildable": false
+    },
+    "noLostUpdate": true
+  },
+  "T3": {
+    "edits": 40,
+    "accepted": 30,
+    "refused": 10,
+    "refusalReasons": [
+      "netCI: race-101804 is being changed on replica jenkins-0",
+      "netCI: race-101804 is being changed on replica jenkins-1"
+    ],
+    "refusalCodes": [
+      409
+    ],
+    "r0Description": "edit 36 via r1",
+    "r1Description": "edit 36 via r1",
+    "converged": true,
+    "finalIsAnAcceptedEdit": true
+  },
+  "T4": {
+    "deleteOnR1": 404,
+    "goneFromR0AfterSeconds": null
+  },
+  "T5": {
+    "editWhileDown": [
+      503,
+      "netCI: the replicas' shared order (netci-homesync) cannot be reached, so store-101804 cannot be changed safely; reads work"
+    ],
+    "readsWhileDown": [
+      200,
+      200
+    ],
+    "editAcceptedAfterSeconds": 0.2,
+    "r1HasItAfterSeconds": 0.17,
+    "r0DescriptionAfterOutage": "after the store came back"
+  },
+  "T6": {
+    "createdOnR0": [
+      [
+        "while-down-101804-0",
+        200
+      ],
+      [
+        "while-down-101804-1",
+        200
+      ],
+      [
+        "while-down-101804-2",
+        200
+      ]
+    ],
+    "editOnR0": 200,
+    "r1BackAfterSeconds": 9.5,
+    "r1Has": {
+      "while-down-101804-0": null,
+      "while-down-101804-1": null,
+      "while-down-101804-2": null
+    },
+    "r1E4Description": "edited while r1 was down",
+    "complete": false
+  }
+}

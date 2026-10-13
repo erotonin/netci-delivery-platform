@@ -68,6 +68,11 @@ public final class EditOrder implements Filter {
         while (i < parts.length && parts[i].isEmpty()) {
             i++;
         }
+        // Anything posted to a user's pages changes that user (a password, an API token, the
+        // description): two replicas minting tokens for one user at once would drop one of them.
+        if (i + 2 < parts.length && "user".equals(parts[i])) {
+            return HomeSync.userPath(URLDecoder.decode(parts[i + 1], StandardCharsets.UTF_8));
+        }
         while (i + 1 < parts.length && "job".equals(parts[i])) {
             names.add(URLDecoder.decode(parts[i + 1], StandardCharsets.UTF_8));
             i += 2;

@@ -107,6 +107,39 @@ class HomeSyncTest {
     }
 
     @Test
+    void aUserSavedHereIsPublishedAndAnotherReplicasUserChangeIsAppliedHere(JenkinsRule j) throws Exception {
+        ready();
+        hudson.model.User alice = hudson.model.User.getById("alice", true);
+        alice.setFullName("Alice From Here");
+        alice.save(); // setFullName alone changes memory only; the UI saves after it
+        await("alice published", () -> stored("@users/alice") != null && stored("@users/alice").contains("Alice From Here"));
+
+        // r1 renamed her: this replica takes it, and does not publish it back.
+        String fromR1 = stored("@users/alice").replace("Alice From Here", "Alice From R1");
+        int before = STORE.seen().size();
+        STORE.changeFrom("r1", "@users/alice", fromR1);
+        await("r1's change to alice here", () -> "Alice From R1".equals(hudson.model.User.getById("alice", false).getFullName()));
+        Thread.sleep(500);
+        assertTrue(STORE.seen().subList(before, STORE.seen().size()).stream().noneMatch(s -> s.path().equals("@users/alice")),
+                "the applied user was published back");
+
+        // A user only r1 has arrives here too.
+        STORE.changeFrom("r1", "@users/bob", fromR1.replace("Alice From R1", "Bob"));
+        await("bob here", () -> hudson.model.User.getById("bob", false) != null
+                && "Bob".equals(hudson.model.User.getById("bob", false).getFullName()));
+    }
+
+    @Test
+    void aChangeThatCannotBeAppliedDoesNotStopTheOnesAfterIt(JenkinsRule j) throws Exception {
+        ready();
+        STORE.changeFrom("r1", "broken", "<this is not a job/>");
+        STORE.changeFrom("r1", "after-broken", "<flow-definition plugin=\"workflow-job\"><description>still applied</description>"
+                + "<keepDependencies>false</keepDependencies><properties/><triggers/><disabled>false</disabled></flow-definition>");
+        await("the change after the broken one", () -> j.jenkins.getItemByFullName("after-broken") != null);
+        assertNull(j.jenkins.getItemByFullName("broken"));
+    }
+
+    @Test
     void anotherReplicasChangeIsAppliedHereWithoutBeingPublishedBack(JenkinsRule j) throws Exception {
         ready();
         STORE.changeFrom("r1", "made-on-r1", "<flow-definition plugin=\"workflow-job\"><description>from r1</description>"

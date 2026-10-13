@@ -13,6 +13,9 @@ class EditOrderTest {
         assertEquals("team/new", EditOrder.editedItem("POST", "/job/team/createItem", "new"));
         assertEquals("top", EditOrder.editedItem("POST", "/createItem", "top"));
         assertEquals("with space", EditOrder.editedItem("POST", "/job/with%20space/disable", null));
+        assertEquals("@users/alice", EditOrder.editedItem("POST", "/user/alice/configSubmit", null));
+        assertEquals("@users/alice", EditOrder.editedItem("POST",
+                "/user/alice/descriptorByName/jenkins.security.ApiTokenProperty/generateNewToken", null));
     }
 
     @Test
@@ -23,5 +26,7 @@ class EditOrderTest {
         assertNull(EditOrder.editedItem("POST", "/job/app/job/x", null));
         assertNull(EditOrder.editedItem("POST", "/configSubmit", null)); // global config: JCasC's, not an item
         assertNull(EditOrder.editedItem("POST", "/createItem", ""));
+        assertNull(EditOrder.editedItem("GET", "/user/alice/configure", null));
+        assertNull(EditOrder.editedItem("POST", "/user/alice", null));
     }
 }

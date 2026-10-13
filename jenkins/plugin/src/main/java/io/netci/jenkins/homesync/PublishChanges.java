@@ -5,6 +5,7 @@ import hudson.XmlFile;
 import hudson.model.AbstractItem;
 import hudson.model.Item;
 import hudson.model.Saveable;
+import hudson.model.User;
 import hudson.model.listeners.ItemListener;
 import hudson.model.listeners.SaveableListener;
 import java.io.IOException;
@@ -24,7 +25,19 @@ public final class PublishChanges {
         @Override
         public void onChange(Saveable o, XmlFile file) {
             HomeSync sync = HomeSync.get();
-            if (sync == null || !sync.ready() || HomeSync.APPLYING.get() || !(o instanceof AbstractItem item)) {
+            if (sync == null || !sync.ready() || HomeSync.APPLYING.get()) {
+                return;
+            }
+            if (o instanceof User user && file.getFile().getName().equals("config.xml")) {
+                String path = HomeSync.userPath(user.getId());
+                try {
+                    sync.publish(path, Files.readAllBytes(file.getFile().toPath()), EditOrder.tokenFor(path));
+                } catch (IOException e) {
+                    LOGGER.log(Level.SEVERE, "netCI homesync: cannot read the saved user " + user.getId() + " to publish it", e);
+                }
+                return;
+            }
+            if (!(o instanceof AbstractItem item)) {
                 return;
             }
             // Only the item's own configuration: builds and other files an item saves are not it.
