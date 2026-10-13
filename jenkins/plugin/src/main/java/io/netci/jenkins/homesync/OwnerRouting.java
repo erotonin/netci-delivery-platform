@@ -13,7 +13,14 @@ import jakarta.servlet.ServletRequest;
 import jakarta.servlet.ServletResponse;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import hudson.model.User;
 import java.io.IOException;
+import java.net.CookieManager;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.time.Duration;
 import java.net.URLDecoder;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
@@ -43,11 +50,24 @@ public final class OwnerRouting implements Filter {
     private final String me;
     private final String cookieName;
     private final Map<String, String> cookies;
+    private final Map<String, String> urls;
 
-    OwnerRouting(String me, String cookieName, Map<String, String> cookies) {
+    OwnerRouting(String me, String cookieName, Map<String, String> cookies, Map<String, String> urls) {
         this.me = me;
         this.cookieName = cookieName;
         this.cookies = cookies;
+        this.urls = urls;
+    }
+
+    static Map<String, String> pairs(String list) {
+        Map<String, String> m = new HashMap<>();
+        for (String pair : list == null ? new String[0] : list.split(",")) {
+            String[] kv = pair.trim().split("=", 2);
+            if (kv.length == 2) {
+                m.put(kv[0].trim(), kv[1].trim());
+            }
+        }
+        return m;
     }
 
     @Initializer(after = InitMilestone.PLUGINS_STARTED)
@@ -57,14 +77,8 @@ public final class OwnerRouting implements Filter {
         if (HomeSync.setting("NETCI_HOMESYNC_URL", "") == null || me == null || map == null) {
             return;
         }
-        Map<String, String> cookies = new HashMap<>();
-        for (String pair : map.split(",")) {
-            String[] kv = pair.trim().split("=", 2);
-            if (kv.length == 2) {
-                cookies.put(kv[0].trim(), kv[1].trim());
-            }
-        }
-        PluginServletFilter.addFilter(new OwnerRouting(me, HomeSync.setting("NETCI_BALANCER_COOKIE", "NETCI_REPLICA"), cookies));
+        PluginServletFilter.addFilter(new OwnerRouting(me, HomeSync.setting("NETCI_BALANCER_COOKIE", "NETCI_REPLICA"), pairs(map),
+                pairs(HomeSync.setting("NETCI_REPLICA_URLS", ""))));
     }
 
     /** A request about a job's builds: the job's full name, and whether it starts a build or reads one. */
@@ -121,6 +135,10 @@ public final class OwnerRouting implements Filter {
             chain.doFilter(request, response); // nobody holds it live (this replica may take it), or it is ours
             return;
         }
+        if (t.starts()) {
+            forward(t, owner, req, rsp);
+            return;
+        }
         String value = cookies.get(owner);
         if (value == null || req.getParameter(ROUTED) != null) {
             rsp.setStatus(409);
@@ -163,6 +181,97 @@ public final class OwnerRouting implements Filter {
             }
         }
         return out.append(ROUTED).append("=1").toString();
+    }
+
+    /**
+     * "Build now" for a job another replica owns is made there, by this replica, for this person.
+     * Not by redirecting the browser: its POST carries a CSRF crumb bound to this replica's session,
+     * and the owner refused it (403) -- the lab's first try. This replica has already checked the
+     * crumb; it acts for the same person on the owner with the same credential (an API token, valid
+     * on every replica since users are replicated) or a shared session it signs for them (ADR-077),
+     * takes the owner's own crumb, and relays the owner's answer.
+     */
+    private void forward(Target t, String owner, HttpServletRequest req, HttpServletResponse rsp) throws IOException {
+        String base = urls.get(owner);
+        String auth = req.getHeader("Authorization");
+        String cookie = null;
+        if (auth == null) {
+            SharedSession shared = SharedSession.get();
+            User user = User.current();
+            if (shared != null && user != null) {
+                cookie = SharedSession.COOKIE + "=" + shared.issue(user, java.time.Instant.now());
+            }
+        }
+        if (base == null || req.getParameter(ROUTED) != null || (auth == null && cookie == null)) {
+            refuse(rsp, t, owner, auth == null && cookie == null ? "this replica cannot act for an anonymous request there" : null);
+            return;
+        }
+        CookieManager jar = new CookieManager();
+        HttpClient http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(3)).cookieHandler(jar).build();
+        String ctx = req.getContextPath();
+        try {
+            HttpRequest.Builder crumbReq = HttpRequest.newBuilder(URI.create(base + ctx + "/crumbIssuer/api/json")).timeout(Duration.ofSeconds(10));
+            credentials(crumbReq, auth, cookie);
+            HttpResponse<String> crumb = http.send(crumbReq.GET().build(), HttpResponse.BodyHandlers.ofString());
+            StringBuilder form = new StringBuilder();
+            for (Map.Entry<String, String[]> e : req.getParameterMap().entrySet()) {
+                if (e.getKey().equals("Jenkins-Crumb") || e.getKey().equals(ROUTED)) {
+                    continue;
+                }
+                for (String v : e.getValue()) {
+                    form.append(URLEncoder.encode(e.getKey(), StandardCharsets.UTF_8)).append('=')
+                            .append(URLEncoder.encode(v, StandardCharsets.UTF_8)).append('&');
+                }
+            }
+            form.append(ROUTED).append("=1");
+            HttpRequest.Builder post = HttpRequest.newBuilder(URI.create(base + encodedPath(ctx, req.getRequestURI().substring(ctx.length()))))
+                    .timeout(Duration.ofSeconds(15)).header("Content-Type", "application/x-www-form-urlencoded");
+            credentials(post, auth, cookie);
+            if (crumb.statusCode() == 200) {
+                net.sf.json.JSONObject c = net.sf.json.JSONObject.fromObject(crumb.body());
+                post.header(c.getString("crumbRequestField"), c.getString("crumb"));
+            }
+            HttpResponse<String> answer = http.send(post.POST(HttpRequest.BodyPublishers.ofString(form.toString())).build(),
+                    HttpResponse.BodyHandlers.ofString());
+            rsp.setStatus(answer.statusCode());
+            rsp.setHeader("X-Netci-Built-On", owner);
+            answer.headers().firstValue("Location").ifPresent(l -> rsp.setHeader("Location", relative(l)));
+            rsp.setContentType("text/plain;charset=UTF-8");
+            rsp.getWriter().print(answer.statusCode() < 300 ? "netCI: scheduled on replica " + owner + "\n" : answer.body());
+        } catch (IOException e) {
+            LOGGER.log(Level.WARNING, "netCI homesync: could not hand " + t.job() + "'s build to " + owner, e);
+            refuse(rsp, t, owner, null);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            refuse(rsp, t, owner, null);
+        }
+    }
+
+    private static void credentials(HttpRequest.Builder b, String auth, String cookie) {
+        if (auth != null) {
+            b.header("Authorization", auth);
+        } else {
+            b.header("Cookie", cookie);
+        }
+    }
+
+    /** The owner's Location, as a path on this same entry point: never a replica's own address. */
+    static String relative(String location) {
+        URI u = URI.create(location);
+        String path = encodedPath("", u.getRawPath() == null ? "/" : URLDecoder.decode(u.getRawPath(), StandardCharsets.UTF_8));
+        return path.isEmpty() ? "/" : path;
+    }
+
+    static String encodedPath(String contextPath, String path) {
+        String l = location(contextPath, path, null);
+        return l.substring(0, l.indexOf('?'));
+    }
+
+    private static void refuse(HttpServletResponse rsp, Target t, String owner, String why) throws IOException {
+        rsp.setStatus(409);
+        rsp.setContentType("text/plain;charset=UTF-8");
+        rsp.getWriter().println("netCI: " + t.job() + (t.starts() ? " builds" : " #" + t.number() + " runs") + " on replica " + owner
+                + (why == null ? ", which could not be reached; try again in a moment" : "; " + why));
     }
 
     private static boolean hasBuild(Target t) {

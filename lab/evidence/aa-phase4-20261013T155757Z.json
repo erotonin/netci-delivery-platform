@@ -1,0 +1,93 @@
+{
+  "scenario": "aa-phase4",
+  "started": "2026-10-13T15:57:57+00:00",
+  "P1": {
+    "numbers": [
+      1,
+      2,
+      3
+    ],
+    "results": [
+      "SUCCESS",
+      "SUCCESS",
+      "SUCCESS"
+    ],
+    "builtBy": [
+      "jenkins-0",
+      "jenkins-0",
+      "jenkins-0"
+    ],
+    "listedOnR1": [
+      1,
+      2,
+      3
+    ],
+    "r1ConsoleOfBuild1": "jenkins-0",
+    "listingLagMs": [
+      83,
+      123,
+      122
+    ]
+  },
+  "P2": {
+    "status": 307,
+    "routedLocation": true,
+    "cookieAfterRedirect": "r0",
+    "followedStatus": 403,
+    "followedServedBy": "r0",
+    "number": 3,
+    "builtBy": "jenkins-0"
+  },
+  "P3": {
+    "minutesWatched": 3,
+    "buildsOnR0": [
+      1,
+      2,
+      3
+    ],
+    "buildsOnR1": [
+      1,
+      2,
+      3
+    ],
+    "contiguous": true,
+    "builtBy": [
+      "jenkins-1"
+    ],
+    "oneOwnerBuiltThemAll": true
+  },
+  "P4": {
+    "lastNumberBefore": 3,
+    "attempts": [
+      {
+        "t": 0.4,
+        "status": 307
+      },
+      {
+        "t": 2.8,
+        "status": 307
+      },
+      {
+        "t": 5.3,
+        "status": 307
+      },
+      {
+        "t": 7.8,
+        "status": 307
+      },
+      {
+        "t": 10.1,
+        "status": 307
+      },
+      {
+        "t": 12.5,
+        "status": 201
+      }
+    ],
+    "firstAcceptedAfterSeconds": 12.5,
+    "numberOnR1": 4,
+    "continued": true,
+    "builtBy": "jenkins-1",
+    "r0ListsR1sBuildAfterReturn": true
+  }
+}

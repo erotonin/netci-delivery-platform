@@ -71,6 +71,10 @@ spec:
             - {name: NETCI_HOMESYNC_TOKEN_FILE, value: "/run/secrets/netci-homesync/$(POD_NAME)"}
             # ADR-077: the key every replica verifies a sign-in's shared cookie with.
             - {name: NETCI_SESSION_KEY_FILE, value: /run/secrets/netci-session/key}
+            # ADR-078: which balancer cookie sends a request to which replica.
+            - {name: NETCI_REPLICA_COOKIES, value: "jenkins-0=r0,jenkins-1=r1"}
+            # ... and where this replica reaches another to make a build there for the same person.
+            - {name: NETCI_REPLICA_URLS, value: "jenkins-0=http://jenkins-0.jenkins.aa-p2.svc.cluster.local:8080,jenkins-1=http://jenkins-1.jenkins.aa-p2.svc.cluster.local:8080"}
           ports: [{containerPort: 8080}]
           readinessProbe: {httpGet: {path: /login, port: 8080}, periodSeconds: 2, failureThreshold: 3}
           resources: {requests: {cpu: 300m, memory: 1Gi}, limits: {memory: 1536Mi}}

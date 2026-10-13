@@ -24,9 +24,33 @@ import org.jvnet.hudson.test.junit.jupiter.WithJenkins;
 @WithJenkins
 class HomeSyncTest {
     static final FakeHomeSync STORE;
+    /** What the job's owner (r1) was sent by this replica: "METHOD path | Authorization | crumb | body". */
+    static final List<String> AT_OWNER = java.util.Collections.synchronizedList(new java.util.ArrayList<>());
 
     static {
         try {
+            com.sun.net.httpserver.HttpServer owner = com.sun.net.httpserver.HttpServer.create(new java.net.InetSocketAddress("127.0.0.1", 0), 0);
+            owner.createContext("/", x -> {
+                try (x) {
+                    String body = new String(x.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
+                    AT_OWNER.add(x.getRequestMethod() + " " + x.getRequestURI().getPath() + " | " + x.getRequestHeaders().getFirst("Authorization")
+                            + " | " + x.getRequestHeaders().getFirst("Jenkins-Crumb") + " | " + body);
+                    byte[] out;
+                    if (x.getRequestURI().getPath().endsWith("/crumbIssuer/api/json")) {
+                        out = "{\"crumbRequestField\":\"Jenkins-Crumb\",\"crumb\":\"owner-crumb\"}".getBytes(StandardCharsets.UTF_8);
+                        x.sendResponseHeaders(200, out.length);
+                    } else {
+                        out = new byte[0];
+                        x.getResponseHeaders().set("Location", "http://jenkins-1.internal:8080/jenkins/queue/item/42/");
+                        x.sendResponseHeaders(201, -1);
+                    }
+                    if (out.length > 0) {
+                        x.getResponseBody().write(out);
+                    }
+                }
+            });
+            owner.start();
+            System.setProperty("netci.replica.urls", "r1=http://127.0.0.1:" + owner.getAddress().getPort());
             STORE = new FakeHomeSync();
             Path token = Files.createTempFile("homesync", ".token");
             Files.writeString(token, FakeHomeSync.TOKEN);
@@ -52,6 +76,7 @@ class HomeSyncTest {
         System.clearProperty("netci.homesync.token.file");
         System.clearProperty("netci.replica.name");
         System.clearProperty("netci.replica.cookies");
+        System.clearProperty("netci.replica.urls");
     }
 
     private static WorkflowJob pipeline(JenkinsRule j, String name) throws Exception {
@@ -98,25 +123,46 @@ class HomeSyncTest {
     }
 
     @Test
-    void buildNowOnTheWrongReplicaIsSentToTheOwnerOnceAndThenRefusedWithAReason(JenkinsRule j) throws Exception {
+    void buildNowForAnotherReplicasJobIsMadeThereForTheSamePerson(JenkinsRule j) throws Exception {
+        // Redirecting the browser's POST failed on the owner: its crumb belonged to this replica's
+        // session (403). This replica makes the request there itself, as the same person.
         ready();
+        hudson.security.HudsonPrivateSecurityRealm realm = new hudson.security.HudsonPrivateSecurityRealm(false, false, null);
+        realm.createAccount("alice", "alice-password-0123456789");
+        j.jenkins.setSecurityRealm(realm);
+        j.jenkins.setAuthorizationStrategy(new org.jvnet.hudson.test.MockAuthorizationStrategy().grant(jenkins.model.Jenkins.READ,
+                hudson.model.Item.READ, hudson.model.Item.BUILD).everywhere().to("alice"));
+        String token = hudson.model.User.getById("alice", false).getProperty(jenkins.security.ApiTokenProperty.class)
+                .generateNewToken("routing").plainValue;
         pipeline(j, "routed");
         STORE.ownJobAs("r1", "routed");
-        j.jenkins.setCrumbIssuer(null); // the redirect is what this tests, not CSRF
-        JenkinsRule.WebClient wc = j.createWebClient();
+        AT_OWNER.clear();
+        JenkinsRule.WebClient wc = j.createWebClient().withBasicCredentials("alice", token);
         wc.getOptions().setRedirectEnabled(false);
         wc.setThrowExceptionOnFailingStatusCode(false);
-        Page sent = wc.getPage(new WebRequest(new URL(j.getURL(), "job/routed/build"), HttpMethod.POST));
-        assertEquals(307, sent.getWebResponse().getStatusCode(), "a POST must stay a POST");
-        assertTrue(sent.getWebResponse().getResponseHeaderValue("Location").contains(OwnerRouting.ROUTED + "=1"));
-        assertTrue(sent.getWebResponse().getResponseHeaders().stream()
-                .anyMatch(h -> h.getName().equalsIgnoreCase("Set-Cookie") && h.getValue().startsWith("NETCI_REPLICA=c1")));
-        // Back here after the redirect (the owner did not answer): a reason, not a loop.
+        Page made = wc.getPage(new WebRequest(new URL(j.getURL(), "job/routed/build?delay=0sec"), HttpMethod.POST));
+        assertEquals(201, made.getWebResponse().getStatusCode(), made.getWebResponse().getContentAsString());
+        assertEquals("r1", made.getWebResponse().getResponseHeaderValue("X-Netci-Built-On"));
+        assertEquals("/jenkins/queue/item/42/", made.getWebResponse().getResponseHeaderValue("Location"),
+                "the owner's own address leaked to the client");
+        List<String> sent = new java.util.ArrayList<>(AT_OWNER);
+        assertEquals(2, sent.size(), sent.toString());
+        String auth = "Basic " + java.util.Base64.getEncoder().encodeToString(("alice:" + token).getBytes(StandardCharsets.UTF_8));
+        assertTrue(sent.get(0).startsWith("GET /jenkins/crumbIssuer/api/json | " + auth), sent.get(0));
+        assertTrue(sent.get(1).startsWith("POST /jenkins/job/routed/build | " + auth + " | owner-crumb | "), sent.get(1));
+        assertTrue(sent.get(1).contains("delay=0sec") && sent.get(1).contains(OwnerRouting.ROUTED + "=1"), sent.get(1));
+        assertNull(job(j, "routed").getLastBuild(), "it was also built here");
+
+        // Handed over once already: a reason, not another hop.
         Page again = wc.getPage(new WebRequest(new URL(j.getURL(), "job/routed/build?" + OwnerRouting.ROUTED + "=1"), HttpMethod.POST));
         assertEquals(409, again.getWebResponse().getStatusCode());
         assertTrue(again.getWebResponse().getContentAsString().contains("on replica r1"));
-        // A build page this replica does not have goes to the owner too.
+        // A build page this replica does not have goes to the owner (a GET has no crumb to lose).
         assertEquals(302, wc.getPage(new URL(j.getURL(), "job/routed/7/")).getWebResponse().getStatusCode());
+    }
+
+    private static WorkflowJob job(JenkinsRule j, String name) {
+        return j.jenkins.getItemByFullName(name, WorkflowJob.class);
     }
 
     @Test

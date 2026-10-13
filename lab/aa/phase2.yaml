@@ -113,7 +113,10 @@ data:
     backend jenkins
       balance roundrobin
       # Sticky: Jenkins keeps a session in one JVM's memory (until phase 3 replicates users).
-      cookie NETCI_REPLICA insert indirect nocache httponly
+      # preserve: in insert mode HAProxy removes a cookie of this name that a server sets, and the
+      # plugin sets it to send a request to a job's owner (ADR-078). Without preserve the redirect
+      # brought the browser back to the same replica (aa-phase4 P2, first run).
+      cookie NETCI_REPLICA insert indirect nocache httponly preserve
       option httpchk GET /login
       http-check expect status 200
       http-response set-header X-Netci-Replica %s

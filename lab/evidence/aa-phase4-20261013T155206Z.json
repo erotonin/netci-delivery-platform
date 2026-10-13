@@ -1,0 +1,88 @@
+{
+  "scenario": "aa-phase4",
+  "started": "2026-10-13T15:52:06+00:00",
+  "P1": {
+    "numbers": [
+      1,
+      2,
+      3
+    ],
+    "results": [
+      "SUCCESS",
+      "SUCCESS",
+      "SUCCESS"
+    ],
+    "builtBy": [
+      "null",
+      "null",
+      "null"
+    ],
+    "listedOnR1": [
+      1,
+      2,
+      3
+    ],
+    "r1ConsoleOfBuild1": "null",
+    "listingLagMs": [
+      123,
+      121,
+      100
+    ]
+  },
+  "P2": {
+    "status": 307,
+    "routedLocation": false,
+    "cookieToR0": false,
+    "resentStatus": 201,
+    "number": 4,
+    "builtBy": "null"
+  },
+  "P3": {
+    "minutesWatched": 3,
+    "buildsOnR0": [
+      1,
+      2,
+      3
+    ],
+    "buildsOnR1": [
+      1,
+      2,
+      3
+    ],
+    "contiguous": true,
+    "builtBy": [
+      "null"
+    ],
+    "oneOwnerBuiltThemAll": true
+  },
+  "P4": {
+    "lastNumberBefore": 4,
+    "attempts": [
+      {
+        "t": 0.5,
+        "status": 307
+      },
+      {
+        "t": 3.3,
+        "status": 307
+      },
+      {
+        "t": 5.8,
+        "status": 307
+      },
+      {
+        "t": 8.5,
+        "status": 307
+      },
+      {
+        "t": 11.2,
+        "status": 201
+      }
+    ],
+    "firstAcceptedAfterSeconds": 11.2,
+    "numberOnR1": 5,
+    "continued": true,
+    "builtBy": "null",
+    "r0ListsR1sBuildAfterReturn": true
+  }
+}

@@ -36,8 +36,14 @@ controller.
    `LazyBuildMixIn._getRuns().recognizeNumber(n)` (public in 2.555), so every replica lists every
    build without reloading the job.
 4. **A running build's pages go to its owner**: a replica that does not have the build answers with
-   a redirect that sets the balancer's cookie to the owner (the sign-in follows, ADR-077). A
-   "Build now" on a non-owner is redirected the same way, as a 307 so the POST is kept.
+   a redirect that sets the balancer's cookie to the owner (the sign-in follows, ADR-077; HAProxy's
+   cookie needs `preserve`, or it removes the cookie the replica sets). **A "Build now" on a
+   non-owner is made on the owner by that replica**, for the same person: redirecting the browser's
+   POST failed in the lab, because its CSRF crumb is bound to the first replica's session and the
+   owner answered 403. The first replica has checked the crumb; it calls the owner with the same
+   credential (an API token is valid everywhere, users being replicated) or a shared session it
+   signs for that person, takes the owner's own crumb, and relays the answer, with the owner's
+   Location rewritten to a path on the entry point.
 5. Logs of finished builds are kept in PostgreSQL in the lab, with a size limit that is enforced and
    said; a site would put them in an object store (the corp lab has one).
 
