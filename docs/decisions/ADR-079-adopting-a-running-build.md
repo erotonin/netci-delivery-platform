@@ -19,13 +19,22 @@ line once. Three things were done by hand that a replica must do itself:
    published as `@running/<job>/<n>` every 3 s when it changed, and deleted when the build is
    finalised (the finished build is then `@builds/...`). The other replicas only **record** that it
    exists; they never write it into their home, because loading it there would resume it.
-2. **Adoption needs the lease and a fence.** A replica adopts a running build only when the job's
-   lease has expired (its owner stopped renewing) **and** the fence confirms the owner is not
-   running. Lab fence: the Kubernetes API says the owner's pod is gone, not running, being deleted,
-   or on a node that is not Ready. Then it claims the job's lease (one winner, ADR-078), writes the
-   latest copy into its home, makes the number known and loads the run, which resumes itself.
+2. **Adoption needs the runner gone and a claim.** The runner is the replica that last wrote the
+   build's copy. A replica adopts it when the runner is itself (it restarted: the old process is
+   gone) or the fence says the runner is gone since that copy; it claims the build by writing the
+   copy again under its own name, compare-and-set (of two replicas trying, one wins), writes it into
+   its home, makes the number known and loads the run, which resumes itself. Lab fence: the
+   Kubernetes API says the runner's pod is gone, being deleted, not running, its container started
+   after the copy (a new process), or its node not Ready.
+   **Not the job's lease.** The first design required it. The lease decides who starts builds and
+   reserves numbers, and it moved to the other replica for a new build (#8) while #7 waited for
+   adoption with its agent on the first replica: #7 was stuck between the two for good.
 2b. **A build follows its agent.** It is adopted only where the agent it is using (the last
-   `Running on X` of its log, if that node block has not closed) is online. The first lab run had
+   `Running on X` of its log, if that node block has not closed) is online. The name is read with
+   the console notes removed: in the log file it is a hyperlink note, and read raw it named no agent
+   any replica had -- nothing was adopted in the second lab run.
+2c. **An idle agent visiting another replica goes home** when its home answers, so the next build of
+   a job owned by the home has its agents (both agents had ended on one replica once). The first lab run had
    the dead replica come back in 9 s and take its own build back while its agent had reconnected to
    the other replica; the build waited for that agent for good.
 3. **A replica that starts finds its own running builds suspect**: before Jenkins loads its jobs,

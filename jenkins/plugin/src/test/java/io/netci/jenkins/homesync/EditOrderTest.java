@@ -38,11 +38,14 @@ class EditOrderTest {
     }
 
     @Test
-    void theAgentABuildIsOnIsTheLastNodeItEnteredAndHasNotLeft() {
+    void theAgentABuildIsOnIsTheLastNodeItEnteredAndHasNotLeft() throws java.io.IOException {
         assertEquals("agent-0", RunningBuilds.agentInLog("[Pipeline] node\nRunning on agent-0 in /w\n[Pipeline] {\n[Pipeline] sh\ntick 3\n"));
         assertEquals("b", RunningBuilds.agentInLog("Running on a in /w\n[Pipeline] // node\nRunning on b in /w\ntick\n"));
         assertNull(RunningBuilds.agentInLog("Running on a in /w\n[Pipeline] // node\n[Pipeline] echo\n"));
         assertNull(RunningBuilds.agentInLog("[Pipeline] sleep\n"));
+        // As the log file has it: the name is a console note (a hyperlink) -- the first lab run's miss.
+        String noted = new hudson.console.HyperlinkNote("/computer/agent-0/", 7).encode() + "agent-0";
+        assertEquals("agent-0", RunningBuilds.agentInLog("Running on " + noted + " in /w\n[Pipeline] {\n"));
     }
 
     @Test

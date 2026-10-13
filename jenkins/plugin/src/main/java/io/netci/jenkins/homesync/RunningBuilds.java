@@ -192,9 +192,20 @@ public final class RunningBuilds {
         }
     }
 
-    /** One pass: adopt every running build whose owner's lease expired and whose owner the fence says is gone. */
+    /**
+     * One pass: adopt every running build whose runner is gone and whose agent is here.
+     *
+     * <p>The runner is the replica that last wrote the build's copy -- not the job's lease holder:
+     * the lease decides who starts builds and reserves numbers, and it can move to another replica
+     * while an orphan waits (the lab: r1 took the lease to build #8 while #7's agent was on r0, and
+     * #7 was stuck between them). Adopted when: the runner is this replica (it restarted: the old
+     * process is gone) or the fence says it is gone since its last copy; and the agent the build is
+     * on is online here (or it is on none). The claim is a compare-and-set of the copy under this
+     * replica's name: of two replicas trying at once, one wins.
+     */
     static void adoptOrphans(HomeSync sync) {
         Fence fence = Fence.configured();
+        String me = OwnerRouting.me();
         for (Map.Entry<String, Long> e : sync.runningCopies.entrySet()) {
             String path = e.getKey();
             int slash = path.lastIndexOf('/');
@@ -212,28 +223,16 @@ public final class RunningBuilds {
                     }
                     continue; // running here already
                 }
-                HomeSyncClient.JobOwner owner = sync.client.jobOwner(jobName);
-                boolean mine = owner.owner().equals(OwnerRouting.me());
-                if (owner.live() && !mine) {
-                    continue; // its owner is alive
-                }
-                // This replica's own build (it restarted: the old process is gone), or another's whose
-                // lease expired and that the fence says is not running.
-                if (!mine && (fence == null || !fence.isGone(owner.owner(), System.currentTimeMillis() + owner.expiresInMs()
-                        - BuildOwnership.LEASE.toMillis()))) {
-                    continue;
-                }
-                if (!BuildOwnership.own(sync, job)) {
-                    continue; // someone else took it first
-                }
                 HomeSyncClient.Item copy = sync.client.get(path);
                 if (copy.content() == null) {
                     sync.runningCopies.remove(path);
                     continue;
                 }
-                // The build follows its agent: adopted only where the agent it was using is online.
-                // A replica that came back fast took its own build while its agent had reconnected to
-                // the other replica, and the build waited for that agent for good (the lab's first run).
+                boolean mine = copy.updatedBy().equals(me);
+                if (!mine && (fence == null || !fence.isGone(copy.updatedBy(), copy.updatedAt()))) {
+                    continue; // its runner may be alive
+                }
+                // The build follows its agent: adopted only where the agent it is on is online.
                 String agent = agentOf(copy.content());
                 if (agent != null) {
                     hudson.model.Computer c = Jenkins.get().getComputer(agent);
@@ -242,14 +241,16 @@ public final class RunningBuilds {
                     }
                 }
                 File aside = new File(job.getBuildDir(), SUSPECT + number);
-                if (mine && new File(aside, "build.xml").exists() && new File(aside, "program.dat").exists()) {
-                    // This replica's own build, set aside at its start: its own last state on disk is
-                    // at least as new as the store's copy.
-                    adopt(job, number, archive(aside));
-                } else {
-                    adopt(job, number, copy.content());
+                byte[] state = mine && new File(aside, "build.xml").exists() && new File(aside, "program.dat").exists()
+                        ? archive(aside) // its own last state on disk is at least as new as the store's copy
+                        : copy.content();
+                try {
+                    sync.client.put(path, state, copy.version(), 0); // the claim: one replica wins it
+                } catch (HomeSyncClient.Refused r) {
+                    continue; // another replica claimed it, or it changed: look again next pass
                 }
                 sync.runningCopies.remove(path);
+                adopt(job, number, state);
             } catch (IOException ex) {
                 LOGGER.log(Level.WARNING, "netCI homesync: could not adopt " + path, ex);
             } catch (InterruptedException ex) {
@@ -276,7 +277,10 @@ public final class RunningBuilds {
         }
     }
 
-    static String agentInLog(String log) {
+    static String agentInLog(String raw) {
+        // The node's name is a hyperlink in the log file: "Running on <ESC>[8mha:...<ESC>[0magent-0 in".
+        // Read as it was, it named no agent any replica had, and nothing was ever adopted.
+        String log = hudson.console.ConsoleNote.removeNotes(raw);
         java.util.regex.Matcher m = java.util.regex.Pattern.compile("Running on (\\S+) in ").matcher(log);
         String agent = null;
         int at = -1;

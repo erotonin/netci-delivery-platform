@@ -77,6 +77,10 @@ func TestTheOriginOfAChangeComesFromTheCredential(t *testing.T) {
 	if header.Get("X-Updated-By") != "r1" {
 		t.Fatalf("recorded origin %q", header.Get("X-Updated-By"))
 	}
+	at, err := strconv.ParseInt(header.Get("X-Updated-At"), 10, 64)
+	if err != nil || time.Since(time.UnixMilli(at)) > time.Minute || time.Since(time.UnixMilli(at)) < -time.Minute {
+		t.Fatalf("X-Updated-At %q is not the time of the change", header.Get("X-Updated-At"))
+	}
 }
 
 func TestTheAPIRefusesAStaleChangeAndALockHeldByAnother(t *testing.T) {

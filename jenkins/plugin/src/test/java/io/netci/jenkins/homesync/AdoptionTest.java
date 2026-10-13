@@ -121,12 +121,17 @@ class AdoptionTest {
     void aBuildAnotherLiveReplicaTookIsNotResumedHere() throws Throwable {
         STORE.reset();
         sessions.then(j -> startLong(j, "taken"));
-        STORE.ownJobAs("r1", "taken"); // while this replica was down, r1 took the job (and its build)
+        // While this replica was down, r1 adopted the build: its copy is now r1's (the claim), and r1
+        // is alive -- there is no fence here to say otherwise. The job's lease is not what decides:
+        // it can move for a new build while an orphan waits (the lab's #7 and #8).
+        synchronized (STORE) {
+            STORE.changeFrom("r1", "@running/taken/1", STORE.items.get("@running/taken/1").content());
+        }
         sessions.then(j -> {
             WorkflowJob job = j.jenkins.getItemByFullName("taken", WorkflowJob.class);
             await("the home caught up", () -> HomeSync.get() != null && HomeSync.get().ready());
             Thread.sleep(12_000); // two adoption passes and more
-            assertNull(job.getBuildByNumber(1), "a build another live replica owns was resumed here");
+            assertNull(job.getBuildByNumber(1), "a build another live replica adopted was resumed here too");
             assertTrue(new File(job.getBuildDir(), RunningBuilds.SUSPECT + "1").exists(), "the unfinished copy was not set aside");
         });
     }

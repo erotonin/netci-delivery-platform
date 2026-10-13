@@ -230,6 +230,9 @@ func (s *Server) getItem(w http.ResponseWriter, r *http.Request, _ string) {
 	}
 	w.Header().Set("Content-Type", "application/xml")
 	w.Header().Set("X-Updated-By", it.UpdatedBy)
+	// When, on the database's clock: for a running build's copy, the last time its runner was
+	// known alive (ADR-079's fence compares a process's start with it).
+	w.Header().Set("X-Updated-At", strconv.FormatInt(it.UpdatedAt.UnixMilli(), 10))
 	w.Write(it.Content) //nolint:errcheck
 }
 

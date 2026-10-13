@@ -28,8 +28,16 @@ final class HomeSyncClient {
         this.tokenFile = tokenFile;
     }
 
-    /** An item as the store has it. {@code content} is null when it never existed or was deleted. */
-    record Item(long version, byte[] content) {}
+    /**
+     * An item as the store has it. {@code content} is null when it never existed or was deleted;
+     * {@code updatedBy} is the replica that last wrote it, {@code updatedAt} when (epoch ms, the
+     * database's clock).
+     */
+    record Item(long version, byte[] content, String updatedBy, long updatedAt) {
+        Item(long version, byte[] content) {
+            this(version, content, "", 0);
+        }
+    }
 
     /** One entry of the store's feed. */
     record Change(long seq, String path, long version, boolean deleted, String origin) {}
@@ -80,7 +88,8 @@ final class HomeSyncClient {
         if (r.statusCode() != 200) {
             throw new IOException("homesync answered HTTP " + r.statusCode() + " for " + path);
         }
-        return new Item(version, r.body());
+        return new Item(version, r.body(), r.headers().firstValue("X-Updated-By").orElse(""),
+                Long.parseLong(r.headers().firstValue("X-Updated-At").orElse("0")));
     }
 
     long put(String path, byte[] content, long expect, long lockToken) throws IOException, InterruptedException {

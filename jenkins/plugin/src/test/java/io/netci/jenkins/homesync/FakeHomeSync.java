@@ -117,6 +117,10 @@ final class FakeHomeSync {
     private synchronized void getItem(HttpExchange x, String path) throws IOException {
         Entry e = items.get(path);
         x.getResponseHeaders().set("X-Version", Long.toString(e == null ? 0 : e.version()));
+        if (e != null) {
+            x.getResponseHeaders().set("X-Updated-By", e.by());
+            x.getResponseHeaders().set("X-Updated-At", Long.toString(System.currentTimeMillis()));
+        }
         if (e == null || e.content() == null) {
             reply(x, 404, new JSONObject().element("code", "NO_ITEM"));
             return;
