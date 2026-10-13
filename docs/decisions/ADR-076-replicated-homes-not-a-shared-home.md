@@ -102,12 +102,34 @@ What it does not fix yet, said plainly:
 - On OpenStack the VIP needs the port's allowed-address-pairs (or an Octavia balancer instead):
   a question for the site.
 
+## Phase 3: the homes kept the same (done)
+
+`lab/aa/phase3.yaml`, `lab/aa/phase3_probe.py`: netci-homesync (two, on the lab's PostgreSQL) and the
+plugin on both replicas (controller `2.555.3-netci15`). Each client pinned to one replica through the
+VIP. Evidence `aa-phase3-20261013T150720Z.json`.
+
+| # | Experiment | Result |
+|---|---|---|
+| T1 | A job created on r0: until r1 has it (10 samples) | median **231 ms**, max 545 ms, none missing |
+| T2 | ADR-074 E4 again: description on r0, then disabled on r1 | **No lost update**: both replicas have both changes |
+| T3 | 40 description edits at once, half on each replica | 25 accepted, 15 refused with "being changed on replica ..." (409), none lost silently; both end on the same accepted edit |
+| T4 | A job deleted on r1 | gone from r0 in 0.16 s |
+| T5 | netci-homesync scaled to 0 | edits refused (503, with the reason), reads served (200); after it returned, an edit in 0.3 s and on r1 in 1.4 s |
+| T6 | r1 down while r0 creates 3 jobs and edits one | r1 back in 20 s with every change |
+| T7 | An API token minted on r0 (users replicated, ADR-077) | accepted on r1 after 0.05 s; revoked on r0, refused on r1 after 0.8 s |
+| T8 | Signed in through the form on r0, r0's pod killed | 59 of 60 polls answered by r1, **all signed in as admin**, no failure |
+
+The first run (`aa-phase3-20261013T101804Z.json`) found a real gap: a job created from XML
+(POST createItem with a config.xml) is written and loaded without a save, so it was never published
+-- ten jobs on r0, none on r1. Fixed (f52639b); the unit test now goes through that API. On the next
+start, r0's bootstrap published those jobs and both replicas listed the same 18.
+
 ## Phases
 
 | Phase | What | Pass |
 |---|---|---|
 | 2 | HAProxy + VIP before two replicas on `local-path`; the VIP's machine, a replica's machine, both, lose power | Done: 2-6 s, one sample per scenario (above); sessions are lost with their replica |
-| 3 | Configuration through PostgreSQL: concurrent edits on two replicas | No lost update; both replicas converge; the loser is refused, not overwritten |
+| 3 | Configuration (and users) through PostgreSQL: concurrent edits on two replicas | Done (above) |
 | 4 | Build numbers and finished builds replicated | Every replica shows every build; the publish lag measured |
 | 5 | Running builds replicated; adoption after fencing; WebSocket agents routed by name | A build on a dead replica finishes, every step once |
 | 6 | Chaos and soak | Evidence in `lab/evidence/` |

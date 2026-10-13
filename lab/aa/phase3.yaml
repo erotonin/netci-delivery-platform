@@ -69,6 +69,8 @@ spec:
             - {name: POD_NAME, valueFrom: {fieldRef: {fieldPath: metadata.name}}}
             - {name: NETCI_HOMESYNC_URL, value: "http://homesync.aa-p2.svc.cluster.local:8080"}
             - {name: NETCI_HOMESYNC_TOKEN_FILE, value: "/run/secrets/netci-homesync/$(POD_NAME)"}
+            # ADR-077: the key every replica verifies a sign-in's shared cookie with.
+            - {name: NETCI_SESSION_KEY_FILE, value: /run/secrets/netci-session/key}
           ports: [{containerPort: 8080}]
           readinessProbe: {httpGet: {path: /login, port: 8080}, periodSeconds: 2, failureThreshold: 3}
           resources: {requests: {cpu: 300m, memory: 1Gi}, limits: {memory: 1536Mi}}
@@ -76,9 +78,11 @@ spec:
             - {name: home, mountPath: /var/jenkins_home}
             - {name: casc, mountPath: /var/jenkins_config, readOnly: true}
             - {name: homesync, mountPath: /run/secrets/netci-homesync, readOnly: true}
+            - {name: session-key, mountPath: /run/secrets/netci-session, readOnly: true}
       volumes:
         - {name: casc, configMap: {name: casc}}
         - {name: homesync, secret: {secretName: homesync-tokens, defaultMode: 0440}}
+        - {name: session-key, secret: {secretName: session-key, defaultMode: 0440}}
   volumeClaimTemplates:
     - metadata: {name: home}
       spec:

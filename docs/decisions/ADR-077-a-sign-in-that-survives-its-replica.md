@@ -1,6 +1,7 @@
 # ADR-077: A sign-in that survives its replica
 
-- Status: accepted (built and unit-tested; the lab run is ADR-076 phase 3b)
+- Status: accepted; measured in the lab (ADR-076 phase 3, T7 and T8: a token minted on r0 accepted by r1 in
+  0.05 s; a person signed in on r0 still signed in on r1 after r0's pod was killed, 59 of 60 polls)
 - Date: 2026-10-13
 - Refines: ADR-076 (replicated homes)
 

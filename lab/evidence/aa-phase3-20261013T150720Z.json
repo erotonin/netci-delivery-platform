@@ -1,0 +1,112 @@
+{
+  "scenario": "aa-phase3",
+  "started": "2026-10-13T15:07:20+00:00",
+  "T1": {
+    "samplesMs": [
+      545,
+      194,
+      209,
+      255,
+      191,
+      175,
+      243,
+      317,
+      231,
+      207
+    ],
+    "medianMs": 231,
+    "maxMs": 545,
+    "missing": 0
+  },
+  "T2": {
+    "describeOnR0": 200,
+    "disableOnR1": 200,
+    "r0": {
+      "_class": "org.jenkinsci.plugins.workflow.job.WorkflowJob",
+      "description": "set on r0",
+      "buildable": false
+    },
+    "r1": {
+      "_class": "org.jenkinsci.plugins.workflow.job.WorkflowJob",
+      "description": "set on r0",
+      "buildable": false
+    },
+    "noLostUpdate": true
+  },
+  "T3": {
+    "edits": 40,
+    "accepted": 25,
+    "refused": 15,
+    "refusalReasons": [
+      "netCI: race-150720 is being changed on replica jenkins-0",
+      "netCI: race-150720 is being changed on replica jenkins-1"
+    ],
+    "refusalCodes": [
+      409
+    ],
+    "r0Description": "edit 39 via r1",
+    "r1Description": "edit 39 via r1",
+    "converged": true,
+    "finalIsAnAcceptedEdit": true
+  },
+  "T4": {
+    "deleteOnR1": 200,
+    "goneFromR0AfterSeconds": 0.16
+  },
+  "T5": {
+    "editWhileDown": [
+      503,
+      "netCI: the replicas' shared order (netci-homesync) cannot be reached, so store-150720 cannot be changed safely; reads work"
+    ],
+    "readsWhileDown": [
+      200,
+      200
+    ],
+    "editAcceptedAfterSeconds": 0.3,
+    "r1HasItAfterSeconds": 1.4,
+    "r0DescriptionAfterOutage": "after the store came back"
+  },
+  "T6": {
+    "createdOnR0": [
+      [
+        "while-down-150720-0",
+        200
+      ],
+      [
+        "while-down-150720-1",
+        200
+      ],
+      [
+        "while-down-150720-2",
+        200
+      ]
+    ],
+    "editOnR0": 200,
+    "r1BackAfterSeconds": 20.4,
+    "r1Has": {
+      "while-down-150720-0": "made while r1 was down 0",
+      "while-down-150720-1": "made while r1 was down 1",
+      "while-down-150720-2": "made while r1 was down 2"
+    },
+    "r1E4Description": "edited while r1 was down",
+    "complete": true
+  },
+  "T7": {
+    "minted": 200,
+    "acceptedOnR1AfterSeconds": 0.05435538291931152,
+    "onR0": 200,
+    "onR1": 200,
+    "refusedOnR1AfterRevokeSeconds": 0.8018844127655029
+  },
+  "T8": {
+    "pinnedTo": "r0",
+    "sharedCookieIssued": true,
+    "polls": 60,
+    "answeredByR1": 59,
+    "signedInOnR1": true,
+    "usersSeenOnR1": [
+      "admin"
+    ],
+    "failures": 0
+  }
+}

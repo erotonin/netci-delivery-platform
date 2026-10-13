@@ -13,6 +13,8 @@ pinned by the balancer's cookie. Experiments:
   T4 delete   a job deleted on r1 disappears from r0
   T5 store    netci-homesync scaled to 0: edits refused (503), reads still served; back: edits work
   T6 restart  r1 down while r0 is edited; r1 back: it has every change
+  T7 tokens   an API token minted on r0 works on r1 (users are replicated, ADR-077)
+  T8 sign-in  a person signed in on r0, r0 killed: is that person still signed in on r1?
 Evidence: lab/evidence/aa-phase3-<timestamp>.json.
 """
 from __future__ import annotations
@@ -201,6 +203,55 @@ def main() -> int:
                    "complete": all(v == f"made while r1 was down {i}" for i, v in enumerate(has.values()))
                    and (r1.job(f"e4-{tag}") or {}).get("description") == "edited while r1 was down"}
     print("T6", facts["T6"], flush=True)
+
+    # T7: an API token minted on r0, used on r1. Kept in memory only, revoked at the end.
+    code, body, _ = r0.req("/user/admin/descriptorByName/jenkins.security.ApiTokenProperty/generateNewToken",
+                           urllib.parse.urlencode({"newTokenName": f"probe-{tag}"}).encode(), "application/x-www-form-urlencoded")
+    data = json.loads(body).get("data", {}) if code == 200 else {}
+    token, uuid = data.get("tokenValue"), data.get("tokenUuid")
+    t7: dict = {"minted": code}
+    if token:
+        by_token = "Basic " + base64.b64encode(f"admin:{token}".encode()).decode()
+
+        def with_token(replica: str) -> int:
+            c = R(replica)
+            c.auth = by_token
+            return c.req("/api/json?tree=mode")[0]
+
+        t7["acceptedOnR1AfterSeconds"] = until(lambda: with_token("r1") == 200, 30, 0.2)
+        t7["onR0"], t7["onR1"] = with_token("r0"), with_token("r1")
+        r0.req("/user/admin/descriptorByName/jenkins.security.ApiTokenProperty/revoke",
+               urllib.parse.urlencode({"tokenUuid": uuid}).encode(), "application/x-www-form-urlencoded")
+        t7["refusedOnR1AfterRevokeSeconds"] = until(lambda: with_token("r1") == 401, 30, 0.2)
+        del token, by_token
+    facts["T7"] = t7
+    print("T7", t7, flush=True)
+
+    # T8: a sign-in through the form on r0, then r0 killed (no graceful stop).
+    sys.path.insert(0, str(Path(__file__).parent))
+    import phase2_probe as p2  # the form sign-in with its crumb
+
+    person = p2.Session()
+    person.jar.set_cookie(http.cookiejar.Cookie(0, "NETCI_REPLICA", "r0", None, False, "192.168.122.240", False, False,
+                                                "/", True, False, None, False, None, None, {}))
+    pinned = person.sign_in()
+    shared = any(c.name == "NETCI_SESSION" for c in person.jar)
+    if not shared:  # issued on the first request after the sign-in
+        person.who()
+        shared = any(c.name == "NETCI_SESSION" for c in person.jar)
+    k("-n", NS, "delete", "pod", "jenkins-0", "--grace-period=0", "--force", check=False)
+    seen = []
+    t0 = time.time()
+    while time.time() - t0 < 30:
+        code, rep, user, _ = person.who()
+        seen.append({"t": round(time.time() - t0, 1), "code": code, "replica": rep, "user": user})
+        time.sleep(0.5)
+    on_r1 = [s for s in seen if s["replica"] == "r1" and s["code"] == 200]
+    facts["T8"] = {"pinnedTo": pinned, "sharedCookieIssued": shared, "polls": len(seen),
+                   "answeredByR1": len(on_r1), "signedInOnR1": bool(on_r1) and all(s["user"] == "admin" for s in on_r1),
+                   "usersSeenOnR1": sorted({s["user"] for s in on_r1}), "failures": sum(1 for s in seen if s["code"] != 200)}
+    print("T8", facts["T8"], flush=True)
+    k("-n", NS, "rollout", "status", "statefulset/jenkins", "--timeout=600s", check=False)
 
     out = p0.EVIDENCE / f"aa-phase3-{started.strftime('%Y%m%dT%H%M%SZ')}.json"
     out.write_text(json.dumps(facts, indent=2) + "\n")
