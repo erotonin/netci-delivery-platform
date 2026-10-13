@@ -4,7 +4,11 @@ import hudson.init.InitMilestone;
 import hudson.init.Initializer;
 import hudson.init.Terminator;
 import hudson.model.AbstractItem;
+import hudson.FilePath;
 import hudson.model.Item;
+import hudson.model.Job;
+import hudson.model.Run;
+import jenkins.model.lazy.LazyBuildMixIn;
 import hudson.model.User;
 import hudson.util.AtomicFileWriter;
 import java.io.File;
@@ -331,10 +335,60 @@ public final class HomeSync {
         u.load();
     }
 
+    /** Finished builds (ADR-078) are kept the same too, under {@code @builds/<job>/<number>}. */
+    static final String BUILDS = "@builds/";
+
+    static String buildPath(Run<?, ?> run) {
+        return BUILDS + run.getParent().getFullName() + "/" + run.getNumber();
+    }
+
+    /**
+     * A finished build another replica ran: its directory written into this home, and the job told
+     * the number exists -- without reloading the job. A build is immutable once finished, so one
+     * already here is left as it is.
+     */
+    private void applyBuild(String path, byte[] content) throws IOException, InterruptedException {
+        int slash = path.lastIndexOf('/');
+        String jobName = path.substring(BUILDS.length(), slash);
+        int number = Integer.parseInt(path.substring(slash + 1));
+        Job<?, ?> job = Jenkins.get().getItemByFullName(jobName, Job.class);
+        if (job == null) {
+            LOGGER.warning(() -> "netCI homesync: a build of " + jobName + ", which is not here");
+            return;
+        }
+        if (content == null) {
+            Run<?, ?> run = job.getBuildByNumber(number);
+            if (run != null) {
+                run.delete();
+            }
+            return;
+        }
+        File dir = new File(job.getBuildDir(), Integer.toString(number));
+        if (dir.exists()) {
+            return;
+        }
+        if (!dir.mkdirs()) {
+            throw new IOException("cannot create " + dir);
+        }
+        // FilePath.untarFrom refuses entries that would land outside the directory.
+        new FilePath(dir).untarFrom(new ByteArrayInputStream(content), FilePath.TarCompression.GZIP);
+        if (job instanceof LazyBuildMixIn.LazyLoadingJob<?, ?> lazy) {
+            lazy.getLazyBuildMixIn()._getRuns().recognizeNumber(number);
+        }
+        if (job.getNextBuildNumber() <= number) {
+            job.updateNextBuildNumber(number + 1);
+        }
+    }
+
     void apply(String path, long version, byte[] content) throws IOException, InterruptedException {
         APPLYING.set(true);
         try (ACLContext ignored = ACL.as2(ACL.SYSTEM2)) {
             Jenkins j = Jenkins.get();
+            if (path.startsWith(BUILDS)) {
+                applyBuild(path, content);
+                recordApplied(path, version, content);
+                return;
+            }
             if (path.startsWith(USERS)) {
                 applyUser(path, content);
                 recordApplied(path, version, content);

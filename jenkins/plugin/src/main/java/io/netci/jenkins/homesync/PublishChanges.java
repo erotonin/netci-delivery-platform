@@ -1,6 +1,11 @@
 package io.netci.jenkins.homesync;
 
 import hudson.Extension;
+import hudson.FilePath;
+import hudson.model.Run;
+import hudson.model.listeners.RunListener;
+import java.io.ByteArrayOutputStream;
+import java.io.OutputStream;
 import hudson.XmlFile;
 import hudson.model.AbstractItem;
 import hudson.model.Item;
@@ -15,6 +20,38 @@ import java.util.logging.Logger;
 
 /** Publishes what this replica saves or deletes, unless it is applying another replica's change. */
 public final class PublishChanges {
+    /** A finished build, and a deleted one (ADR-078). */
+    @Extension
+    public static final class OnBuild extends RunListener<Run<?, ?>> {
+        @Override
+        public void onFinalized(Run<?, ?> run) {
+            HomeSync sync = HomeSync.get();
+            if (sync == null || !sync.ready()) {
+                return;
+            }
+            ByteArrayOutputStream archive = new ByteArrayOutputStream();
+            try (OutputStream gz = FilePath.TarCompression.GZIP.compress(archive)) {
+                new FilePath(run.getRootDir()).tar(gz, "**/*");
+            } catch (IOException e) {
+                LOGGER.log(Level.SEVERE, "netCI homesync: cannot archive " + run + " to publish it; the other replicas will not have it", e);
+                return;
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return;
+            }
+            sync.publish(HomeSync.buildPath(run), archive.toByteArray(), 0);
+        }
+
+        @Override
+        public void onDeleted(Run<?, ?> run) {
+            HomeSync sync = HomeSync.get();
+            if (sync == null || !sync.ready() || HomeSync.APPLYING.get()) {
+                return;
+            }
+            sync.publishDelete(HomeSync.buildPath(run), 0);
+        }
+    }
+
     private static final Logger LOGGER = Logger.getLogger(PublishChanges.class.getName());
 
     private PublishChanges() {}

@@ -65,8 +65,12 @@ final class FakeHomeSync {
 
     /** Another replica changes an item, as the store would record it. */
     synchronized long changeFrom(String replica, String path, String content) {
+        return changeFrom(replica, path, content == null ? null : content.getBytes(StandardCharsets.UTF_8));
+    }
+
+    synchronized long changeFrom(String replica, String path, byte[] content) {
         long v = items.containsKey(path) ? items.get(path).version() + 1 : 1;
-        items.put(path, new Entry(v, content == null ? null : content.getBytes(StandardCharsets.UTF_8), replica));
+        items.put(path, new Entry(v, content, replica));
         feed.add(new JSONObject().element("seq", feed.size() + 1).element("path", path).element("version", v)
                 .element("deleted", content == null).element("origin", replica));
         notifyAll();
@@ -101,6 +105,7 @@ final class FakeHomeSync {
                 case "DELETE /v1/locks" -> unlock(x, q.get("path"), Long.parseLong(q.get("token")));
                 case "GET /v1/changes" -> changes(x, Long.parseLong(q.get("after")), q.get("wait"));
                 case "POST /v1/jobs/claim" -> claim(x, q.get("job"));
+                case "GET /v1/jobs/owner" -> owner(x, q.get("job"));
                 case "POST /v1/jobs/reserve" -> reserve(x, q.get("job"), Integer.parseInt(q.get("number")), Long.parseLong(q.get("epoch")));
                 default -> reply(x, 404, new JSONObject());
             }
@@ -161,6 +166,12 @@ final class FakeHomeSync {
 
     synchronized List<Integer> reservedFor(String job) {
         return new ArrayList<>(reserved.getOrDefault(job, List.of()));
+    }
+
+    private synchronized void owner(HttpExchange x, String job) throws IOException {
+        String owner = jobOwner.get(job);
+        reply(x, 200, new JSONObject().element("job", job).element("owner", owner == null ? "" : owner)
+                .element("epoch", jobEpoch.getOrDefault(job, 0L)).element("expiresInMs", owner == null ? 0 : 15000));
     }
 
     private synchronized void claim(HttpExchange x, String job) throws IOException {

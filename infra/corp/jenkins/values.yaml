@@ -7,7 +7,7 @@ controller:
   image:
     registry: 172.17.0.1:8930
     repository: netci/jenkins-controller
-    tag: 2.555.3-netci15         # toolchain/versions.yaml decides it (ADR-059); a contract test holds them equal
+    tag: 2.555.3-netci16         # toolchain/versions.yaml decides it (ADR-059); a contract test holds them equal
   installPlugins: false          # baked into the image: a restart must not depend on the update site
   numExecutors: 0
   # SystemRead lets netci-sa read the plugin list (ADR-059) without Administer.

@@ -19,6 +19,16 @@ class EditOrderTest {
     }
 
     @Test
+    void theRoutedLocationIsReEncodedSoNothingRawReachesTheHeader() {
+        assertEquals("/jenkins/job/a%20b/buildWithParameters?X=1+2&netci-routed=1",
+                OwnerRouting.location("/jenkins", "/job/a%20b/buildWithParameters", "X=1%202"));
+        String injected = OwnerRouting.location("", "/job/app/build", "a=%0d%0aSet-Cookie:%20x=1");
+        assertEquals(-1, injected.indexOf('\r'));
+        assertEquals(-1, injected.indexOf('\n'));
+        assertEquals("/job/app/7/?netci-routed=1", OwnerRouting.location("", "/job/app/7/", OwnerRouting.ROUTED + "=1"));
+    }
+
+    @Test
     void readsBuildsAndOtherPagesAreNotEdits() {
         assertNull(EditOrder.editedItem("GET", "/job/app/config.xml", null));
         assertNull(EditOrder.editedItem("POST", "/job/app/build", null));

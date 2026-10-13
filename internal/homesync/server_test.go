@@ -167,3 +167,17 @@ func TestTheJobLeaseAndReservationsOverHTTP(t *testing.T) {
 		t.Fatalf("owner: %d %v", code, body)
 	}
 }
+
+func TestABuildMayBeLargerThanAConfigButIsStillBounded(t *testing.T) {
+	srv := testServer(t)
+	big := strings.Repeat("x", MaxItemBytes+1)
+	if code, _, _, _ := call(t, srv, "PUT", "/v1/items?path=job", tokenR0, map[string]string{"If-Match": "0"}, big); code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("a config above 4 MiB: %d", code)
+	}
+	if code, _, _, raw := call(t, srv, "PUT", "/v1/items?path=@builds/job/1", tokenR0, map[string]string{"If-Match": "0"}, big); code != 200 {
+		t.Fatalf("a build of 4 MiB: %d %s", code, raw)
+	}
+	if code, _, _, _ := call(t, srv, "PUT", "/v1/items?path=@builds/job/2", tokenR0, map[string]string{"If-Match": "0"}, strings.Repeat("y", MaxBuildBytes+1)); code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("a build above 32 MiB: %d", code)
+	}
+}

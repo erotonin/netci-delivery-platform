@@ -22,6 +22,18 @@ import (
 // MaxItemBytes bounds one item's config.xml: a job's is a few KiB; a megabyte is a mistake.
 const MaxItemBytes = 4 << 20
 
+// MaxBuildBytes bounds one finished build (its directory, gzipped: build.xml, log, flow nodes,
+// ADR-078). Kept in PostgreSQL in the lab; a build above it is refused and said so -- a site would
+// keep build archives in an object store.
+const MaxBuildBytes = 32 << 20
+
+func maxBytes(path string) int64 {
+	if strings.HasPrefix(path, "@builds/") {
+		return MaxBuildBytes
+	}
+	return MaxItemBytes
+}
+
 // Replicas maps a bearer token to the replica it identifies. Which replica made a change is
 // decided here, from the credential, never from anything the request says about itself.
 type Replicas struct{ byDigest map[[32]byte]string }
@@ -252,7 +264,7 @@ func (s *Server) change(w http.ResponseWriter, r *http.Request, replica string, 
 				version, err = s.Store.Delete(r.Context(), path, expect, replica, token)
 			} else {
 				var body []byte
-				if body, err = io.ReadAll(http.MaxBytesReader(w, r.Body, MaxItemBytes)); err == nil {
+				if body, err = io.ReadAll(http.MaxBytesReader(w, r.Body, maxBytes(path))); err == nil {
 					if len(body) == 0 {
 						err = errors.New("an item's content cannot be empty; delete it instead")
 					} else {

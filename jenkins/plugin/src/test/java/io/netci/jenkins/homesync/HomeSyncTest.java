@@ -32,6 +32,9 @@ class HomeSyncTest {
             Files.writeString(token, FakeHomeSync.TOKEN);
             System.setProperty("netci.homesync.url", STORE.url());
             System.setProperty("netci.homesync.token.file", token.toString());
+            // This replica is "me" to the fake store; r1 is the other, behind the balancer's cookie c1.
+            System.setProperty("netci.replica.name", "me");
+            System.setProperty("netci.replica.cookies", "me=c0,r1=c1");
         } catch (IOException e) {
             throw new ExceptionInInitializerError(e);
         }
@@ -47,6 +50,8 @@ class HomeSyncTest {
     static void off() {
         System.clearProperty("netci.homesync.url");
         System.clearProperty("netci.homesync.token.file");
+        System.clearProperty("netci.replica.name");
+        System.clearProperty("netci.replica.cookies");
     }
 
     private static WorkflowJob pipeline(JenkinsRule j, String name) throws Exception {
@@ -65,6 +70,63 @@ class HomeSyncTest {
         assertEquals(List.of(1, 2), STORE.reservedFor("owned"));
         assertEquals(1, b1.getNumber());
         assertEquals(2, b2.getNumber());
+    }
+
+    @Test
+    void aFinishedBuildIsPublishedAndAnotherReplicasBuildIsListedHere(JenkinsRule j) throws Exception {
+        ready();
+        WorkflowJob src = pipeline(j, "src");
+        j.buildAndAssertSuccess(src);
+        await("build #1 published", () -> STORE.items.containsKey("@builds/src/1"));
+        byte[] archive;
+        synchronized (STORE) {
+            archive = STORE.items.get("@builds/src/1").content();
+        }
+        assertTrue(archive.length > 0);
+
+        // The same build, as r1 would have published it for its own job: listed here, readable.
+        WorkflowJob dst = pipeline(j, "dst");
+        STORE.changeFrom("r1", "@builds/dst/1", archive);
+        await("r1's build listed here", () -> dst.getBuildByNumber(1) != null);
+        org.jenkinsci.plugins.workflow.job.WorkflowRun copied = dst.getBuildByNumber(1);
+        assertEquals(hudson.model.Result.SUCCESS, copied.getResult());
+        assertTrue(copied.getLog().contains("hi"), "the log did not come with the build");
+        assertTrue(dst.getNextBuildNumber() >= 2, "the next build here would reuse #1");
+
+        STORE.changeFrom("r1", "@builds/dst/1", (byte[]) null);
+        await("r1's deletion of the build here", () -> dst.getBuildByNumber(1) == null);
+    }
+
+    @Test
+    void buildNowOnTheWrongReplicaIsSentToTheOwnerOnceAndThenRefusedWithAReason(JenkinsRule j) throws Exception {
+        ready();
+        pipeline(j, "routed");
+        STORE.ownJobAs("r1", "routed");
+        j.jenkins.setCrumbIssuer(null); // the redirect is what this tests, not CSRF
+        JenkinsRule.WebClient wc = j.createWebClient();
+        wc.getOptions().setRedirectEnabled(false);
+        wc.setThrowExceptionOnFailingStatusCode(false);
+        Page sent = wc.getPage(new WebRequest(new URL(j.getURL(), "job/routed/build"), HttpMethod.POST));
+        assertEquals(307, sent.getWebResponse().getStatusCode(), "a POST must stay a POST");
+        assertTrue(sent.getWebResponse().getResponseHeaderValue("Location").contains(OwnerRouting.ROUTED + "=1"));
+        assertTrue(sent.getWebResponse().getResponseHeaders().stream()
+                .anyMatch(h -> h.getName().equalsIgnoreCase("Set-Cookie") && h.getValue().startsWith("NETCI_REPLICA=c1")));
+        // Back here after the redirect (the owner did not answer): a reason, not a loop.
+        Page again = wc.getPage(new WebRequest(new URL(j.getURL(), "job/routed/build?" + OwnerRouting.ROUTED + "=1"), HttpMethod.POST));
+        assertEquals(409, again.getWebResponse().getStatusCode());
+        assertTrue(again.getWebResponse().getContentAsString().contains("on replica r1"));
+        // A build page this replica does not have goes to the owner too.
+        assertEquals(302, wc.getPage(new URL(j.getURL(), "job/routed/7/")).getWebResponse().getStatusCode());
+    }
+
+    @Test
+    void aJobOwnedHereIsNotRedirected(JenkinsRule j) throws Exception {
+        ready();
+        WorkflowJob job = pipeline(j, "mine");
+        j.buildAndAssertSuccess(job);
+        JenkinsRule.WebClient wc = j.createWebClient();
+        wc.getOptions().setRedirectEnabled(false);
+        assertEquals(200, wc.getPage(new URL(j.getURL(), "job/mine/1/")).getWebResponse().getStatusCode());
     }
 
     @Test
@@ -206,7 +268,7 @@ class HomeSyncTest {
         Thread.sleep(500);
         assertTrue(STORE.seen().stream().noneMatch(s -> s.path().equals("made-on-r1")), "the applied change was published back");
 
-        STORE.changeFrom("r1", "made-on-r1", null);
+        STORE.changeFrom("r1", "made-on-r1", (String) null);
         await("r1's deletion here", () -> j.jenkins.getItemByFullName("made-on-r1") == null);
     }
 
