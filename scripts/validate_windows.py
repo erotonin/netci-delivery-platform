@@ -194,6 +194,14 @@ if "output.body.url" in backstage_text:
     errors.append("Backstage output references URL not returned by netCI API")
 
 makefile_text = (ROOT / "Makefile").read_text(encoding="utf-8")
+# The Makefile includes the Jenkins HA layer's targets (mk/ha.mk, ADR-073): read what it includes,
+# or a documented `make check` would be reported missing although make runs it.
+for included in re.findall(r"^include\s+(\S+)$", makefile_text, flags=re.MULTILINE):
+    path = ROOT / included
+    if path.is_file():
+        makefile_text += "\n" + path.read_text(encoding="utf-8")
+    else:
+        errors.append(f"Makefile includes a missing file: {included}")
 targets = make_targets(makefile_text)
 script_references = re.findall(r"(?:python3?|bash|\$\([A-Z_]+\))\s+([A-Za-z0-9_./-]+\.(?:py|sh))", makefile_text)
 for relative in script_references:
