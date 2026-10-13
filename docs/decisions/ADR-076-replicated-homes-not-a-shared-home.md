@@ -149,7 +149,7 @@ replica (ADR-078 point 4). Both runs are kept as evidence.
 | 2 | HAProxy + VIP before two replicas on `local-path`; the VIP's machine, a replica's machine, both, lose power | Done: 2-6 s, one sample per scenario (above); sessions are lost with their replica |
 | 3 | Configuration (and users) through PostgreSQL: concurrent edits on two replicas | Done (above) |
 | 4 | Build numbers and finished builds replicated | Done (above) |
-| 5 | Running builds replicated; adoption after fencing; WebSocket agents routed by name | A build on a dead replica finishes, every step once |
+| 5 | Running builds replicated; adoption after fencing; WebSocket agents routed by name | Done (ADR-079): pod killed 4.3 s, machine lost 49.5 s, SUCCESS, every tick once |
 | 6 | Chaos and soak | Evidence in `lab/evidence/` |
 
 ## Rejected

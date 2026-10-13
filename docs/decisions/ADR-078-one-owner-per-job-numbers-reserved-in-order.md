@@ -78,6 +78,12 @@ hand); adoption only once the old owner is fenced (here: killed and cordoned by 
 returning replica must not resume, from its stale copy, a build that was adopted elsewhere (here:
 its copy was replaced by hand before it came back).
 
+## Phase 5 automated (ADR-079)
+
+What was done by hand above is done by the replicas: a killed pod's build adopted in 4.3 s, a dead
+machine's in 49.5 s, both SUCCESS with every tick once, neither resumed again by the replica that
+came back (`aa-phase5-20261013T192242Z.json`, ADR-079 has the table).
+
 ## Rejected
 
 - **Numbers striped by replica** (r0 odd, r1 even): no coordination needed, but numbers that jump

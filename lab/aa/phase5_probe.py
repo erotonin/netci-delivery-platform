@@ -37,10 +37,22 @@ def kubectl(*args: str, check: bool = True) -> str:
 
 
 def holder(n: int) -> tuple[str | None, dict]:
-    """Which replica answers for build n (a replica without it redirects to the owner), and its state."""
-    c = p3.R("r0")
-    code, body, served = c.req(f"/job/long/{n}/api/json?tree=building,result")
-    return (served if code == 200 else None), (json.loads(body) if code == 200 else {})
+    """Which replica has build n, asking each one itself, redirects not followed: a replica without
+    the build sends the request on to the owner, and following that mixed the two up (the first
+    machine run recorded no holder until the end)."""
+    import urllib.error
+    import urllib.request
+    for r in ("r0", "r1"):
+        c = p3.R(r)
+        opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(c.jar), p4.NoRedirect())
+        req = urllib.request.Request(p3.VIP + f"/job/long/{n}/api/json?tree=building,result", headers={"Authorization": c.auth})
+        try:
+            with opener.open(req, timeout=3) as resp:
+                if resp.headers.get("X-Netci-Replica") == r:
+                    return r, json.loads(resp.read())
+        except (urllib.error.URLError, OSError):
+            continue
+    return None, {}
 
 
 def console(n: int) -> str:
@@ -105,6 +117,15 @@ def scenario(kind: str) -> dict:
              "twice": sorted({t for t in seen if seen.count(t) > 1}),
              "hosts": sorted(set(re.findall(r"^tick \d+ on (\S+)", console(n), re.M))),
              "timeline": timeline}
+    # The adoption's own record, from the replica that adopted: its log line and its time. Polling
+    # through the VIP while a machine is dying misses answers (3 s timeouts), so this is the
+    # authority for when and where; the polls are kept as they came.
+    facts["killedAtEpoch"] = round(t0, 1)
+    for pod in REPLICA.values():
+        for line in kubectl("-n", NS, "logs", pod, "--since=30m", check=False).splitlines():
+            if f"adopted long #{n} " in line:
+                at = dt.datetime.strptime(line[:23], "%Y-%m-%d %H:%M:%S.%f").replace(tzinfo=dt.timezone.utc).timestamp()
+                facts["adoptionLogged"] = {"by": pod, "afterSeconds": round(at - t0, 1), "line": line[:160]}
     if kind == "machine":
         subprocess.run([*VIRSH, "start", victim], capture_output=True)
     whole()

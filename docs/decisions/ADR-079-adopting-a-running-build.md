@@ -1,6 +1,6 @@
 # ADR-079: Adopting a running build when its replica dies
 
-- Status: accepted (built; unit-tested across a real Jenkins restart; the lab run is ADR-078 phase 5)
+- Status: accepted; measured in the lab (below)
 - Date: 2026-10-13
 - Refines: ADR-078
 
@@ -44,6 +44,28 @@ line once. Three things were done by hand that a replica must do itself:
    `<result>`": a running Pipeline's build.xml already says `SUCCESS`, its initial value. Those builds come back only through
    adoption (2) -- by this replica or another, whichever takes the lease -- so a build is resumed in
    one place, from the latest replicated copy.
+
+## Measured (the lab, netci22, `lab/aa/phase5_probe.py`, `aa-phase5-20261013T192242Z.json`)
+
+`long`, 90 one-second ticks in an `sh` step on agent-0 (inbound, WebSocket through the VIP), owned by
+r0. Nothing done by hand after the death; the adoption time is the adopting replica's own log line.
+
+| Death of the owner | Adopted by | Adopted after | Result | Ticks | Returning replica |
+|---|---|---|---|---|---|
+| its pod killed (no grace) | jenkins-1 | **4.3 s** | SUCCESS, 74.5 s after the death | 90, none missing, none twice | lists it SUCCESS, did not resume it |
+| its machine's power cut | jenkins-1 | **49.5 s** | SUCCESS, 76.2 s after the death | 90, none missing, none twice | lists it SUCCESS, did not resume it |
+
+After a machine's death the build still finished when it would have: the `sh` process ran on the
+agent throughout, and the adopter read its output on. The 49.5 s are Kubernetes taking the dead
+node to NotReady, which is what the lab's fence waits for; a power fence (Redfish) is faster.
+
+Found on the way, each kept as evidence and fixed: the agent's name read from the raw log (a
+console note) matched nothing; adoption waited on the job's lease, which had moved for a new build
+(#7 stuck while #8 ran); a fast-returning replica took its build back while its agent was on the
+other; HAProxy kept an agent's tunnel to a dead machine open for an hour; the fence's pooled
+connection kept landing on the dead API server; an agent was sent home from a build just adopted
+for it. Once, the lab's PostgreSQL was on the lost machine: the store answered 503 for ~80 s and
+adoption waited for it -- the store must be HA.
 
 ## What it costs, said plainly
 

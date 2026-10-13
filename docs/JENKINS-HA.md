@@ -30,6 +30,28 @@ against real Jenkins, with the evidence file named; "tested" means automated tes
 | Configuration changes need no restart | The cell agent applies a changed JCasC ConfigMap to the running controller; jobs new in JCasC exist from the first start | **Lab**: applied in 81 s with the same pod and no restart; a job declared only in JCasC was there after a restart, with no reload |
 | A failure that needs a person is seen | 16 Prometheus alerts, each with a runbook entry, including no supervisor or queue running at all; a Grafana dashboard; every labelled series starts at 0 so the first event after a start counts | **Lab**, kube-prometheus-stack (`lab/monitoring.sh`): all 8 netCI targets up, every rule healthy; with every supervisor replica removed, `NetciSupervisorNotLeading` fired after 96 s and cleared 61 s after they returned; all 23 dashboard queries returned data through Grafana once runs and a sandbox claim had happened. **Tested**: promtool unit tests (`deploy/helm/netci/ci/test-rules.sh`) |
 
+## Active-active: the UI and API never go down (ADR-076 to ADR-079)
+
+The cells above keep builds when a controller's machine dies, but that controller's UI is down
+until it is taken over. Active-active keeps the UI up: several replicas serve one Jenkins at once,
+each with **its own `JENKINS_HOME` on its own node's disk** (`local-path`, as the site mostly runs),
+kept the same through PostgreSQL by netCI's own plugin and `netci-homesync` -- not one shared home:
+on Longhorn RWX that stalled every replica 61 s when the NFS server's machine died (ADR-074).
+Pipeline only, inbound agents (the mentor's site). Lab: 2 replicas, an HAProxy per machine, a
+kube-vip VIP, 2 inbound agents with 2 executors each.
+
+| Guarantee | How | Status |
+|---|---|---|
+| The UI and API answer through a machine's power loss | HAProxy on every machine behind a kube-vip VIP (ARP, leader election on each machine's own API server); health checks every second, a failed request sent again to the other replica | **Lab**: a replica's machine 0-2 s, the VIP's machine 6 s, both on one machine 2-4 s; one sample each (`aa-phase2-*.json`) |
+| A signed-in person stays signed in when their replica dies | Users replicated; a cookie signed with a key every replica has, bound to the user's seed, restored with the realm's current authorities (ADR-077) | **Lab**: machine lost, still `admin` on the other replica (`aa-phase2-20261013T151003Z.json`); pod killed, 59 of 60 polls signed in (`aa-phase3-20261013T150720Z.json`) |
+| Both homes stay the same, no edit lost | Every item and user change ordered by PostgreSQL: a per-item lock, compare-and-set on its version, a feed every replica follows (ADR-076) | **Lab**: a job on r0 on r1 in 231 ms (median); ADR-074's lost update replayed, nothing lost; 40 concurrent edits on both replicas, 25 accepted, 15 refused with the holder named, both converged; a replica down while the other changed comes back with every change; store down: edits refused (503), reads served |
+| An API token works on every replica | Users replicated | **Lab**: minted on r0, accepted by r1 in 0.05 s, revoked there in 0.8 s |
+| Build numbers used once; every build listed everywhere | One owner per job (a lease with an epoch); each number reserved in PostgreSQL before the build takes it; finished builds published and listed by `recognizeNumber` (ADR-078) | **Lab**: listed on the other replica in 104-229 ms; a cron job on both replicas built once a minute; owner killed, numbers continued (`aa-phase4-20261013T161858Z.json`) |
+| "Build now" on any replica | Made on the job's owner by the replica that got it, for the same person | **Lab**: 201, built once, on the owner |
+| A running build survives its replica's death | Copied every 3 s while it runs; adopted where its agent is, once the fence says its runner is gone, claimed by compare-and-set; loading it resumes it; a returning replica sets its own unfinished builds aside (ADR-079) | **Lab**: pod killed, adopted in 4.3 s; machine lost, in 49.5 s; both SUCCESS, 90 of 90 ticks, none twice, not resumed again by the replica that came back (`aa-phase5-20261013T192242Z.json`) |
+| No CloudBees limit kept | Agents keep several executors; Pipeline resumes; REST answers from any replica | Agents ran with 2 executors each. Freestyle is not covered (the site has none) |
+| Not done, said plainly | The store's PostgreSQL must be HA (a single one on the lost machine left adoption and edits waiting ~80 s once); views, renames and moves of items are not replicated; a POST from a page served by the dead replica fails its CSRF crumb once; the fence is Kubernetes' view, not a power fence | -- |
+
 ## Builds on the agent fabric
 
 | Guarantee | How | Status |
@@ -78,6 +100,11 @@ deploy/helm/netci/ci/test-rules.sh   # promtool checks and unit tests of the ale
 - [ADR-069 — fencing with real BMCs, at scale, without costing a running build](decisions/ADR-069-fencing-with-real-bmcs-at-scale.md)
 - [ADR-070 — cell pods go after the storage settles](decisions/ADR-070-cell-pods-go-after-the-storage-settles.md)
 - [ADR-071 — upgrades, failing dependencies, cluster DNS, start time, a fabric that heals](decisions/ADR-071-what-production-asks-beyond-a-power-loss.md)
+- [ADR-074 — active-active on one shared home: what breaks](decisions/ADR-074-active-active-controllers-on-one-jenkins-home.md)
+- [ADR-076 — active-active on replicated homes](decisions/ADR-076-replicated-homes-not-a-shared-home.md)
+- [ADR-077 — a sign-in that survives its replica](decisions/ADR-077-a-sign-in-that-survives-its-replica.md)
+- [ADR-078 — one owner per job, numbers reserved in order](decisions/ADR-078-one-owner-per-job-numbers-reserved-in-order.md)
+- [ADR-079 — adopting a running build](decisions/ADR-079-adopting-a-running-build.md)
 
 Installing it: [docs/INSTALL.md](INSTALL.md) (prerequisites, images, both charts, the
 checks before anyone depends on it). Operating it: [the runbook](RUNBOOK.md) (every alert,
