@@ -1,6 +1,6 @@
 # ADR-074: Active-active Jenkins on one JENKINS_HOME -- what breaks, and the plan
 
-- Status: proposed (phase 0 of the lab done; the design below is what the next phases build and test)
+- Status: proposed (phases 0 and 1 of the lab done; the design below is what the next phases build and test)
 - Date: 2026-10-13
 - Refines: ADR-060 (one writer per cell), ADR-071 (UI unavailable during a takeover)
 
@@ -50,6 +50,33 @@ What it shows:
   mechanism to use. It runs only at start, it needs the build's previous owner provably stopped
   (or the build runs twice), and it needs the step's process on an agent the adopter can reach.
 
+## Phase 1: the shared home's cost, and what it does when its machine dies
+
+`lab/aa/phase1_storage_probe.py`: on the replica that is *not* on the share-manager's machine, 4 KiB
+writes with `fsync` every 0.2 s, on the home and on the pod's own disk; then a writer loop on the home
+and the replica's `/login` asked every 0.5 s while the machine running Longhorn's share-manager (the
+NFS server of the RWX volume) loses power (`virsh destroy`). One run per setting.
+
+| Setting | Write latency, home vs local (median / p99 ms) | Writes stalled after power loss | `/login` failures | Evidence |
+|---|---|---|---|---|
+| Longhorn default | 8.0 / 15.0 vs 4.5 / 15.1 | **133.7 s** | 0 of 496 | `aa-phase1-storage-20261013T023735Z.json` |
+| `rwx-volume-fast-failover=true` | 8.9 / 17.1 vs 4.9 / 18.4 | **61.0 s** | 0 of 497 | `aa-phase1-storage-20261013T024510Z.json` |
+
+What it shows:
+- **Steady state is not the problem.** A synced write to the home costs about twice the local disk,
+  a few milliseconds; Jenkins' own saves are not on a hot path where that matters.
+- **The failover is.** Every writer on the home blocks until the share-manager is up on another
+  machine: about a minute even with fast failover. `/login` kept answering only because it never
+  touches the home. Any request that reads or saves a build, a job or a log would hang as long, on
+  *every* replica at once, since they share the one NFS server. That is an outage of the UI in all
+  but name. So Longhorn RWX alone does not meet "the UI never goes down".
+- So point 8 below: the controllers must not block on the home. What the home holds stays there, but
+  a replica must keep serving while the home is away, and the storage choice must be measured the
+  same way for each option the mentor's site may have (an HA NAS over NFS, CephFS with a standby
+  MDS), with the probe above.
+- Kept: `rwx-volume-fast-failover=true` on the lab's Longhorn. It halves the stall and costs nothing
+  measured.
+
 ## Decision: the design the next phases build
 
 1. **Nothing that is not state on the shared home.** WAR, unzipped plugins and caches are on each
@@ -78,12 +105,18 @@ What it shows:
    - Freestyle: cannot resume in Jenkins at all, so it is re-run from the start and that is said
      plainly.
 
+8. **Requests do not wait on the shared home** (phase 1). Reads a replica can answer from memory
+   are answered from memory; a request that needs the home while it is away gets a bounded wait and
+   an honest error, never a hang; the load balancer's health check tells "this replica is stuck on
+   storage" from "this replica is down", so a storage stall does not look like every replica dying.
+   Which store the mentor's site has decides how long the home is away; the probe measures it.
+
 ## Phases
 
 | Phase | What | Pass |
 |---|---|---|
 | 0 | Uncoordinated replicas | Done: the table above |
-| 1 | The shared file system's latency, and its failover when the machine holding it dies (Longhorn RWX now; NFS and CephFS options) | Known whether storage keeps "the UI never goes down" |
+| 1 | The shared file system's latency, and its failover when the machine holding it dies (Longhorn RWX now; NFS and CephFS options) | Done for Longhorn RWX: it does not, alone (61 s stall); NFS and CephFS still to measure |
 | 2 | Load balancer + replicas serving the UI; a machine loses power | UI and API probed every second, none failing (or within the mentor's bound) |
 | 3 | PostgreSQL coordination: ownership, numbers, configuration; adoption without restart | A running build on a dead replica carries on, every step once |
 | 4 | Agents (single-executor, SSH and inbound), cron and polling once per cluster, `build`, `lock` | Each correct with a replica lost |

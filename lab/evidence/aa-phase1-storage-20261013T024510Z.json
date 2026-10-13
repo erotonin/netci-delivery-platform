@@ -1,0 +1,33 @@
+{
+  "scenario": "aa-phase1-storage",
+  "started": "2026-10-13T02:45:10+00:00",
+  "volume": "pvc-c9e24bee-7a84-46b3-a5be-15a32cc7a510",
+  "shareManagerNode": "netci-lab-3",
+  "replicas": {
+    "r1": "netci-lab-1",
+    "r2": "netci-lab-3"
+  },
+  "watcher": "r1",
+  "latency_shared_ms": {
+    "n": 100,
+    "median": 8.85,
+    "p99": 17.09,
+    "max": 19.72
+  },
+  "latency_local_ms": {
+    "n": 100,
+    "median": 4.88,
+    "p99": 18.36,
+    "max": 42.17
+  },
+  "failover": {
+    "writesBefore": 48,
+    "writesAfter": 847,
+    "firstWriteAfterLossSeconds": 60.9,
+    "longestWriteGapSeconds": 61.0,
+    "uiPolls": 497,
+    "uiFailures": 0,
+    "uiLongestOutageSeconds": 0.0,
+    "shareManagerNodeAfter": "netci-lab-2"
+  }
+}
