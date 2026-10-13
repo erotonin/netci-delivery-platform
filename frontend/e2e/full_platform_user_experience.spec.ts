@@ -1,4 +1,5 @@
 import { expect, test, type Page } from '@playwright/test'
+import { activeFreezesNamed, cancelFreezesNamed, separationOfDuties, skipUnlessRepositoryReachable } from './live'
 
 /**
  * Authentic Keycloak SSO Login using browser PKCE exchange.
@@ -42,7 +43,8 @@ async function ssoLogin(page: Page, username: string, password = 'netci-lab-only
 test.describe.serial('Comprehensive Real-User Platform Experience & Zero-Mock Verification', () => {
   test.setTimeout(180_000)
 
-  test('Milestone 1: CI/CD Pipeline Execution & Real-Time DAG Monitoring', async ({ page }) => {
+  test('Milestone 1: CI/CD Pipeline Execution & Real-Time DAG Monitoring', async ({ page, request }) => {
+    await skipUnlessRepositoryReachable(request, 'hello-container')
     console.log('[E2E 1] Signing in as engineer pat...')
     await ssoLogin(page, 'pat')
 
@@ -140,16 +142,21 @@ test.describe.serial('Comprehensive Real-User Platform Experience & Zero-Mock Ve
     console.log('[E2E 2] Production Request successfully submitted.')
 
     // 5. Verify Negative Test: Requester (pat) cannot approve own request (Separation of Duties)
-    const firstRow = page.locator('.requests-table button[aria-label^="Xem "]').first()
+    const firstRow = page.locator('.requests-table button[aria-label^="View "]').first()
     await firstRow.click()
     await expect(page.locator('.modal')).toBeVisible()
 
     const approveBtn = page.locator('.modal [data-testid="request-approve"], .modal button:has-text("Approve"), .modal button:has-text("Phê duyệt")').first()
     await expect(approveBtn).toBeVisible()
-    await expect(approveBtn).toBeDisabled()
-    const titleAttr = await approveBtn.getAttribute('title')
-    expect(titleAttr).toMatch(/You raised this request|different reviewer|tách biệt/i)
-    console.log(`[E2E 2] Separation of Duties verified: Approve button is correctly DISABLED for requester with title: "${titleAttr}"`)
+    if (await separationOfDuties(page.request)) {
+      await expect(approveBtn).toBeDisabled()
+      const titleAttr = await approveBtn.getAttribute('title')
+      expect(titleAttr).toMatch(/You raised this request|different reviewer/i)
+      console.log(`[E2E 2] Separation of Duties verified: Approve button is correctly DISABLED for requester with title: "${titleAttr}"`)
+    } else {
+      // Authentication off: one anonymous subject, which the server lets approve.
+      await expect(approveBtn).toBeEnabled()
+    }
     await page.locator('.modal button[aria-label="Đóng"], .modal button:has-text("Close")').first().click()
 
     // 6. Role Switch: Sign in as Reviewer / Release Manager (rae) in a dedicated context
@@ -159,7 +166,7 @@ test.describe.serial('Comprehensive Real-User Platform Experience & Zero-Mock Ve
     await ssoLogin(reviewerPage, 'rae')
 
     await reviewerPage.click('button:has-text("Production Requests")')
-    const reviewerViewBtn = reviewerPage.locator('.requests-table button[aria-label^="Xem "]').first()
+    const reviewerViewBtn = reviewerPage.locator('.requests-table button[aria-label^="View "]').first()
     await reviewerViewBtn.click()
     await expect(reviewerPage.locator('.modal')).toBeVisible()
 
@@ -238,56 +245,9 @@ test.describe.serial('Comprehensive Real-User Platform Experience & Zero-Mock Ve
     }
   })
 
-  test('Milestone 4: Template Studio Management (Register, Instantiate & Version)', async ({ page }) => {
-    console.log('[E2E 4] Testing Template Studio as Platform Admin (pat)...')
-    await ssoLogin(page, 'pat')
-
-    // Open Service Catalog -> Golden Path Templates
-    await page.click('button:has-text("Service Catalog")')
-    await page.click('button[role="tab"]:has-text("Golden Path Templates")')
-
-    // Open Register Template Studio Modal
-    const regBtn = page.locator('button[data-testid="catalog-header-register-template"], button[data-testid="catalog-register-template"]')
-    await expect(regBtn).toBeVisible()
-    await regBtn.click()
-    await expect(page.locator('.modal h2')).toContainText('Register Golden Path Template')
-
-    // Form inputs
-    const tplId = `vt-microservice-${Date.now().toString().slice(-4)}`
-    await page.locator('#tpl-id').fill(tplId)
-    await page.locator('#tpl-name').fill('VTNet Telecom Microservice')
-    await page.locator('#tpl-description').fill('Standardized Viettel Cloud-native microservice with SLSA provenance.')
-    await page.locator('#tpl-parameters').fill(JSON.stringify({ port: 8080, db: 'postgres' }))
-    await page.locator('#tpl-pipeline').fill(JSON.stringify({ stages: ['checkout', 'test', 'build', 'sign'] }))
-
-    // Submit Template
-    await page.locator('button[data-testid="catalog-register-template-submit"]').click()
-    await expect(page.locator('.modal')).toBeHidden({ timeout: 10_000 })
-    console.log(`[E2E 4] Successfully registered template ${tplId} in database!`)
-
-    // Verify Template Card in Catalog
-    const tplCard = page.locator(`article:has-text("${tplId}")`)
-    await expect(tplCard).toBeVisible()
-
-    // Test 1-Click Instantiate
-    const instBtn = tplCard.locator('button:has-text("1-Click Instantiate")')
-    await instBtn.click()
-    await expect(page.locator('.modal h2')).toContainText('Instantiate Golden Path')
-    await page.locator('.modal input[placeholder*="order-api"]').fill('vt-subscriber-demo')
-    await page.locator('.modal button:has-text("Generate Application Plan")').click()
-    await expect(page.locator('text=Instantiated Configuration Plan Ready!')).toBeVisible({ timeout: 10_000 })
-    console.log('[E2E 4] 1-Click Instantiate plan computed successfully!')
-    await page.locator('.modal button:has-text("Close")').first().click()
-
-    // Test New Version button for Admin
-    const verBtn = tplCard.locator(`button[data-testid="catalog-new-version-${tplId}"]`)
-    if (await verBtn.isVisible()) {
-      await verBtn.click()
-      await expect(page.locator('.modal h2')).toContainText(/Register Golden Path Template|Register template/i)
-      console.log('[E2E 4] Template versioning modal opened successfully!')
-      await page.locator('.modal button:has-text("Cancel")').click()
-    }
-  })
+  // Milestone 4 (Template Studio: register, instantiate and version a Golden Path template) went
+  // with the feature: 1dabfca removed the catalog's Golden Path tab in favour of the shared
+  // Pipelines page, whose list and designer user_experience_comprehensive_audit Workflow 5 covers.
 
   test('Milestone 5: Enterprise Governance - Release Calendar Freezes, Vulnerabilities CVE & Server Fleet', async ({ page }) => {
     console.log('[E2E 5] Testing Release Calendar Change Freezes...')
@@ -302,48 +262,40 @@ test.describe.serial('Comprehensive Real-User Platform Experience & Zero-Mock Ve
     await expect(page.locator('form.freeze-form, form:has-text("New change freeze")')).toBeVisible()
 
     const freezeName = `DR-Drill-${Date.now().toString().slice(-4)}`
-    await page.locator('#freeze-name').fill(freezeName)
+    try {
+      await page.locator('#freeze-name').fill(freezeName)
 
-    const now = new Date()
-    const freezeStart = new Date(now.getTime() - 3600_000).toISOString().slice(0, 16)
-    const freezeEnd = new Date(now.getTime() + 86400_000).toISOString().slice(0, 16)
-    await page.locator('#freeze-start').fill(freezeStart)
-    await page.locator('#freeze-end').fill(freezeEnd)
+      const now = new Date()
+      const freezeStart = new Date(now.getTime() - 3600_000).toISOString().slice(0, 16)
+      const freezeEnd = new Date(now.getTime() + 86400_000).toISOString().slice(0, 16)
+      await page.locator('#freeze-start').fill(freezeStart)
+      await page.locator('#freeze-end').fill(freezeEnd)
 
-    await page.locator('#freeze-reason').fill('Viettel Disaster Recovery Drill Window')
-    await page.click('button[type="submit"]:has-text("Create freeze")')
+      await page.locator('#freeze-reason').fill('Viettel Disaster Recovery Drill Window')
+      await page.click('button[type="submit"]:has-text("Create freeze")')
 
-    // Verify Freeze is drawn on calendar
-    const freezeBadge = page.locator(`.calendar-freeze:has-text("${freezeName}")`).first()
-    await expect(freezeBadge).toBeVisible({ timeout: 10_000 })
-    console.log(`[E2E 5] Change Freeze ${freezeName} enforced on Release Calendar!`)
+      // Verify Freeze is drawn on calendar
+      const freezeBadge = page.locator(`.calendar-freeze:has-text("${freezeName}")`).first()
+      await expect(freezeBadge).toBeVisible({ timeout: 10_000 })
+      console.log(`[E2E 5] Change Freeze ${freezeName} enforced on Release Calendar!`)
 
-    // Cancel the freeze
-    const cancelFreezeBtn = freezeBadge.locator('button:has-text("Cancel freeze")')
-    if (await cancelFreezeBtn.isVisible()) {
-      await cancelFreezeBtn.click()
+      // Cancel it the way a user does: the button in the grid cell is for screen readers only
+      // (1px, under the cell), so open the day and use the panel's. Required, not "if visible":
+      // a cancel that silently did not happen left the freeze blocking the rest of the run.
+      await freezeBadge.click()
+      await page.locator(`.cal-side-freeze-card:has-text("${freezeName}") button:has-text("Cancel freeze")`).click()
+      await expect.poll(() => activeFreezesNamed(page.request, freezeName)).toEqual([])
       console.log('[E2E 5] Change freeze successfully cancelled.')
+    } finally {
+      await cancelFreezesNamed(page.request, freezeName)
     }
 
-    // 2. Vulnerabilities Page
-    console.log('[E2E 5] Verifying Vulnerabilities & SBOM scanning...')
-    await page.click('button:has-text("Vulnerabilities")')
-    await expect(page.locator('h1')).toContainText('Vulnerabilities')
-
-    // Verify running digests / coverage table renders from real backend
-    await expect(page.locator('.coverage-table, .vuln-table, table')).toBeVisible({ timeout: 10_000 })
-    console.log('[E2E 5] Vulnerabilities SBOM coverage table loaded from PostgreSQL.')
-
-    // Trigger Rescan
-    const rescanBtn = page.locator('button:has-text("Rescan"), button:has-text("Quét lại")').first()
-    if (await rescanBtn.isVisible()) {
-      await rescanBtn.click()
-      console.log('[E2E 5] Triggered live vulnerability rescan on backend.')
-    }
+    // 2. The Vulnerabilities page was removed (d7a537c); nothing of it is left to check here.
 
     // 3. Scorecards & Insights
     console.log('[E2E 5] Testing Scorecards & Delivery Insights...')
-    await page.click('button:has-text("Scorecards")')
+    // Off the sidebar since the navigation was streamlined (kahn_dag asserts that), still routed.
+    await page.goto('/#/scorecards')
     await expect(page.locator('h1')).toContainText('Scorecards')
     await expect(page.locator('[data-testid="scorecards-table"]')).toBeVisible({ timeout: 10_000 })
     const scorecardRows = page.locator('[data-testid="scorecards-table"] tbody tr')

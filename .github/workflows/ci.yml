@@ -159,16 +159,12 @@ jobs:
 
       # A real API, not a fixture server. The unit suite mocks netciClient and so cannot
       # catch the Portal and the API disagreeing about a field name or a status code,
-      # which is the entire reason this job exists.
-      - name: Start netCI
-        run: |
-          python scripts/migrate.py
-          PYTHONPATH=backend nohup python -m uvicorn app.main:app --host 127.0.0.1 --port 8100 &
-          for _ in $(seq 1 40); do curl -sf http://127.0.0.1:8100/healthz && break; sleep 1; done
+      # which is the entire reason this job exists. And a real edge agent beside it, so the
+      # telemetry and remote-execution journeys see this runner's own figures, not invented ones.
+      - name: Start netCI and an edge agent
+        run: scripts/e2e_stack.sh start
         env:
           DATABASE_URL: postgresql://netci:netci-ci-only@127.0.0.1:5432/netci
-          NETCI_ALLOWED_ORIGINS: http://127.0.0.1:4173
-          NETCI_DEMO_DATA: 'true'
 
       - name: Browser tests and accessibility scan
         run: npm --prefix frontend run test:e2e
@@ -180,7 +176,9 @@ jobs:
         if: failure()
         with:
           name: playwright-report
-          path: frontend/playwright-report/
+          path: |
+            frontend/playwright-report/
+            .netci-gate/e2e/*.log
           retention-days: 7
 
   supply-chain:

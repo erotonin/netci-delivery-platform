@@ -30,13 +30,13 @@ test('the shell loads from the API rather than from invented defaults', async ({
 
   // The KPI numbers come from the API. Before this suite existed the page seeded itself
   // with plausible fixtures while loading, so a broken API looked like a healthy platform.
-  await expect(page.getByText(/Tổng số hệ thống/i)).toBeVisible()
+  await expect(page.getByText(/Total Systems/i)).toBeVisible()
 })
 
 test('navigating to systems and back keeps the URL and the view in step', async ({ page }) => {
   await signIn(page)
 
-  await page.getByRole('button', { name: /^Systems$/i }).click()
+  await page.getByRole('button', { name: /^Systems & Pipelines$/i }).click()
   await expect(page).toHaveURL(/#\/systems$/)
 
   await page.getByRole('button', { name: /^Servers$/i }).click()
@@ -50,7 +50,7 @@ test('navigating to systems and back keeps the URL and the view in step', async 
 test('global search reaches a module by name', async ({ page }) => {
   await signIn(page)
 
-  const search = page.getByRole('textbox', { name: /Tìm kiếm toàn cục/i })
+  const search = page.getByRole('textbox', { name: /Global search/i })
   await search.click()
   await search.fill('hello')
 
@@ -78,8 +78,8 @@ test('a failed API call shows an error with a retry, not an empty page', async (
   // failing at once is correct behaviour rather than something to assert away.
   const alert = page.getByRole('alert').first()
   await expect(alert).toBeVisible()
-  await expect(alert).toContainText(/sự cố|Không kết nối/i)
-  await expect(alert.getByRole('button', { name: /Thử lại/i })).toBeVisible()
+  await expect(alert).toContainText(/experiencing issues|Cannot connect/i)
+  await expect(alert.getByRole('button', { name: /Retry/i })).toBeVisible()
 })
 
 test('the retry actually re-requests, and recovers', async ({ page }) => {
@@ -91,9 +91,9 @@ test('the retry actually re-requests, and recovers', async ({ page }) => {
   })
 
   await page.goto('/')
-  await page.getByRole('alert').first().getByRole('button', { name: /Thử lại/i }).click()
+  await page.getByRole('alert').first().getByRole('button', { name: /Retry/i }).click()
 
-  await expect(page.getByText(/Tổng số hệ thống/i)).toBeVisible()
+  await expect(page.getByText(/Total Systems/i)).toBeVisible()
   expect(attempts).toBeGreaterThan(1)
 })
 
@@ -135,9 +135,9 @@ test('logging out is offered only when there is a credential to drop', async ({ 
   const body = await identity.json()
 
   if (body.authMode === 'none') {
-    await expect(page.getByText(/Chưa bật xác thực/i).first()).toBeVisible()
-    await expect(page.getByRole('button', { name: /Đăng xuất/i })).toHaveCount(0)
+    await expect(page.getByText(/Authentication disabled/i).first()).toBeVisible()
+    await expect(page.getByRole('button', { name: /Logout|Sign out/i })).toHaveCount(0)
   } else {
-    await expect(page.getByRole('button', { name: /Đăng xuất/i }).first()).toBeVisible()
+    await expect(page.getByRole('button', { name: /Logout|Sign out/i }).first()).toBeVisible()
   }
 })

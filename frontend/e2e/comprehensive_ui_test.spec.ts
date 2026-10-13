@@ -3,9 +3,9 @@ import { test, expect } from '@playwright/test'
 test.describe('Comprehensive UI & Feature Testing across all 3 Systems + DCIM Integration', () => {
   test('Complete walk-through of all UI buttons, pages, and workflows', async ({ page }) => {
     // 1. INITIAL NAVIGATION & CLEAN SESSION
-    await page.goto('http://localhost:5173/')
+    await page.goto('/')
     await page.evaluate(() => window.sessionStorage.clear())
-    await page.goto('http://localhost:5173/#/login')
+    await page.goto('/#/login')
     
     // Select Dev Token mode if on login page
     const loginHeading = page.locator('h1')
@@ -34,7 +34,7 @@ test.describe('Comprehensive UI & Feature Testing across all 3 Systems + DCIM In
     await expect(page.locator('h1')).toContainText('Systems')
 
     // Test Search input
-    const systemSearch = page.locator('input[placeholder*="Tìm kiếm hệ thống"]')
+    const systemSearch = page.locator('input[placeholder="Search systems…"]')
     await systemSearch.fill('container')
     await expect(page.locator('.systems-table button:has-text("hello-container")')).toBeVisible()
     await systemSearch.fill('')
@@ -57,7 +57,7 @@ test.describe('Comprehensive UI & Feature Testing across all 3 Systems + DCIM In
     // CREATE NEW SYSTEM VIA DCIM SEARCH
     await page.click('button:has-text("New System")')
     await expect(page.locator('.modal h2')).toContainText('Create new system')
-    const dcimTab = page.locator('button:has-text("Tìm từ DCIM")')
+    const dcimTab = page.locator('button:has-text("Search from DCIM")')
     if (await dcimTab.isVisible()) {
       await dcimTab.click()
     }
@@ -77,7 +77,7 @@ test.describe('Comprehensive UI & Feature Testing across all 3 Systems + DCIM In
     await expect(page.locator('.modal')).toBeHidden()
 
     // 4. PRODUCTION REQUESTS PAGE (inside hello-container)
-    await page.goto('http://localhost:5173/#/systems/hello-container/requests')
+    await page.goto('/#/systems/hello-container/requests')
     await expect(page.locator('h1')).toContainText('Production Requests')
 
     // Filter controls
@@ -117,8 +117,8 @@ test.describe('Comprehensive UI & Feature Testing across all 3 Systems + DCIM In
     }
 
     // 5. SERVERS PAGE
-    await page.goto('http://localhost:5173/#/servers')
-    await expect(page.locator('h1')).toHaveText(/Deployment targets|Servers/)
+    await page.goto('/#/servers')
+    await expect(page.locator('h1')).toHaveText(/Deployment targets|Servers/i)
     await expect(page.locator('.servers-table')).toBeVisible()
 
     // Test Server status filtering

@@ -1,5 +1,6 @@
 import { expect, test, type Page } from '@playwright/test'
 import * as path from 'path'
+import { separationOfDuties } from './live'
 
 const ARTIFACT_DIR = '/home/deployer/.gemini/antigravity-cli/brain/2fb6e3dc-998c-4b70-bff7-692b77c81866'
 
@@ -72,16 +73,19 @@ test.describe.serial('Demo Kahn Algorithm Multi-Module CI/CD & Streamlined UX', 
     await expect(page.locator('text=Kahn\'s algorithm identified 2 Waves')).toBeVisible()
     await page.screenshot({ path: path.join(ARTIFACT_DIR, 'kahn_demo_02_kahn_preset_waves.png'), fullPage: true })
 
-    // Test Cycle Detection by checking circular dependency
-    const circularCheck = page.locator('.dependency-checkboxes input[type="checkbox"]').first()
+    // Close a loop: the last module already depends on the one before it, so make that one
+    // depend on the last. Its own last checkbox is the last module (a module never lists itself).
+    // Picking "the first checkbox" made a cycle only with exactly two modules; the demo data has more.
+    const groups = page.locator('.dependency-checkboxes')
+    const circularCheck = groups.nth((await groups.count()) - 2).locator('input[type="checkbox"]').last()
     await circularCheck.check()
-    await expect(page.locator('text=Circular dependency detected')).toBeVisible()
+    await expect(page.getByText(/Circular dependency detected/i)).toBeVisible()
     await expect(page.locator('button:has-text("Review Request")')).toBeDisabled()
     await page.screenshot({ path: path.join(ARTIFACT_DIR, 'kahn_demo_03_cycle_detection_alert.png'), fullPage: true })
 
     // Fix cycle
     await circularCheck.uncheck()
-    await expect(page.locator('text=Circular dependency detected')).toHaveCount(0)
+    await expect(page.getByText(/Circular dependency detected/i)).toHaveCount(0)
     await expect(page.locator('button:has-text("Review Request")')).toBeEnabled()
 
     // Proceed to Review step
@@ -99,10 +103,15 @@ test.describe.serial('Demo Kahn Algorithm Multi-Module CI/CD & Streamlined UX', 
     await eyeBtns.first().click()
     await expect(page.locator('h2:has-text("PR-")')).toBeVisible()
 
-    // Verify Kahn waves and Separation of Duties (Approve disabled for pat)
+    // Verify Kahn waves and Separation of Duties (Approve disabled for pat where the server keeps
+    // requester and approver apart; with authentication off it lets the one anonymous caller approve)
     await expect(page.locator('text=DAG Release Plan (2 Waves · Kahn\'s Wave Orchestration)')).toBeVisible()
     const approveBtn = page.locator('[data-testid="request-approve"]')
-    await expect(approveBtn).toBeDisabled()
+    if (await separationOfDuties(page.request)) {
+      await expect(approveBtn).toBeDisabled()
+    } else {
+      await expect(approveBtn).toBeEnabled()
+    }
     await page.screenshot({ path: path.join(ARTIFACT_DIR, 'kahn_demo_05_request_created_sod.png'), fullPage: true })
 
     await page.click('button:has-text("Close")')

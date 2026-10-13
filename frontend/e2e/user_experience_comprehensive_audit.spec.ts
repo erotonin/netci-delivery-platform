@@ -1,4 +1,5 @@
 import { expect, test, type Page } from '@playwright/test'
+import { separationOfDuties, skipUnlessRepositoryReachable } from './live'
 import * as path from 'path'
 
 const ARTIFACT_DIR = '/home/deployer/.gemini/antigravity-cli/brain/05605e73-a615-4bdb-bbb4-41065dd7cfa8'
@@ -45,7 +46,8 @@ async function ssoLogin(page: Page, username: string, password = 'netci-lab-only
 test.describe.serial('Comprehensive Real-User Experience & Zero-Mock Platform Audit', () => {
   test.setTimeout(300_000)
 
-  test('Workflow 1: CI/CD Pipeline, Live DAG Execution & Realtime Promotion', async ({ page }) => {
+  test('Workflow 1: CI/CD Pipeline, Live DAG Execution & Realtime Promotion', async ({ page, request }) => {
+    await skipUnlessRepositoryReachable(request, 'hello-container')
     console.log('[Workflow 1] Logging in as engineer pat...')
     await ssoLogin(page, 'pat')
     await page.screenshot({ path: path.join(ARTIFACT_DIR, 'user_audit_01_sso_pat.png') })
@@ -129,15 +131,20 @@ test.describe.serial('Comprehensive Real-User Experience & Zero-Mock Platform Au
     await expect(modal).toBeHidden()
 
     // Separation of Duties check: Requester pat cannot approve
-    const firstRow = page.locator('.requests-table button[aria-label^="Xem "]').first()
+    const firstRow = page.locator('.requests-table button[aria-label^="View "]').first()
     await firstRow.click()
     await expect(page.locator('.modal')).toBeVisible()
 
     const approveBtn = page.locator('.modal [data-testid="request-approve"], .modal button:has-text("Approve"), .modal button:has-text("Phê duyệt")').first()
     await expect(approveBtn).toBeVisible()
-    await expect(approveBtn).toBeDisabled()
-    await page.screenshot({ path: path.join(ARTIFACT_DIR, 'user_audit_06_sod_disabled.png') })
-    console.log('[Workflow 2] Separation of Duties verified: Requester cannot self-approve.')
+    if (await separationOfDuties(page.request)) {
+      await expect(approveBtn).toBeDisabled()
+      await page.screenshot({ path: path.join(ARTIFACT_DIR, 'user_audit_06_sod_disabled.png') })
+      console.log('[Workflow 2] Separation of Duties verified: Requester cannot self-approve.')
+    } else {
+      // Authentication off: one anonymous subject, which the server lets approve.
+      await expect(approveBtn).toBeEnabled()
+    }
 
     await page.locator('.modal button:has-text("Close"), .modal button:has-text("Đóng")').first().click()
 
@@ -148,7 +155,7 @@ test.describe.serial('Comprehensive Real-User Experience & Zero-Mock Platform Au
     await ssoLogin(reviewerPage, 'rae')
 
     await reviewerPage.click('button:has-text("Production Requests")')
-    const reviewerFirstRow = reviewerPage.locator('.requests-table button[aria-label^="Xem "]').first()
+    const reviewerFirstRow = reviewerPage.locator('.requests-table button[aria-label^="View "]').first()
     await reviewerFirstRow.click()
 
     const reviewerApproveBtn = reviewerPage.locator('.modal [data-testid="request-approve"], .modal button:has-text("Approve"), .modal button:has-text("Phê duyệt")').first()
@@ -229,11 +236,13 @@ test.describe.serial('Comprehensive Real-User Experience & Zero-Mock Platform Au
 
     // 1. Shared pipelines & designer (ADR-058)
     await page.getByRole('button', { name: /^Pipelines$/ }).click()
-    await expect(page.locator('h1')).toHaveText('Pipelines')
+    await expect(page.locator('h1')).toHaveText('Shared Pipelines')
     await page.waitForTimeout(300)
     await page.screenshot({ path: path.join(ARTIFACT_DIR, 'user_audit_12_pipelines_list.png') })
 
     await page.getByRole('button', { name: 'New pipeline' }).click()
+    // The designer opens on the Jenkinsfile; the script is the second tab.
+    await page.getByRole('button', { name: /pipeline\.sh \(CI Script\)/ }).click()
     await expect(page.getByLabel('Pipeline script')).toBeVisible({ timeout: 10_000 })
     await page.waitForTimeout(300)
     await page.screenshot({ path: path.join(ARTIFACT_DIR, 'user_audit_13_pipeline_designer.png') })

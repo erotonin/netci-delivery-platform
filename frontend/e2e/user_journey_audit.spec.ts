@@ -1,4 +1,5 @@
 import { expect, test, type Page } from '@playwright/test'
+import { hasSucceededRun } from './live'
 import * as path from 'path'
 
 const ARTIFACT_DIR = '/home/deployer/.gemini/antigravity-cli/brain/05605e73-a615-4bdb-bbb4-41065dd7cfa8'
@@ -98,8 +99,9 @@ test.describe.serial('Full User Journey & End-to-End Enterprise Experience Audit
     await expect(page.locator('.modal')).toBeHidden()
 
     // Open a run to view the Real-Time Pipeline DAG
+    // The DAG belongs to a run: with none recorded (CI has no Jenkins) there is nothing to open.
     const lastBuild = page.locator('.last-build').first()
-    if (await lastBuild.isVisible()) {
+    if ((await hasSucceededRun(page.request, 'hello-container')) && (await lastBuild.isVisible())) {
       await lastBuild.click()
       await expect(page.locator('.stage-graph')).toBeVisible({ timeout: 15_000 })
       console.log('[Audit] Real-time Pipeline DAG loaded successfully!')
@@ -158,7 +160,7 @@ test.describe.serial('Full User Journey & End-to-End Enterprise Experience Audit
     await expect(page.locator('.modal')).toBeHidden()
 
     // Inspect an existing request in the table
-    const viewEyeBtn = page.locator('.requests-table button[aria-label^="Xem "]').first()
+    const viewEyeBtn = page.locator('.requests-table button[aria-label^="View "]').first()
     if (await viewEyeBtn.isVisible()) {
       await viewEyeBtn.click()
       await expect(page.locator('.modal')).toBeVisible()
@@ -230,47 +232,18 @@ test.describe.serial('Full User Journey & End-to-End Enterprise Experience Audit
     }
   })
 
-  test('Step 4: Platform Management & Template Studio', async ({ page }) => {
-    console.log('[Audit] 4. Testing Service Catalog & Template Studio...')
+  test('Step 4: Platform Management & Service Catalog', async ({ page }) => {
+    // The Golden Path tab and its template form were removed from the catalog (1dabfca, in
+    // favour of the Pipelines page); what the catalog offers now is checked instead.
+    console.log('[Audit] 4. Testing Service Catalog...')
     await ssoLogin(page, 'pat')
 
-    // Navigate to Catalog
     await page.click('button:has-text("Service Catalog")')
-    await expect(page.locator('h1')).toContainText('Service Catalog')
-
-    // Switch to Golden Path Templates tab
-    await page.click('button[role="tab"]:has-text("Golden Path Templates")')
-    await expect(page.locator('article h3').first()).toBeVisible({ timeout: 10_000 })
-    const templates = page.locator('article:has(h3)')
-    const count = await templates.count()
-    console.log(`[Audit] Catalog shows ${count} active Golden Path templates`)
-    expect(count).toBeGreaterThanOrEqual(1)
-
-    // Check Register Template Button
-    const regBtn = page.locator('button[data-testid="catalog-register-template"]')
-    await expect(regBtn).toBeVisible()
-    await regBtn.click()
-    await expect(page.locator('.modal')).toBeVisible()
-    await expect(page.locator('.modal h2')).toContainText('Register Golden Path Template')
-
-    // Test form fields
-    const tplId = `audit-tpl-${Date.now().toString().slice(-4)}`
-    await page.locator('#tpl-id').fill(tplId)
-    await page.locator('#tpl-name').fill('Audit Microservice Template')
-    await page.locator('#tpl-description').fill('Golden Path template registered via UI form.')
-
-    // Test invalid JSON validation
-    await page.locator('#tpl-parameters').fill('{ invalid_json: true ')
-    await page.locator('button[data-testid="catalog-register-template-submit"]').click()
-    await expect(page.locator('.modal .inline-error, .modal [role="alert"]')).toBeVisible()
-    console.log('[Audit] Template Studio correctly caught invalid JSON syntax!')
-
-    // Now enter valid JSON
-    await page.locator('#tpl-parameters').fill('{"port": 8080}')
-    await page.screenshot({ path: path.join(ARTIFACT_DIR, 'audit_11_template_studio_modal.png') })
-
-    await page.locator('.modal button:has-text("Cancel")').click()
-    await expect(page.locator('.modal')).toBeHidden()
+    await expect(page.locator('h1').first()).toContainText(/Catalog/i)
+    await expect(page.getByRole('tab', { name: /Services & Dependency Graph/i })).toBeVisible()
+    await page.getByRole('tab', { name: /Ephemeral Preview Environments/i }).click()
+    await page.getByRole('tab', { name: /Self-Service Resources/i }).click()
+    await page.screenshot({ path: path.join(ARTIFACT_DIR, 'audit_11_service_catalog.png') })
   })
 
   test('Step 5: Infrastructure & Server Fleet Monitoring', async ({ page }) => {

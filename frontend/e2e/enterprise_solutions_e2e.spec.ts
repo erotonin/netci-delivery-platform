@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test'
+import { skipUnlessSucceededRun } from './live'
 
 test.describe('Enterprise IDP 3 Core Solutions E2E Suite', () => {
   test.beforeEach(async ({ page }) => {
@@ -40,7 +41,8 @@ test.describe('Enterprise IDP 3 Core Solutions E2E Suite', () => {
     await closeBtn.click()
   })
 
-  test('Solution 2: Decoupled Lifecycle - Fast-Track Config Deploy (Skip CI Rebuild)', async ({ page }) => {
+  test('Solution 2: Decoupled Lifecycle - Fast-Track Config Deploy (Skip CI Rebuild)', async ({ page, request }) => {
+    await skipUnlessSucceededRun(request, 'hello-container')
     // Navigate directly to hello-container system
     await page.goto('/#/systems')
     await page.waitForTimeout(600)
@@ -99,13 +101,13 @@ test.describe('Enterprise IDP 3 Core Solutions E2E Suite', () => {
     const rows = page.locator('.servers-table .table-row:not(.table-head)')
     await expect(rows.first()).toBeVisible({ timeout: 5000 })
 
-    // Verify Edge Agent badge on hello-container:dev:localhost
-    const srvRow = page.locator('.servers-table .table-row:has-text("hello-container:dev:localhost")').first()
+    // The edge agent (scripts/e2e_stack.sh starts the real one) is connected as localhost, a server of the demo data.
+    const srvRow = page.locator('.servers-table .table-row:has-text("localhost")').first()
     await expect(srvRow).toBeVisible({ timeout: 5000 })
     await expect(srvRow).toContainText('Edge Agent')
 
     // Open details modal
-    const moreBtn = srvRow.locator('.row-actions button, button[aria-label*="hello-container:dev:localhost"]').first()
+    const moreBtn = srvRow.locator('button[aria-label="Details localhost"]')
     await moreBtn.click()
     await page.waitForTimeout(600)
 

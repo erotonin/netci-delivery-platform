@@ -3,7 +3,7 @@ import { test, expect } from '@playwright/test'
 test.describe('Enterprise Features Professional QA Suite', () => {
   test.beforeEach(async ({ page }) => {
     // Navigate to root to ensure authenticated session
-    await page.goto('http://localhost:5173/')
+    await page.goto('/')
     await page.waitForTimeout(500)
     // If on login page, quickly login
     const devPersona = page.locator('button:has-text("Developer"), button:has-text("Admin")').first()
@@ -14,7 +14,7 @@ test.describe('Enterprise Features Professional QA Suite', () => {
   })
 
   test('QA-E1: Server Maintenance Toggle & Persistence after Refresh', async ({ page }) => {
-    await page.goto('http://localhost:5173/#/servers')
+    await page.goto('/#/servers')
     await expect(page.locator('h1')).toContainText(/Deployment targets|Inventory|Servers/i)
 
     // Wait for servers table to be populated
@@ -26,7 +26,7 @@ test.describe('Enterprise Features Professional QA Suite', () => {
     const serverName = (await firstRow.locator('.strong-cell').textContent())?.trim() || ''
     expect(serverName).toBeTruthy()
 
-    const maintButton = firstRow.locator('button:has-text("Bảo trì"), button:has-text("Bỏ bảo trì")')
+    const maintButton = firstRow.locator('button:has-text("Maintenance")')
     await expect(maintButton).toBeVisible()
 
     const initialText = (await maintButton.textContent())?.trim()
@@ -35,13 +35,14 @@ test.describe('Enterprise Features Professional QA Suite', () => {
     await maintButton.click()
     await page.waitForTimeout(800)
 
-    const expectedNewText = initialText === 'Bảo trì' ? 'Bỏ bảo trì' : 'Bảo trì'
+    // Whichever state the row is in (an earlier test may have set it), the toggle must flip it.
+    const expectedNewText = initialText?.startsWith('Exit') ? 'Maintenance' : 'Exit Maintenance'
     await expect(maintButton).toHaveText(expectedNewText)
 
     // 2. Refresh page to verify state persistence in backend & frontend
     await page.reload()
     await expect(rows.first()).toBeVisible({ timeout: 5000 })
-    const reloadedMaintButton = rows.first().locator('button:has-text("Bảo trì"), button:has-text("Bỏ bảo trì")')
+    const reloadedMaintButton = rows.first().locator('button:has-text("Maintenance")')
     await expect(reloadedMaintButton).toHaveText(expectedNewText)
 
     // 3. Revert back to original state for clean test hygiene
@@ -51,14 +52,14 @@ test.describe('Enterprise Features Professional QA Suite', () => {
   })
 
   test('QA-E2: Live Pre-flight Telemetry Modal (CPU, Memory, Disk Gauges)', async ({ page }) => {
-    await page.goto('http://localhost:5173/#/servers')
+    await page.goto('/#/servers')
     await expect(page.locator('h1')).toContainText(/Deployment targets|Inventory|Servers/i)
 
     const rows = page.locator('.servers-table .table-row:not(.table-head)')
     await expect(rows.first()).toBeVisible({ timeout: 5000 })
 
     // Click more details on first server
-    const detailsBtn = rows.first().locator('button[aria-label*="Chi tiết"]').first()
+    const detailsBtn = rows.first().locator('button[aria-label*="Details"]').first()
     await detailsBtn.click()
 
     // Modal should appear
@@ -79,28 +80,28 @@ test.describe('Enterprise Features Professional QA Suite', () => {
   })
 
   test('QA-E3: VEX Security Waivers CRUD and Revocation Flow', async ({ page }) => {
-    await page.goto('http://localhost:5173/#/servers')
+    await page.goto('/#/servers')
     await expect(page.locator('h1')).toContainText(/Deployment targets|Inventory|Servers/i)
 
     // Scroll to VEX Security Waivers section
-    const waiverSection = page.locator('text=VEX Security Waivers')
+    const waiverSection = page.locator('text=VEX Security Waivers').first()
     await expect(waiverSection).toBeVisible()
 
     // Open Create Waiver modal
-    const createWaiverBtn = page.locator('button:has-text("Tạo miễn trừ CVE")')
+    const createWaiverBtn = page.locator('button:has-text("Create CVE Waiver")')
     await createWaiverBtn.click()
 
     const modal = page.locator('.modal')
     await expect(modal).toBeVisible()
-    await expect(modal.locator('h2')).toContainText(/Tạo miễn trừ bảo mật VEX/i)
+    await expect(modal.locator('h2')).toContainText(/Create VEX Security Waiver/i)
 
     // Fill form
     const testCveId = `CVE-2026-QA-${Date.now().toString().slice(-4)}`
     await modal.locator('input[placeholder*="CVE-"]').fill(testCveId)
-    await modal.locator('textarea[placeholder*="Mô tả phân tích VEX"]').fill('Compensating control: Automated QA isolation verify safe deployment')
+    await modal.locator('textarea[placeholder*="Describe VEX analysis"]').fill('Compensating control: Automated QA isolation verify safe deployment')
 
     // Submit
-    await modal.locator('button:has-text("Xác nhận miễn trừ")').click()
+    await modal.locator('button:has-text("Confirm Waiver")').click()
     await expect(modal).not.toBeVisible({ timeout: 4000 })
 
     // Verify row appears in waivers table (check strong-cell in data table specifically to avoid toast ambiguity)
@@ -109,18 +110,18 @@ test.describe('Enterprise Features Professional QA Suite', () => {
 
     // Click revoke
     const tableRow = page.locator(`.table-row:has-text("${testCveId}")`).first()
-    const revokeBtn = tableRow.locator('button:has-text("Thu hồi")')
+    const revokeBtn = tableRow.locator('button:has-text("Revoke")')
     if (await revokeBtn.isVisible()) {
       await revokeBtn.click()
       await page.waitForTimeout(600)
       // Verify row is removed or marked revoked
-      const afterCount = await page.locator(`.table-row:has-text("${testCveId}") button:has-text("Thu hồi")`).count()
+      const afterCount = await page.locator(`.table-row:has-text("${testCveId}") button:has-text("Revoke")`).count()
       expect(afterCount).toBe(0)
     }
   })
 
   test('QA-E4: Production Request with L7 Canary Steering & Policy Inspection', async ({ page }) => {
-    await page.goto('http://localhost:5173/#/systems/hello-container/requests')
+    await page.goto('/#/systems/hello-container/requests')
     await expect(page.locator('h1')).toContainText(/Production Requests/i)
 
     // Click New Request
@@ -175,7 +176,7 @@ test.describe('Enterprise Features Professional QA Suite', () => {
     const reqRows = page.locator('.data-table .table-row:not(.table-head), .requests-table .table-row:not(.table-head)')
     if (await reqRows.first().isVisible().catch(() => false)) {
       // Click view details
-      const viewBtn = reqRows.first().locator('button[aria-label*="Chi tiết"], button[title*="View details"], button').last()
+      const viewBtn = reqRows.first().locator('button[aria-label*="Details"], button[title*="View details"], button').last()
       if (await viewBtn.isVisible()) {
         await viewBtn.click()
         const detailModal = page.locator('.modal')

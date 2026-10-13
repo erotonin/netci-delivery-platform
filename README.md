@@ -116,9 +116,19 @@ cho trước**. Chúng không chứng minh được Portal và API *đồng ý v
 trước mặt người dùng. Đó là khoảng trống mà `frontend/e2e/` lấp.
 
 ```bash
-make lab-up                                   # cần một netCI đang chạy thật
-NETCI_API_URL=http://127.0.0.1:8100 npm --prefix frontend run test:e2e
+# API thật (demo data) + một edge agent thật (backend/app/adapters/agent_daemon.py) trên :8100.
+# DATABASE_URL phải là DB test được phép ghi -- không bao giờ netci_live.
+DATABASE_URL=postgresql://netci:netci-local-only@127.0.0.1:55434/netci_e2e scripts/e2e_stack.sh start
+CI=true NETCI_API_URL=http://127.0.0.1:8100 npm --prefix frontend run test:e2e
+scripts/e2e_stack.sh stop
 ```
+
+Agent báo CPU/RAM/disk thật của máy chạy test, nên test telemetry và chạy lệnh từ xa thấy số
+liệu thật. Test nào cần hạ tầng mà máy không có (repo git của module, một pipeline đã chạy
+thành công trên Jenkins, OIDC) thì **bỏ qua và nói rõ thiếu gì** theo lời của chính API, chứ
+không giả lập: trên lab chúng chạy. Test tách quyền (người tạo request không được duyệt) khẳng
+định đúng tư thế server báo ở `/me` (`separationOfDuties`): tắt xác thực thì chỉ có một chủ thể
+ẩn danh và server cho phép duyệt.
 
 Bao gồm cả **axe accessibility scan**. Lần chạy đầu tiên tìm ra 22 node vi phạm tương phản
 màu WCAG AA — không phải lỗi mới, mà là lỗi chưa ai đo: các giá trị xám được viết cứng rải

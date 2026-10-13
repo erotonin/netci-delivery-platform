@@ -27,7 +27,10 @@ test.describe('Professional QA End-to-End Test Suite for netCI Platform', () => 
 
   test('QA-01: Authentication, Role Switching, and Session Management', async ({ page }) => {
     // Navigate to root and set manual_login so login screen shows instead of auto-logging in
-    await page.goto('http://localhost:5173/')
+    await page.goto('/')
+    // Wait for the automatic sign-in (authMode none) to finish first: it stores a session and drops
+    // manual_login when it completes, so clearing storage before that let it sign straight back in.
+    await expect(page.getByRole('button', { name: /Dashboard/i })).toBeVisible()
     await page.evaluate(() => {
       window.sessionStorage.clear()
       window.sessionStorage.setItem('netci.manual_login', 'true')
@@ -39,10 +42,10 @@ test.describe('Professional QA End-to-End Test Suite for netCI Platform', () => 
     await expect(page.locator('h1, h2').first()).toContainText(/Track every release|Đăng nhập|Sign in|netCI/i)
 
     // 1. Negative Test: empty credentials
-    const usernameInput = page.locator('#login-username, input[placeholder*="admin hoặc dev"]').first()
+    const usernameInput = page.locator('#login-username, input[placeholder*="admin, dev"]').first()
     if (await usernameInput.isVisible()) {
       await usernameInput.fill('')
-      await page.click('button:has-text("Đăng nhập")')
+      await page.click('button:has-text("Sign In")')
       const errorAlert = page.locator('.login-error, [role="alert"]')
       await expect(errorAlert).toBeVisible()
     }
@@ -54,7 +57,7 @@ test.describe('Professional QA End-to-End Test Suite for netCI Platform', () => 
       if (await passwordInput.isVisible()) {
         await passwordInput.fill('wrong_pass')
       }
-      await page.click('button:has-text("Đăng nhập")')
+      await page.click('button:has-text("Sign In")')
       await page.waitForTimeout(300)
     }
 
@@ -99,7 +102,7 @@ test.describe('Professional QA End-to-End Test Suite for netCI Platform', () => 
   })
 
   test('QA-02: Dashboard KPIs, Pipeline Activity, and Quick Navigation', async ({ page }) => {
-    await page.goto('http://localhost:5173/#/dashboard')
+    await page.goto('/#/dashboard')
     await expect(page.locator('h1')).toContainText('Dashboard')
 
     // Verify KPI grid exists and contains at least 4 metrics
@@ -124,11 +127,11 @@ test.describe('Professional QA End-to-End Test Suite for netCI Platform', () => 
   })
 
   test('QA-03: Systems Management, Filtering, DCIM Integration, and Detail Views', async ({ page }) => {
-    await page.goto('http://localhost:5173/#/systems')
+    await page.goto('/#/systems')
     await expect(page.locator('h1')).toContainText('Systems')
 
     // 1. Search filter testing
-    const searchInput = page.locator('input[placeholder*="Tìm kiếm hệ thống"]')
+    const searchInput = page.locator('input[placeholder="Search systems…"]')
     await searchInput.fill('kubernetes')
     await expect(page.locator('.systems-table button:has-text("hello-kubernetes")')).toBeVisible()
     
@@ -164,7 +167,7 @@ test.describe('Professional QA End-to-End Test Suite for netCI Platform', () => 
     await expect(modal.locator('h2')).toContainText(/Create new system|Tạo hệ thống/)
 
     // Test DCIM tab
-    const dcimTab = page.locator('button:has-text("Tìm từ DCIM")')
+    const dcimTab = page.locator('button:has-text("Search from DCIM")')
     if (await dcimTab.isVisible()) {
       await dcimTab.click()
       const dcimInput = page.locator('input[placeholder*="Search by service name"]')
@@ -174,7 +177,7 @@ test.describe('Professional QA End-to-End Test Suite for netCI Platform', () => 
     }
 
     // Close modal
-    const cancelBtn = page.locator('.modal button:has-text("Cancel"), .modal button[aria-label="Close"]')
+    const cancelBtn = page.locator('.modal button:has-text("Cancel"), .modal button[aria-label="Close"]').first()
     if (await cancelBtn.isVisible()) {
       await cancelBtn.click()
     }
@@ -185,7 +188,7 @@ test.describe('Professional QA End-to-End Test Suite for netCI Platform', () => 
 
   test('QA-04: Module Detail, Run Triggers, Configuration, and DORA Metrics', async ({ page }) => {
     // Navigate to module hello-container
-    await page.goto('http://localhost:5173/#/systems/hello-container/modules/hello-container')
+    await page.goto('/#/systems/hello-container/modules/hello-container')
     await expect(page.locator('h1')).toHaveText(/Hello Container|hello-container/i)
 
     // Check module tabs
@@ -222,11 +225,11 @@ test.describe('Professional QA End-to-End Test Suite for netCI Platform', () => 
   })
 
   test('QA-05: New Module Onboarding Wizard Navigation', async ({ page }) => {
-    await page.goto('http://localhost:5173/#/systems/hello-container/new-module')
+    await page.goto('/#/systems/hello-container/new-module')
     await expect(page.locator('h1').first()).toContainText(/New Module|Tạo module|Wizard/i)
 
-    // Step 1: Check runtime choices
-    const runtimeOptions = page.locator('input[name="runtime"], .runtime-card, button:has-text("Docker"), button:has-text("Kubernetes")')
+    // Step 1 offers the module's source: one from DCIM, or one defined here
+    const runtimeOptions = page.locator('.segmented button, input[type="radio"], button:has-text("Create Local Module")')
     expect(await runtimeOptions.count()).toBeGreaterThanOrEqual(1)
 
     // Test Cancel button returns to system page
@@ -240,7 +243,7 @@ test.describe('Professional QA End-to-End Test Suite for netCI Platform', () => 
   })
 
   test('QA-06: Service Catalog, Templates, Previews, and Resource Vending', async ({ page }) => {
-    await page.goto('http://localhost:5173/#/catalog')
+    await page.goto('/#/catalog')
     await expect(page.locator('.catalog-page')).toBeVisible()
 
     // Check catalog tab switching
@@ -271,8 +274,8 @@ test.describe('Professional QA End-to-End Test Suite for netCI Platform', () => 
   })
 
   test('QA-07: Architecture Roadmap & 4 Levels of Truth Matrix', async ({ page }) => {
-    await page.goto('http://localhost:5173/#/architecture')
-    await expect(page.locator('h1')).toContainText(/Kiến Trúc|Architecture/i)
+    await page.goto('/#/architecture')
+    await expect(page.locator('h1')).toContainText(/Kiến Trúc|Architect/i)
 
     // Verify the 4 sub-tabs
     const archTabs = ['Architecture Overview', 'State Reconciliation', 'Pluggable Traits', 'Agentic AI & MCP']
@@ -289,7 +292,7 @@ test.describe('Professional QA End-to-End Test Suite for netCI Platform', () => 
   })
 
   test('QA-08: Production Requests, Approval Gate & Canary Promotion Controls', async ({ page }) => {
-    await page.goto('http://localhost:5173/#/systems/hello-container/requests')
+    await page.goto('/#/systems/hello-container/requests')
     await expect(page.locator('h1')).toContainText('Production Requests')
 
     // Search input
@@ -319,12 +322,12 @@ test.describe('Professional QA End-to-End Test Suite for netCI Platform', () => 
   })
 
   test('QA-09: Deployment Targets / Servers Inventory Operations', async ({ page }) => {
-    await page.goto('http://localhost:5173/#/servers')
-    await expect(page.locator('h1')).toHaveText(/Deployment targets|Servers/)
+    await page.goto('/#/servers')
+    await expect(page.locator('h1')).toHaveText(/Deployment targets|Servers/i)
     await expect(page.locator('.servers-table')).toBeVisible()
 
     // 1. Test search filter
-    const searchInput = page.locator('input[placeholder*="Tìm hostname"]')
+    const searchInput = page.locator('input[placeholder*="Search hostname"]')
     if (await searchInput.isVisible()) {
       await searchInput.fill('staging')
       await page.waitForTimeout(300)
@@ -366,19 +369,19 @@ test.describe('Professional QA End-to-End Test Suite for netCI Platform', () => 
 
   test('QA-10: Resilience, Malformed Routes, XSS Input Sanitization, and Boundary Recovery', async ({ page }) => {
     // 1. Malformed Route Test: Should fallback gracefully to Dashboard without white-screen or crash
-    await page.goto('http://localhost:5173/#/totally-nonexistent-route-404-error')
+    await page.goto('/#/totally-nonexistent-route-404-error')
     await page.waitForTimeout(300)
     await expect(page.locator('h1')).toBeVisible()
     await expect(page.locator('.portal-crash')).toBeHidden()
 
     // 2. Non-existent System ID: Should show loading/fallback gracefully
-    await page.goto('http://localhost:5173/#/systems/sys-does-not-exist-qa-999')
+    await page.goto('/#/systems/sys-does-not-exist-qa-999')
     await page.waitForTimeout(500)
     await expect(page.locator('.portal-crash')).toBeHidden()
 
     // 3. XSS Injection Attack Resistance
-    await page.goto('http://localhost:5173/#/systems')
-    const searchInput = page.locator('input[placeholder*="Tìm kiếm hệ thống"]')
+    await page.goto('/#/systems')
+    const searchInput = page.locator('input[placeholder="Search systems…"]')
     await searchInput.fill('<script>window.__xss_leaked = true;</script><img src=x onerror=alert(1)>')
     await page.waitForTimeout(300)
     const xssLeaked = await page.evaluate(() => (window as any).__xss_leaked)
@@ -387,7 +390,7 @@ test.describe('Professional QA End-to-End Test Suite for netCI Platform', () => 
 
     // 4. Mobile Responsive Viewport Testing (iPhone 13 size: 390x844)
     await page.setViewportSize({ width: 390, height: 844 })
-    await page.goto('http://localhost:5173/#/dashboard')
+    await page.goto('/#/dashboard')
     await expect(page.locator('.brand')).toBeVisible()
     await expect(page.locator('.portal-crash')).toBeHidden()
 
