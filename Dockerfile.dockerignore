@@ -8,3 +8,4 @@
 !bin/linux-amd64/netci-queue
 !bin/linux-amd64/netci-fabric
 !bin/linux-amd64/netci-sandbox
+!bin/linux-amd64/netci-homesync

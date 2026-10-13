@@ -1,6 +1,7 @@
 # ADR-074: Active-active Jenkins on one JENKINS_HOME -- what breaks, and the plan
 
-- Status: proposed (phases 0 and 1 of the lab done; the design below is what the next phases build and test)
+- Status: superseded in its storage decision by ADR-076 (the mentor's answers: Pipeline only, inbound
+  agents, storage mostly local-path). Phases 0 and 1 stand as evidence.
 - Date: 2026-10-13
 - Refines: ADR-060 (one writer per cell), ADR-071 (UI unavailable during a takeover)
 
@@ -16,6 +17,7 @@ active/active limits as possible, on Viettel's infrastructure. What is known of 
 
 Still open: whether jobs are Pipeline or Freestyle, whether agents connect over SSH or inbound,
 and what shared file system there is. The lab is to cover each case.
+(Answered 2026-10-13: Pipeline only; inbound JNLP agents; mostly local-path, Longhorn present. See ADR-076.)
 
 CloudBees runs several replicas of a controller on one `JENKINS_HOME` on a shared file system,
 keeps live state in Hazelcast, needs sticky sessions, and has a replica adopt a dead one's

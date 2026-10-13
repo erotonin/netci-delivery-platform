@@ -1,0 +1,317 @@
+package io.netci.jenkins.homesync;
+
+import hudson.init.InitMilestone;
+import hudson.init.Initializer;
+import hudson.init.Terminator;
+import hudson.model.AbstractItem;
+import hudson.model.Item;
+
+import hudson.security.ACL;
+import hudson.security.ACLContext;
+import java.io.ByteArrayInputStream;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.time.Duration;
+import java.util.Arrays;
+import java.util.Comparator;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.logging.Level;
+import java.util.logging.Logger;
+import javax.xml.transform.stream.StreamSource;
+import jenkins.model.Jenkins;
+import jenkins.model.ModifiableTopLevelItemGroup;
+
+/**
+ * Keeps this replica's home the same as the others' (ADR-076): every change to an item (a job, a
+ * folder) is published to netci-homesync under the item's version, and every other replica's
+ * change is applied here in the order the store gave it.
+ *
+ * <p>Off unless {@code NETCI_HOMESYNC_URL} is set: a single controller (a cell) has no other home
+ * to agree with.
+ *
+ * <p>What this does not do yet, said here rather than discovered: views, renames and moves are
+ * not replicated; a folder's deletion removes its children here and on the others, but the
+ * children's own entries are not tombstoned in the store.
+ */
+public final class HomeSync {
+    private static final Logger LOGGER = Logger.getLogger(HomeSync.class.getName());
+    private static final Duration POLL = Duration.ofSeconds(25);
+
+    /** Set while this replica applies a change it was given, so the save it causes is not published back. */
+    static final ThreadLocal<Boolean> APPLYING = ThreadLocal.withInitial(() -> false);
+
+    private static volatile HomeSync instance;
+
+    final HomeSyncClient client;
+    /** The version of each item this home holds, deleted ones included (a re-create starts there). */
+    final Map<String, Long> versions = new ConcurrentHashMap<>();
+    /** Applying and publishing are one at a time, so the feed never interleaves with a publish. */
+    final Object order = new Object();
+
+    private volatile long applied;
+    private Thread follower;
+    private volatile boolean ready;
+
+    HomeSync(HomeSyncClient client) {
+        this.client = client;
+    }
+
+    /** The running instance, or null when homesync is off (or not started yet). */
+    static HomeSync get() {
+        return instance;
+    }
+
+    /** Edits are refused until the home has caught up with the store: before that, a save could be made from stale content. */
+    boolean ready() {
+        return ready;
+    }
+
+    @Initializer(after = InitMilestone.JOB_CONFIG_ADAPTED)
+    public static void start() {
+        String url = setting("NETCI_HOMESYNC_URL", "");
+        if (url == null) {
+            return;
+        }
+        String tokenFile = setting("NETCI_HOMESYNC_TOKEN_FILE", "/run/secrets/netci-homesync/token");
+        HomeSync sync = new HomeSync(new HomeSyncClient(url, tokenFile));
+        instance = sync;
+        sync.follower = new Thread(sync::run, "netCI homesync follower");
+        sync.follower.setDaemon(true);
+        sync.follower.start();
+    }
+
+    /** Stop following when Jenkins stops, so nothing is applied to a home that is shutting down. */
+    @Terminator
+    public static void stop() {
+        HomeSync sync = instance;
+        instance = null;
+        if (sync != null && sync.follower != null) {
+            sync.follower.interrupt();
+        }
+    }
+
+    /** Catch up from the start, then follow. An unreachable store leaves edits refused and is retried. */
+    private void run() {
+        while (!ready) {
+            try {
+                bootstrap();
+                ready = true;
+                LOGGER.info(() -> "netCI homesync: home caught up with the store at seq " + applied + ", " + versions.size() + " items");
+            } catch (IOException e) {
+                LOGGER.log(Level.WARNING, "netCI homesync: cannot reach the store; edits stay refused until it answers", e);
+                sleep(Duration.ofSeconds(3));
+            } catch (InterruptedException e) {
+                return;
+            }
+        }
+        while (true) {
+            try {
+                HomeSyncClient.Changes page = client.changes(applied, POLL);
+                synchronized (order) {
+                    applyAll(page.changes());
+                }
+            } catch (IOException e) {
+                LOGGER.log(Level.WARNING, "netCI homesync: the feed is unreachable; retrying", e);
+                sleep(Duration.ofSeconds(2));
+            } catch (InterruptedException e) {
+                return;
+            }
+        }
+    }
+
+    /**
+     * The store is the truth for every item it knows; an item only this home has (a replica's first
+     * start, or a job its own JCasC created) is published, and if another replica published it first,
+     * that one is applied here.
+     */
+    void bootstrap() throws IOException, InterruptedException {
+        synchronized (order) {
+            Map<String, HomeSyncClient.Change> latest = new HashMap<>();
+            long after = 0;
+            while (true) {
+                HomeSyncClient.Changes page = client.changes(after, Duration.ZERO);
+                for (HomeSyncClient.Change c : page.changes()) {
+                    latest.put(c.path(), c);
+                    after = c.seq();
+                }
+                if (page.changes().isEmpty() || after >= page.head()) {
+                    after = Math.max(after, page.head());
+                    break;
+                }
+            }
+            // Parents before children.
+            List<String> paths = latest.keySet().stream()
+                    .sorted(Comparator.comparingInt((String p) -> p.split("/").length).thenComparing(p -> p)).toList();
+            for (String path : paths) {
+                HomeSyncClient.Item item = client.get(path);
+                if (item.content() == null) {
+                    apply(path, item.version(), null);
+                } else if (!Arrays.equals(local(path), item.content())) {
+                    apply(path, item.version(), item.content());
+                } else {
+                    versions.put(path, item.version());
+                }
+            }
+            applied = after;
+            try (ACLContext ignored = ACL.as2(ACL.SYSTEM2)) {
+                for (AbstractItem it : Jenkins.get().getAllItems(AbstractItem.class)) {
+                    if (!latest.containsKey(it.getFullName())) {
+                        publishInOrder(it.getFullName(), Files.readAllBytes(it.getConfigFile().getFile().toPath()), 0);
+                    }
+                }
+            }
+        }
+    }
+
+    /** Apply every change in a page not already held here; called with {@link #order} held. */
+    private void applyAll(List<HomeSyncClient.Change> changes) throws IOException, InterruptedException {
+        for (HomeSyncClient.Change c : changes) {
+            if (c.version() > versions.getOrDefault(c.path(), 0L)) {
+                // The latest content, which may be newer than this entry: later entries are then no-ops.
+                HomeSyncClient.Item item = client.get(c.path());
+                if (item.version() > versions.getOrDefault(c.path(), 0L)) {
+                    apply(c.path(), item.version(), item.content());
+                }
+            }
+            applied = c.seq();
+        }
+    }
+
+    /** Before an edit: apply everything the store had when the edit's lock was taken. */
+    void catchUp(long head) throws IOException, InterruptedException {
+        synchronized (order) {
+            while (applied < head) {
+                HomeSyncClient.Changes page = client.changes(applied, Duration.ZERO);
+                if (page.changes().isEmpty()) {
+                    applied = Math.max(applied, page.head());
+                    break;
+                }
+                applyAll(page.changes());
+            }
+        }
+    }
+
+    /**
+     * Publish this home's saved config of an item. Under a lock the edit was ordered and caught up,
+     * so a refusal here means the order broke; without one (a save no request asked for) another
+     * replica's change may have won -- then that change is applied, and the refusal is logged as the
+     * lost local change it is.
+     */
+    void publish(String path, byte[] content, long lockToken) {
+        synchronized (order) {
+            publishInOrder(path, content, lockToken);
+        }
+    }
+
+    private void publishInOrder(String path, byte[] content, long lockToken) {
+        long expect = versions.getOrDefault(path, 0L);
+        try {
+            versions.put(path, client.put(path, content, expect, lockToken));
+        } catch (HomeSyncClient.Refused r) {
+            LOGGER.severe(() -> "netCI homesync: this replica's change to " + path + " was refused (" + r.code
+                    + (r.holder.isEmpty() ? "" : ", held by " + r.holder) + "): " + r.getMessage()
+                    + "; the shared version is applied here instead");
+            reapply(path);
+        } catch (IOException e) {
+            LOGGER.log(Level.SEVERE, "netCI homesync: could not publish " + path
+                    + "; this home now differs from the others until it is saved again", e);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+    }
+
+    void publishDelete(String path, long lockToken) {
+        synchronized (order) {
+            long expect = versions.getOrDefault(path, 0L);
+            try {
+                versions.put(path, client.delete(path, expect, lockToken));
+            } catch (HomeSyncClient.Refused r) {
+                LOGGER.severe(() -> "netCI homesync: the deletion of " + path + " was refused (" + r.code + "); the shared version is applied");
+                reapply(path);
+            } catch (IOException e) {
+                LOGGER.log(Level.SEVERE, "netCI homesync: could not publish the deletion of " + path, e);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        }
+    }
+
+    private void reapply(String path) {
+        try {
+            HomeSyncClient.Item item = client.get(path);
+            apply(path, item.version(), item.content());
+        } catch (IOException e) {
+            LOGGER.log(Level.SEVERE, "netCI homesync: could not re-read " + path + " after a refused change", e);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+    }
+
+    /** Make this home's item what the store says: created, replaced, or deleted (content null). */
+    void apply(String path, long version, byte[] content) throws IOException, InterruptedException {
+        APPLYING.set(true);
+        try (ACLContext ignored = ACL.as2(ACL.SYSTEM2)) {
+            Jenkins j = Jenkins.get();
+            Item existing = j.getItemByFullName(path);
+            if (content == null) {
+                if (existing != null) {
+                    existing.delete();
+                }
+            } else if (existing instanceof AbstractItem ai) {
+                ai.updateByXml(new StreamSource(new ByteArrayInputStream(content)));
+            } else if (existing == null) {
+                int slash = path.lastIndexOf('/');
+                Object parent = slash < 0 ? j : j.getItemByFullName(path.substring(0, slash));
+                if (!(parent instanceof ModifiableTopLevelItemGroup group)) {
+                    LOGGER.warning(() -> "netCI homesync: cannot create " + path + ": its parent is not here");
+                    return;
+                }
+                group.createProjectFromXML(path.substring(slash + 1), new ByteArrayInputStream(content));
+            } else {
+                LOGGER.warning(() -> "netCI homesync: " + path + " is not an item this replica can update");
+                return;
+            }
+            versions.put(path, version);
+        } finally {
+            APPLYING.set(false);
+        }
+    }
+
+    /**
+     * A setting from the environment (how a pod is configured), or the system property of the same
+     * name lower-cased with dots (how a test is); null when neither is set and the default is blank.
+     */
+    static String setting(String env, String dflt) {
+        String v = System.getProperty(env.toLowerCase(java.util.Locale.ROOT).replace('_', '.'));
+        if (v == null || v.isBlank()) {
+            v = System.getenv(env);
+        }
+        if (v == null || v.isBlank()) {
+            v = dflt;
+        }
+        return v == null || v.isBlank() ? null : v;
+    }
+
+    private static byte[] local(String path) {
+        try (ACLContext ignored = ACL.as2(ACL.SYSTEM2)) {
+            Item it = Jenkins.get().getItemByFullName(path);
+            if (it instanceof AbstractItem ai && ai.getConfigFile().exists()) {
+                return Files.readAllBytes(ai.getConfigFile().getFile().toPath());
+            }
+        } catch (IOException e) {
+            LOGGER.log(Level.WARNING, "netCI homesync: cannot read " + path, e);
+        }
+        return null;
+    }
+
+    private static void sleep(Duration d) {
+        try {
+            Thread.sleep(d.toMillis());
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+    }
+}

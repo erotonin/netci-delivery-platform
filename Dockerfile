@@ -4,6 +4,7 @@ FROM scratch
 COPY bin/linux-amd64/cell-agent /cell-agent
 COPY bin/linux-amd64/supervisor /supervisor
 COPY bin/linux-amd64/netci-queue /netci-queue
+COPY bin/linux-amd64/netci-homesync /netci-homesync
 COPY bin/linux-amd64/netci-fabric /netci-fabric
 COPY bin/linux-amd64/netci-sandbox /netci-sandbox
 USER 65532:65532
