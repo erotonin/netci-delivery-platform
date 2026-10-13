@@ -1,0 +1,22 @@
+{
+  "scenario": "aa-phase5-manual",
+  "started": "2026-10-13T16:43:25+00:00",
+  "build": 3,
+  "copiedAtTick": 15,
+  "killedAtTick": 15,
+  "agent0OnR1AfterSeconds": 4.5,
+  "adoptedAfterSeconds": 4.8,
+  "adoption": "adopted #3: building=true",
+  "finished": {
+    "result": "SUCCESS",
+    "afterSeconds": 71.7,
+    "ticksSeen": 90,
+    "distinct": 90,
+    "missing": [],
+    "duplicated": [],
+    "hosts": [
+      "agent-0"
+    ]
+  },
+  "r0HomeOnHost": "/var/lib/rancher/k3s/storage/pvc-61cf9d4d-bfa6-47cc-b900-180cd57775ff_aa-p2_home-jenkins-0"
+}

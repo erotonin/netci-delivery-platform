@@ -1,0 +1,118 @@
+# Active-active, phase 5 (ADR-078 "Phase 5"), applied over phases 2 and 3: inbound agents through the
+# VIP, and a long build to adopt.
+#   - two inbound agents (the large VM's executors in the mentor's site: here two pods), each with
+#     TWO executors -- one executor per agent is a CloudBees limit this design does not need;
+#   - they connect over WebSocket to the VIP; HAProxy sends each to its replica by the Node-Name
+#     header, and to the other replica when that one is down (use-server is ignored for a down server);
+#   - every replica has the same secrets/ (lab/aa/phase5_secrets.sh), or an agent's secret -- an HMAC
+#     under them -- would be valid on one replica only.
+# INBOUND is replaced by a digest at apply time; lab/aa/phase5_probe.py runs it.
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: casc, namespace: aa-p2}
+data:
+  jenkins.yaml: |
+    jenkins:
+      systemMessage: "netCI active-active lab, phase 5: inbound agents, builds adopted by a surviving replica"
+      numExecutors: 0          # builds never run on a controller (the mentor's rule)
+      securityRealm:
+        local:
+          allowsSignup: false
+          users: [{id: admin, password: "${ADMIN_PASSWORD}"}]
+      authorizationStrategy: loggedInUsersCanDoAnything
+      nodes:
+        - permanent:
+            name: agent-0
+            labelString: linux
+            numExecutors: 2
+            remoteFS: /home/jenkins/agent
+            launcher: {inbound: {webSocket: true}}
+        - permanent:
+            name: agent-1
+            labelString: linux
+            numExecutors: 2
+            remoteFS: /home/jenkins/agent
+            launcher: {inbound: {webSocket: true}}
+    unclassified:
+      location: {url: "http://192.168.122.240/"}
+    jobs:
+      - script: |
+          pipelineJob('quick') {
+            definition { cps { sandbox(true); script('''node { sh 'echo quick on $(hostname)' }''') } }
+          }
+          pipelineJob('long') {
+            // Max survivability: the run's program is written at every step, which is what lets
+            // another replica continue it (with performance-optimised durability it is not).
+            properties { durabilityHint { hint('MAX_SURVIVABILITY') } }
+            definition { cps { sandbox(true); script('''node('linux') { sh 'for i in $(seq 1 90); do echo "tick $i on $(hostname)"; sleep 1; done' }''') } }
+          }
+---
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: haproxy, namespace: aa-p2}
+data:
+  haproxy.cfg: |
+    global
+      # httplog without captures: no request header is logged, so an agent's Secret-Key never is.
+      log stdout format raw local0 info
+    defaults
+      mode http
+      log global
+      option httplog
+      timeout connect 1s
+      timeout client 60s
+      timeout server 60s
+      timeout tunnel 1h        # an agent's WebSocket lives for hours
+      timeout check 1s
+      retries 3
+      option redispatch 1
+      retry-on conn-failure empty-response response-timeout
+    resolvers k8s
+      parse-resolv-conf
+      hold valid 2s
+      hold obsolete 2s
+    frontend ui
+      bind :8080
+      default_backend jenkins
+    backend jenkins
+      balance roundrobin
+      # preserve: the plugin sets this cookie to send a request to a job's owner (ADR-078).
+      cookie NETCI_REPLICA insert indirect nocache httponly preserve
+      option httpchk GET /login
+      http-check expect status 200
+      http-response set-header X-Netci-Replica %s
+      # Each agent to its replica; a use-server rule is ignored while that server is down, so an
+      # agent whose replica died reconnects to the other one.
+      use-server r0 if { req.hdr(Node-Name) -m str agent-0 }
+      use-server r1 if { req.hdr(Node-Name) -m str agent-1 }
+      default-server inter 1s fall 2 rise 2 resolvers k8s init-addr none
+      server r0 jenkins-0.jenkins.aa-p2.svc.cluster.local:8080 check cookie r0
+      server r1 jenkins-1.jenkins.aa-p2.svc.cluster.local:8080 check cookie r1
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata: {name: agent, namespace: aa-p2}
+spec:
+  serviceName: agent
+  replicas: 2
+  podManagementPolicy: Parallel
+  selector: {matchLabels: {app: agent}}
+  template:
+    metadata: {labels: {app: agent}}
+    spec:
+      # On the machine that is not killed in the experiments: here the agent stands for the
+      # mentor's large VM, which is not one of the controllers' machines.
+      nodeSelector: {kubernetes.io/hostname: netci-lab-3}
+      securityContext: {runAsUser: 1000, runAsGroup: 1000, fsGroup: 1000}
+      containers:
+        - name: agent
+          image: INBOUND
+          command: [sh, -c, 'JENKINS_SECRET="$(cat /run/secrets/agents/$POD_NAME)" JENKINS_AGENT_NAME="$POD_NAME" exec /usr/local/bin/jenkins-agent']
+          env:
+            - {name: POD_NAME, valueFrom: {fieldRef: {fieldPath: metadata.name}}}
+            - {name: JENKINS_URL, value: "http://192.168.122.240/"}
+            - {name: JENKINS_WEB_SOCKET, value: "true"}
+            - {name: JENKINS_AGENT_WORKDIR, value: /home/jenkins/agent}
+          resources: {requests: {cpu: 100m, memory: 256Mi}, limits: {memory: 768Mi}}
+          volumeMounts: [{name: secrets, mountPath: /run/secrets/agents, readOnly: true}]
+      volumes: [{name: secrets, secret: {secretName: agent-secrets, defaultMode: 0440}}]

@@ -48,6 +48,10 @@ spec:
   serviceName: jenkins
   replicas: 2
   podManagementPolicy: Parallel
+  # A restarted replica is ready to Kubernetes before the balancers have resolved its new address
+  # and checked it twice; rolling on at once took the other replica down in that gap, and the
+  # balancers logged "0 active servers left" (phase 5 setup). Wait before the next one.
+  minReadySeconds: 30
   selector: {matchLabels: {app: jenkins}}
   template:
     metadata: {labels: {app: jenkins}}
@@ -59,6 +63,16 @@ spec:
           requiredDuringSchedulingIgnoredDuringExecution:
             - labelSelector: {matchLabels: {app: jenkins}}
               topologyKey: kubernetes.io/hostname
+      initContainers:
+        # ADR-076 phase 5: one secrets/ set for every replica (lab/aa/phase5_secrets.py made it from
+        # jenkins-0's). An inbound agent's secret is an HMAC under these keys, and credentials are
+        # encrypted with them: different keys per replica made each a different Jenkins to its agents.
+        - name: same-secrets
+          image: CONTROLLER
+          command: [sh, -c, 'if [ -d /seed ] && [ -n "$(ls /seed)" ]; then mkdir -p /var/jenkins_home/secrets && for f in /seed/*; do n=$(basename $f); case $n in identity.key.enc) cp $f /var/jenkins_home/$n;; *) cp $f /var/jenkins_home/secrets/$n;; esac; done; chmod 700 /var/jenkins_home/secrets; fi']
+          volumeMounts:
+            - {name: home, mountPath: /var/jenkins_home}
+            - {name: home-secrets, mountPath: /seed, readOnly: true}
       containers:
         - name: jenkins
           image: CONTROLLER
@@ -87,6 +101,7 @@ spec:
         - {name: casc, configMap: {name: casc}}
         - {name: homesync, secret: {secretName: homesync-tokens, defaultMode: 0440}}
         - {name: session-key, secret: {secretName: session-key, defaultMode: 0440}}
+        - {name: home-secrets, secret: {secretName: home-secrets, defaultMode: 0400, optional: true}}
   volumeClaimTemplates:
     - metadata: {name: home}
       spec:

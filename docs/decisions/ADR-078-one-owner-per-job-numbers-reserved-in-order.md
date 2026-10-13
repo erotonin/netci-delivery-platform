@@ -55,6 +55,29 @@ replicated state into its home and resumes it. The agent running the step reconn
 VIP and is routed by `Node-Name` to the new owner. That is where "a build is not lost when a
 machine dies" is decided, and it is measured there, not claimed here.
 
+## Phase 5 by hand: a running build continued by the surviving replica (done)
+
+`lab/aa/phase5_manual.py`, before any code automates it. `long` runs 90 one-second ticks in an `sh`
+step on agent-0 (an inbound agent, two executors, WebSocket through the VIP), started on r0. At
+tick 15 r0's copy of the running build is copied into r1's home; r0 is killed and its machine
+cordoned (dead, fenced). Evidence `aa-phase5-manual-20261013T164325Z.json`:
+
+- agent-0 reconnected through the VIP; r0 being down, the balancer gave it to r1 **after 4.5 s**;
+- on r1, the build's number made known (`recognizeNumber`) and the run loaded: it resumed itself
+  ("Resuming build ... Waiting for reconnection of agent-0 ... Ready to run") -- **r1 was not
+  restarted**;
+- it **finished SUCCESS** on r1: **90 ticks, none missing, none twice**, all on agent-0. The `sh`
+  process had kept running on the agent; r1 read its output on from the offset the copy held.
+
+What the first try taught (`aa-phase5-manual-20261013T164147Z.json`): loading the run is the whole
+adoption. Calling `onResume()` on its steps as well resumed them a second time ("Already
+resumed"), the `sh` step interrupted its process, and the build failed.
+
+What automation must add, from this: the running build replicated while it runs (here: one copy by
+hand); adoption only once the old owner is fenced (here: killed and cordoned by hand); and a
+returning replica must not resume, from its stale copy, a build that was adopted elsewhere (here:
+its copy was replaced by hand before it came back).
+
 ## Rejected
 
 - **Numbers striped by replica** (r0 odd, r1 even): no coordination needed, but numbers that jump
