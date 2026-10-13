@@ -40,6 +40,9 @@ final class HomeSyncClient {
     /** A lock on an item, and the feed's head when it was taken. */
     record Lock(long token, long head) {}
 
+    /** A job's lease (ADR-078): the epoch it is held under, for how long, and the highest number reserved. */
+    record JobLease(long epoch, long expiresInMs, int maxReserved) {}
+
     /** The store refused a change: {@code code} is VERSION_CONFLICT, LOCKED or LOCK_LOST. */
     static final class Refused extends IOException {
         private static final long serialVersionUID = 1L;
@@ -106,6 +109,36 @@ final class HomeSyncClient {
             throw new Refused("LOCKED", 0, o.optString("holder"), o.optString("message"));
         }
         throw new IOException("homesync answered HTTP " + r.statusCode() + " to a lock of " + path);
+    }
+
+    JobLease claimJob(String job, Duration ttl) throws IOException, InterruptedException {
+        HttpResponse<String> r = HTTP.send(
+                request("/v1/jobs/claim?job=" + enc(job) + "&ttl=" + ttl.toMillis() + "ms")
+                        .POST(HttpRequest.BodyPublishers.noBody()).build(),
+                HttpResponse.BodyHandlers.ofString());
+        JSONObject o = json(r.body());
+        if (r.statusCode() == 200) {
+            return new JobLease(o.getLong("epoch"), o.getLong("expiresInMs"), o.optInt("maxReserved"));
+        }
+        if (r.statusCode() == 423) {
+            throw new Refused("OWNED", o.optLong("epoch"), o.optString("owner"), "owned by " + o.optString("owner"));
+        }
+        throw new IOException("homesync answered HTTP " + r.statusCode() + " to a claim of " + job);
+    }
+
+    void reserve(String job, int number, long epoch) throws IOException, InterruptedException {
+        HttpResponse<String> r = HTTP.send(
+                request("/v1/jobs/reserve?job=" + enc(job) + "&number=" + number + "&epoch=" + epoch)
+                        .POST(HttpRequest.BodyPublishers.noBody()).build(),
+                HttpResponse.BodyHandlers.ofString());
+        if (r.statusCode() == 200) {
+            return;
+        }
+        JSONObject o = json(r.body());
+        if (r.statusCode() == 409) {
+            throw new Refused(o.optString("code"), o.optLong("max"), "", o.optString("message"));
+        }
+        throw new IOException("homesync answered HTTP " + r.statusCode() + " to a reservation of " + job + " #" + number);
     }
 
     void unlock(String path, long token) throws IOException, InterruptedException {

@@ -27,7 +27,7 @@ func testStore(t *testing.T) *Store {
 	if err := Migrate(ctx, pool); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, `TRUNCATE home_items, home_changes, home_locks`); err != nil {
+	if _, err := pool.Exec(ctx, `TRUNCATE home_items, home_changes, home_locks, home_job_owners, home_build_numbers`); err != nil {
 		t.Fatal(err)
 	}
 	return &Store{Pool: pool}

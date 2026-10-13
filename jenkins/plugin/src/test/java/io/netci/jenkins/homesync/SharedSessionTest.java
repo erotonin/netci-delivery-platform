@@ -35,6 +35,11 @@ class SharedSessionTest {
         }
     }
 
+    @org.junit.jupiter.api.AfterAll
+    static void off() {
+        System.clearProperty("netci.session.key.file");
+    }
+
     private static User alice(JenkinsRule j) throws Exception {
         HudsonPrivateSecurityRealm realm = new HudsonPrivateSecurityRealm(false, false, null);
         realm.createAccount("alice", PASSWORD);

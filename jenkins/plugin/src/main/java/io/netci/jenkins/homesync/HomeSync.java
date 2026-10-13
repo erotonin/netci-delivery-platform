@@ -58,6 +58,7 @@ public final class HomeSync {
 
     private volatile long applied;
     private Thread follower;
+    private Thread renewer;
     private volatile boolean ready;
 
     HomeSync(HomeSyncClient client) {
@@ -86,6 +87,15 @@ public final class HomeSync {
         sync.follower = new Thread(sync::run, "netCI homesync follower");
         sync.follower.setDaemon(true);
         sync.follower.start();
+        BuildOwnership.forget();
+        sync.renewer = new Thread(() -> {
+            while (!Thread.currentThread().isInterrupted()) {
+                BuildOwnership.renewAll(sync);
+                sleep(Duration.ofSeconds(5));
+            }
+        }, "netCI homesync job leases");
+        sync.renewer.setDaemon(true);
+        sync.renewer.start();
     }
 
     /** Stop following when Jenkins stops, so nothing is applied to a home that is shutting down. */
@@ -95,6 +105,9 @@ public final class HomeSync {
         instance = null;
         if (sync != null && sync.follower != null) {
             sync.follower.interrupt();
+        }
+        if (sync != null && sync.renewer != null) {
+            sync.renewer.interrupt();
         }
     }
 

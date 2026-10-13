@@ -42,6 +42,62 @@ class HomeSyncTest {
         STORE.reset();
     }
 
+    /** The properties are the JVM's: left set, the test classes after this one would run with homesync on. */
+    @org.junit.jupiter.api.AfterAll
+    static void off() {
+        System.clearProperty("netci.homesync.url");
+        System.clearProperty("netci.homesync.token.file");
+    }
+
+    private static WorkflowJob pipeline(JenkinsRule j, String name) throws Exception {
+        WorkflowJob job = j.createProject(WorkflowJob.class, name);
+        job.setDefinition(new org.jenkinsci.plugins.workflow.cps.CpsFlowDefinition("echo 'hi'", true));
+        return job;
+    }
+
+    @Test
+    void aBuildHereTakesTheJobsLeaseAndANumberReservedBeforeItStarts(JenkinsRule j) throws Exception {
+        ready();
+        WorkflowJob job = pipeline(j, "owned");
+        org.jenkinsci.plugins.workflow.job.WorkflowRun b1 = j.buildAndAssertSuccess(job);
+        org.jenkinsci.plugins.workflow.job.WorkflowRun b2 = j.buildAndAssertSuccess(job);
+        assertEquals("me", STORE.jobOwner.get("owned"));
+        assertEquals(List.of(1, 2), STORE.reservedFor("owned"));
+        assertEquals(1, b1.getNumber());
+        assertEquals(2, b2.getNumber());
+    }
+
+    @Test
+    void aJobAnotherReplicaOwnsIsNotScheduledHere(JenkinsRule j) throws Exception {
+        ready();
+        WorkflowJob job = pipeline(j, "theirs");
+        STORE.ownJobAs("r1", "theirs");
+        assertNull(job.scheduleBuild2(0), "a build of r1's job was scheduled here");
+        Thread.sleep(1000);
+        assertNull(job.getLastBuild());
+        assertTrue(STORE.reservedFor("theirs").isEmpty());
+    }
+
+    @Test
+    void numbersContinueAboveEveryReservationAnotherOwnerMade(JenkinsRule j) throws Exception {
+        ready();
+        WorkflowJob job = pipeline(j, "handed-over");
+        synchronized (STORE) {
+            STORE.reserved.put("handed-over", new java.util.ArrayList<>(List.of(1, 2, 3, 4, 5))); // a previous owner's
+        }
+        org.jenkinsci.plugins.workflow.job.WorkflowRun b = j.buildAndAssertSuccess(job);
+        assertEquals(6, b.getNumber(), "a number another owner reserved was used again");
+        assertEquals(6, STORE.maxReserved("handed-over"));
+    }
+
+    @Test
+    void withoutTheStoreNothingIsScheduled(JenkinsRule j) throws Exception {
+        ready();
+        WorkflowJob job = pipeline(j, "no-store");
+        STORE.down = true;
+        assertNull(job.scheduleBuild2(0), "a build was scheduled with no way to order it");
+    }
+
     private static void await(String what, BooleanSupplier ok) throws InterruptedException {
         long end = System.currentTimeMillis() + 15_000;
         while (!ok.getAsBoolean()) {

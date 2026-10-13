@@ -1,0 +1,188 @@
+{
+  "scenario": "aa-phase2",
+  "started": "2026-10-13T15:10:03+00:00",
+  "vip": {
+    "victim": "netci-lab-1",
+    "before": {
+      "pods": {
+        "netci-lab-2": [
+          "haproxy-47ngr",
+          "jenkins-0"
+        ],
+        "netci-lab-3": [
+          "haproxy-sdvx7",
+          "homesync-748964f9bd-55ksx"
+        ],
+        "netci-lab-1": [
+          "haproxy-zw7jw",
+          "homesync-748964f9bd-2d642",
+          "jenkins-1"
+        ]
+      },
+      "vipHolder": "netci-lab-1"
+    },
+    "afterObserving": {
+      "pods": {
+        "netci-lab-2": [
+          "haproxy-47ngr",
+          "homesync-748964f9bd-mlbkz",
+          "jenkins-0"
+        ],
+        "netci-lab-1": [
+          "haproxy-9hm4b",
+          "jenkins-1"
+        ],
+        "netci-lab-3": [
+          "haproxy-sdvx7",
+          "homesync-748964f9bd-55ksx"
+        ]
+      },
+      "vipHolder": "netci-lab-3"
+    },
+    "sessionPinnedTo": "r0",
+    "login": {
+      "polls": 252,
+      "failures": 3,
+      "longestOutageSeconds": 6.01,
+      "firstFailureAfterLossSeconds": 0.5,
+      "p50ms": 4.6,
+      "p99ms": 24.2,
+      "answeredBy": {
+        "r0": 165,
+        "r1": 84
+      }
+    },
+    "api": {
+      "polls": 252,
+      "failures": 3,
+      "longestOutageSeconds": 6.01,
+      "firstFailureAfterLossSeconds": 0.0,
+      "p50ms": 96.7,
+      "p99ms": 235.1,
+      "answeredBy": {
+        "r0": 226,
+        "r1": 23
+      }
+    },
+    "session": {
+      "polls": 252,
+      "failures": 3,
+      "longestOutageSeconds": 6.01,
+      "firstFailureAfterLossSeconds": 0.5,
+      "p50ms": 3.4,
+      "p99ms": 14.7,
+      "answeredBy": {
+        "r0": 249
+      }
+    },
+    "sessionStillSignedIn": true,
+    "sessionUsersAfter": [
+      "admin"
+    ],
+    "wholeAgainSeconds": 45.4
+  },
+  "probeIntervalSeconds": 0.5,
+  "requestTimeoutSeconds": 2,
+  "replica": {
+    "victim": "netci-lab-2",
+    "before": {
+      "pods": {
+        "netci-lab-2": [
+          "haproxy-4ggkz",
+          "homesync-748964f9bd-j6zwf",
+          "jenkins-0"
+        ],
+        "netci-lab-3": [
+          "haproxy-sdvx7"
+        ],
+        "netci-lab-1": [
+          "haproxy-zw7jw",
+          "homesync-748964f9bd-2d642",
+          "jenkins-1"
+        ]
+      },
+      "vipHolder": "netci-lab-1"
+    },
+    "afterObserving": {
+      "pods": {
+        "netci-lab-2": [
+          "haproxy-47ngr",
+          "jenkins-0"
+        ],
+        "netci-lab-3": [
+          "haproxy-sdvx7",
+          "homesync-748964f9bd-55ksx"
+        ],
+        "netci-lab-1": [
+          "haproxy-zw7jw",
+          "homesync-748964f9bd-2d642",
+          "jenkins-1"
+        ]
+      },
+      "vipHolder": "netci-lab-1"
+    },
+    "sessionPinnedTo": "r0",
+    "login": {
+      "polls": 259,
+      "failures": 0,
+      "longestOutageSeconds": 0.0,
+      "firstFailureAfterLossSeconds": null,
+      "p50ms": 3.3,
+      "p99ms": 12.9,
+      "answeredBy": {
+        "r0": 8,
+        "r1": 251
+      }
+    },
+    "api": {
+      "polls": 256,
+      "failures": 1,
+      "longestOutageSeconds": 2.0,
+      "firstFailureAfterLossSeconds": 0.0,
+      "p50ms": 95.6,
+      "p99ms": 217.4,
+      "answeredBy": {
+        "r0": 112,
+        "r1": 143
+      }
+    },
+    "session": {
+      "polls": 257,
+      "failures": 1,
+      "longestOutageSeconds": 2.0,
+      "firstFailureAfterLossSeconds": 0.5,
+      "p50ms": 3.3,
+      "p99ms": 10.9,
+      "answeredBy": {
+        "r0": 21,
+        "r1": 235
+      }
+    },
+    "sessionStillSignedIn": true,
+    "sessionUsersAfter": [
+      "admin"
+    ],
+    "wholeAgainSeconds": 45.4
+  },
+  "both": {
+    "skipped": "the VIP's machine runs no replica now (could not pin a session where the scenario needs it)",
+    "placement": {
+      "pods": {
+        "netci-lab-2": [
+          "haproxy-47ngr",
+          "homesync-748964f9bd-mlbkz",
+          "jenkins-0"
+        ],
+        "netci-lab-1": [
+          "haproxy-9hm4b",
+          "jenkins-1"
+        ],
+        "netci-lab-3": [
+          "haproxy-sdvx7",
+          "homesync-748964f9bd-55ksx"
+        ]
+      },
+      "vipHolder": "netci-lab-3"
+    }
+  }
+}

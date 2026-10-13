@@ -30,6 +30,11 @@ final class FakeHomeSync {
     final List<JSONObject> feed = new ArrayList<>();
     final Map<String, String> lockHolder = new HashMap<>();
     final Map<String, Long> lockToken = new HashMap<>();
+    /** job -> owner; a job's epoch; numbers reserved per job. */
+    final Map<String, String> jobOwner = new HashMap<>();
+    final Map<String, Long> jobEpoch = new HashMap<>();
+    final Map<String, List<Integer>> reserved = new HashMap<>();
+    private long epochs = 1000;
     final List<Seen> seen = new ArrayList<>();
     volatile boolean down;
     private long tokens = 100;
@@ -52,6 +57,9 @@ final class FakeHomeSync {
         lockHolder.clear();
         lockToken.clear();
         seen.clear();
+        jobOwner.clear();
+        jobEpoch.clear();
+        reserved.clear();
         down = false;
     }
 
@@ -92,6 +100,8 @@ final class FakeHomeSync {
                 case "POST /v1/locks" -> lock(x, q.get("path"));
                 case "DELETE /v1/locks" -> unlock(x, q.get("path"), Long.parseLong(q.get("token")));
                 case "GET /v1/changes" -> changes(x, Long.parseLong(q.get("after")), q.get("wait"));
+                case "POST /v1/jobs/claim" -> claim(x, q.get("job"));
+                case "POST /v1/jobs/reserve" -> reserve(x, q.get("job"), Integer.parseInt(q.get("number")), Long.parseLong(q.get("epoch")));
                 default -> reply(x, 404, new JSONObject());
             }
         } catch (InterruptedException e) {
@@ -138,6 +148,45 @@ final class FakeHomeSync {
                 .element("deleted", deleted).element("origin", "me"));
         notifyAll();
         reply(x, 200, new JSONObject().element("version", current + 1));
+    }
+
+    synchronized void ownJobAs(String replica, String job) {
+        jobOwner.put(job, replica);
+        jobEpoch.put(job, ++epochs);
+    }
+
+    synchronized int maxReserved(String job) {
+        return reserved.getOrDefault(job, List.of()).stream().mapToInt(Integer::intValue).max().orElse(0);
+    }
+
+    synchronized List<Integer> reservedFor(String job) {
+        return new ArrayList<>(reserved.getOrDefault(job, List.of()));
+    }
+
+    private synchronized void claim(HttpExchange x, String job) throws IOException {
+        String owner = jobOwner.get(job);
+        if (owner != null && !owner.equals("me")) {
+            reply(x, 423, new JSONObject().element("code", "OWNED").element("owner", owner).element("epoch", jobEpoch.get(job)));
+            return;
+        }
+        if (owner == null) {
+            ownJobAs("me", job);
+        }
+        reply(x, 200, new JSONObject().element("job", job).element("owner", "me").element("epoch", jobEpoch.get(job))
+                .element("expiresInMs", 15000).element("maxReserved", maxReserved(job)));
+    }
+
+    private synchronized void reserve(HttpExchange x, String job, int number, long epoch) throws IOException {
+        if (!"me".equals(jobOwner.get(job)) || jobEpoch.get(job) != epoch) {
+            reply(x, 409, new JSONObject().element("code", "NOT_OWNER").element("message", "not the owner"));
+            return;
+        }
+        if (number <= maxReserved(job)) {
+            reply(x, 409, new JSONObject().element("code", "NUMBER_TAKEN").element("max", maxReserved(job)));
+            return;
+        }
+        reserved.computeIfAbsent(job, k -> new ArrayList<>()).add(number);
+        reply(x, 200, new JSONObject().element("job", job).element("number", number));
     }
 
     private synchronized void lock(HttpExchange x, String path) throws IOException {

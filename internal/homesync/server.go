@@ -95,7 +95,86 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/locks", s.authed(s.lock))
 	mux.HandleFunc("DELETE /v1/locks", s.authed(s.unlock))
 	mux.HandleFunc("GET /v1/changes", s.authed(s.changes))
+	mux.HandleFunc("POST /v1/jobs/claim", s.authed(s.claimJob))
+	mux.HandleFunc("GET /v1/jobs/owner", s.authed(s.jobOwner))
+	mux.HandleFunc("POST /v1/jobs/reserve", s.authed(s.reserve))
 	return mux
+}
+
+// jobPath reads ?job= with the rules of an item's full name.
+func jobPath(r *http.Request) (string, error) {
+	q := r.URL.Query()
+	q.Set("path", q.Get("job"))
+	r2 := *r
+	u := *r.URL
+	u.RawQuery = q.Encode()
+	r2.URL = &u
+	return itemPath(&r2)
+}
+
+func (s *Server) claimJob(w http.ResponseWriter, r *http.Request, replica string) {
+	job, err := jobPath(r)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"code": "BAD_JOB", "message": err.Error()})
+		return
+	}
+	ttl, err := time.ParseDuration(r.URL.Query().Get("ttl"))
+	if err != nil {
+		ttl = 15 * time.Second
+	}
+	o, err := s.Store.ClaimJob(r.Context(), job, replica, ttl)
+	var owned *OwnedError
+	switch {
+	case errors.As(err, &owned):
+		writeJSON(w, http.StatusLocked, map[string]any{"code": "OWNED", "owner": owned.Ownership.Owner,
+			"epoch": owned.Ownership.Epoch, "expiresInMs": owned.Ownership.ExpiresIn})
+	case err != nil:
+		writeJSON(w, http.StatusBadRequest, map[string]any{"code": "BAD_REQUEST", "message": err.Error()})
+	default:
+		max, err := s.Store.MaxReserved(r.Context(), job)
+		if err != nil {
+			s.fail(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"job": o.Job, "owner": o.Owner, "epoch": o.Epoch,
+			"expiresInMs": o.ExpiresIn, "maxReserved": max})
+	}
+}
+
+func (s *Server) jobOwner(w http.ResponseWriter, r *http.Request, _ string) {
+	job, err := jobPath(r)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"code": "BAD_JOB", "message": err.Error()})
+		return
+	}
+	o, err := s.Store.JobOwner(r.Context(), job)
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, o)
+}
+
+func (s *Server) reserve(w http.ResponseWriter, r *http.Request, replica string) {
+	job, err := jobPath(r)
+	number, nerr := strconv.Atoi(r.URL.Query().Get("number"))
+	epoch, eerr := strconv.ParseInt(r.URL.Query().Get("epoch"), 10, 64)
+	if err != nil || nerr != nil || eerr != nil || number < 1 {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"code": "BAD_REQUEST", "message": "job, number (1+) and epoch are required"})
+		return
+	}
+	err = s.Store.Reserve(r.Context(), job, number, replica, epoch)
+	var taken *NumberTakenError
+	switch {
+	case err == nil:
+		writeJSON(w, http.StatusOK, map[string]any{"job": job, "number": number})
+	case errors.As(err, &taken):
+		writeJSON(w, http.StatusConflict, map[string]any{"code": "NUMBER_TAKEN", "max": taken.Max})
+	case errors.Is(err, ErrNotOwner):
+		writeJSON(w, http.StatusConflict, map[string]any{"code": "NOT_OWNER", "message": err.Error()})
+	default:
+		s.fail(w, err)
+	}
 }
 
 type handler func(w http.ResponseWriter, r *http.Request, replica string)

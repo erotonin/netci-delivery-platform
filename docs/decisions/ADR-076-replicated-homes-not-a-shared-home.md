@@ -83,6 +83,8 @@ not a distribution.
 | **v3: `Local`, an HAProxy per machine, kube-vip on its own API server** | a replica's machine | 1 / 0 / 1 | **2 s** |
 | v3 | the VIP's machine (with a replica on it) | 3 / 3 / 3 | **6 s** |
 | v3 | the VIP's and the session's replica's machine | 1 / 2 / 1 | **2-4 s** |
+| **netci15** (users replicated, shared sign-in, ADR-077) | a replica's machine, the session's replica on it | 0 / 1 / 1 | **0-2 s; the session stayed signed in as admin on r1** |
+| netci15 | the VIP's machine | 3 / 3 / 3 | 6 s; session kept |
 
 What each change fixed, from the evidence:
 - `Cluster` let kube-proxy on the VIP's machine send requests to a balancer on a machine that had
@@ -94,9 +96,8 @@ What each change fixed, from the evidence:
 - An HAProxy on every machine leaves every surviving machine able to take the VIP under `Local`.
 
 What it does not fix yet, said plainly:
-- **A signed-in session is lost when its replica dies**: the person is anonymous on the other replica
-  and signs in again. Jenkins keeps sessions in one JVM. To be fixed by replicating users and the
-  `secrets/` set (so a remember-me cookie or an SSO session is valid on every replica), or by SSO.
+- ~~A signed-in session is lost when its replica dies~~: fixed by ADR-077 (users replicated, a shared
+  signed cookie); measured with netci15 above (`aa-phase2-20261013T151003Z.json`).
 - The few seconds that remain are the 2 s client timeout of requests already sent to the dead
   machine, plus the 3 s VIP lease. Shorter timings are possible and were not tried.
 - On OpenStack the VIP needs the port's allowed-address-pairs (or an Octavia balancer instead):

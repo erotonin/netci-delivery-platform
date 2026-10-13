@@ -142,3 +142,28 @@ func TestALongPollWakesWhenAnotherReplicaCommits(t *testing.T) {
 }
 
 func itoa(v int64) string { return strconv.FormatInt(v, 10) }
+
+func TestTheJobLeaseAndReservationsOverHTTP(t *testing.T) {
+	srv := testServer(t)
+	code, _, body, raw := call(t, srv, "POST", "/v1/jobs/claim?job=team/app&ttl=10s", tokenR0, nil, "")
+	if code != 200 || body["owner"] != "r0" || body["maxReserved"] != float64(0) {
+		t.Fatalf("claim: %d %s", code, raw)
+	}
+	epoch := strconv.FormatInt(int64(body["epoch"].(float64)), 10)
+	if code, _, body, _ = call(t, srv, "POST", "/v1/jobs/claim?job=team/app", tokenR1, nil, ""); code != http.StatusLocked || body["owner"] != "r0" {
+		t.Fatalf("r1 claimed r0's job: %d %v", code, body)
+	}
+	if code, _, _, _ = call(t, srv, "POST", "/v1/jobs/reserve?job=team/app&number=1&epoch="+epoch, tokenR0, nil, ""); code != 200 {
+		t.Fatalf("reserve: %d", code)
+	}
+	if code, _, body, _ = call(t, srv, "POST", "/v1/jobs/reserve?job=team/app&number=1&epoch="+epoch, tokenR0, nil, ""); code != 409 || body["code"] != "NUMBER_TAKEN" || body["max"] != float64(1) {
+		t.Fatalf("a number twice: %d %v", code, body)
+	}
+	// r1 cannot reserve under r0's epoch: the epoch is not a credential, the token is.
+	if code, _, body, _ = call(t, srv, "POST", "/v1/jobs/reserve?job=team/app&number=2&epoch="+epoch, tokenR1, nil, ""); code != 409 || body["code"] != "NOT_OWNER" {
+		t.Fatalf("r1 reserved under r0's epoch: %d %v", code, body)
+	}
+	if code, _, body, _ = call(t, srv, "GET", "/v1/jobs/owner?job=team/app", tokenR1, nil, ""); code != 200 || body["owner"] != "r0" {
+		t.Fatalf("owner: %d %v", code, body)
+	}
+}
