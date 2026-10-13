@@ -125,13 +125,30 @@ The first run (`aa-phase3-20261013T101804Z.json`) found a real gap: a job create
 -- ten jobs on r0, none on r1. Fixed (f52639b); the unit test now goes through that API. On the next
 start, r0's bootstrap published those jobs and both replicas listed the same 18.
 
+## Phase 4: builds with two replicas (done; ADR-078)
+
+`lab/aa/phase4_probe.py` on netci17. Which replica ran a build is the store's record of who
+published it. Evidence `aa-phase4-20261013T161858Z.json`.
+
+| # | Experiment | Result |
+|---|---|---|
+| P1 | 3 builds on the owner r0 | #1, #2, #3, all by jenkins-0; listed on r1 after 104-229 ms, console included |
+| P2 | "Build now" on r1 for r0's job, with r1's crumb | 201; built on jenkins-0 as #4, and not also on r1 |
+| P3 | A job triggered every minute, on both replicas, for 3 minutes | 3 builds, #1-#3, one owner built them all, both replicas list the same |
+| P4 | r0's pod killed, "Build now" on r1 | refused with the owner's name (409) until r0's lease expired; at 13.8 s r1 built #5 -- numbers continued |
+
+The first two runs found what unit tests could not: HAProxy removed the routing cookie the replica
+set (`preserve` fixes it), and a redirected POST was refused by the owner because its CSRF crumb
+belonged to the first replica's session -- so build requests are now made on the owner by the first
+replica (ADR-078 point 4). Both runs are kept as evidence.
+
 ## Phases
 
 | Phase | What | Pass |
 |---|---|---|
 | 2 | HAProxy + VIP before two replicas on `local-path`; the VIP's machine, a replica's machine, both, lose power | Done: 2-6 s, one sample per scenario (above); sessions are lost with their replica |
 | 3 | Configuration (and users) through PostgreSQL: concurrent edits on two replicas | Done (above) |
-| 4 | Build numbers and finished builds replicated | Every replica shows every build; the publish lag measured |
+| 4 | Build numbers and finished builds replicated | Done (above) |
 | 5 | Running builds replicated; adoption after fencing; WebSocket agents routed by name | A build on a dead replica finishes, every step once |
 | 6 | Chaos and soak | Evidence in `lab/evidence/` |
 
