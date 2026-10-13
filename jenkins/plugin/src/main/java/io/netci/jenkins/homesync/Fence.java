@@ -59,7 +59,7 @@ abstract class Fence {
     static final class KubernetesFence extends Fence {
         private final Path account;
         private final String api;
-        private final HttpClient http;
+        private final SSLContext tls;
 
         KubernetesFence(Path account, String api) throws IOException, java.security.GeneralSecurityException {
             this.account = account;
@@ -73,15 +73,27 @@ abstract class Fence {
             }
             TrustManagerFactory tmf = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
             tmf.init(trust);
-            SSLContext tls = SSLContext.getInstance("TLS");
-            tls.init(null, tmf.getTrustManagers(), null);
-            this.http = HttpClient.newBuilder().sslContext(tls).connectTimeout(Duration.ofSeconds(3)).build();
+            this.tls = SSLContext.getInstance("TLS");
+            this.tls.init(null, tmf.getTrustManagers(), null);
         }
 
+        /**
+         * A new connection each attempt, three attempts. The API's Service spreads connections over
+         * every control-plane node, and a pooled connection that landed on the machine that died kept
+         * landing there: the fence answered "cannot tell" for four minutes (the lab's machine loss).
+         */
         private HttpResponse<String> get(String path) throws IOException, InterruptedException {
             String token = Files.readString(account.resolve("token"), StandardCharsets.UTF_8).trim();
-            return http.send(HttpRequest.newBuilder(URI.create(api + path)).timeout(Duration.ofSeconds(5))
-                    .header("Authorization", "Bearer " + token).GET().build(), HttpResponse.BodyHandlers.ofString());
+            IOException last = null;
+            for (int attempt = 0; attempt < 3; attempt++) {
+                try (HttpClient http = HttpClient.newBuilder().sslContext(tls).connectTimeout(Duration.ofSeconds(2)).build()) {
+                    return http.send(HttpRequest.newBuilder(URI.create(api + path)).timeout(Duration.ofSeconds(3))
+                            .header("Authorization", "Bearer " + token).GET().build(), HttpResponse.BodyHandlers.ofString());
+                } catch (IOException e) {
+                    last = e;
+                }
+            }
+            throw last;
         }
 
         @Override

@@ -88,7 +88,7 @@ def scenario(kind: str) -> dict:
         subprocess.run([*VIRSH, "destroy", victim], check=True, capture_output=True)
     print(f"[{kind}] {owner} ({victim}) killed at tick {at_tick}", flush=True)
     timeline = []
-    while time.time() - t0 < 300:
+    while time.time() - t0 < 600:
         h, state = holder(n)
         timeline.append({"t": round(time.time() - t0, 1), "holder": h, "building": state.get("building"), "result": state.get("result")})
         if state.get("result"):

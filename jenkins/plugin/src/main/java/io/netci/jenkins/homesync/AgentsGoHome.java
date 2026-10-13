@@ -37,7 +37,7 @@ final class AgentsGoHome {
         }
         for (Computer c : Jenkins.get().getComputers()) {
             String home = homes.get(c.getName());
-            if (home == null || home.equals(me) || c.isOffline() || !c.isIdle() || !answers(urls.get(home))) {
+            if (home == null || home.equals(me) || c.isOffline() || !c.isIdle() || awaited(c.getName()) || !answers(urls.get(home))) {
                 continue;
             }
             LOGGER.info(() -> "netCI homesync: " + c.getName() + " is idle here and its home " + home + " is back; sending it home");
@@ -57,6 +57,21 @@ final class AgentsGoHome {
         public String toString() {
             return "netCI: idle, sent home to replica " + home;
         }
+    }
+
+    /**
+     * Something in the queue waits for this very agent: a build adopted here re-queues its node block
+     * for the agent it was on, and the agent's executors look idle until it gets one. The lab's first
+     * machine loss sent the agent home in that gap, away from the build adopted for it.
+     */
+    static boolean awaited(String agent) {
+        for (hudson.model.Queue.Item item : hudson.model.Queue.getInstance().getItems()) {
+            hudson.model.Label label = item.getAssignedLabel();
+            if (label != null && agent.equals(label.getName())) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static boolean answers(String url) {

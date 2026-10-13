@@ -85,7 +85,10 @@ data:
       # agent whose replica died reconnects to the other one.
       use-server r0 if { req.hdr(Node-Name) -m str agent-0 }
       use-server r1 if { req.hdr(Node-Name) -m str agent-1 }
-      default-server inter 1s fall 2 rise 2 resolvers k8s init-addr none
+      # shutdown-sessions: a server marked down has its open sessions closed. An agent's WebSocket
+      # through a balancer whose server's machine lost power stayed open for the tunnel's hour (no
+      # RST comes from a dead machine): the agent never reconnected, so its build was never adopted.
+      default-server inter 1s fall 2 rise 2 resolvers k8s init-addr none on-marked-down shutdown-sessions
       server r0 jenkins-0.jenkins.aa-p2.svc.cluster.local:8080 check cookie r0
       server r1 jenkins-1.jenkins.aa-p2.svc.cluster.local:8080 check cookie r1
 ---
