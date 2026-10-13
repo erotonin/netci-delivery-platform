@@ -1,0 +1,85 @@
+# Active-active, phase 3 (ADR-076), applied over phase 2: the two replicas' homes kept the same
+# through netci-homesync, two of them, on the lab's PostgreSQL (netci-pg, database netci_homesync).
+# HOMESYNC and CONTROLLER are replaced by digests at apply time; lab/aa/phase3_probe.py runs it.
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: homesync, namespace: aa-p2}
+spec:
+  replicas: 2
+  selector: {matchLabels: {app: homesync}}
+  template:
+    metadata: {labels: {app: homesync}}
+    spec:
+      imagePullSecrets: [{name: harbor-pull}]
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector: {matchLabels: {app: homesync}}
+              topologyKey: kubernetes.io/hostname
+      containers:
+        - name: homesync
+          image: HOMESYNC
+          command: [/netci-homesync]
+          env:
+            - {name: DATABASE_URL, valueFrom: {secretKeyRef: {name: homesync-db, key: url}}}
+            - {name: NETCI_HOMESYNC_REPLICAS_FILE, value: /run/secrets/netci-homesync/replicas}
+          ports: [{containerPort: 8080}]
+          readinessProbe: {httpGet: {path: /healthz, port: 8080}, periodSeconds: 2, failureThreshold: 2}
+          resources: {requests: {cpu: 50m, memory: 32Mi}, limits: {memory: 128Mi}}
+          volumeMounts: [{name: replicas, mountPath: /run/secrets/netci-homesync, readOnly: true}]
+      volumes: [{name: replicas, secret: {secretName: homesync-replicas, defaultMode: 0400}}]
+---
+apiVersion: v1
+kind: Service
+metadata: {name: homesync, namespace: aa-p2}
+spec:
+  selector: {app: homesync}
+  ports: [{port: 8080}]
+---
+# The replicas, now on the controller that carries the plugin side, each with its own token. In the
+# lab both tokens are in one Secret mounted by both pods and each reads its own by pod name; a site
+# would give each pod only its own (a Secret per pod, or a CSI driver).
+apiVersion: apps/v1
+kind: StatefulSet
+metadata: {name: jenkins, namespace: aa-p2}
+spec:
+  serviceName: jenkins
+  replicas: 2
+  podManagementPolicy: Parallel
+  selector: {matchLabels: {app: jenkins}}
+  template:
+    metadata: {labels: {app: jenkins}}
+    spec:
+      imagePullSecrets: [{name: harbor-pull}]
+      securityContext: {fsGroup: 1000, runAsUser: 1000, runAsGroup: 1000}
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector: {matchLabels: {app: jenkins}}
+              topologyKey: kubernetes.io/hostname
+      containers:
+        - name: jenkins
+          image: CONTROLLER
+          env:
+            - {name: CASC_JENKINS_CONFIG, value: /var/jenkins_config/jenkins.yaml}
+            - {name: JAVA_OPTS, value: "-Xms512m -Xmx900m -Djenkins.install.runSetupWizard=false"}
+            - {name: ADMIN_PASSWORD, valueFrom: {secretKeyRef: {name: admin, key: password}}}
+            - {name: POD_NAME, valueFrom: {fieldRef: {fieldPath: metadata.name}}}
+            - {name: NETCI_HOMESYNC_URL, value: "http://homesync.aa-p2.svc.cluster.local:8080"}
+            - {name: NETCI_HOMESYNC_TOKEN_FILE, value: "/run/secrets/netci-homesync/$(POD_NAME)"}
+          ports: [{containerPort: 8080}]
+          readinessProbe: {httpGet: {path: /login, port: 8080}, periodSeconds: 2, failureThreshold: 3}
+          resources: {requests: {cpu: 300m, memory: 1Gi}, limits: {memory: 1536Mi}}
+          volumeMounts:
+            - {name: home, mountPath: /var/jenkins_home}
+            - {name: casc, mountPath: /var/jenkins_config, readOnly: true}
+            - {name: homesync, mountPath: /run/secrets/netci-homesync, readOnly: true}
+      volumes:
+        - {name: casc, configMap: {name: casc}}
+        - {name: homesync, secret: {secretName: homesync-tokens, defaultMode: 0440}}
+  volumeClaimTemplates:
+    - metadata: {name: home}
+      spec:
+        accessModes: [ReadWriteOnce]
+        storageClassName: local-path
+        resources: {requests: {storage: 2Gi}}

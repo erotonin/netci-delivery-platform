@@ -65,11 +65,48 @@ files does not order two writers' saves. This is not that. PostgreSQL orders eve
 - Our plugin hooks Jenkins' save and build lifecycle. Jenkins upgrades must be tested against it,
   as with any plugin that does this (CloudBees' does too).
 
+## Phase 2: the UI and API through an HA balancer (done)
+
+`lab/aa/phase2.yaml`, `lab/aa/phase2_probe.py`: two replicas on `local-path`, an HAProxy per machine,
+the VIP 192.168.122.240 held by kube-vip. Three probes every 0.5 s through the VIP, 2 s timeout:
+`/login`, the API with basic auth, and a session signed in through the form. One power loss
+(`virsh destroy`) per scenario, observed for 150 s. **One sample each**: these are what happened,
+not a distribution.
+
+| Run | Scenario | Failures (login / API / session) | Longest outage |
+|---|---|---|---|
+| v1: `externalTrafficPolicy: Cluster`, 2 HAProxy | a replica's machine | 5 / 5 / 4 | 4-6 s |
+| v1 | the VIP's machine | 5 / 5 / 5 | 8-10 s |
+| v2: `Local` | a replica's machine | 1 / 0 / 1 | 2 s |
+| v2 | the VIP's machine | 7 / 7 / 7 | 14 s |
+| v2 | the VIP's and the session's replica's machine | 15 / 16 / 15 | 30-32 s |
+| **v3: `Local`, an HAProxy per machine, kube-vip on its own API server** | a replica's machine | 1 / 0 / 1 | **2 s** |
+| v3 | the VIP's machine (with a replica on it) | 3 / 3 / 3 | **6 s** |
+| v3 | the VIP's and the session's replica's machine | 1 / 2 / 1 | **2-4 s** |
+
+What each change fixed, from the evidence:
+- `Cluster` let kube-proxy on the VIP's machine send requests to a balancer on a machine that had
+  just died, until its endpoint was removed. `Local` keeps traffic on the VIP's machine.
+- kube-vip renewed its lease through the `kubernetes` Service, which still listed the dead
+  machine's API server: each call landing there hung 10 s (`error retrieving resource lock`), so the
+  VIP took 14-30 s to move instead of the lease's 3 s. Pointing kube-vip at its own machine's API
+  server (every lab machine is a control-plane node) removed that.
+- An HAProxy on every machine leaves every surviving machine able to take the VIP under `Local`.
+
+What it does not fix yet, said plainly:
+- **A signed-in session is lost when its replica dies**: the person is anonymous on the other replica
+  and signs in again. Jenkins keeps sessions in one JVM. To be fixed by replicating users and the
+  `secrets/` set (so a remember-me cookie or an SSO session is valid on every replica), or by SSO.
+- The few seconds that remain are the 2 s client timeout of requests already sent to the dead
+  machine, plus the 3 s VIP lease. Shorter timings are possible and were not tried.
+- On OpenStack the VIP needs the port's allowed-address-pairs (or an Octavia balancer instead):
+  a question for the site.
+
 ## Phases
 
 | Phase | What | Pass |
 |---|---|---|
-| 2 | HAProxy pair + VIP before two replicas on `local-path`; the VIP's machine, a replica's machine, both, lose power | UI and API probed every 0.5 s through the VIP: failures and longest outage measured, sessions after failover |
+| 2 | HAProxy + VIP before two replicas on `local-path`; the VIP's machine, a replica's machine, both, lose power | Done: 2-6 s, one sample per scenario (above); sessions are lost with their replica |
 | 3 | Configuration through PostgreSQL: concurrent edits on two replicas | No lost update; both replicas converge; the loser is refused, not overwritten |
 | 4 | Build numbers and finished builds replicated | Every replica shows every build; the publish lag measured |
 | 5 | Running builds replicated; adoption after fencing; WebSocket agents routed by name | A build on a dead replica finishes, every step once |

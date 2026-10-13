@@ -1,0 +1,220 @@
+# Active-active, phase 2 (ADR-076): the UI and API through a load balancer that is itself HA.
+#   - two Jenkins replicas, each with its OWN JENKINS_HOME on its node's disk (local-path), on
+#     different machines -- nothing shared, so one machine's death leaves the other's disk alone;
+#   - an HAProxy on every machine: health checks every second, sticky sessions,
+#     a request to a replica that died is sent again to the other;
+#   - a VIP (192.168.122.240) held by kube-vip on one machine by leader election, moved by ARP when
+#     that machine dies -- so the balancer is not a single point of failure either.
+# The replicas are not coordinated yet (phases 3-5): each has its own jobs and builds. This phase
+# measures only whether the UI and API keep answering. lab/aa/phase2_probe.py runs it.
+# CONTROLLER, HAPROXY and KUBE_VIP are replaced by digests at apply time.
+apiVersion: v1
+kind: Namespace
+metadata: {name: aa-p2}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: casc, namespace: aa-p2}
+data:
+  jenkins.yaml: |
+    jenkins:
+      systemMessage: "netCI active-active lab, phase 2: replicated homes behind an HA balancer"
+      numExecutors: 0          # builds never run on a controller (the mentor's rule)
+      securityRealm:
+        local:
+          allowsSignup: false
+          users: [{id: admin, password: "${ADMIN_PASSWORD}"}]
+      authorizationStrategy: loggedInUsersCanDoAnything
+    unclassified:
+      location: {url: "http://192.168.122.240/"}
+    jobs:
+      - script: |
+          pipelineJob('quick') {
+            definition { cps { sandbox(true); script('''node { sh 'echo quick on $(hostname)' }''') } }
+          }
+---
+# Headless: jenkins-0.jenkins and jenkins-1.jenkins resolve to each replica (HAProxy addresses them so).
+apiVersion: v1
+kind: Service
+metadata: {name: jenkins, namespace: aa-p2}
+spec:
+  clusterIP: None
+  publishNotReadyAddresses: false
+  selector: {app: jenkins}
+  ports: [{name: http, port: 8080}]
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata: {name: jenkins, namespace: aa-p2}
+spec:
+  serviceName: jenkins
+  replicas: 2
+  podManagementPolicy: Parallel
+  selector: {matchLabels: {app: jenkins}}
+  template:
+    metadata: {labels: {app: jenkins}}
+    spec:
+      imagePullSecrets: [{name: harbor-pull}]
+      securityContext: {fsGroup: 1000, runAsUser: 1000, runAsGroup: 1000}
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector: {matchLabels: {app: jenkins}}
+              topologyKey: kubernetes.io/hostname
+      containers:
+        - name: jenkins
+          image: CONTROLLER
+          env:
+            - {name: CASC_JENKINS_CONFIG, value: /var/jenkins_config/jenkins.yaml}
+            - {name: JAVA_OPTS, value: "-Xms512m -Xmx900m -Djenkins.install.runSetupWizard=false"}
+            - {name: ADMIN_PASSWORD, valueFrom: {secretKeyRef: {name: admin, key: password}}}
+          ports: [{containerPort: 8080}]
+          readinessProbe: {httpGet: {path: /login, port: 8080}, periodSeconds: 2, failureThreshold: 3}
+          resources: {requests: {cpu: 300m, memory: 1Gi}, limits: {memory: 1536Mi}}
+          volumeMounts:
+            - {name: home, mountPath: /var/jenkins_home}
+            - {name: casc, mountPath: /var/jenkins_config, readOnly: true}
+      volumes:
+        - {name: casc, configMap: {name: casc}}
+  volumeClaimTemplates:
+    - metadata: {name: home}
+      spec:
+        accessModes: [ReadWriteOnce]
+        storageClassName: local-path     # what the site mostly runs: the node's own disk
+        resources: {requests: {storage: 2Gi}}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: haproxy, namespace: aa-p2}
+data:
+  haproxy.cfg: |
+    global
+      # httplog without captures: no request header is logged, so an agent's Secret-Key never is.
+      log stdout format raw local0 info
+    defaults
+      mode http
+      log global
+      option httplog
+      timeout connect 1s        # a dead machine does not refuse, it is silent: give up fast
+      timeout client 60s
+      timeout server 60s
+      timeout tunnel 1h
+      timeout check 1s
+      retries 3
+      option redispatch 1       # a retry goes to another server, not the one that just failed
+      retry-on conn-failure empty-response response-timeout
+    resolvers k8s
+      parse-resolv-conf
+      hold valid 2s
+      hold obsolete 2s
+    frontend ui
+      bind :8080
+      default_backend jenkins
+    backend jenkins
+      balance roundrobin
+      # Sticky: Jenkins keeps a session in one JVM's memory (until phase 3 replicates users).
+      cookie NETCI_REPLICA insert indirect nocache httponly
+      option httpchk GET /login
+      http-check expect status 200
+      http-response set-header X-Netci-Replica %s
+      default-server inter 1s fall 2 rise 2 resolvers k8s init-addr none
+      server r0 jenkins-0.jenkins.aa-p2.svc.cluster.local:8080 check cookie r0
+      server r1 jenkins-1.jenkins.aa-p2.svc.cluster.local:8080 check cookie r1
+---
+# On every machine: with externalTrafficPolicy Local the VIP may only sit where a balancer runs,
+# so a balancer everywhere leaves every surviving machine able to take it.
+apiVersion: apps/v1
+kind: DaemonSet
+metadata: {name: haproxy, namespace: aa-p2}
+spec:
+  selector: {matchLabels: {app: haproxy}}
+  template:
+    metadata: {labels: {app: haproxy}}
+    spec:
+      containers:
+        - name: haproxy
+          image: HAPROXY
+          args: [-f, /usr/local/etc/haproxy/haproxy.cfg]
+          ports: [{containerPort: 8080}]
+          readinessProbe: {tcpSocket: {port: 8080}, periodSeconds: 1, failureThreshold: 2}
+          resources: {requests: {cpu: 50m, memory: 64Mi}, limits: {memory: 256Mi}}
+          volumeMounts: [{name: cfg, mountPath: /usr/local/etc/haproxy, readOnly: true}]
+      volumes: [{name: cfg, configMap: {name: haproxy}}]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ui
+  namespace: aa-p2
+  annotations: {kube-vip.io/loadbalancerIPs: 192.168.122.240}
+spec:
+  type: LoadBalancer
+  # Local: the VIP is only ever on a machine running a balancer, and traffic stays there. With
+  # Cluster, kube-proxy on the VIP's machine spread requests over every balancer, including one
+  # on a machine that had just died, until its endpoint was removed (aa-phase2-20261013T094235Z).
+  externalTrafficPolicy: Local
+  selector: {app: haproxy}
+  ports: [{name: http, port: 80, targetPort: 8080}]
+---
+# kube-vip in services mode: one leader per Service holds the VIP and answers ARP for it.
+apiVersion: v1
+kind: ServiceAccount
+metadata: {name: kube-vip, namespace: kube-system}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata: {name: netci-kube-vip}
+rules:
+  - apiGroups: [""]
+    resources: [services, services/status, nodes, endpoints, pods]
+    verbs: [get, list, watch, update, patch]
+  - apiGroups: [discovery.k8s.io]
+    resources: [endpointslices]
+    verbs: [get, list, watch]
+  - apiGroups: [coordination.k8s.io]
+    resources: [leases]
+    verbs: [get, list, watch, create, update, patch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata: {name: netci-kube-vip}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: netci-kube-vip}
+subjects: [{kind: ServiceAccount, name: kube-vip, namespace: kube-system}]
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata: {name: kube-vip, namespace: kube-system}
+spec:
+  selector: {matchLabels: {app: kube-vip}}
+  template:
+    metadata: {labels: {app: kube-vip}}
+    spec:
+      serviceAccountName: kube-vip
+      hostNetwork: true
+      tolerations: [{operator: Exists}]
+      containers:
+        - name: kube-vip
+          image: KUBE_VIP
+          args: [manager]
+          env:
+            - {name: vip_arp, value: "true"}
+            - {name: vip_interface, value: enp1s0}
+            - {name: svc_enable, value: "true"}
+            - {name: svc_election, value: "true"}
+            - {name: cp_enable, value: "false"}
+            - {name: vip_leaderelection, value: "false"}
+            # How long a dead holder keeps the VIP: the lease must expire before another takes it.
+            - {name: vip_leaseduration, value: "3"}
+            - {name: vip_renewdeadline, value: "2"}
+            - {name: vip_retryperiod, value: "1"}
+            - {name: NODE_NAME, valueFrom: {fieldRef: {fieldPath: spec.nodeName}}}
+            # This machine's own API server, not the kubernetes Service: that still lists a dead
+            # machine's API server for a while, and each lease call that landed there hung 10 s, so
+            # the VIP took 14-30 s to move instead of the lease's 3 (aa-phase2-20261013T094844Z).
+            # Every lab machine is a control-plane node; on a site where they are not, this would
+            # be the control plane's own VIP.
+            - {name: KUBERNETES_SERVICE_HOST, value: 127.0.0.1}
+            - {name: KUBERNETES_SERVICE_PORT, value: "6443"}
+          securityContext:
+            capabilities: {add: [NET_ADMIN, NET_RAW]}
+          resources: {requests: {cpu: 20m, memory: 32Mi}, limits: {memory: 128Mi}}

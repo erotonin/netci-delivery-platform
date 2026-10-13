@@ -1,0 +1,178 @@
+{
+  "scenario": "aa-phase2",
+  "started": "2026-10-13T10:00:01+00:00",
+  "vip": {
+    "victim": "netci-lab-2",
+    "before": {
+      "pods": {
+        "netci-lab-1": [
+          "haproxy-c22gz",
+          "jenkins-1"
+        ],
+        "netci-lab-3": [
+          "haproxy-sdvx7"
+        ],
+        "netci-lab-2": [
+          "haproxy-z44q6",
+          "jenkins-0"
+        ]
+      },
+      "vipHolder": "netci-lab-2"
+    },
+    "afterObserving": {
+      "pods": {
+        "netci-lab-2": [
+          "haproxy-4ggkz",
+          "jenkins-0"
+        ],
+        "netci-lab-1": [
+          "haproxy-c22gz",
+          "jenkins-1"
+        ],
+        "netci-lab-3": [
+          "haproxy-sdvx7"
+        ]
+      },
+      "vipHolder": "netci-lab-3"
+    },
+    "sessionPinnedTo": "r1",
+    "login": {
+      "polls": 311,
+      "failures": 3,
+      "longestOutageSeconds": 6.01,
+      "firstFailureAfterLossSeconds": 0.5,
+      "p50ms": 3.0,
+      "p99ms": 8.5,
+      "answeredBy": {
+        "r0": 15,
+        "r1": 293
+      }
+    },
+    "api": {
+      "polls": 311,
+      "failures": 3,
+      "longestOutageSeconds": 6.01,
+      "firstFailureAfterLossSeconds": 0.0,
+      "p50ms": 60.0,
+      "p99ms": 99.4,
+      "answeredBy": {
+        "r0": 168,
+        "r1": 140
+      }
+    },
+    "session": {
+      "polls": 311,
+      "failures": 3,
+      "longestOutageSeconds": 6.01,
+      "firstFailureAfterLossSeconds": 0.5,
+      "p50ms": 2.9,
+      "p99ms": 6.6,
+      "answeredBy": {
+        "r1": 308
+      }
+    },
+    "sessionStillSignedIn": true,
+    "sessionUsersAfter": [
+      "admin"
+    ],
+    "wholeAgainSeconds": 45.2
+  },
+  "probeIntervalSeconds": 0.5,
+  "requestTimeoutSeconds": 2,
+  "replica": {
+    "victim": "netci-lab-1",
+    "before": {
+      "pods": {
+        "netci-lab-1": [
+          "haproxy-b95xx",
+          "jenkins-1"
+        ],
+        "netci-lab-3": [
+          "haproxy-sdvx7"
+        ],
+        "netci-lab-2": [
+          "haproxy-z44q6",
+          "jenkins-0"
+        ]
+      },
+      "vipHolder": "netci-lab-2"
+    },
+    "afterObserving": {
+      "pods": {
+        "netci-lab-1": [
+          "haproxy-c22gz",
+          "jenkins-1"
+        ],
+        "netci-lab-3": [
+          "haproxy-sdvx7"
+        ],
+        "netci-lab-2": [
+          "haproxy-z44q6",
+          "jenkins-0"
+        ]
+      },
+      "vipHolder": "netci-lab-2"
+    },
+    "sessionPinnedTo": "r1",
+    "login": {
+      "polls": 317,
+      "failures": 1,
+      "longestOutageSeconds": 2.01,
+      "firstFailureAfterLossSeconds": 0.5,
+      "p50ms": 3.3,
+      "p99ms": 8.8,
+      "answeredBy": {
+        "r0": 307,
+        "r1": 9
+      }
+    },
+    "api": {
+      "polls": 319,
+      "failures": 0,
+      "longestOutageSeconds": 0.0,
+      "firstFailureAfterLossSeconds": null,
+      "p50ms": 61.7,
+      "p99ms": 104.6,
+      "answeredBy": {
+        "r0": 130,
+        "r1": 189
+      }
+    },
+    "session": {
+      "polls": 317,
+      "failures": 1,
+      "longestOutageSeconds": 2.0,
+      "firstFailureAfterLossSeconds": 0.5,
+      "p50ms": 2.6,
+      "p99ms": 6.4,
+      "answeredBy": {
+        "r0": 295,
+        "r1": 21
+      }
+    },
+    "sessionStillSignedIn": false,
+    "sessionUsersAfter": [
+      "anonymous"
+    ],
+    "wholeAgainSeconds": 45.3
+  },
+  "both": {
+    "skipped": "the VIP's machine runs no replica now (could not pin a session where the scenario needs it)",
+    "placement": {
+      "pods": {
+        "netci-lab-2": [
+          "haproxy-4ggkz",
+          "jenkins-0"
+        ],
+        "netci-lab-1": [
+          "haproxy-c22gz",
+          "jenkins-1"
+        ],
+        "netci-lab-3": [
+          "haproxy-sdvx7"
+        ]
+      },
+      "vipHolder": "netci-lab-3"
+    }
+  }
+}
