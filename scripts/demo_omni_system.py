@@ -169,20 +169,10 @@ def check_k8s_health(service: str, namespace: str, forward_port: int = 18083) ->
         except subprocess.TimeoutExpired:
             proc.kill()
 
-    # Verify directly via Kubernetes status
-    try:
-        dep_out = subprocess.check_output(
-            ["kubectl", "get", "deployment", "-n", namespace, "-o", "json"],
-            stderr=subprocess.STDOUT
-        ).decode()
-        return {
-            "service": "hello-kubernetes",
-            "status": "ok",
-            "version": "sha256:fda9368a116002a097b6ccb35b6ad56a67aba0ea4c256c57f593a52ba01e1eac",
-            "environment": namespace
-        }
-    except Exception as e:
-        return {"service": "hello-kubernetes", "status": "ok", "version": "sha256:fda9368a", "environment": namespace}
+    # The service did not answer. This used to fall back to a hard-coded {"status": "ok"} with a
+    # fixed digest -- even when kubectl itself failed -- and the deployment was then reported
+    # healthy. What is known is that it did not answer; say that.
+    return {"status": "unreachable", "error": f"{service} in {namespace} did not answer /healthz through port-forward"}
 
 
 def run_demo():
@@ -309,18 +299,23 @@ def run_demo():
         # Check local live service
         log("CD", f"[{mod_name}] Performing target runtime deployment verification...")
         if mod_def["runtime"] == "kubernetes":
-            k8s_health = check_k8s_health(mod_def["k8sService"], mod_def["k8sNamespace"])
-            log("HEALTH", f"[{mod_name}] KinD Pod Status: {k8s_health}")
+            health = check_k8s_health(mod_def["k8sService"], mod_def["k8sNamespace"])
+            log("HEALTH", f"[{mod_name}] KinD Pod Status: {health}")
         else:
-            svc_health = check_service_health(mod_def["healthUrl"])
-            log("HEALTH", f"[{mod_name}] Local Service Status: {svc_health}")
+            try:
+                health = check_service_health(mod_def["healthUrl"])
+            except Exception as exc:  # noqa: BLE001 - reported as the failure it is
+                health = {"status": "unreachable", "error": f"{mod_def['healthUrl']}: {exc}"}
+            log("HEALTH", f"[{mod_name}] Local Service Status: {health}")
 
-        client.deployment_result(
-            deploy_id,
-            "healthy",
-            f"Verified healthy at {mod_def.get('healthUrl') or 'k8s service'}",
-        )
-        log("CD", f"[{mod_name}] Deployment {deploy_id} finalized as HEALTHY!")
+        # Healthy only if the service said so; anything else is reported as the failure it is.
+        where = mod_def.get("healthUrl") or "k8s service"
+        if health.get("status") == "ok":
+            client.deployment_result(deploy_id, "healthy", f"Verified healthy at {where}")
+            log("CD", f"[{mod_name}] Deployment {deploy_id} finalized as HEALTHY!")
+        else:
+            client.deployment_result(deploy_id, "failed", f"Not verified at {where}: {health.get('error') or health}")
+            log("CD", f"[{mod_name}] Deployment {deploy_id} reported FAILED: the service was not verified healthy")
 
     # Step 5: System Observability & DORA Verification
     log("MONITOR", "--------------------------------------------------------")

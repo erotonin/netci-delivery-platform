@@ -14,12 +14,10 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import secrets
 import shutil
 import sys
 import tempfile
-import urllib.parse
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -28,15 +26,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from scripts.netci_backup import (
     CRITICAL_TABLES,
-    check_referential_integrity,
     create,
     database_url,
-    discover_tables,
-    psql_value,
-    safe_identifier,
     split,
-    table_checksums,
-    table_counts,
     verify,
 )
 
@@ -102,7 +94,7 @@ def run_drill(url: str, output_dir: Path | None = None) -> dict:
 
         # Step 4: Verification complete
         drill_record["verdict"] = "PASSED"
-        print(f"[4/4] Automated Disaster Recovery Drill PASSED!")
+        print("[4/4] Automated Disaster Recovery Drill PASSED!")
 
     except Exception as exc:
         drill_record["error"] = str(exc)

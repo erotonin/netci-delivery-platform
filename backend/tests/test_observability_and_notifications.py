@@ -32,10 +32,10 @@ from backend.app.retention import RetentionManager
 from backend.app.store.memory import InMemoryDatabase
 from backend.app.store.postgres import PostgresConnectionPool, PostgresDatabase
 
-TEST_PG_URL = os.getenv(
-    "NETCI_TEST_DATABASE_URL",
-    "postgresql://netci:netci-local-only@127.0.0.1:55432/netci",
-)
+# No default: a built-in URL made these fail as "connection refused" wherever no PostgreSQL
+# listens there (CI's portable job), and quietly use whatever database does listen there.
+TEST_PG_URL = os.getenv("NETCI_TEST_DATABASE_URL", "").strip()
+needs_postgres = pytest.mark.skipif(not TEST_PG_URL, reason="set NETCI_TEST_DATABASE_URL to a PostgreSQL")
 
 
 # ==============================================================================
@@ -43,6 +43,7 @@ TEST_PG_URL = os.getenv(
 # ==============================================================================
 
 
+@needs_postgres
 def test_postgres_connection_pool_acquisition_and_stats():
     pool = PostgresConnectionPool(TEST_PG_URL, min_size=2, max_size=5, timeout=2.0)
     try:
@@ -66,6 +67,7 @@ def test_postgres_connection_pool_acquisition_and_stats():
         pool.close()
 
 
+@needs_postgres
 def test_postgres_connection_pool_exhaustion_timeout():
     # Create tiny pool of 2 connections
     pool = PostgresConnectionPool(TEST_PG_URL, min_size=1, max_size=2, timeout=0.3)

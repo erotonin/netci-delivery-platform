@@ -27,14 +27,13 @@ Outputs structured audit evidence to evidence/production_readiness_audit.json.
 from __future__ import annotations
 
 import argparse
-import inspect
 import json
 import os
 import re
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
-from uuid import UUID, uuid4
+from uuid import uuid4
 
 # Add project root to sys.path
 ROOT_DIR = Path(__file__).resolve().parent.parent
@@ -45,23 +44,22 @@ from backend.app.domain.models import (
     DEPLOYMENT_TRANSITIONS,
     PIPELINE_TRANSITIONS,
     DeploymentStatus,
-    Environment,
     PipelineStatus,
     Runtime,
     can_transition_deployment,
     can_transition_pipeline,
 )
 from backend.app.persistence import UnitOfWork
-from backend.app.build_inputs import DEPLOYMENT_CONTROLLED_KEYS, validate_build_inputs
+from backend.app.build_inputs import validate_build_inputs
 from backend.app.catalog.previews import PreviewEnvironmentManager
 from backend.app.catalog.resources import SelfServiceResourceManager
 from backend.app.catalog.services import CatalogServiceManager
 from backend.app.admission import AdmissionController
 from backend.app.policy.break_glass import BreakGlassError, BreakGlassService
-from backend.app.policy.risk import RiskAssessment, RiskCalculator
+from backend.app.policy.risk import RiskCalculator
 from backend.app.domain.dag import DagValidationError, compute_dag_waves
 from backend.app.store.memory import InMemoryDatabase
-from backend.app.traffic import CanaryAnalyzer, InMemoryTrafficRoutingAdapter
+from backend.app.traffic import CanaryAnalyzer
 from backend.app.workload_identity import (
     WORKLOAD_SCOPES,
     Scope,
@@ -70,7 +68,7 @@ from backend.app.workload_identity import (
     mint,
     verify,
 )
-from scripts.netci_backup import CRITICAL_TABLES, discover_tables, split
+from scripts.netci_backup import CRITICAL_TABLES, discover_tables
 
 
 def _migrations_contiguous(names: list[str]) -> bool:
@@ -276,7 +274,7 @@ class AuditRunner:
 
     def _audit_phase_04_immutability_and_cleanroom(self) -> None:
         print("\n--- Auditing Phase 4: Release Immutability & Runtime Clean-Room ---")
-        from backend.app.adapters.scm import _SCM_PROVIDERS, ScmProviderType
+        from backend.app.adapters.scm import _SCM_PROVIDERS
         from backend.app.adapters.dcim import UnconfiguredDcimCatalog
 
         # 1. Verify default SCM provider table contains only production providers

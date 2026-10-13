@@ -263,9 +263,18 @@ def test_missing_collections_are_named_from_requirements(tmp_path, monkeypatch):
     )
     runner = AnsibleRuntimeRunner(tmp_path, tmp_path / "inventory.ini")
     assert runner.required_collections() == ["community.docker", "kubernetes.core"]
-    # Point Ansible at an empty collections dir: both must be reported missing.
-    monkeypatch.setenv("NETCI_ANSIBLE_COLLECTIONS_PATH", str(tmp_path / "empty"))
-    (tmp_path / "empty").mkdir()
+    # The answer is whatever ansible-galaxy resolves, so the test supplies its own: an empty
+    # collections dir is not enough where Ansible ships collections in its own package (the CI
+    # runner's does, and there both were rightly found).
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    galaxy = bin_dir / "ansible-galaxy"
+    galaxy.write_text('#!/bin/sh\necho \'{"/opt/c/ansible_collections": {"community.docker": {"version": "5.2.1"}}}\'\n')
+    galaxy.chmod(0o755)
+    monkeypatch.setenv("PATH", str(bin_dir))
+    assert runner.missing_collections() == ["kubernetes.core"]
+    # No ansible-galaxy at all: nothing can be resolved, so everything is missing.
+    galaxy.unlink()
     assert runner.missing_collections() == ["community.docker", "kubernetes.core"]
 
 

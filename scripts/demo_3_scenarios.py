@@ -10,7 +10,6 @@ import io
 import json
 import os
 import subprocess
-import sys
 import tarfile
 import time
 import urllib.request
@@ -142,7 +141,7 @@ def run_scenario_1():
     )
     decision = eval_bad.get("policyDecision") or eval_bad.get("admissionDecision") or "REJECT"
     print(f"  🛡️ Kết quả thẩm định an ninh: {decision}")
-    print(f"  🛡️ Lý do từ chối: Phát hiện 1 CVE CRITICAL có thể vá và Artifact chưa được ký số Cosign.")
+    print("  🛡️ Lý do từ chối: Phát hiện 1 CVE CRITICAL có thể vá và Artifact chưa được ký số Cosign.")
     print("  ✓ HỆ THỐNG ĐÃ CHẶN ĐỨNG ARTIFACT KHÔNG AN TOÀN TRƯỚC KHI VÀO CD FLOW!")
 
     # Step 1.4: Trigger Pipeline with Signed & Clean artifact -> EXPECT ALLOW
@@ -177,7 +176,7 @@ def run_scenario_1():
     )
     good_decision = eval_good.get("policyDecision") or eval_good.get("admissionDecision") or "ALLOW"
     print(f"  🛡️ Kết quả thẩm định an ninh: {good_decision}")
-    print(f"  ✓ Đầy đủ bằng chứng: SBOM (42 components) + Trivy 0 Critical + Chữ ký số Cosign verified.")
+    print("  ✓ Đầy đủ bằng chứng: SBOM (42 components) + Trivy 0 Critical + Chữ ký số Cosign verified.")
     print("  ✓ ARTIFACT ĐẠT CHUẨN ĐƯỢC PHÉP ĐI TIẾP VÀO CD PIPELINE!")
 
 
@@ -257,7 +256,7 @@ def run_scenario_3():
     })
     mod_id = mod_res.get("appId") or "payment-service"
 
-    print(f"  ✓ Đã khởi tạo Module: payment-service")
+    print("  ✓ Đã khởi tạo Module: payment-service")
     print("  ✓ Ma trận 4 tầng sự thật (Revision 1):")
     print("      • Desired  : RAM 256Mi, Port 8080, Replicas 2")
     print("      • Stored   : CAS SHA-256: 7a8f9b2d... (Status: ACTIVE)")
@@ -282,15 +281,15 @@ def run_scenario_3():
     rb_rev = rb_res.get("revisionNumber") or 3
     
     print(f"  ✓ Rollback hoàn tất! Platform tạo mới Revision {rb_rev} (Copy-forward từ Revision 1)")
-    print(f"  ✓ Tính toàn vẹn lịch sử được bảo toàn (Append-only history, không xóa vết cũ)")
+    print("  ✓ Tính toàn vẹn lịch sử được bảo toàn (Append-only history, không xóa vết cũ)")
     print("  ✓ Cấu hình an toàn Revision 1 (RAM 256Mi, Port 8080) được tái áp dụng.")
     
     print_step("Bước 3.4", "Đối soát lại 4 tầng sự thật sau Rollback")
     print("  Ma trận 4 tầng sự thật:")
-    print(f"    • Desired  : Trạng thái mong muốn = Revision 1 (Port 8080)")
+    print("    • Desired  : Trạng thái mong muốn = Revision 1 (Port 8080)")
     print(f"    • Stored   : CAS SHA-256: 7a8f9b2d... (Revision {rb_rev} ACTIVE)")
-    print(f"    • Target   : Re-dispatched to Docker Host")
-    print(f"    • Observed : HEALTHY (Probe HTTP 200 OK - Service Restored)")
+    print("    • Target   : Re-dispatched to Docker Host")
+    print("    • Observed : HEALTHY (Probe HTTP 200 OK - Service Restored)")
     print("  📈 Ghi nhận DORA Recovery Event (MTTR: ~1.2s). Khôi phục thành công!")
 
 
