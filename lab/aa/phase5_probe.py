@@ -76,7 +76,8 @@ def scenario(kind: str) -> dict:
         return b[0]["number"] if b else None
     p3.until(lambda: running() is not None, 60)
     n = running()
-    p3.until(lambda: max(ticks(n) or [0]) >= 15, 120, 0.5)
+    if p3.until(lambda: max(ticks(n) or [0]) >= 15, 120, 0.5) is None:
+        raise SystemExit(f"long #{n} did not reach tick 15 before anything was killed: {console(n)[-300:]}")
     owner, _ = holder(n)
     victim = before[owner]
     at_tick = max(ticks(n))

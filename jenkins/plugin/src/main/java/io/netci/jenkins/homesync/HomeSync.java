@@ -98,10 +98,17 @@ public final class HomeSync {
         sync.follower.start();
         BuildOwnership.forget();
         sync.renewer = new Thread(() -> {
-            while (!Thread.currentThread().isInterrupted()) {
+            for (long pass = 1; !Thread.currentThread().isInterrupted(); pass++) {
                 BuildOwnership.renewAll(sync);
                 if (sync.ready()) {
                     RunningBuilds.adoptOrphans(sync);
+                    if (pass % 6 == 0) {
+                        try (ACLContext ignored = ACL.as2(ACL.SYSTEM2)) {
+                            AgentsGoHome.pass();
+                        } catch (RuntimeException e) {
+                            LOGGER.log(Level.WARNING, "netCI homesync: sending agents home failed", e);
+                        }
+                    }
                 }
                 sleep(Duration.ofSeconds(5));
             }
