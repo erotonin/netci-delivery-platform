@@ -43,8 +43,8 @@ final class HomeSyncClient {
     /** A job's lease (ADR-078): the epoch it is held under, for how long, and the highest number reserved. */
     record JobLease(long epoch, long expiresInMs, int maxReserved) {}
 
-    /** Who holds a job's lease, and whether it is live. */
-    record JobOwner(String owner, boolean live) {}
+    /** Who holds a job's lease, whether it is live, and how long until (negative: since) it expires. */
+    record JobOwner(String owner, boolean live, long expiresInMs) {}
 
     JobOwner jobOwner(String job) throws IOException, InterruptedException {
         HttpResponse<String> r = HTTP.send(request("/v1/jobs/owner?job=" + enc(job)).GET().build(), HttpResponse.BodyHandlers.ofString());
@@ -52,7 +52,7 @@ final class HomeSyncClient {
             throw new IOException("homesync answered HTTP " + r.statusCode() + " for the owner of " + job);
         }
         JSONObject o = json(r.body());
-        return new JobOwner(o.optString("owner"), o.optLong("expiresInMs") > 0);
+        return new JobOwner(o.optString("owner"), o.optLong("expiresInMs") > 0, o.optLong("expiresInMs"));
     }
 
     /** The store refused a change: {@code code} is VERSION_CONFLICT, LOCKED or LOCK_LOST. */

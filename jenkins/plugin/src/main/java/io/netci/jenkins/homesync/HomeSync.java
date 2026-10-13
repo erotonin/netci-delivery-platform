@@ -55,6 +55,11 @@ public final class HomeSync {
     final HomeSyncClient client;
     /** The version of each item this home holds, deleted ones included (a re-create starts there). */
     final Map<String, Long> versions = new ConcurrentHashMap<>();
+    /**
+     * Running builds the store holds a copy of (ADR-079), by path and version. Only recorded, never
+     * written into this home: loading one here would resume it.
+     */
+    final Map<String, Long> runningCopies = new ConcurrentHashMap<>();
     /** The SHA-256 of what this home last published, or applied, for each item. */
     final Map<String, String> published = new ConcurrentHashMap<>();
     /** Applying and publishing are one at a time, so the feed never interleaves with a publish. */
@@ -95,6 +100,9 @@ public final class HomeSync {
         sync.renewer = new Thread(() -> {
             while (!Thread.currentThread().isInterrupted()) {
                 BuildOwnership.renewAll(sync);
+                if (sync.ready()) {
+                    RunningBuilds.adoptOrphans(sync);
+                }
                 sleep(Duration.ofSeconds(5));
             }
         }, "netCI homesync job leases");
@@ -173,6 +181,13 @@ public final class HomeSync {
             List<String> paths = latest.keySet().stream()
                     .sorted(Comparator.comparingInt((String p) -> p.split("/").length).thenComparing(p -> p)).toList();
             for (String path : paths) {
+                if (path.startsWith(RunningBuilds.RUNNING)) {
+                    if (!latest.get(path).deleted()) {
+                        runningCopies.put(path, latest.get(path).version());
+                    }
+                    versions.put(path, latest.get(path).version());
+                    continue;
+                }
                 HomeSyncClient.Item item = client.get(path);
                 if (item.content() == null) {
                     apply(path, item.version(), null);
@@ -202,6 +217,17 @@ public final class HomeSync {
     /** Apply every change in a page not already held here; called with {@link #order} held. */
     private void applyAll(List<HomeSyncClient.Change> changes) throws IOException, InterruptedException {
         for (HomeSyncClient.Change c : changes) {
+            if (c.path().startsWith(RunningBuilds.RUNNING)) {
+                // A copy of a running build: recorded, not fetched, not applied (ADR-079).
+                if (c.deleted()) {
+                    runningCopies.remove(c.path());
+                } else {
+                    runningCopies.put(c.path(), c.version());
+                }
+                versions.put(c.path(), c.version());
+                applied = c.seq();
+                continue;
+            }
             if (c.version() > versions.getOrDefault(c.path(), 0L)) {
                 // The latest content, which may be newer than this entry: later entries are then no-ops.
                 HomeSyncClient.Item item = client.get(c.path());

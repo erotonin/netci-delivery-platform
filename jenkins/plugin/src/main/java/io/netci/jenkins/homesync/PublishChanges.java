@@ -29,9 +29,9 @@ public final class PublishChanges {
             if (sync == null || !sync.ready()) {
                 return;
             }
-            ByteArrayOutputStream archive = new ByteArrayOutputStream();
-            try (OutputStream gz = FilePath.TarCompression.GZIP.compress(archive)) {
-                new FilePath(run.getRootDir()).tar(gz, "**/*");
+            byte[] archive;
+            try {
+                archive = RunningBuilds.archive(run.getRootDir());
             } catch (IOException e) {
                 LOGGER.log(Level.SEVERE, "netCI homesync: cannot archive " + run + " to publish it; the other replicas will not have it", e);
                 return;
@@ -39,7 +39,7 @@ public final class PublishChanges {
                 Thread.currentThread().interrupt();
                 return;
             }
-            sync.publish(HomeSync.buildPath(run), archive.toByteArray(), 0);
+            sync.publish(HomeSync.buildPath(run), archive, 0);
         }
 
         @Override

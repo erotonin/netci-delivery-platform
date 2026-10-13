@@ -70,6 +70,12 @@ public final class OwnerRouting implements Filter {
         return m;
     }
 
+    /** This replica's name, as the store knows it from its credential (the pod's name in the lab). */
+    static String me() {
+        String me = HomeSync.setting("NETCI_REPLICA_NAME", HomeSync.setting("POD_NAME", ""));
+        return me == null ? "" : me;
+    }
+
     @Initializer(after = InitMilestone.PLUGINS_STARTED)
     public static void register() throws ServletException {
         String me = HomeSync.setting("NETCI_REPLICA_NAME", HomeSync.setting("POD_NAME", ""));

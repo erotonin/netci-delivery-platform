@@ -2,6 +2,7 @@ package io.netci.jenkins.homesync;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import org.junit.jupiter.api.Test;
 
@@ -26,6 +27,14 @@ class EditOrderTest {
         assertEquals(-1, injected.indexOf('\r'));
         assertEquals(-1, injected.indexOf('\n'));
         assertEquals("/job/app/7/?netci-routed=1", OwnerRouting.location("", "/job/app/7/", OwnerRouting.ROUTED + "=1"));
+    }
+
+    @Test
+    void aRunningPipelineIsTheOneWhoseBuildXmlSaysNotCompleted() {
+        assertTrue(RunningBuilds.unfinished("<flow-build><result>SUCCESS</result><completed>false</completed></flow-build>"));
+        assertTrue(!RunningBuilds.unfinished("<flow-build><result>SUCCESS</result><completed>true</completed></flow-build>"));
+        assertTrue(RunningBuilds.unfinished("<build><number>3</number></build>"));
+        assertTrue(!RunningBuilds.unfinished("<build><result>FAILURE</result></build>"));
     }
 
     @Test
