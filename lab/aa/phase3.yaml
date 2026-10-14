@@ -96,7 +96,10 @@ spec:
             - {name: NETCI_REPLICA_COOKIES, value: "jenkins-0=r0,jenkins-1=r1"}
             # ... and where this replica reaches another to make a build there for the same person.
             # ADR-079: adopt a dead replica's running builds, once Kubernetes says it is gone.
-            - {name: NETCI_ADOPT_FENCE, value: kubernetes}
+            # Strict (ADR-084): a runner is gone only once the supervisor has its machine confirmed
+            # off (the out-of-service taint), or a Ready node's kubelet reports its process ended.
+            # "kubernetes" also took a NotReady node or a deleted pod, which a partition shows too.
+            - {name: NETCI_ADOPT_FENCE, value: kubernetes-power}
             # Each agent's home replica, as the balancer routes it; an idle agent visiting goes home.
             - {name: NETCI_AGENT_HOMES, value: "agent-0=jenkins-0,agent-1=jenkins-1"}
             - {name: NETCI_REPLICA_URLS, value: "jenkins-0=http://jenkins-0.jenkins.aa-p2.svc.cluster.local:8080,jenkins-1=http://jenkins-1.jenkins.aa-p2.svc.cluster.local:8080"}

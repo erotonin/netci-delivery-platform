@@ -1,0 +1,21 @@
+{
+  "scenario": "aa-phase8-partition",
+  "started": "2026-10-14T17:16:35+00:00",
+  "build": 62,
+  "owner": "r0",
+  "victim": "netci-lab-2",
+  "marks": {
+    "notReady": 51.7,
+    "fenced": 51.6,
+    "machineOff": 54.0,
+    "finished": 81.9,
+    "result": "SUCCESS",
+    "adopted": 57.8,
+    "adoptedBy": "jenkins-1"
+  },
+  "ticks": 90,
+  "missing": [],
+  "twice": [],
+  "adoptedOnlyAfterFenced": true,
+  "resumedTwice": false
+}

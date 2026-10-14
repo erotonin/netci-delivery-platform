@@ -1,6 +1,6 @@
 # ADR-084: Active-active replicas are fenced by power, on OpenStack through Nova
 
-- Status: accepted; unit-tested, lab run below
+- Status: accepted; unit-tested, measured in the lab (below)
 - Date: 2026-10-14
 - Refines: ADR-060 (the supervisor fences cells), ADR-079 (adoption needs the runner gone)
 
@@ -64,6 +64,24 @@ application credential allowed to stop and start them.
   - a partitioned machine is gone to the lenient fence and not to the strict one, until the taint;
   - a reporting kubelet proves a new or ended process in both modes;
   - a missing pod is gone only to the lenient fence.
+
+## Lab: a partition (`lab/aa/phase8_partition_probe.py`, `aa-phase8-partition-20261014T171635Z.json`)
+
+The setup:
+- the replicas on netci29 with `NETCI_ADOPT_FENCE=kubernetes-power`;
+- the supervisor on lost-node fencing, through the lab's Redfish emulator;
+- `long` on agent-0, owned by r0.
+
+At tick 10, r0's machine (netci-lab-2) lost its link (`virsh domif-setlink ... down`): the VM kept
+running, and its Jenkins with it. Seconds after the link went down:
+- 51.7: the node NotReady;
+- 51.6: the supervisor's out-of-service taint, put on after its power controller confirmed the
+  machine off (the probe, polling, saw the VM off at 54.0);
+- **57.8: jenkins-1 adopted the build, after the fence and not before**;
+- 81.9: the build ended SUCCESS, 90 of 90 ticks, none twice, resumed once.
+
+The lenient fence would have adopted at the NotReady with the old replica still running. Here it
+happened to come at the same second, which is why only the power-off may decide.
 
 ## What it costs, said plainly
 
