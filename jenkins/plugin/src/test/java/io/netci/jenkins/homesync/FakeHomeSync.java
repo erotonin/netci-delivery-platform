@@ -34,6 +34,10 @@ final class FakeHomeSync {
     final Map<String, String> jobOwner = new HashMap<>();
     final Map<String, Long> jobEpoch = new HashMap<>();
     final Map<String, List<Integer>> reserved = new HashMap<>();
+    /** run id -> its reservation (ADR-081). */
+    record RunAt(String job, int number, String replica, long at) {}
+
+    final Map<String, RunAt> runs = new HashMap<>();
     private long epochs = 1000;
     final List<Seen> seen = new ArrayList<>();
     volatile boolean down;
@@ -63,6 +67,7 @@ final class FakeHomeSync {
         jobOwner.clear();
         jobEpoch.clear();
         reserved.clear();
+        runs.clear();
         down = false;
         beforeGet = path -> {};
         beforeChange = path -> {};
@@ -117,7 +122,9 @@ final class FakeHomeSync {
                 case "GET /v1/changes" -> changes(x, Long.parseLong(q.get("after")), q.get("wait"));
                 case "POST /v1/jobs/claim" -> claim(x, q.get("job"));
                 case "GET /v1/jobs/owner" -> owner(x, q.get("job"));
-                case "POST /v1/jobs/reserve" -> reserve(x, q.get("job"), Integer.parseInt(q.get("number")), Long.parseLong(q.get("epoch")));
+                case "POST /v1/jobs/reserve" -> reserve(x, q.get("job"), Integer.parseInt(q.get("number")), Long.parseLong(q.get("epoch")), q.get("run"));
+                case "GET /v1/runs" -> run(x, q.get("id"));
+                case "DELETE /v1/runs" -> releaseRun(x, q.get("id"), q.get("job"), Integer.parseInt(q.get("number")));
                 default -> reply(x, 404, new JSONObject());
             }
         } catch (InterruptedException e) {
@@ -202,7 +209,38 @@ final class FakeHomeSync {
                 .element("expiresInMs", 15000).element("maxReserved", maxReserved(job)));
     }
 
-    private synchronized void reserve(HttpExchange x, String job, int number, long epoch) throws IOException {
+    /** Another replica gave a run a number. */
+    synchronized void runReservedBy(String replica, String runId, String job, int number) {
+        reserved.computeIfAbsent(job, k -> new ArrayList<>()).add(number);
+        runs.put(runId, new RunAt(job, number, replica, System.currentTimeMillis()));
+    }
+
+    private synchronized void run(HttpExchange x, String id) throws IOException {
+        RunAt r = runs.get(id);
+        if (r == null) {
+            reply(x, 404, new JSONObject().element("code", "NO_RUN"));
+            return;
+        }
+        reply(x, 200, new JSONObject().element("job", r.job()).element("number", r.number()).element("replica", r.replica())
+                .element("reservedAt", r.at()));
+    }
+
+    private synchronized void releaseRun(HttpExchange x, String id, String job, int number) throws IOException {
+        RunAt r = runs.get(id);
+        if (r == null || !r.job().equals(job) || r.number() != number) {
+            reply(x, 404, new JSONObject().element("code", "NO_RUN"));
+            return;
+        }
+        runs.remove(id);
+        x.sendResponseHeaders(204, -1);
+    }
+
+    private synchronized void reserve(HttpExchange x, String job, int number, long epoch, String run) throws IOException {
+        if (run != null && runs.containsKey(run)) {
+            RunAt had = runs.get(run);
+            reply(x, 409, new JSONObject().element("code", "RUN_TAKEN").element("job", had.job()).element("number", had.number()));
+            return;
+        }
         if (!"me".equals(jobOwner.get(job)) || jobEpoch.get(job) != epoch) {
             reply(x, 409, new JSONObject().element("code", "NOT_OWNER").element("message", "not the owner"));
             return;
@@ -212,6 +250,9 @@ final class FakeHomeSync {
             return;
         }
         reserved.computeIfAbsent(job, k -> new ArrayList<>()).add(number);
+        if (run != null) {
+            runs.put(run, new RunAt(job, number, "me", System.currentTimeMillis()));
+        }
         reply(x, 200, new JSONObject().element("job", job).element("number", number));
     }
 

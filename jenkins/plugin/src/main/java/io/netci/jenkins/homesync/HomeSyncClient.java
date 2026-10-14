@@ -148,18 +148,57 @@ final class HomeSyncClient {
     }
 
     void reserve(String job, int number, long epoch) throws IOException, InterruptedException {
+        reserve(job, number, epoch, null);
+    }
+
+    /**
+     * The number for a build, recording the netCI run it is for (runId, or null): refused with
+     * RUN_TAKEN when that run has a number already, Refused.current holding it (ADR-081).
+     */
+    void reserve(String job, int number, long epoch, String runId) throws IOException, InterruptedException {
         HttpResponse<String> r = HTTP.send(
-                request("/v1/jobs/reserve?job=" + enc(job) + "&number=" + number + "&epoch=" + epoch)
+                request("/v1/jobs/reserve?job=" + enc(job) + "&number=" + number + "&epoch=" + epoch + (runId == null ? "" : "&run=" + enc(runId)))
                         .POST(HttpRequest.BodyPublishers.noBody()).build(),
                 HttpResponse.BodyHandlers.ofString());
         if (r.statusCode() == 200) {
             return;
         }
         JSONObject o = json(r.body());
+        if (r.statusCode() == 409 && "RUN_TAKEN".equals(o.optString("code"))) {
+            throw new Refused("RUN_TAKEN", o.optLong("number"), o.optString("job"), o.optString("message"));
+        }
         if (r.statusCode() == 409) {
             throw new Refused(o.optString("code"), o.optLong("max"), "", o.optString("message"));
         }
         throw new IOException("homesync answered HTTP " + r.statusCode() + " to a reservation of " + job + " #" + number);
+    }
+
+    /** Where a netCI run was given its number, or null when it has none (ADR-081). */
+    record RunReservation(String job, int number, String replica, long reservedAt) {}
+
+    RunReservation run(String runId) throws IOException, InterruptedException {
+        HttpResponse<String> r = HTTP.send(request("/v1/runs?id=" + enc(runId)).GET().build(), HttpResponse.BodyHandlers.ofString());
+        if (r.statusCode() == 404) {
+            return null;
+        }
+        if (r.statusCode() != 200) {
+            throw new IOException("homesync answered HTTP " + r.statusCode() + " for run " + runId);
+        }
+        JSONObject o = json(r.body());
+        return new RunReservation(o.getString("job"), o.getInt("number"), o.getString("replica"), o.getLong("reservedAt"));
+    }
+
+    /** Forget the run's number, its build having never existed; false when it no longer had it. */
+    boolean releaseRun(String runId, String job, int number) throws IOException, InterruptedException {
+        HttpResponse<Void> r = HTTP.send(request("/v1/runs?id=" + enc(runId) + "&job=" + enc(job) + "&number=" + number).DELETE().build(),
+                HttpResponse.BodyHandlers.discarding());
+        if (r.statusCode() == 204) {
+            return true;
+        }
+        if (r.statusCode() == 404) {
+            return false;
+        }
+        throw new IOException("homesync answered HTTP " + r.statusCode() + " to a release of run " + runId);
     }
 
     void unlock(String path, long token) throws IOException, InterruptedException {

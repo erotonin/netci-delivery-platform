@@ -17,6 +17,7 @@ import hudson.model.SimpleParameterDefinition;
 import hudson.model.queue.ScheduleResult;
 import hudson.security.ACL;
 import hudson.security.ACLContext;
+import io.netci.jenkins.homesync.RunsAcrossReplicas;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
@@ -76,10 +77,16 @@ public final class NetciEndpoint implements RootAction {
     @RequirePOST
     public HttpResponse doDispatch(StaplerRequest2 req) throws Exception {
         JSONObject body;
+        String raw;
         try {
-            body = JSONObject.fromObject(readBody(req));
+            raw = readBody(req);
+            body = JSONObject.fromObject(raw);
         } catch (JSONException | IOException e) {
             return error(400, "the body must be a JSON object of at most 64 KiB");
+        }
+        HttpResponse routed = route(req, "POST", "/netci/dispatch", raw, body.optString("job", ""));
+        if (routed != null) {
+            return routed;
         }
         String runId = body.optString("runId", "");
         if (!RUN_ID.matcher(runId).matches()) {
@@ -110,6 +117,28 @@ public final class NetciEndpoint implements RootAction {
         }
         long notBefore = body.optLong("notBefore", 0);
 
+        Callable<JSONObject> here = () -> {
+            try (ACLContext ignored = ACL.as2(ACL.SYSTEM2)) {
+                RunLookup.Found found = RunLookup.find(job, runId, notBefore);
+                return found == null ? null : describe(found, false);
+            }
+        };
+        JSONObject known = Queue.withLock(here);
+        if (known != null) {
+            return json(200, known.element("runId", runId).element("job", job.getFullName()));
+        }
+        // Not here: has another replica got it? Asked outside the queue's lock -- the store is a
+        // network call -- and not trusted alone: the reservation refuses a second number.
+        if (RunsAcrossReplicas.active()) {
+            try {
+                RunsAcrossReplicas.Elsewhere e = RunsAcrossReplicas.find(runId);
+                if (e != null) {
+                    return json(200, elsewhere(e).element("runId", runId).element("job", job.getFullName()));
+                }
+            } catch (IOException e) {
+                return error(503, "the replicas' store cannot be reached to tell whether the run exists; retry");
+            }
+        }
         Callable<JSONObject> dispatch = () -> {
             // The lookup must see every item and build, whatever the caller may read; the caller
             // was checked for BUILD on this job above and learns only about its own run.
@@ -127,6 +156,11 @@ public final class NetciEndpoint implements RootAction {
             }
         };
         JSONObject result = Queue.withLock(dispatch);
+        if (result == null && RunsAcrossReplicas.active()) {
+            // With replicas the refusal is the owner's rule or the store, both passing: never a
+            // refusal of the run for good, which netci-queue takes a 409 to be.
+            return error(503, "this replica cannot schedule the run now (another replica owns the job, or the store is unreachable); retry");
+        }
         if (result == null) {
             return error(409, "Jenkins refused to schedule the run");
         }
@@ -139,6 +173,10 @@ public final class NetciEndpoint implements RootAction {
             return error(400, "runId must be a lower-case UUID");
         }
         String name = req.getParameter("job");
+        HttpResponse routed = route(req, "GET", "/netci/run?" + req.getQueryString(), null, name == null ? "" : name);
+        if (routed != null) {
+            return routed;
+        }
         Job<?, ?> job = Jenkins.get().getItemByFullName(name == null ? "" : name, Job.class);
         if (job == null) {
             return error(404, "no such job, or no permission to see it");
@@ -156,6 +194,17 @@ public final class NetciEndpoint implements RootAction {
             }
         };
         JSONObject result = Queue.withLock(lookup);
+        if (result == null && RunsAcrossReplicas.active()) {
+            try {
+                RunsAcrossReplicas.Elsewhere e = RunsAcrossReplicas.find(runId);
+                if (e != null) {
+                    result = elsewhere(e);
+                }
+            } catch (IOException e) {
+                // "absent" would end a running build's run (finished, result unknown): say nothing
+                return error(503, "the replicas' store cannot be reached to tell where the run is; retry");
+            }
+        }
         if (result == null) {
             return json(404, new JSONObject().element("runId", runId).element("state", "absent").element("session", SESSION));
         }
@@ -199,6 +248,53 @@ public final class NetciEndpoint implements RootAction {
             }
         }
         return new ParametersAction(out);
+    }
+
+    /**
+     * A call for a job another replica owns, made there (ADR-081), or null to answer here: homesync
+     * off, the call already routed, this replica the owner, or no credential to act with.
+     */
+    private static HttpResponse route(StaplerRequest2 req, String method, String pathAndQuery, String body, String job) {
+        if (!RunsAcrossReplicas.active() || req.getHeader(RunsAcrossReplicas.ROUTED) != null) {
+            return null;
+        }
+        String auth = req.getHeader("Authorization");
+        try {
+            String owner = RunsAcrossReplicas.ownerElsewhere(job);
+            if (owner == null || auth == null) {
+                return null;
+            }
+            RunsAcrossReplicas.Answer a = RunsAcrossReplicas.forward(owner, method, req.getContextPath() + pathAndQuery, body, auth);
+            return new HttpResponse() {
+                @Override
+                public void generateResponse(StaplerRequest2 r, StaplerResponse2 rsp, Object node) throws IOException {
+                    rsp.setStatus(a.status());
+                    rsp.setContentType("application/json;charset=UTF-8");
+                    rsp.setHeader("X-Netci-Answered-By", owner);
+                    rsp.getWriter().print(a.body());
+                }
+            };
+        } catch (IOException e) {
+            return error(503, "the owner of the job cannot be reached, or the store cannot say which replica it is; retry");
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return error(503, "interrupted; retry");
+        }
+    }
+
+    /** A run another replica has: started (running there, or finished and not yet listed here) or about to start. */
+    private static JSONObject elsewhere(RunsAcrossReplicas.Elsewhere e) {
+        JSONObject o = new JSONObject().element("state", e.started() ? "started" : "starting").element("created", false)
+                .element("session", SESSION).element("replica", e.replica());
+        if (e.started()) {
+            String url;
+            try (ACLContext ignored = ACL.as2(ACL.SYSTEM2)) {
+                Job<?, ?> j = Jenkins.get().getItemByFullName(e.job(), Job.class);
+                url = (j == null ? "job/" + e.job() + "/" : j.getUrl()) + e.number() + "/";
+            }
+            o.element("build", new JSONObject().element("number", e.number()).element("building", true).element("url", url));
+        }
+        return o;
     }
 
     private static JSONObject describe(RunLookup.Found f, boolean created) {

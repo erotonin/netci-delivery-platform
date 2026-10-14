@@ -481,4 +481,117 @@ class HomeSyncTest {
         assertNotNull(stored("bg"));
         assertTrue(stored("bg").contains("r1 won"), "the stale save replaced r1's");
     }
+
+    // ADR-081: netci-queue's dispatch and lookup through the VIP land on either replica.
+
+    private static String alice(JenkinsRule j) throws Exception {
+        hudson.security.HudsonPrivateSecurityRealm realm = new hudson.security.HudsonPrivateSecurityRealm(false, false, null);
+        realm.createAccount("alice", "alice-password-0123456789");
+        j.jenkins.setSecurityRealm(realm);
+        j.jenkins.setAuthorizationStrategy(new org.jvnet.hudson.test.MockAuthorizationStrategy().grant(jenkins.model.Jenkins.READ,
+                hudson.model.Item.READ, hudson.model.Item.BUILD).everywhere().to("alice"));
+        String token = hudson.model.User.getById("alice", false).getProperty(jenkins.security.ApiTokenProperty.class)
+                .generateNewToken("queue").plainValue;
+        return "Basic " + java.util.Base64.getEncoder().encodeToString(("alice:" + token).getBytes(StandardCharsets.UTF_8));
+    }
+
+    private static java.net.http.HttpResponse<String> netci(JenkinsRule j, String path, String body, String auth) throws Exception {
+        java.net.http.HttpRequest.Builder b = java.net.http.HttpRequest.newBuilder(java.net.URI.create(j.getURL() + path)).header("Authorization", auth);
+        b = body == null ? b.GET() : b.header("Content-Type", "application/json").POST(java.net.http.HttpRequest.BodyPublishers.ofString(body));
+        return java.net.http.HttpClient.newHttpClient().send(b.build(), java.net.http.HttpResponse.BodyHandlers.ofString());
+    }
+
+    private static String dispatch(String job, String run) {
+        return "{\"job\":\"" + job + "\",\"runId\":\"" + run + "\"}";
+    }
+
+    @Test
+    void aRunsDispatchAndLookupForAJobAnotherReplicaOwnsAreMadeOnTheOwner(JenkinsRule j) throws Exception {
+        ready();
+        String auth = alice(j);
+        String run = "1b8d6a8e-3f2c-4c7e-9d2a-0a1b2c3d4e5f";
+        pipeline(j, "q-owned");
+        STORE.ownJobAs("r1", "q-owned");
+        AT_OWNER.clear();
+        java.net.http.HttpResponse<String> r = netci(j, "netci/dispatch", dispatch("q-owned", run), auth);
+        assertEquals(201, r.statusCode(), r.body()); // the owner's own answer (the fake owner says 201)
+        assertEquals("r1", r.headers().firstValue("X-Netci-Answered-By").orElse(""));
+        java.net.http.HttpResponse<String> l = netci(j, "netci/run?job=q-owned&runId=" + run, null, auth);
+        assertEquals("r1", l.headers().firstValue("X-Netci-Answered-By").orElse(""), l.body());
+        List<String> sent = new java.util.ArrayList<>(AT_OWNER);
+        assertTrue(sent.stream().anyMatch(x -> x.startsWith("POST /jenkins/netci/dispatch | " + auth + " | ") && x.contains(run)), sent.toString());
+        assertTrue(sent.stream().anyMatch(x -> x.startsWith("GET /jenkins/netci/run | " + auth)), sent.toString());
+        assertEquals(0, j.jenkins.getQueue().getItems().length, "it was queued here too");
+        assertNull(job(j, "q-owned").getLastBuild());
+    }
+
+    /**
+     * The lab's danger: the run's build is on another replica (its owner died, the build waits for
+     * adoption), and the run is dispatched again here. It is reported running, not built twice.
+     */
+    @Test
+    void aRunWhoseBuildRunsOnAnotherReplicaIsReportedNotScheduledAgain(JenkinsRule j) throws Exception {
+        ready();
+        String auth = alice(j);
+        String run = "2b8d6a8e-3f2c-4c7e-9d2a-0a1b2c3d4e5f";
+        pipeline(j, "q-elsewhere");
+        STORE.runReservedBy("r1", run, "q-elsewhere", 1);
+        STORE.changeFrom("r1", "@running/q-elsewhere/1", "a running copy");
+        java.net.http.HttpResponse<String> r = netci(j, "netci/dispatch", dispatch("q-elsewhere", run), auth);
+        assertEquals(200, r.statusCode(), r.body());
+        net.sf.json.JSONObject o = net.sf.json.JSONObject.fromObject(r.body());
+        assertEquals("started", o.getString("state"), r.body());
+        assertEquals(1, o.getJSONObject("build").getInt("number"));
+        assertTrue(o.getJSONObject("build").getBoolean("building"));
+        java.net.http.HttpResponse<String> l = netci(j, "netci/run?job=q-elsewhere&runId=" + run, null, auth);
+        assertEquals(200, l.statusCode(), "a running build reported absent ends its run: " + l.body());
+        Thread.sleep(1000);
+        assertEquals(0, j.jenkins.getQueue().getItems().length, "scheduled a second time");
+        assertNull(job(j, "q-elsewhere").getLastBuild());
+    }
+
+    /** A number this replica reserved for the run before it restarted, the build never made: run once. */
+    @Test
+    void aRunGivenANumberHereButNeverStartedRunsOnce(JenkinsRule j) throws Exception {
+        ready();
+        String auth = alice(j);
+        String run = "3b8d6a8e-3f2c-4c7e-9d2a-0a1b2c3d4e5f";
+        WorkflowJob job = pipeline(j, "q-lost");
+        STORE.runReservedBy("me", run, "q-lost", 1);
+        java.net.http.HttpResponse<String> r = netci(j, "netci/dispatch", dispatch("q-lost", run), auth);
+        assertEquals(200, r.statusCode(), r.body());
+        await("the run built", () -> job.getLastBuild() != null && !job.getLastBuild().isBuilding());
+        assertEquals(2, job.getLastBuild().getNumber(), "the number given up stays taken");
+        synchronized (STORE) {
+            assertEquals(2, STORE.runs.get(run).number());
+        }
+        assertEquals(200, netci(j, "netci/dispatch", dispatch("q-lost", run), auth).statusCode());
+        Thread.sleep(1000);
+        assertEquals(1, job.getBuilds().size(), "dispatched again, built again");
+    }
+
+    /** Whatever slips past the lookups, the store refuses the run a second number: the item is cancelled. */
+    @Test
+    void aSecondItemForARunThatHasANumberIsCancelled(JenkinsRule j) throws Exception {
+        ready();
+        WorkflowJob job = pipeline(j, "q-dup");
+        String run = "4b8d6a8e-3f2c-4c7e-9d2a-0a1b2c3d4e5f";
+        STORE.runReservedBy("r1", run, "q-dup", 7);
+        j.jenkins.getQueue().schedule2(job, 0, List.of(new io.netci.jenkins.NetciRunAction(run)));
+        await("the second item cancelled", () -> j.jenkins.getQueue().getItems().length == 0);
+        Thread.sleep(1500);
+        assertNull(job.getLastBuild(), "a run built twice");
+    }
+
+    /** The store unreachable: "try again", never "refused" (409) nor "absent" -- each ends the run. */
+    @Test
+    void withTheStoreUnreachableARunIsNeitherRefusedNorAbsent(JenkinsRule j) throws Exception {
+        ready();
+        String auth = alice(j);
+        pipeline(j, "q-down");
+        String run = "5b8d6a8e-3f2c-4c7e-9d2a-0a1b2c3d4e5f";
+        STORE.down = true;
+        assertEquals(503, netci(j, "netci/dispatch", dispatch("q-down", run), auth).statusCode());
+        assertEquals(503, netci(j, "netci/run?job=q-down&runId=" + run, null, auth).statusCode());
+    }
 }

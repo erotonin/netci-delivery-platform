@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -110,6 +111,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/jobs/claim", s.authed(s.claimJob))
 	mux.HandleFunc("GET /v1/jobs/owner", s.authed(s.jobOwner))
 	mux.HandleFunc("POST /v1/jobs/reserve", s.authed(s.reserve))
+	mux.HandleFunc("GET /v1/runs", s.authed(s.run))
+	mux.HandleFunc("DELETE /v1/runs", s.authed(s.releaseRun))
 	return mux
 }
 
@@ -175,17 +178,69 @@ func (s *Server) reserve(w http.ResponseWriter, r *http.Request, replica string)
 		writeJSON(w, http.StatusBadRequest, map[string]any{"code": "BAD_REQUEST", "message": "job, number (1+) and epoch are required"})
 		return
 	}
-	err = s.Store.Reserve(r.Context(), job, number, replica, epoch)
+	run := r.URL.Query().Get("run")
+	if run != "" && !runID.MatchString(run) {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"code": "BAD_REQUEST", "message": "run must be a lower-case UUID"})
+		return
+	}
+	err = s.Store.ReserveRun(r.Context(), job, number, replica, epoch, run)
 	var taken *NumberTakenError
+	var runTaken *RunTakenError
 	switch {
 	case err == nil:
 		writeJSON(w, http.StatusOK, map[string]any{"job": job, "number": number})
+	case errors.As(err, &runTaken):
+		writeJSON(w, http.StatusConflict, map[string]any{"code": "RUN_TAKEN", "job": runTaken.Job, "number": runTaken.Number, "message": err.Error()})
 	case errors.As(err, &taken):
 		writeJSON(w, http.StatusConflict, map[string]any{"code": "NUMBER_TAKEN", "max": taken.Max})
 	case errors.Is(err, ErrNotOwner):
 		writeJSON(w, http.StatusConflict, map[string]any{"code": "NOT_OWNER", "message": err.Error()})
 	default:
 		s.fail(w, err)
+	}
+}
+
+// runID is netci-queue's run id as the plugin carries it: a lower-case UUID.
+var runID = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
+
+// run: where a run was given its number (ADR-081), 404 when it has none.
+func (s *Server) run(w http.ResponseWriter, r *http.Request, _ string) {
+	id := r.URL.Query().Get("id")
+	if !runID.MatchString(id) {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"code": "BAD_REQUEST", "message": "id must be a lower-case UUID"})
+		return
+	}
+	res, ok, err := s.Store.Run(r.Context(), id)
+	switch {
+	case err != nil:
+		s.fail(w, err)
+	case !ok:
+		writeJSON(w, http.StatusNotFound, map[string]any{"code": "NO_RUN", "message": "the run has no number"})
+	default:
+		writeJSON(w, http.StatusOK, map[string]any{"job": res.Job, "number": res.Number, "replica": res.Replica,
+			"reservedAt": res.ReservedAt.UnixMilli()})
+	}
+}
+
+// releaseRun: the run may be given a number again (its reserving replica died before the build
+// existed; the plugin decides that with its fence). Only for the job and number it had.
+func (s *Server) releaseRun(w http.ResponseWriter, r *http.Request, _ string) {
+	q := r.URL.Query()
+	id := q.Get("id")
+	job, err := jobPath(r)
+	number, nerr := strconv.Atoi(q.Get("number"))
+	if !runID.MatchString(id) || err != nil || nerr != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"code": "BAD_REQUEST", "message": "id, job and number are required"})
+		return
+	}
+	released, err := s.Store.ReleaseRun(r.Context(), id, job, number)
+	switch {
+	case err != nil:
+		s.fail(w, err)
+	case !released:
+		writeJSON(w, http.StatusNotFound, map[string]any{"code": "NO_RUN", "message": "the run does not have that number"})
+	default:
+		w.WriteHeader(http.StatusNoContent)
 	}
 }
 

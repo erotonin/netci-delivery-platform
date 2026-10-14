@@ -129,11 +129,31 @@ public final class BuildOwnership {
             }
             Lease lease = LEASES.get(name);
             int number = job.getNextBuildNumber();
+            io.netci.jenkins.NetciRunAction run = item.getAction(io.netci.jenkins.NetciRunAction.class);
             try {
-                sync.client.reserve(name, number, lease.epoch());
+                sync.client.reserve(name, number, lease.epoch(), run == null ? null : run.getRunId());
                 PENDING_BY_JOB.put(name, new Pending(item.getId(), number, System.currentTimeMillis()));
                 return null;
             } catch (HomeSyncClient.Refused r) {
+                if ("RUN_TAKEN".equals(r.code)) {
+                    // The run has a build already (ADR-081), on this replica or another: this item
+                    // is a second dispatch of it, and must never start. Cancelled outside the
+                    // queue's lock, which canRun is called under.
+                    LOGGER.warning(() -> "netCI homesync: run " + run.getRunId() + " has " + r.holder + " #" + r.current
+                            + " already; cancelling the second item for it");
+                    // By id: the item canRun is handed is not the object the queue holds by the
+                    // time this runs (a blocked item is another object), and cancelling that one
+                    // did nothing -- the test's item stayed blocked for good.
+                    long id = item.getId();
+                    jenkins.util.Timer.get().submit(() -> {
+                        hudson.model.Queue q = hudson.model.Queue.getInstance();
+                        hudson.model.Queue.Item now = q.getItem(id);
+                        if (now != null) {
+                            q.cancel(now);
+                        }
+                    });
+                    return blockage("netCI: this run is " + r.holder + " #" + r.current + " already");
+                }
                 if ("NUMBER_TAKEN".equals(r.code)) {
                     try {
                         job.updateNextBuildNumber((int) r.current + 1);

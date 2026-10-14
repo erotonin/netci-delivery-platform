@@ -213,3 +213,32 @@ func TestALockTheStoreCannotTakeIs503NotTheCallersMistake(t *testing.T) {
 		t.Fatalf("the store's error reached the caller: %s", raw)
 	}
 }
+
+func TestARunsNumberOverHTTP(t *testing.T) {
+	srv := testServer(t)
+	_, _, lease, _ := call(t, srv, "POST", "/v1/jobs/claim?job=app&ttl=1m", tokenR0, nil, "")
+	epoch := strconv.FormatInt(int64(lease["epoch"].(float64)), 10)
+	if code, _, body, _ := call(t, srv, "POST", "/v1/jobs/reserve?job=app&number=1&epoch="+epoch+"&run="+runA, tokenR0, nil, ""); code != 200 {
+		t.Fatalf("reserve: %d %v", code, body)
+	}
+	code, _, body, _ := call(t, srv, "POST", "/v1/jobs/reserve?job=app&number=2&epoch="+epoch+"&run="+runA, tokenR0, nil, "")
+	if code != http.StatusConflict || body["code"] != "RUN_TAKEN" || body["number"] != float64(1) {
+		t.Fatalf("a second number: %d %v", code, body)
+	}
+	if code, _, _, _ := call(t, srv, "POST", "/v1/jobs/reserve?job=app&number=2&epoch="+epoch+"&run=NOT-A-UUID", tokenR0, nil, ""); code != http.StatusBadRequest {
+		t.Fatalf("a run id that is not one: %d", code)
+	}
+	code, _, body, _ = call(t, srv, "GET", "/v1/runs?id="+runA, tokenR1, nil, "")
+	if code != 200 || body["job"] != "app" || body["number"] != float64(1) || body["replica"] != "r0" || body["reservedAt"] == nil {
+		t.Fatalf("lookup: %d %v", code, body)
+	}
+	if code, _, _, _ := call(t, srv, "DELETE", "/v1/runs?id="+runA+"&job=app&number=1", tokenR1, nil, ""); code != http.StatusNoContent {
+		t.Fatalf("release: %d", code)
+	}
+	if code, _, _, _ := call(t, srv, "GET", "/v1/runs?id="+runA, tokenR1, nil, ""); code != http.StatusNotFound {
+		t.Fatalf("lookup after the release: %d", code)
+	}
+	if code, _, _, _ := call(t, srv, "GET", "/v1/runs?id="+runA, "", nil, ""); code != http.StatusUnauthorized {
+		t.Fatalf("lookup without a replica's token: %d", code)
+	}
+}
