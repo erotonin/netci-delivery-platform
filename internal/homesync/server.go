@@ -318,12 +318,14 @@ func (s *Server) lock(w http.ResponseWriter, r *http.Request, replica string) {
 	}
 	token, err := s.Store.Lock(r.Context(), path, replica, ttl)
 	if err != nil {
-		var locked *LockedError
-		if errors.As(err, &locked) {
-			s.refuse(w, err)
+		// Only a bad lifetime is the caller's: anything else is the store's, a 503 like every other
+		// store failure. It was a 400 carrying the database's error text, which the soak saw while
+		// the store failed over ("homesync answered HTTP 400 to a lock").
+		if errors.Is(err, ErrBadTTL) {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"code": "BAD_REQUEST", "message": err.Error()})
 			return
 		}
-		writeJSON(w, http.StatusBadRequest, map[string]any{"code": "BAD_REQUEST", "message": err.Error()})
+		s.refuse(w, err)
 		return
 	}
 	// The head comes with the lock: everything up to it must be applied before the edit starts.

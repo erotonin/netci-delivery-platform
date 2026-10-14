@@ -3,6 +3,7 @@
 a time, while people use it. Does the UI or API ever fail, and are edits refused?
 
     CONTROLLER=<image@digest> python3 lab/aa/phase6_upgrade_probe.py
+    python3 lab/aa/phase6_upgrade_probe.py --restart     the same roll, the image unchanged
 
 A reader asks the VIP for /api/json twice a second, unpinned (the balancer picks a replica, as for a
 person arriving); two writers, one pinned to each replica by the balancer's cookie, create a job each
@@ -19,6 +20,7 @@ import os
 import sys
 import threading
 import time
+import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -30,9 +32,10 @@ NS = p3.NS
 
 
 def main() -> int:
+    restart = "--restart" in sys.argv[1:]
     image = os.environ.get("CONTROLLER", "")
-    if "@sha256:" not in image:
-        raise SystemExit("CONTROLLER=<controller image by digest>")
+    if not restart and "@sha256:" not in image:
+        raise SystemExit("CONTROLLER=<controller image by digest>, or --restart")
     started = dt.datetime.now(dt.timezone.utc)
     run = started.strftime("%H%M%S")
     p5.whole()
@@ -57,14 +60,16 @@ def main() -> int:
         auth = p3.R("r0").auth
         while not stop.is_set():
             at = time.time()
-            served = ""
+            served, why = "", ""
             try:
                 req = urllib.request.Request(p3.VIP + "/api/json?tree=mode", headers={"Authorization": auth})
                 with urllib.request.urlopen(req, timeout=3) as resp:
                     ok, served = resp.status == 200, resp.headers.get("X-Netci-Replica", "")
-            except OSError:
-                ok = False
-            reads.append({"at": at, "ok": ok, "served": served})
+            except urllib.error.HTTPError as e:
+                ok, served, why = False, e.headers.get("X-Netci-Replica", ""), str(e.code)
+            except OSError as e:
+                ok, why = False, type(e).__name__
+            reads.append({"at": at, "ok": ok, "served": served, "why": why})
             time.sleep(max(0.0, 0.5 - (time.time() - at)))
 
     threads = [threading.Thread(target=writer, args=(r,), daemon=True) for r in writes] + [threading.Thread(target=reader, daemon=True)]
@@ -72,8 +77,13 @@ def main() -> int:
         t.start()
     time.sleep(15)
     t0 = time.time()
-    p3.k("-n", NS, "set", "image", "statefulset/jenkins", f"jenkins={image}", f"same-secrets={image}")
-    print("image set", flush=True)
+    if restart:
+        image = before
+        p3.k("-n", NS, "rollout", "restart", "statefulset/jenkins")
+        print("restarted", flush=True)
+    else:
+        p3.k("-n", NS, "set", "image", "statefulset/jenkins", f"jenkins={image}", f"same-secrets={image}")
+        print("image set", flush=True)
     p3.k("-n", NS, "rollout", "status", "statefulset/jenkins", "--timeout=1200s")
     rolled = time.time() - t0
     print(f"rolled out in {rolled:.0f} s", flush=True)
@@ -85,9 +95,9 @@ def main() -> int:
         x["t"] = round(x.pop("at") - t0, 1)
     p5.whole()
     acked = [w for r in writes for w in writes[r] if w["code"] == 200]
-    facts: dict = {"scenario": "aa-phase6-upgrade", "started": started.isoformat(timespec="seconds"),
+    facts: dict = {"scenario": "aa-phase6-upgrade", "started": started.isoformat(timespec="seconds"), "restartOnly": restart,
                    "imageBefore": before, "imageAfter": image, "rolledOutAfterSeconds": round(rolled, 1),
-                   "reads": {"count": len(reads), "failed": [x["t"] for x in reads if not x["ok"]],
+                   "reads": {"count": len(reads), "failed": [(x["t"], x["why"], x["served"]) for x in reads if not x["ok"]],
                              "servedBy": {r: sum(x["served"] == r for x in reads) for r in ("r0", "r1")}},
                    "acknowledged": len(acked),
                    "missingOn": {r: [w["name"] for w in acked if p3.R(r).job(w["name"]) is None] for r in ("r0", "r1")},

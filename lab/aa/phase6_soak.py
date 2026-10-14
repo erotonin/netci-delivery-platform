@@ -128,8 +128,16 @@ def dumps(n: int, until: threading.Event) -> None:
 def round_(kind: str, agents_node: str) -> dict:
     p5.whole()
     p3.until(p6.settled, 900, 5)
-    code, _ = p4.trigger(p3.R("r0"), "long")
-    assert code == 201, code
+    # A replica that has just come back answered one "Build now" 302 (round 3 of a run); the answers
+    # are kept, and the build is asked for again, at most 5 times.
+    triggers = []
+    for _ in range(5):
+        code, _ = p4.trigger(p3.R("r0"), "long")
+        triggers.append(code)
+        if code == 201:
+            break
+        time.sleep(3)
+    assert triggers[-1] == 201, triggers
     p3.until(lambda: any(b["building"] for b in p4.builds(p3.R("r0"), "long")), 120)
     n = max(b["number"] for b in p4.builds(p3.R("r0"), "long") if b["building"])
     if p3.until(lambda: max(p5.ticks(n) or [0]) >= 10, 180, 0.5) is None:
@@ -167,11 +175,15 @@ def round_(kind: str, agents_node: str) -> dict:
     p5.whole()
     p3.until(p6.settled, 900, 5)
     seen = p5.ticks(n)
+    # Listed on both, eventually: the replica that came back may still be catching up with the store.
+    since = time.time()
+    p3.until(lambda: all(p3.R(r).req(f"/job/long/{n}/api/json?tree=result")[0] == 200 for r in ("r0", "r1")), 60, 1)
     listed = {r: p3.R(r).req(f"/job/long/{n}/api/json?tree=result")[0] == 200 for r in ("r0", "r1")}
+    listed_after = round(time.time() - since, 1)
     return {"fault": kind, "done": done, "target": target, "node": victim_node, "build": n, "holder": holder,
             "at": round(t0, 1), "result": result, "finishedAfterSeconds": finished, "ticks": len(seen),
             "missing": sorted(set(range(1, 91)) - set(seen)), "twice": sorted({t for t in seen if seen.count(t) > 1}),
-            "listedOn": listed}
+            "listedOn": listed, "listedOnBothAfterSeconds": listed_after, "triggers": triggers}
 
 
 def main() -> int:

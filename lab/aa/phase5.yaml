@@ -66,7 +66,10 @@ data:
       timeout check 1s
       retries 3
       option redispatch 1
-      retry-on conn-failure empty-response response-timeout
+      # 503 too: a replica stopping answers 503 for the ~2 s before its check marks it down (the
+      # rolling upgrade's two failed polls of 280). Jenkins says 503 before it acts on a request,
+      # and so does the plugin when it refuses an edit, so a retry on the other replica is safe.
+      retry-on conn-failure empty-response response-timeout 503
     resolvers k8s
       parse-resolv-conf
       hold valid 2s
@@ -113,12 +116,34 @@ spec:
           command: [sh, -c, 'JENKINS_SECRET="$(cat /run/secrets/agents/$POD_NAME)" JENKINS_AGENT_NAME="$POD_NAME" exec /usr/local/bin/jenkins-agent']
           env:
             - {name: POD_NAME, valueFrom: {fieldRef: {fieldPath: metadata.name}}}
-            - {name: JENKINS_URL, value: "http://192.168.122.240/"}
+            # The balancer on this agent's own machine (the Service below), not the VIP: these agents
+            # are pods, and kube-proxy sends a pod's connection to the VIP to the balancer of any
+            # machine. When that machine lost power the connection was a black hole -- no reset ever
+            # came, the agent's writes blocked, its ping was queued behind them, and the build it ran
+            # waited 4-9 minutes. The local balancer lives and dies with the agent, and when a
+            # replica's machine dies it marks the replica down and closes the agent's session. An
+            # agent outside the cluster (the site's VM) uses the VIP: the machine that takes the VIP
+            # over answers a dead connection with a reset.
+            - {name: JENKINS_URL, value: "http://haproxy-local.aa-p2.svc.cluster.local/"}
             - {name: JENKINS_WEB_SOCKET, value: "true"}
             - {name: JENKINS_AGENT_WORKDIR, value: /home/jenkins/agent}
+            # A connection attempt gives up after 3 s. These agents are pods: their connection to the
+            # VIP may be sent to the HAProxy of a machine that just lost power, whose pod is still an
+            # endpoint for ~40 s, and a SYN to it is retried for ~127 s -- the build waited that long.
+            # Kept by the agent's restarter, which re-executes with the same environment.
+            - {name: JAVA_OPTS, value: "-Dsun.net.client.defaultConnectTimeout=3000"}
           resources: {requests: {cpu: 100m, memory: 256Mi}, limits: {memory: 768Mi}}
           volumeMounts: [{name: secrets, mountPath: /run/secrets/agents, readOnly: true}]
       volumes: [{name: secrets, secret: {secretName: agent-secrets, defaultMode: 0440}}]
+---
+# The balancer on the caller's own machine, for the agents (above).
+apiVersion: v1
+kind: Service
+metadata: {name: haproxy-local, namespace: aa-p2}
+spec:
+  selector: {app: haproxy}
+  internalTrafficPolicy: Local
+  ports: [{name: http, port: 80, targetPort: 8080}]
 ---
 # The fence's view (ADR-079): read pods here and nodes, nothing else, nothing written.
 apiVersion: v1

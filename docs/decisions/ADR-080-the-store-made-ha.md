@@ -99,6 +99,56 @@ With each instance on its own machine's API server, a standby's machine lost cos
 `aa-phase6-store-20261014T043239Z.json` shows r1 refused nothing, and r0 lost two writes only
 because jenkins-0 was on that machine.
 
+## Found: an adopted build missing two lines of its log
+
+A rerun of the soak's machine loss alone (`aa-phase6-soak-20261014T054113Z.json`) adopted
+`long #30` with SUCCESS, but ticks 10 and 11 were not in its log; the `sh` step had printed them.
+The lab's durable steps poll:
+- the controller reads the agent's output file from `lastLocation`, writes it to the build log,
+  and saves `lastLocation` in program.dat;
+- the copy took `log` before `program.dat` (name order), so a read between the two left
+  program.dat past the copy's log, and the adopter read on from there;
+- and a Pipeline log is buffered (seconds) before it reaches the file.
+
+A copy now holds everything else first, then the log, flushed just before it is copied. The log
+then holds all output up to program.dat's position. At worst, a read landing between the two files
+is shown twice: duplicated, never lost.
+
+Where output is watched (durable-task's `USE_WATCHING`), the agent keeps the mark itself. A copy
+records each running `sh` step's mark together with the log's length read just after it. The
+adopter puts the agent's mark back to the copy's, and moves it on only past what was appended to
+the log after the mark, when that is exactly the output following the mark. "Whatever the log ends
+with" would have skipped a repeated line the log never got.
+
+The tests:
+- the log is the archive's last entry;
+- only output provably appended counts;
+- a mark is put back, never forward;
+- a watched `sh` step's copy holds every tick up to its mark. This one failed ("lacks tick 11")
+  until the log was flushed.
+
+## Found: an agent connected to a dead machine for 9 minutes
+
+In 1 of 2, then 1 of 3 machine-loss rounds the build was adopted only after ~8.7 minutes, yet
+still SUCCESS with every tick. The agent's log showed why: agent-0 stayed "Connected" to the dead
+jenkins-0 until its own remoting ping failed (Jenkins defaults: every 300 s, 240 s timeout).
+- The lab's agents are pods. kube-proxy sends their connection to the VIP to the HAProxy of any
+  machine, and in those rounds it was the HAProxy on the machine that lost power.
+- A machine without power sends no reset, so the connection went silent.
+- An agent outside the cluster, as at the site, meets the same thing when the machine holding the
+  VIP dies.
+
+The replicas now set a remoting ping every 5 s with a 10 s timeout. The controller sets the
+agent's pinger too, so an agent on a dead path reconnects within ~15 s.
+
+## Found: a replica stopping answers 503 for ~2 s
+
+A second rolling upgrade (`aa-phase6-upgrade-20261014T061407Z.json`) failed 2 of 280 UI polls, one
+at each replica's restart. HAProxy retried connection failures and empty responses, but not a
+503. A stopping Jenkins answers 503 until its health check fails twice. HAProxy now retries a 503
+on the other replica. That is safe: Jenkins says 503 before it acts on a request, and so does the
+plugin when it refuses an edit.
+
 ## Measured (the lab, controller netci23, homesync 3e9469e)
 
 **The store's primary machine powered off** (`lab/aa/phase6_store_probe.py`,

@@ -80,7 +80,12 @@ spec:
           image: CONTROLLER
           env:
             - {name: CASC_JENKINS_CONFIG, value: /var/jenkins_config/jenkins.yaml}
-            - {name: JAVA_OPTS, value: "-Xms512m -Xmx900m -Djenkins.install.runSetupWizard=false"}
+            # A remoting ping every 5 s, a channel dead after 10 s without an answer (Jenkins: 300 s and
+            # 240 s). An agent's connection through a balancer on a machine that lost power is not
+            # reset, it goes silent: in the soak agent-0 sat "Connected" to the dead jenkins-0 for 9
+            # minutes, and the build it was running waited that long to be adopted. The controller
+            # sets the agent's pinger too.
+            - {name: JAVA_OPTS, value: "-Xms512m -Xmx900m -Djenkins.install.runSetupWizard=false -Dhudson.slaves.ChannelPinger.pingIntervalSeconds=5 -Dhudson.slaves.ChannelPinger.pingTimeoutSeconds=10"}
             - {name: ADMIN_PASSWORD, valueFrom: {secretKeyRef: {name: admin, key: password}}}
             - {name: POD_NAME, valueFrom: {fieldRef: {fieldPath: metadata.name}}}
             - {name: NETCI_HOMESYNC_URL, value: "http://homesync.aa-p2.svc.cluster.local:8080"}

@@ -201,11 +201,15 @@ func checkLock(ctx context.Context, tx pgx.Tx, path, origin string, token int64)
 	return nil
 }
 
+// ErrBadTTL is a lock asked for with a lifetime outside (0, 5 minutes]: the caller's mistake, unlike
+// every other error of Lock, which is the store's.
+var ErrBadTTL = errors.New("a lock lasts more than 0 and at most 5 minutes")
+
 // Lock takes the item's lock for ttl, or renews the caller's own. A new token each time, so a
 // renewal also fences any older use of the caller's previous token.
 func (s *Store) Lock(ctx context.Context, path, holder string, ttl time.Duration) (int64, error) {
 	if ttl <= 0 || ttl > 5*time.Minute {
-		return 0, errors.New("a lock lasts more than 0 and at most 5 minutes")
+		return 0, ErrBadTTL
 	}
 	var token int64
 	err := s.Pool.QueryRow(ctx, `INSERT INTO home_locks (path, holder, token, expires_at)

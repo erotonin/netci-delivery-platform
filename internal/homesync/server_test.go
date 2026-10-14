@@ -185,3 +185,31 @@ func TestABuildMayBeLargerThanAConfigButIsStillBounded(t *testing.T) {
 		t.Fatalf("a build above 32 MiB: %d", code)
 	}
 }
+
+// A lock the store cannot take is the store's failure, a 503 that says nothing of the database;
+// only a lifetime out of range is the caller's 400.
+func TestALockTheStoreCannotTakeIs503NotTheCallersMistake(t *testing.T) {
+	store := testStore(t)
+	file := filepath.Join(t.TempDir(), "replicas")
+	os.WriteFile(file, []byte("r0:"+tokenR0+"\n"), 0o600) //nolint:errcheck
+	replicas, err := LoadReplicas(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	srv := httptest.NewServer(NewServer(ctx, store, replicas, slog.New(slog.NewTextHandler(io.Discard, nil))).Handler())
+	t.Cleanup(srv.Close)
+	if code, _, body, _ := call(t, srv, "POST", "/v1/locks?path=a&ttl=10m", tokenR0, nil, ""); code != http.StatusBadRequest {
+		t.Fatalf("a 10 minute lock: %d %v", code, body)
+	}
+	cancel()           // the change listener holds a connection until then: Close would wait for it
+	store.Pool.Close() // the database gone
+	code, _, body, raw := call(t, srv, "POST", "/v1/locks?path=a&ttl=10s", tokenR0, nil, "")
+	if code != http.StatusServiceUnavailable || body["code"] != "UNAVAILABLE" {
+		t.Fatalf("a lock with the store gone: %d %v", code, body)
+	}
+	if strings.Contains(raw, "pool") || strings.Contains(raw, "closed") {
+		t.Fatalf("the store's error reached the caller: %s", raw)
+	}
+}
