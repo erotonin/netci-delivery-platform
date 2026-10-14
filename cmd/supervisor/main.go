@@ -61,6 +61,9 @@ func run(log *slog.Logger) error {
 	cfg.Cooldown = duration("NETCI_COOLDOWN", cfg.Cooldown, &errs)
 	cfg.PowerOnAfter = duration("NETCI_POWER_ON_AFTER", cfg.PowerOnAfter, &errs)
 	cfg.StorageSettle = durationOrZero("NETCI_STORAGE_SETTLE", cfg.StorageSettle, &errs)
+	// Labelled nodes lost with no cell Lease (the active-active replicas' machines, ADR-084);
+	// zero never fences them.
+	cfg.NodeFenceAfter = durationOrZero("NETCI_NODE_FENCE_AFTER", cfg.NodeFenceAfter, &errs)
 	cfg.AutoPowerOn = os.Getenv("NETCI_AUTO_POWER_ON") == "true"
 	if v := os.Getenv("NETCI_PANIC_FRACTION"); v != "" {
 		f, err := strconv.ParseFloat(v, 64)
@@ -194,7 +197,7 @@ func run(log *slog.Logger) error {
 		LockConfig: resourcelock.ResourceLockConfig{Identity: pod},
 	}
 	log.Info("supervisor starting", "identity", pod, "interval", interval, "node_stale", cfg.NodeStale,
-		"auto_power_on", cfg.AutoPowerOn, "panic_fraction", cfg.PanicFraction, "storage_settle", cfg.StorageSettle)
+		"auto_power_on", cfg.AutoPowerOn, "panic_fraction", cfg.PanicFraction, "storage_settle", cfg.StorageSettle, "node_fence_after", cfg.NodeFenceAfter)
 	// Losing the leader lease (an API stall can cause it) puts the replica back into the
 	// election instead of exiting: a restart cost 13 s in the lab. The supervisor's
 	// observations start over in either case, so nothing seen before the loss is acted on.

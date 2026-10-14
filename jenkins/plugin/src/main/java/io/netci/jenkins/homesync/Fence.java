@@ -33,13 +33,15 @@ abstract class Fence {
     private static volatile Fence kubernetes;
 
     static Fence configured() {
-        if (!"kubernetes".equals(HomeSync.setting("NETCI_ADOPT_FENCE", ""))) {
+        String mode = HomeSync.setting("NETCI_ADOPT_FENCE", "");
+        if (!"kubernetes".equals(mode) && !"kubernetes-power".equals(mode)) {
             return null;
         }
         if (kubernetes == null) {
             try {
                 kubernetes = new KubernetesFence(Path.of(HomeSync.setting("NETCI_KUBERNETES_ACCOUNT",
-                        "/var/run/secrets/kubernetes.io/serviceaccount")), HomeSync.setting("NETCI_KUBERNETES_API", "https://kubernetes.default.svc"));
+                        "/var/run/secrets/kubernetes.io/serviceaccount")), HomeSync.setting("NETCI_KUBERNETES_API", "https://kubernetes.default.svc"),
+                        "kubernetes-power".equals(mode));
             } catch (IOException | java.security.GeneralSecurityException e) {
                 LOGGER.log(Level.SEVERE, "netCI homesync: the Kubernetes fence cannot be set up; nothing is adopted", e);
                 return null;
@@ -57,13 +59,78 @@ abstract class Fence {
      * power (the supervisor, ADR-060/069).
      */
     static final class KubernetesFence extends Fence {
+        /**
+         * The decision, from what the API says of the replica's pod (null: no such pod) and of its
+         * node (null: unknown).
+         *
+         * <p>Lenient (the lab): gone when the pod is missing or being deleted, not running, its
+         * container not running or newer than the last renewal, or its node not Ready.
+         *
+         * <p>Strict (production, {@code NETCI_ADOPT_FENCE=kubernetes-power}): only what proves the old
+         * process cannot write. Its node carries the out-of-service taint, which the supervisor puts
+         * on only once the machine's power controller reports it off (ADR-060, ADR-084). Or the
+         * kubelet of a node that is Ready reports the old process ended (container not running, or a
+         * new one started after the renewal). A missing or deleted pod, or a NotReady node, is not
+         * enough: a machine cut off from the network keeps running its pod, which the API then shows
+         * deleted or stale.
+         */
+        static boolean decide(boolean strict, JSONObject pod, JSONObject node, long lastRenewed) {
+            boolean ready = false;
+            boolean fenced = false;
+            if (node != null) {
+                JSONArray conditions = node.getJSONObject("status").optJSONArray("conditions");
+                for (int i = 0; conditions != null && i < conditions.size(); i++) {
+                    JSONObject c = conditions.getJSONObject(i);
+                    if ("Ready".equals(c.optString("type"))) {
+                        ready = "True".equals(c.optString("status"));
+                    }
+                }
+                JSONArray taints = node.getJSONObject("spec").optJSONArray("taints");
+                for (int i = 0; taints != null && i < taints.size(); i++) {
+                    if ("node.kubernetes.io/out-of-service".equals(taints.getJSONObject(i).optString("key"))) {
+                        fenced = true;
+                    }
+                }
+            }
+            if (strict && fenced) {
+                return true;
+            }
+            if (pod == null || pod.getJSONObject("metadata").has("deletionTimestamp")) {
+                return !strict;
+            }
+            if (strict && !ready) {
+                return false; // the kubelet is not reporting: what the API shows of the pod is stale
+            }
+            JSONObject status = pod.getJSONObject("status");
+            if (!"Running".equals(status.optString("phase"))) {
+                return true;
+            }
+            JSONArray containers = status.optJSONArray("containerStatuses");
+            for (int i = 0; containers != null && i < containers.size(); i++) {
+                JSONObject c = containers.getJSONObject(i);
+                if (!"jenkins".equals(c.optString("name"))) {
+                    continue;
+                }
+                JSONObject running = c.getJSONObject("state").optJSONObject("running");
+                if (running == null || running.isNullObject()) {
+                    return true;
+                }
+                if (Instant.parse(running.getString("startedAt")).toEpochMilli() > lastRenewed) {
+                    return true; // started after the lease's last renewal: not the process that held it
+                }
+            }
+            return !strict && node != null && !ready;
+        }
+
         private final Path account;
         private final String api;
         private final SSLContext tls;
+        private final boolean strict;
 
-        KubernetesFence(Path account, String api) throws IOException, java.security.GeneralSecurityException {
+        KubernetesFence(Path account, String api, boolean strict) throws IOException, java.security.GeneralSecurityException {
             this.account = account;
             this.api = api;
+            this.strict = strict;
             KeyStore trust = KeyStore.getInstance(KeyStore.getDefaultType());
             trust.load(null, null);
             byte[] ca = Files.readAllBytes(account.resolve("ca.crt"));
@@ -104,46 +171,19 @@ abstract class Fence {
             try {
                 String ns = Files.readString(account.resolve("namespace"), StandardCharsets.UTF_8).trim();
                 HttpResponse<String> r = get("/api/v1/namespaces/" + ns + "/pods/" + replica);
-                if (r.statusCode() == 404) {
-                    return true;
-                }
-                if (r.statusCode() != 200) {
+                if (r.statusCode() != 200 && r.statusCode() != 404) {
                     return false; // cannot tell: not gone
                 }
-                JSONObject pod = JSONObject.fromObject(r.body());
-                if (pod.getJSONObject("metadata").has("deletionTimestamp")) {
-                    return true;
-                }
-                JSONObject status = pod.getJSONObject("status");
-                if (!"Running".equals(status.optString("phase"))) {
-                    return true;
-                }
-                JSONArray containers = status.optJSONArray("containerStatuses");
-                for (int i = 0; containers != null && i < containers.size(); i++) {
-                    JSONObject c = containers.getJSONObject(i);
-                    if (!"jenkins".equals(c.optString("name"))) {
-                        continue;
-                    }
-                    JSONObject running = c.getJSONObject("state").optJSONObject("running");
-                    if (running == null || running.isNullObject()) {
-                        return true;
-                    }
-                    if (Instant.parse(running.getString("startedAt")).toEpochMilli() > lastRenewed) {
-                        return true; // started after the lease's last renewal: not the process that held it
+                JSONObject pod = r.statusCode() == 404 ? null : JSONObject.fromObject(r.body());
+                JSONObject node = null;
+                String name = pod == null ? "" : pod.getJSONObject("spec").optString("nodeName");
+                if (!name.isEmpty()) {
+                    HttpResponse<String> n = get("/api/v1/nodes/" + name);
+                    if (n.statusCode() == 200) {
+                        node = JSONObject.fromObject(n.body());
                     }
                 }
-                String node = pod.getJSONObject("spec").optString("nodeName");
-                HttpResponse<String> n = get("/api/v1/nodes/" + node);
-                if (n.statusCode() == 200) {
-                    JSONArray conditions = JSONObject.fromObject(n.body()).getJSONObject("status").getJSONArray("conditions");
-                    for (int i = 0; i < conditions.size(); i++) {
-                        JSONObject c = conditions.getJSONObject(i);
-                        if ("Ready".equals(c.optString("type")) && !"True".equals(c.optString("status"))) {
-                            return true;
-                        }
-                    }
-                }
-                return false;
+                return decide(strict, pod, node, lastRenewed);
             } catch (IOException | RuntimeException e) {
                 LOGGER.log(Level.WARNING, "netCI homesync: the fence could not tell whether " + replica + " is gone", e);
                 return false;

@@ -22,8 +22,13 @@ import (
 //	  "netci-lab-1": {"ssh": {"addr": "192.168.122.1:22", "user": "deployer", "machine": "netci-lab-1",
 //	                          "credentials": "/etc/netci/fence/lab"}}}}
 //
+//	  "ctl-1":       {"nova": {"authURL": "https://keystone.example:5000/v3", "region": "RegionOne",
+//	                           "server": "6f1b6a8e-3f2c-4c7e-9d2a-0a1b2c3d4e5f",
+//	                           "credentials": "/etc/netci/fence/openstack"}}
+//
 // A Redfish credentials directory holds username, password, and either ca.crt or tls-sha256.
-// An SSH one holds id_ed25519 and host_key.pub.
+// An SSH one holds id_ed25519 and host_key.pub. A Nova one holds application_credential_id,
+// application_credential_secret and, for a private CA, ca.crt.
 type Config struct {
 	Nodes map[string]NodeConfig `json:"nodes"`
 }
@@ -32,6 +37,18 @@ type Config struct {
 type NodeConfig struct {
 	Redfish *RedfishConfig `json:"redfish,omitempty"`
 	SSH     *SSHConfig     `json:"ssh,omitempty"`
+	Nova    *NovaConfig    `json:"nova,omitempty"`
+}
+
+// NovaConfig is an OpenStack server (ADR-084): the node's VM, stopped through the Compute API.
+type NovaConfig struct {
+	AuthURL     string `json:"authURL"`
+	Region      string `json:"region,omitempty"`
+	Interface   string `json:"interface,omitempty"`
+	Server      string `json:"server"`
+	Credentials string `json:"credentials"`
+	// RequestTimeout bounds each request to Keystone and Nova ("10s" by default).
+	RequestTimeout string `json:"requestTimeout,omitempty"`
 }
 
 type RedfishConfig struct {
@@ -71,9 +88,33 @@ func LoadConfig(path string) (*Router, map[string]string, error) {
 	}
 	targets, machines := map[string]Target{}, map[string]string{}
 	bmcs := map[string]*Redfish{} // one client per BMC and credential, shared by its systems
+	clouds := map[string]*Nova{}  // one client (and token) per cloud and credential
 	for node, nc := range cfg.Nodes {
 		var t Target
+		count := 0
+		for _, set := range []bool{nc.Redfish != nil, nc.SSH != nil, nc.Nova != nil} {
+			if set {
+				count++
+			}
+		}
+		if count != 1 {
+			return nil, nil, fmt.Errorf("node %s must name exactly one power controller (redfish, ssh or nova)", node)
+		}
 		switch {
+		case nc.Nova != nil:
+			key := nc.Nova.AuthURL + "|" + nc.Nova.Region + "|" + nc.Nova.Credentials
+			n, ok := clouds[key]
+			if !ok {
+				var err error
+				if n, err = loadNova(nc.Nova); err != nil {
+					return nil, nil, fmt.Errorf("node %s: %w", node, err)
+				}
+				clouds[key] = n
+			}
+			if !serverID.MatchString(nc.Nova.Server) {
+				return nil, nil, fmt.Errorf("node %s: nova server %q is not a server id", node, nc.Nova.Server)
+			}
+			t = Target{Fencer: n, ID: nc.Nova.Server}
 		case nc.Redfish != nil && nc.SSH == nil:
 			key := nc.Redfish.Endpoint + "|" + nc.Redfish.Credentials
 			r, ok := bmcs[key]
@@ -97,7 +138,7 @@ func LoadConfig(path string) (*Router, map[string]string, error) {
 			}
 			t = Target{Fencer: s, ID: nc.SSH.Machine}
 		default:
-			return nil, nil, fmt.Errorf("node %s must name exactly one power controller (redfish or ssh)", node)
+			return nil, nil, fmt.Errorf("node %s must name exactly one power controller (redfish, ssh or nova)", node)
 		}
 		targets[node], machines[node] = t, node
 	}
@@ -139,6 +180,34 @@ func loadRedfish(c *RedfishConfig) (*Redfish, error) {
 		pin.LeafSHA256 = fp
 	}
 	return NewRedfish(c.Endpoint, user, pass, pin)
+}
+
+func loadNova(c *NovaConfig) (*Nova, error) {
+	if c.Credentials == "" {
+		return nil, errors.New("nova needs a credentials directory")
+	}
+	read := func(name string) (string, error) {
+		b, err := os.ReadFile(filepath.Join(c.Credentials, name))
+		return strings.TrimSpace(string(b)), err
+	}
+	id, err := read("application_credential_id")
+	if err != nil {
+		return nil, fmt.Errorf("nova credentials: %w", err)
+	}
+	secret, err := read("application_credential_secret")
+	if err != nil {
+		return nil, fmt.Errorf("nova credentials: %w", err)
+	}
+	timeout := 10 * time.Second
+	if c.RequestTimeout != "" {
+		d, err := time.ParseDuration(c.RequestTimeout)
+		if err != nil || d <= 0 || d > time.Minute {
+			return nil, fmt.Errorf("nova requestTimeout %q: a duration up to 1m", c.RequestTimeout)
+		}
+		timeout = d
+	}
+	ca, _ := os.ReadFile(filepath.Join(c.Credentials, "ca.crt"))
+	return NewNova(c.AuthURL, c.Region, c.Interface, id, secret, ca, timeout)
 }
 
 func loadSSH(c *SSHConfig) (*SSH, error) {

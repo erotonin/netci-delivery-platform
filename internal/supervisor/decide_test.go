@@ -505,3 +505,65 @@ func TestManyFailingVolumesAreAStorageProblemNotRestarted(t *testing.T) {
 		t.Fatalf("%q", a.Reason)
 	}
 }
+
+// ADR-084: a labelled node lost with no cell on it (an active-active replica's machine) is fenced
+// once its kubelet has been silent for NodeFenceAfter -- powered off, or confirmed off -- under the
+// cells' guards; a node that is not labelled, still Ready, or silent only briefly is left alone.
+func TestALabelledLostNodeIsFencedUnderTheSameGuards(t *testing.T) {
+	lost := func(in Input, name string, stale time.Duration, state fence.State) {
+		node(in, name, func(n *NodeView) {
+			n.FenceOnLoss, n.Ready, n.KubeletFresh, n.StaleFor, n.MachineState = true, false, false, stale, state
+		})
+	}
+	in := Input{Now: now, Nodes: world().Nodes}
+	lost(in, "netci-lab-2", 50*time.Second, fence.Running)
+	a := only(t, Decide(in, cfg()), FenceLostNode)
+	if a.Node != "netci-lab-2" || a.Machine != "netci-lab-2" || !a.PowerOff {
+		t.Fatalf("%+v", a)
+	}
+
+	in = Input{Now: now, Nodes: world().Nodes}
+	lost(in, "netci-lab-2", 50*time.Second, fence.Off)
+	if a := only(t, Decide(in, cfg()), FenceLostNode); a.PowerOff {
+		t.Fatalf("a machine already off powered off again: %+v", a)
+	}
+
+	in = Input{Now: now, Nodes: world().Nodes}
+	lost(in, "netci-lab-2", 50*time.Second, fence.Unknown)
+	if a := only(t, Decide(in, cfg()), Alert); !strings.Contains(a.Reason, "cannot be read") {
+		t.Fatalf("a power state that cannot be read: %+v", a)
+	}
+
+	for name, f := range map[string]func(n *NodeView){
+		"not labelled":   func(n *NodeView) { n.FenceOnLoss = false },
+		"still Ready":    func(n *NodeView) { n.Ready = true },
+		"silent briefly": func(n *NodeView) { n.StaleFor = 30 * time.Second },
+		"already fenced": func(n *NodeView) { n.Fenced = true },
+	} {
+		in = Input{Now: now, Nodes: world().Nodes}
+		lost(in, "netci-lab-2", 50*time.Second, fence.Running)
+		node(in, "netci-lab-2", f)
+		for _, a := range Decide(in, cfg()) {
+			if a.Kind == FenceLostNode {
+				t.Errorf("%s: fenced: %+v", name, a)
+			}
+		}
+	}
+
+	// Two lost at once out of three: a shared cause is more likely; nothing is powered off.
+	in = Input{Now: now, Nodes: world().Nodes}
+	lost(in, "netci-lab-2", 50*time.Second, fence.Running)
+	lost(in, "netci-lab-3", 50*time.Second, fence.Running)
+	for _, a := range Decide(in, cfg()) {
+		if a.Kind == FenceLostNode && a.PowerOff {
+			t.Fatalf("powered off while failures look shared: %+v", a)
+		}
+	}
+
+	// Off by configuration.
+	in = Input{Now: now, Nodes: world().Nodes}
+	lost(in, "netci-lab-2", 50*time.Second, fence.Running)
+	c := cfg()
+	c.NodeFenceAfter = 0
+	none(t, Decide(in, c))
+}

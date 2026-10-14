@@ -76,6 +76,8 @@ func (e *Executor) Execute(ctx context.Context, a Action, l *coordinationv1.Leas
 	switch a.Kind {
 	case FenceNode:
 		err = e.fenceNode(ctx, a, l)
+	case FenceLostNode:
+		err = e.fenceLostNode(ctx, a)
 	case DeletePod:
 		err = e.deletePod(ctx, a, false)
 	case ForceDeletePods:
@@ -100,6 +102,30 @@ func (e *Executor) Execute(ctx context.Context, a Action, l *coordinationv1.Leas
 	}
 	e.Metrics.actions.WithLabelValues(string(a.Kind), result(err)).Inc()
 	return err
+}
+
+// fenceLostNode: a labelled node lost with no cell Lease to release (ADR-084). The machine is
+// confirmed off by its power controller before anything says so: the out-of-service taint is what
+// the active-active replicas' fence takes as proof that the replica there cannot write.
+func (e *Executor) fenceLostNode(ctx context.Context, a Action) error {
+	ref := nodeRef(a.Node)
+	if a.PowerOff {
+		e.Events.Event(ref, true, "PoweringOff", fmt.Sprintf("%s: %s", a.Machine, a.Reason))
+		if _, err := fence.EnsureOff(ctx, e.Fencer, a.Machine, e.OffTimeout); err != nil {
+			e.Events.Event(ref, true, "FenceFailed", err.Error())
+			return fmt.Errorf("power off: %w", err)
+		}
+	} else if state, err := e.Fencer.State(ctx, a.Machine); err != nil || state != fence.Off {
+		return fmt.Errorf("machine %s no longer reports off (%s, %v): deciding again", a.Machine, state, err)
+	}
+	if err := e.taint(ctx, a.Node); err != nil {
+		return fmt.Errorf("taint: %w", err)
+	}
+	if err := e.markNotReady(ctx, a.Node); err != nil {
+		e.Log.Warn("could not mark the node not ready", "node", a.Node, "error", err)
+	}
+	e.Events.Event(ref, false, "Fenced", fmt.Sprintf("%s confirmed off; node out of service: %s", a.Machine, a.Reason))
+	return nil
 }
 
 func (e *Executor) fenceNode(ctx context.Context, a Action, l *coordinationv1.Lease) error {

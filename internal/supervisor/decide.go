@@ -56,13 +56,20 @@ type Config struct {
 	// detach was retried (lab/spike/many_volumes_probe.py, ADR-070). The Leases are released at
 	// fencing, so nothing else waits meanwhile. Zero: at the next observation.
 	StorageSettle time.Duration
+	// NodeFenceAfter: a node labelled netci.io/fence-on-loss=true whose kubelet has been silent
+	// this long, and that is not Ready, has its machine powered off and confirmed off, then the
+	// out-of-service taint (ADR-084). For machines whose controllers hold no cell Lease -- the
+	// active-active replicas, each with its own home -- the taint is what lets the others adopt
+	// their builds: their fence trusts a confirmed power-off, never a mere NotReady, since a
+	// machine cut off from the network is NotReady and still running. Zero: never.
+	NodeFenceAfter time.Duration
 }
 
 // DefaultConfig is the production default.
 func DefaultConfig() Config {
 	return Config{NodeStale: 20 * time.Second, StuckPodAfter: 30 * time.Second, Cooldown: 2 * time.Minute,
 		PanicFraction: 0.5, PowerOnAfter: 30 * time.Second, SuspectAfter: 3 * time.Second,
-		StorageSettle: 3 * time.Second}
+		StorageSettle: 3 * time.Second, NodeFenceAfter: 45 * time.Second}
 }
 
 // CellView is what was observed of one cell.
@@ -125,8 +132,12 @@ type NodeView struct {
 	Fenced       bool          // carries the out-of-service taint
 	FencedFor    time.Duration // since the taint was added
 	MachineState fence.State   // fence.Unknown when not queried
-	CellPods     int           // cell controller pods still bound to the node
-	Attachments  int           // VolumeAttachments still naming the node
+	// FenceOnLoss: labelled netci.io/fence-on-loss=true (ADR-084).
+	FenceOnLoss bool
+	// StaleFor: how long its kubelet's heartbeat has not changed (0 while fresh or unknown).
+	StaleFor    time.Duration
+	CellPods    int // cell controller pods still bound to the node
+	Attachments int // VolumeAttachments still naming the node
 }
 
 // Input is one observation of the whole cluster.
@@ -153,6 +164,9 @@ const (
 	Unfence Kind = "Unfence"
 	// PowerOn: start a fenced machine again (AutoPowerOn only).
 	PowerOn Kind = "PowerOn"
+	// FenceLostNode: power a lost node's machine off if PowerOff, confirm it is off, add the
+	// out-of-service taint. No cell Lease is involved (ADR-084).
+	FenceLostNode Kind = "FenceLostNode"
 	// Alert: something needs a person; nothing was done.
 	Alert Kind = "Alert"
 )
@@ -231,7 +245,48 @@ func Decide(in Input, cfg Config) []Action {
 		}
 		actions = append(actions, a)
 	}
+	actions = append(actions, lostNodes(in, cfg, panicking, &powerOffDecided, fencing)...)
 	return append(actions, recovery(in, cfg)...)
+}
+
+// lostNodes fences the labelled nodes whose kubelet has been silent for NodeFenceAfter (ADR-084),
+// under the same guards as cells: never while failures look shared, at most one running machine
+// powered off per decision, and a machine counts as fenced only once its power controller says off.
+func lostNodes(in Input, cfg Config, panicking bool, powerOffDecided *bool, fencing map[string]bool) []Action {
+	if cfg.NodeFenceAfter <= 0 {
+		return nil
+	}
+	names := make([]string, 0, len(in.Nodes))
+	for name := range in.Nodes {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	var actions []Action
+	for _, name := range names {
+		n := in.Nodes[name]
+		if !n.FenceOnLoss || n.Fenced || n.Ready || n.KubeletFresh || fencing[name] || n.StaleFor < cfg.NodeFenceAfter {
+			continue
+		}
+		a := Action{Kind: FenceLostNode, Node: name, Machine: n.Machine}
+		switch {
+		case n.Machine == "":
+			a.Kind, a.Reason = Alert, fmt.Sprintf("node %s has been silent for %s and has no power controller configured", name, n.StaleFor.Round(time.Second))
+		case n.MachineState == fence.Off:
+			a.Reason = "the node has been silent and its machine is off"
+		case n.MachineState == fence.Running:
+			if panicking || *powerOffDecided {
+				continue
+			}
+			*powerOffDecided = true
+			a.PowerOff = true
+			a.Reason = fmt.Sprintf("the node has been silent for %s and is not Ready; its machine still reports running", n.StaleFor.Round(time.Second))
+		default:
+			a.Kind, a.Reason = Alert, fmt.Sprintf("node %s has been silent for %s and its machine's power state cannot be read: not fencing it", name, n.StaleFor.Round(time.Second))
+		}
+		fencing[name] = true
+		actions = append(actions, a)
+	}
+	return actions
 }
 
 // failedVolumes restarts the pods whose controller reports that its JENKINS_HOME fails: a new pod

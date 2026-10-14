@@ -34,6 +34,9 @@ const (
 	// volumes detached without waiting for the kubelet. It is only correct on a machine that is
 	// off, which is why it is added after the power controller has said so.
 	OutOfServiceTaint = "node.kubernetes.io/out-of-service"
+	// FenceOnLossLabel=true on a Node: fence it when lost, whether or not a cell runs on it
+	// (ADR-084; Config.NodeFenceAfter).
+	FenceOnLossLabel  = "netci.io/fence-on-loss"
 	controlPlaneLabel = "node-role.kubernetes.io/control-plane"
 	nodeLeaseNS       = "kube-node-lease"
 )
@@ -188,8 +191,13 @@ func (c *Collector) Collect(ctx context.Context) (*Snapshot, error) {
 		n := &nodes.Items[i]
 		nv := NodeView{Name: n.Name, Machine: c.Machines[n.Name], Ready: ready(n), KubeletFresh: true}
 		_, nv.ControlPlane = n.Labels[controlPlaneLabel]
+		nv.FenceOnLoss = n.Labels[FenceOnLossLabel] == "true"
 		if hb := heartbeat[n.Name]; hb != nil {
-			nv.KubeletFresh = c.beats.Observe(hb).SinceChange < c.Config.NodeStale
+			since := c.beats.Observe(hb).SinceChange
+			nv.KubeletFresh = since < c.Config.NodeStale
+			if !nv.KubeletFresh {
+				nv.StaleFor = since
+			}
 		}
 		if t := outOfService(n); t != nil && n.Annotations[FencedByAnnotation] != "" {
 			nv.Fenced = true
@@ -223,7 +231,7 @@ func (c *Collector) Collect(ctx context.Context) (*Snapshot, error) {
 		}
 	}
 	for name, nv := range in.Nodes {
-		if nv.Fenced {
+		if nv.Fenced || (nv.FenceOnLoss && !nv.KubeletFresh && !nv.Ready) {
 			ask[name] = true
 		}
 	}
