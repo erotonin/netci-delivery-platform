@@ -650,52 +650,55 @@ class JenkinsHttpAdapter:
 
     # --------------------------------------------------------------- triggering
 
+    def _ci_parameters(self, request: "CiLaunchRequest", callback_token: str) -> dict[str, str]:
+        """The build's parameters: the same whether the build is triggered here or queued (ADR-082)."""
+
+        return {
+            "NETCI_PIPELINE_RUN_ID": str(request.pipeline_run_id),
+            "NETCI_CALLBACK_TOKEN": callback_token,
+            "NETCI_APPLICATION_ID": str(request.application_id),
+            "NETCI_CORRELATION_ID": request.correlation_id,
+            "NETCI_API_URL": self.config.callback_url,
+            "NETCI_ENVIRONMENT": request.environment,
+            "NETCI_TEMPLATE": request.pipeline_template,
+            "NETCI_STAGES": ",".join(_stages_for(request)),
+            "NETCI_CUSTOM_STAGES": json.dumps(request.custom_stages) if request.custom_stages else "",
+            "GIT_URL": request.repository_url,
+            "GIT_BRANCH": request.branch,
+            "COMMIT_SHA": request.commit_sha,
+            # A build input, validated by build_inputs.application_directory; the
+            # repository root unless the module lives in a subdirectory.
+            "NETCI_APP_DIR": str(
+                request.parameters.get("NETCI_APP_DIR")
+                or (
+                    f"sample-apps/{request.application_name}"
+                    if ("netci.git" in request.repository_url or "sample-apps" in request.repository_url)
+                    else "."
+                )
+            ),
+            # Decided here, not by the caller: the image repository is where the
+            # artifact lands, and one module must not be able to publish as another.
+            "NETCI_IMAGE_NAME": image_name_for(request.application_name),
+            "NETCI_IMAGE_NAMESPACE": self.config.registry_namespace,
+            "NETCI_PUBLISH": "true" if request.publish_artifact else "false",
+            "NETCI_GIT_REF": request.source_ref,
+            "NETCI_AGENT_LABEL": str(request.parameters.get("agentLabel", "")),
+            **(request.isolation.as_parameters() if request.isolation else {
+                "NETCI_BUILD_NAMESPACE": "", "NETCI_BUILD_SERVICE_ACCOUNT": "", "NETCI_BUILD_CACHE_CLAIM": "",
+            }),
+            "NETCI_BASE_IMAGE": self.config.base_image,
+            "REGISTRY_PUSH_HOST": self.config.registry_push_host,
+            "REGISTRY_PULL_HOST": self.config.registry_pull_host,
+            "NETCI_TRIVY_DB_REPOSITORY": self.config.trivy_db_repository,
+            **_registry_parameters(self.config),
+        }
+
     def trigger_ci_run(
         self, job_name: str, request: "CiLaunchRequest", callback_token: str = ""
     ) -> JenkinsRun:
         """Trigger a build and resolve the queue item into a real build identity."""
 
-        query = urllib.parse.urlencode(
-            {
-                "NETCI_PIPELINE_RUN_ID": str(request.pipeline_run_id),
-                "NETCI_CALLBACK_TOKEN": callback_token,
-                "NETCI_APPLICATION_ID": str(request.application_id),
-                "NETCI_CORRELATION_ID": request.correlation_id,
-                "NETCI_API_URL": self.config.callback_url,
-                "NETCI_ENVIRONMENT": request.environment,
-                "NETCI_TEMPLATE": request.pipeline_template,
-                "NETCI_STAGES": ",".join(_stages_for(request)),
-                "NETCI_CUSTOM_STAGES": json.dumps(request.custom_stages) if request.custom_stages else "",
-                "GIT_URL": request.repository_url,
-                "GIT_BRANCH": request.branch,
-                "COMMIT_SHA": request.commit_sha,
-                # A build input, validated by build_inputs.application_directory; the
-                # repository root unless the module lives in a subdirectory.
-                "NETCI_APP_DIR": str(
-                    request.parameters.get("NETCI_APP_DIR")
-                    or (
-                        f"sample-apps/{request.application_name}"
-                        if ("netci.git" in request.repository_url or "sample-apps" in request.repository_url)
-                        else "."
-                    )
-                ),
-                # Decided here, not by the caller: the image repository is where the
-                # artifact lands, and one module must not be able to publish as another.
-                "NETCI_IMAGE_NAME": image_name_for(request.application_name),
-                "NETCI_IMAGE_NAMESPACE": self.config.registry_namespace,
-                "NETCI_PUBLISH": "true" if request.publish_artifact else "false",
-                "NETCI_GIT_REF": request.source_ref,
-                "NETCI_AGENT_LABEL": str(request.parameters.get("agentLabel", "")),
-                **(request.isolation.as_parameters() if request.isolation else {
-                    "NETCI_BUILD_NAMESPACE": "", "NETCI_BUILD_SERVICE_ACCOUNT": "", "NETCI_BUILD_CACHE_CLAIM": "",
-                }),
-                "NETCI_BASE_IMAGE": self.config.base_image,
-                "REGISTRY_PUSH_HOST": self.config.registry_push_host,
-                "REGISTRY_PULL_HOST": self.config.registry_pull_host,
-                "NETCI_TRIVY_DB_REPOSITORY": self.config.trivy_db_repository,
-                **_registry_parameters(self.config),
-            }
-        )
+        query = urllib.parse.urlencode(self._ci_parameters(request, callback_token))
         # `query` is sent as the form body, never in the URL: it carries the callback
         # token, and a URL lands in Jenkins' and every proxy's access log -- and, through
         # JenkinsHttpError, in netCI's own launch-failure log and audit record. Jenkins

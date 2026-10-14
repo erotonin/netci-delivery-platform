@@ -334,6 +334,7 @@ def build_ci_launcher() -> CiLauncher:
         raise ValueError(f"unsupported NETCI_CI_MODE: {mode}")
 
     from .jenkins_http import JenkinsHttpAdapter, JenkinsHttpConfig
+    from .jenkins_queue import JenkinsQueueAdapter, RunQueueConfig
 
     if not is_local_runtime():
         # Both have lab defaults ("A,B", host.docker.internal). Outside local mode a missing
@@ -343,6 +344,12 @@ def build_ci_launcher() -> CiLauncher:
         if missing:
             raise ValueError(f"NETCI_CI_MODE=jenkins outside local mode requires {', '.join(missing)}")
     controller_ids = [item.strip() for item in os.getenv("NETCI_JENKINS_CONTROLLERS", "A,B").split(",") if item.strip()]
+    # With netci-queue (ADR-082) the queue chooses where a build runs, and the launcher must not:
+    # falling through to another controller after a failed trigger is how a build whose answer
+    # was lost would be built twice. One entry point (a cell's address, or the replicas' VIP).
+    queue = RunQueueConfig.from_env()
+    if queue is not None and len(controller_ids) != 1:
+        raise ValueError("NETCI_RUN_QUEUE_URL needs exactly one entry in NETCI_JENKINS_CONTROLLERS: the queue routes builds, not netCI")
     controllers: list[JenkinsController] = []
     adapters: dict[str, JenkinsAdapter] = {}
     for controller_id in controller_ids:
@@ -351,7 +358,7 @@ def build_ci_launcher() -> CiLauncher:
         name = os.getenv(f"{prefix}_ID", f"jenkins-{controller_id.lower()}")
         executors = int(os.getenv(f"{prefix}_EXECUTORS", "2"))
         controllers.append(JenkinsController(controller_id=name, executors_total=executors))
-        adapters[name] = JenkinsHttpAdapter(config)
+        adapters[name] = JenkinsQueueAdapter(config, queue) if queue is not None else JenkinsHttpAdapter(config)
     if not controllers:
         raise ValueError("NETCI_CI_MODE=jenkins requires at least one controller in NETCI_JENKINS_CONTROLLERS")
     return JenkinsCiLauncher(
