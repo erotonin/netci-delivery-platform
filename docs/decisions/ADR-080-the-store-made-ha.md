@@ -36,6 +36,11 @@ The site mostly runs local-path, and so do the homes.
 5. **Applying and publishing are ordered per item, not under one lock** (the plugin; see "Found").
    A publish can run inside Jenkins' locks. It waits for its item at most 10 s; after that it is
    deferred to the lease thread and redone from the home's content, read under the item's lock.
+6. **The feed's order is its commit order.** Every change takes one advisory lock just before it
+   is placed in the feed, and holds it until the commit (see "Found").
+7. **The store's instances and the operator talk to their own machine's API server**, not the
+   Service in front of all three (see "Found"). A machine's API server lives and dies with the pods
+   on it.
 
 `lab/aa/store.sh install` sets this up:
 - applies the operator release by checksum, with its image by digest;
@@ -63,6 +68,36 @@ Two tests now cover it:
   here never finished".
 - A contended publish, deferred within its bound and done later. Writing it caught the deferred
   publish reading the home before taking the item's lock, which undid an applied change in the store.
+
+## Found: an acknowledged create skipped by one replica
+
+A later run (`aa-phase6-store-20261014T043727Z.json`) checked every create answered 200 on both
+replicas. One, `st-043727-r1-2`, was missing on r0, although it was in the store at seq 3205, 9 s
+before the power-off. Nothing was logged. The cause:
+- `home_changes.seq` comes from a sequence, handed out at insert time.
+- Transactions commit in any order, so the one holding 3206 committed first.
+- r0's follower read 3206, moved past it, and never read 3205.
+
+Synchronous replication made each commit long enough to be overtaken. The single PostgreSQL before
+had the same hole, only narrower. The test holds one change before its commit while another is
+made: without the lock the reader sees only the second, with it both. A replica that missed a
+change before the fix gets it back when it restarts: its bootstrap compares every item with the
+store. r0 had `st-043727-r1-2` after the restart.
+
+## Found: a standby's machine lost restarted the healthy primary
+
+The first soak (`aa-phase6-soak-20261014T040915Z.json`) powered off the machine of a jenkins
+replica, which also ran a standby. Three minutes later edits were refused for ~4 s: the
+**primary's** postgres had been restarted by its own liveness probe.
+- Its instance manager reached the API server through the Service, and its pooled connection sat on
+  the dead machine's API server for ~40 s.
+- CloudNativePG's isolation check then reached neither the API server nor the dead standby, and
+  failed the primary's liveness.
+- The kubelet restarted a primary that had nothing wrong with it.
+
+With each instance on its own machine's API server, a standby's machine lost cost no edit:
+`aa-phase6-store-20261014T043239Z.json` shows r1 refused nothing, and r0 lost two writes only
+because jenkins-0 was on that machine.
 
 ## Measured (the lab, controller netci23, homesync 3e9469e)
 

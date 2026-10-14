@@ -48,6 +48,27 @@ public final class RunningBuilds {
 
     private RunningBuilds() {}
 
+    /**
+     * In a copy: where each running {@code sh} step's agent had got to in its output when the copy
+     * was taken, one per line, {@code node TAB last-location file TAB output file TAB offset TAB
+     * the build log's length just after the offset was read}.
+     *
+     * <p>When the step's output is watched (durable-task's USE_WATCHING; the lab polls, see
+     * {@link LogLast}), the agent pushes it to the controller and then moves its own mark
+     * ({@code last-location.txt}); a resumed step goes on from that mark. The controller writes the
+     * output to the build's log before the agent moves the mark, but the copy is up to 3 s old: in
+     * the soak, ticks 10 and 11 were in the dead replica's log, past the agent's mark, and in no copy
+     * -- the adopted build never had them. So the marks are read before the log is copied (the copy's
+     * log then holds everything up to them), and the adopter puts the agent's mark back to the copy's
+     * before the build resumes -- moved on only past output the copy's log provably holds: what was
+     * appended to the log after the mark was read, when it is exactly the output that follows the
+     * mark. Not "whatever the log ends with": a step printing the same line again and again would
+     * match more than it sent, and that output would be lost.
+     */
+    static final String MARKS = "netci-durable-marks";
+    /** The most output compared, or sent again, when a mark is put back. */
+    static final int MARK_WINDOW = 1 << 20;
+
     static String path(Run<?, ?> run) {
         return RUNNING + run.getParent().getFullName() + "/" + run.getNumber();
     }
@@ -55,11 +76,62 @@ public final class RunningBuilds {
     static byte[] archive(File dir) throws IOException, InterruptedException {
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         try (OutputStream gz = FilePath.TarCompression.GZIP.compress(out)) {
-            // Not the temporary files of an atomic write in progress: one vanished mid-archive and
-            // the copy failed ("closed at 0 before the 39 bytes specified in the header").
-            new FilePath(dir).tar(gz, new hudson.util.DirScanner.Glob("**/*", "**/*-atomic*tmp"));
+            new FilePath(dir).tar(gz, new LogLast());
         }
         return out.toByteArray();
+    }
+
+    /**
+     * A build directory with its log last. A running {@code sh} step reads its output from the agent
+     * from where it got to ({@code lastLocation}, saved in program.dat after each read), writes it to
+     * the log, then saves: so a log copied after program.dat holds everything up to program.dat's
+     * position. Copied in name order the log came first, and a read between the two left
+     * program.dat past the copy's log -- the soak's adopted build #30 never had ticks 10 and 11.
+     * And flushed first: a Pipeline's log is buffered (up to seconds) before it reaches the file, so
+     * the file can lag what the step has already counted as written (the test found it lacking a tick
+     * the agent's mark had passed). The temporary files of an atomic write in progress are left out: one vanished mid-archive and
+     * the copy failed ("closed at 0 before the 39 bytes specified in the header").
+     */
+    static final class LogLast extends hudson.util.DirScanner {
+        private static final long serialVersionUID = 1L;
+
+        @Override
+        public void scan(File dir, hudson.util.FileVisitor visitor) throws IOException {
+            new hudson.util.DirScanner.Glob("**/*", "**/*-atomic*tmp,log").scan(dir, visitor);
+            File log = new File(dir, "log");
+            if (log.isFile()) {
+                flushLog(log);
+                visitor.visit(log, "log");
+            }
+        }
+    }
+
+    /**
+     * Push what a running build has written to its log into the file. Only a log Pipeline has open:
+     * looking one up through FileLogStorage.forFile would open storage for a directory set aside or
+     * about to be replaced. Through reflection: workflow-api is not a dependency of this plugin.
+     */
+    static void flushLog(File log) {
+        try {
+            Class<?> c = Jenkins.get().getPluginManager().uberClassLoader.loadClass("org.jenkinsci.plugins.workflow.log.FileLogStorage");
+            java.lang.reflect.Field open = c.getDeclaredField("openStorages");
+            open.setAccessible(true);
+            Object storage;
+            synchronized (c) { // forFile is static synchronized: the map's lock
+                storage = ((Map<?, ?>) open.get(null)).get(log);
+            }
+            if (storage == null) {
+                return;
+            }
+            java.lang.reflect.Field bos = c.getDeclaredField("bos");
+            bos.setAccessible(true);
+            Object out = bos.get(storage);
+            if (out instanceof OutputStream o) {
+                o.flush(); // BufferedOutputStream's flush is synchronized with its writes
+            }
+        } catch (ReflectiveOperationException | IOException | RuntimeException e) {
+            LOGGER.log(Level.WARNING, "netCI homesync: cannot flush " + log + " before copying it; the copy may lack its last seconds", e);
+        }
     }
 
     /**
@@ -95,6 +167,7 @@ public final class RunningBuilds {
         }
         {
             try {
+                writeMarks(run);
                 sync.publish(path(run), archive(run.getRootDir()), 0);
             } catch (IOException e) {
                 LOGGER.log(Level.WARNING, "netCI homesync: cannot copy the running " + run, e);
@@ -291,6 +364,142 @@ public final class RunningBuilds {
         return agent != null && log.indexOf("[Pipeline] // node", at) < 0 ? agent : null;
     }
 
+    /** The marks of this run's running {@code sh} steps, written into its directory before it is copied. */
+    static void writeMarks(Run<?, ?> run) throws IOException, InterruptedException {
+        StringBuilder out = new StringBuilder();
+        java.util.List<Object> executions = new java.util.ArrayList<>();
+        try {
+            org.jenkinsci.plugins.workflow.steps.StepExecution.applyAll(org.jenkinsci.plugins.workflow.steps.StepExecution.class, e -> {
+                if (e.getClass().getName().equals("org.jenkinsci.plugins.workflow.steps.durable_task.DurableTaskStep$Execution")) {
+                    try {
+                        if (run.equals(e.getContext().get(Run.class))) {
+                            executions.add(e);
+                        }
+                    } catch (IOException | InterruptedException ex) {
+                        // not this run's, or gone
+                    }
+                }
+                return null;
+            }).get(5, TimeUnit.SECONDS);
+        } catch (java.util.concurrent.ExecutionException | java.util.concurrent.TimeoutException e) {
+            throw new IOException("cannot list the running steps of " + run, e);
+        }
+        for (Object e : executions) {
+            try {
+                Object controller = field(e, "controller");
+                String node = (String) field(e, "node");
+                String remote = (String) field(e, "remote");
+                if (controller == null || remote == null || !watchesAFile(controller.getClass())) {
+                    continue; // not a step whose output the agent watches into a file
+                }
+                hudson.model.Computer computer = Jenkins.get().getComputer(node == null ? "" : node);
+                hudson.remoting.VirtualChannel channel = computer == null ? null : computer.getChannel();
+                if (channel == null) {
+                    continue;
+                }
+                FilePath ws = new FilePath(channel, remote);
+                FilePath mark = (FilePath) call(controller, "getLastLocationFile", ws);
+                long at = mark.exists() ? Long.parseLong(mark.readToString().trim()) : 0;
+                File logFile = new File(run.getRootDir(), "log");
+                flushLog(logFile);
+                long logged = logFile.length(); // holds all the output up to `at`
+                out.append(node == null ? "" : node).append('\t').append(mark.getRemote()).append('\t')
+                        .append(((FilePath) call(controller, "getLogFile", ws)).getRemote()).append('\t').append(at).append('\t').append(logged).append('\n');
+            } catch (ReflectiveOperationException | NumberFormatException ex) {
+                LOGGER.log(Level.WARNING, "netCI homesync: cannot read where a step of " + run + " got to in its output", ex);
+            }
+        }
+        Files.writeString(new File(run.getRootDir(), MARKS).toPath(), out.toString(), StandardCharsets.UTF_8);
+    }
+
+    /** A durable-task controller that keeps the step's output in a file (sh's is a subclass of it). */
+    private static boolean watchesAFile(Class<?> c) {
+        for (; c != null; c = c.getSuperclass()) {
+            if (c.getName().equals("org.jenkinsci.plugins.durabletask.FileMonitoringTask$FileMonitoringController")) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** A public method of durable-task's controller, whose class is a protected nested one. */
+    private static Object call(Object o, String name, FilePath ws) throws ReflectiveOperationException {
+        for (Class<?> c = o.getClass(); c != null; c = c.getSuperclass()) {
+            try {
+                java.lang.reflect.Method m = c.getDeclaredMethod(name, FilePath.class);
+                m.setAccessible(true);
+                return m.invoke(o, ws);
+            } catch (NoSuchMethodException e) {
+                // declared higher up
+            }
+        }
+        throw new NoSuchMethodException(name);
+    }
+
+    private static Object field(Object o, String name) throws ReflectiveOperationException {
+        java.lang.reflect.Field f = o.getClass().getDeclaredField(name);
+        f.setAccessible(true);
+        return f.get(o);
+    }
+
+    /**
+     * Put each agent's mark back to the copy's, before the build resumes: output past the copy's
+     * mark is sent again, except what was appended to the copy's log after the mark was read when
+     * that is exactly the output following the mark. Never forward past what the log holds, so
+     * nothing is lost; output is shown twice only when the appended part is not just this step's
+     * output (another branch wrote too, or a chunk was in flight when the mark was read).
+     */
+    static void putMarksBack(File dir) throws IOException, InterruptedException {
+        File marks = new File(dir, MARKS);
+        if (!marks.exists()) {
+            return;
+        }
+        byte[] log = Files.readAllBytes(new File(dir, "log").toPath());
+        for (String line : Files.readAllLines(marks.toPath(), StandardCharsets.UTF_8)) {
+            String[] f = line.split("\t");
+            if (f.length != 5) {
+                continue;
+            }
+            hudson.model.Computer computer = Jenkins.get().getComputer(f[0]);
+            hudson.remoting.VirtualChannel channel = computer == null ? null : computer.getChannel();
+            if (channel == null) {
+                LOGGER.warning(() -> "netCI homesync: " + f[0] + " is not connected here; its step's output resumes from the agent's own mark");
+                continue;
+            }
+            FilePath mark = new FilePath(channel, f[1]);
+            long copied = Long.parseLong(f[3]);
+            long now = mark.exists() ? Long.parseLong(mark.readToString().trim()) : 0;
+            if (now <= copied) {
+                continue;
+            }
+            byte[] since;
+            try (java.io.InputStream in = new FilePath(channel, f[2]).readFromOffset(copied)) {
+                since = in.readNBytes((int) Math.min(now - copied, MARK_WINDOW));
+            }
+            int held = held(log, Integer.parseInt(f[4]), since);
+            long back = copied + held;
+            mark.write(Long.toString(back), StandardCharsets.UTF_8.name());
+            LOGGER.info(() -> "netCI homesync: " + f[0] + "'s step output put back from " + now + " to " + back
+                    + " (the copy's log held " + held + " bytes past its mark); " + (now - back) + " bytes are sent again");
+        }
+    }
+
+    /**
+     * How many bytes of the output past the mark the copy's log holds: everything appended to the log
+     * after the mark was read ({@code log[logged:]}) when it is exactly the start of that output,
+     * else none.
+     */
+    static int held(byte[] log, int logged, byte[] since) {
+        if (logged < 0 || logged > log.length) {
+            return 0;
+        }
+        int appended = log.length - logged;
+        if (appended > since.length) {
+            return 0;
+        }
+        return java.util.Arrays.equals(log, logged, log.length, since, 0, appended) ? appended : 0;
+    }
+
     static void adopt(Job<?, ?> job, int number, byte[] copy) throws IOException, InterruptedException {
         File dir = new File(job.getBuildDir(), Integer.toString(number));
         new FilePath(new File(job.getBuildDir(), SUSPECT + number)).deleteRecursive(); // the stale local copy, if any
@@ -299,6 +508,7 @@ public final class RunningBuilds {
             throw new IOException("cannot create " + dir);
         }
         new FilePath(dir).untarFrom(new ByteArrayInputStream(copy), FilePath.TarCompression.GZIP);
+        putMarksBack(dir); // before the run is loaded: loading it resumes its steps from the agents' marks
         if (job.getNextBuildNumber() <= number) {
             job.updateNextBuildNumber(number + 1);
         }

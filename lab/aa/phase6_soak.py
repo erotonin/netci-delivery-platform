@@ -2,7 +2,10 @@
 """Active-active, a soak (ADR-080): one fault after another under steady use, and after all of them:
 was any acknowledged edit lost, any build lost or run twice, any number given twice?
 
-    python3 lab/aa/phase6_soak.py [--rounds N]
+    python3 lab/aa/phase6_soak.py [--rounds N] [--only FAULT] [--watch]
+
+--watch keeps every replica's and the store's log, and a thread dump of each live replica every
+20 s while a round waits for its build, in .netci-gate/aa/watch-<timestamp>/ (not evidence: logs).
 
 Steady use for the whole run: a reader asks the VIP for /api/json each second; two writers, one
 pinned to each replica, create a job each second. Each round starts `long` (90 one-second ticks on
@@ -98,6 +101,30 @@ class Load:
             time.sleep(max(0.0, 1 - (time.time() - at)))
 
 
+WATCH: Path | None = None
+
+
+def watch_logs(stop: threading.Event) -> list[subprocess.Popen]:
+    """Every replica's, homesync's and the store's log, followed to files for the whole run."""
+    procs = []
+    for p in pods():
+        name = p["metadata"]["name"]
+        if name.startswith(("jenkins-", "homesync-", "store-")):
+            f = open(WATCH / f"{name}.log", "a")  # noqa: SIM115 - closed with the process
+            procs.append(subprocess.Popen(["kubectl", "--kubeconfig", str(p3.p0.STATE / "kubeconfig"), "-n", NS, "logs", "-f",
+                                           "--all-containers", "--prefix", name], stdout=f, stderr=subprocess.STDOUT))
+    return procs
+
+
+def dumps(n: int, until: threading.Event) -> None:
+    """A thread dump of each replica that answers, every 20 s, while round n waits."""
+    while not until.wait(20):
+        for r in ("r0", "r1"):
+            code, body, served = p3.R(r).req("/threadDump", timeout=10)
+            if code == 200 and served == r:
+                (WATCH / f"threads-{n}-{r}-{int(time.time())}.html").write_text(body)
+
+
 def round_(kind: str, agents_node: str) -> dict:
     p5.whole()
     p3.until(p6.settled, 900, 5)
@@ -125,11 +152,15 @@ def round_(kind: str, agents_node: str) -> dict:
             done = kind.replace("-machine", "-pod") + " (its machine has the agents)"
         kill_pod(target)
     print(f"round {kind}: long #{n} on {holder}, {done}: {target} on {victim_node}", flush=True)
+    waiting = threading.Event()
+    if WATCH:
+        threading.Thread(target=dumps, args=(n, waiting), daemon=True).start()
     result = None
     while result is None and time.time() - t0 < 600:
         result = p5.holder(n)[1].get("result")
         time.sleep(2)
     finished = round(time.time() - t0, 1)
+    waiting.set()
     if kind.endswith("-machine") and victim_node != agents_node:
         time.sleep(max(0, OFF_FOR - (time.time() - t0)))
         subprocess.run([*VIRSH, "start", victim_node], capture_output=True)
@@ -146,25 +177,35 @@ def round_(kind: str, agents_node: str) -> dict:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--rounds", type=int, default=len(FAULTS))
+    ap.add_argument("--only", choices=FAULTS)
+    ap.add_argument("--watch", action="store_true")
     args = ap.parse_args()
+    faults = [args.only] if args.only else FAULTS
     started = dt.datetime.now(dt.timezone.utc)
+    global WATCH
+    if args.watch:
+        WATCH = p3.p0.STATE.parent / "aa" / f"watch-{started.strftime('%Y%m%dT%H%M%SZ')}"
+        WATCH.mkdir(parents=True)
     p5.whole()
     agents_node = node_of("agent-0")
     assert agents_node == node_of("agent-1"), "the agents are on two machines: pick which one not to power off"
     load = Load(started.strftime("%H%M%S"))
     for t in load.threads:
         t.start()
+    followers = watch_logs(load.stop) if WATCH else []
     rounds = []
     out = p3.p0.EVIDENCE / f"aa-phase6-soak-{started.strftime('%Y%m%dT%H%M%SZ')}.json"
     try:
         for i in range(args.rounds):
-            rounds.append(round_(FAULTS[i % len(FAULTS)], agents_node))
+            rounds.append(round_(faults[i % len(faults)], agents_node))
             print(json.dumps(rounds[-1]), flush=True)
             out.write_text(json.dumps({"partial": True, "rounds": rounds}, indent=2) + "\n")
     finally:
         load.stop.set()
         for t in load.threads:
             t.join(30)
+        for f in followers:
+            f.terminate()
     p5.whole()
     acked = [w for r in load.writes for w in load.writes[r] if w["code"] == 200]
     numbers = [b["number"] for b in p4.builds(p3.R("r0"), "long")]
