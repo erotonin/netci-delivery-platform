@@ -38,6 +38,8 @@ final class FakeHomeSync {
     record RunAt(String job, int number, String replica, long at) {}
 
     final Map<String, RunAt> runs = new HashMap<>();
+    /** Feed entries up to here are gone (ADR-083); see compact(). */
+    long compactedThrough;
     private long epochs = 1000;
     final List<Seen> seen = new ArrayList<>();
     volatile boolean down;
@@ -68,6 +70,7 @@ final class FakeHomeSync {
         jobEpoch.clear();
         reserved.clear();
         runs.clear();
+        compactedThrough = 0;
         down = false;
         beforeGet = path -> {};
         beforeChange = path -> {};
@@ -284,7 +287,7 @@ final class FakeHomeSync {
         for (int i = (int) after; i < feed.size(); i++) {
             list.add(feed.get(i));
         }
-        reply(x, 200, new JSONObject().element("changes", list).element("head", feed.size()));
+        reply(x, 200, new JSONObject().element("changes", list).element("head", feed.size()).element("compactedThrough", compactedThrough));
     }
 
     private static void reply(HttpExchange x, int code, JSONObject body) throws IOException {

@@ -43,7 +43,12 @@ final class HomeSyncClient {
     record Change(long seq, String path, long version, boolean deleted, String origin) {}
 
     /** A page of the feed and its head. */
-    record Changes(List<Change> changes, long head) {}
+    /** A page of the feed; compactedThrough: the feed has dropped entries up to there (ADR-083). */
+    record Changes(List<Change> changes, long head, long compactedThrough) {
+        Changes(List<Change> changes, long head) {
+            this(changes, head, 0);
+        }
+    }
 
     /** A lock on an item, and the feed's head when it was taken. */
     record Lock(long token, long head) {}
@@ -222,7 +227,7 @@ final class HomeSyncClient {
             list.add(new Change(c.getLong("seq"), c.getString("path"), c.getLong("version"),
                     c.getBoolean("deleted"), c.getString("origin")));
         }
-        return new Changes(list, o.getLong("head"));
+        return new Changes(list, o.getLong("head"), o.optLong("compactedThrough", 0));
     }
 
     private HttpRequest.Builder request(String path) throws IOException {

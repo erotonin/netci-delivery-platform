@@ -55,7 +55,29 @@ func run(log *slog.Logger) error {
 	if err := homesync.Migrate(ctx, pool); err != nil {
 		return fmt.Errorf("migrate: %w", err)
 	}
-	srv := homesync.NewServer(ctx, &homesync.Store{Pool: pool}, replicas, log)
+	store := &homesync.Store{Pool: pool}
+	srv := homesync.NewServer(ctx, store, replicas, log)
+	// The feed compacted every hour (ADR-083): superseded changes and ended builds' copies older
+	// than a day. Every replica of the service runs it; the feed lock makes them take turns.
+	after, err := time.ParseDuration(getenv("NETCI_HOMESYNC_COMPACT_AFTER", "24h"))
+	if err != nil || after < time.Hour {
+		return fmt.Errorf("NETCI_HOMESYNC_COMPACT_AFTER must be a duration of at least 1h")
+	}
+	go func() {
+		for t := time.NewTicker(time.Hour); ; {
+			if n, err := store.Compact(ctx, after); err != nil {
+				log.Warn("homesync: compaction failed; the feed grows until the next one", "error", err)
+			} else if n > 0 {
+				log.Info("homesync: feed compacted", "deleted", n)
+			}
+			select {
+			case <-ctx.Done():
+				t.Stop()
+				return
+			case <-t.C:
+			}
+		}
+	}()
 	// WriteTimeout above the longest long poll (30 s), or every idle poll would be cut.
 	server := &http.Server{Addr: getenv("NETCI_HTTP_ADDR", ":8080"), Handler: srv.Handler(),
 		ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 45 * time.Second}

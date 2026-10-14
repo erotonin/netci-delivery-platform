@@ -594,4 +594,23 @@ class HomeSyncTest {
         assertEquals(503, netci(j, "netci/dispatch", dispatch("q-down", run), auth).statusCode());
         assertEquals(503, netci(j, "netci/run?job=q-down&runId=" + run, null, auth).statusCode());
     }
+
+    /**
+     * ADR-083: the feed compacted past this home's position. Going on from there is not enough --
+     * here, a job made while the store was down was never published, and only reading everything
+     * again (the bootstrap) publishes what only this home has.
+     */
+    @Test
+    void aHomeBehindTheFeedsCompactionReadsEverythingAgain(JenkinsRule j) throws Exception {
+        ready();
+        STORE.down = true;
+        pipeline(j, "made-while-down"); // its publish fails: the store is down
+        synchronized (STORE) {
+            STORE.compactedThrough = STORE.feed.size() + 10;
+        }
+        STORE.changeFrom("r1", "from-r1-meanwhile", String.format(XML, "r1"));
+        STORE.down = false;
+        await("the change made meanwhile applied", () -> j.jenkins.getItemByFullName("from-r1-meanwhile") != null);
+        await("what only this home had published", () -> stored("made-while-down") != null);
+    }
 }

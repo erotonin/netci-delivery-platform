@@ -80,6 +80,10 @@ class JenkinsHttpConfig:
     #: The transparency log to upload to when the tlog is required. Never defaulted: an
     #: unset one would be the public Rekor, publishing every internal image digest.
     rekor_url: str = ""
+    # A generated job keeps this many builds, for at most this many days (ADR-083): every build is
+    # kept on each replica and its archive in the replicas' store until Jenkins discards it.
+    keep_builds: int = 100
+    keep_days: int = 30
 
     @classmethod
     def from_env(cls, prefix: str = "JENKINS") -> "JenkinsHttpConfig":
@@ -117,11 +121,22 @@ class JenkinsHttpConfig:
             in {"1", "true", "yes"},
             rekor_url=rekor_url_setting(),
             folder=jenkins_folder(os.getenv("NETCI_JENKINS_FOLDER", "")),
+            keep_builds=_positive_int("NETCI_JENKINS_KEEP_BUILDS", 100),
+            keep_days=_positive_int("NETCI_JENKINS_KEEP_DAYS", 30),
         )
 
 
 #: OCI repository path components (distribution spec), joined by "/".
 _REGISTRY_NAMESPACE = re.compile(r"[a-z0-9]+(?:[._-][a-z0-9]+)*(?:/[a-z0-9]+(?:[._-][a-z0-9]+)*)*")
+
+
+def _positive_int(name: str, default: int) -> int:
+    raw = os.getenv(name, "").strip()
+    if not raw:
+        return default
+    if not raw.isdigit() or int(raw) < 1:
+        raise ValueError(f"{name} must be a whole number of at least 1, not {raw!r}")
+    return int(raw)
 
 
 def registry_namespace_setting(value: str) -> str:
@@ -595,6 +610,20 @@ class JenkinsHttpAdapter:
             f"  <description>Managed by netCI template {escape(template_id)}. Do not edit in the Jenkins UI.</description>\n"
             "  <keepDependencies>false</keepDependencies>\n"
             "  <properties>\n"
+            # Written at every step, so that a replica can adopt the run when its own dies
+            # (ADR-079): performance-optimised durability leaves nothing to adopt.
+            "    <org.jenkinsci.plugins.workflow.job.properties.DurabilityHintJobProperty>\n"
+            "      <hint>MAX_SURVIVABILITY</hint>\n"
+            "    </org.jenkinsci.plugins.workflow.job.properties.DurabilityHintJobProperty>\n"
+            # Builds are not kept for ever (ADR-083), here or in the replicas' store.
+            "    <jenkins.model.BuildDiscarderProperty>\n"
+            "      <strategy class=\"hudson.tasks.LogRotator\">\n"
+            f"        <daysToKeep>{int(self.config.keep_days)}</daysToKeep>\n"
+            f"        <numToKeep>{int(self.config.keep_builds)}</numToKeep>\n"
+            "        <artifactDaysToKeep>-1</artifactDaysToKeep>\n"
+            "        <artifactNumToKeep>-1</artifactNumToKeep>\n"
+            "      </strategy>\n"
+            "    </jenkins.model.BuildDiscarderProperty>\n"
             "    <hudson.model.ParametersDefinitionProperty>\n"
             f"      <parameterDefinitions>{parameters}</parameterDefinitions>\n"
             "    </hudson.model.ParametersDefinitionProperty>\n"

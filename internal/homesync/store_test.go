@@ -3,7 +3,9 @@ package homesync
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -270,5 +272,64 @@ func TestAReaderFollowingTheFeedNeverSkipsAChangeCommittedLate(t *testing.T) {
 	read()
 	if !seen["slow"] || !seen["fast"] {
 		t.Fatalf("the reader skipped a change: saw %v", seen)
+	}
+}
+
+// ADR-083: compaction keeps the latest change of every path and drops what it superseded, only
+// past the bound; an ended build's copy goes entirely; a reader from the start still learns every
+// item, and the compacted-through mark tells a reader below it to read everything again.
+func TestCompactionKeepsTheLatestChangeOfEveryPath(t *testing.T) {
+	s, ctx := testStore(t), context.Background()
+	put := func(path string, expect int64) int64 {
+		v, err := s.Put(ctx, path, []byte(path), expect, "r0", 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return v
+	}
+	put("a", 0)
+	put("a", 1)
+	put("a", 2)
+	put("b", 0)
+	put("@running/j/1", 0)
+	put("@running/j/1", 1)
+	if _, err := s.Delete(ctx, "@running/j/1", 2, "r0", 0); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Pool.Exec(ctx, `UPDATE home_changes SET at = now() - interval '2 days'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Pool.Exec(ctx, `UPDATE home_items SET updated_at = now() - interval '2 days'`); err != nil {
+		t.Fatal(err)
+	}
+	put("c", 0) // recent: kept whatever supersedes it
+	put("c", 1)
+	n, err := s.Compact(ctx, 24*time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 5 { // a v1, a v2, and the copy's three
+		t.Fatalf("compacted %d changes, want 5", n)
+	}
+	left, _, err := s.Changes(ctx, 0, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, c := range left {
+		got = append(got, fmt.Sprintf("%s@%d", c.Path, c.Version))
+	}
+	if strings.Join(got, " ") != "a@3 b@1 c@1 c@2" {
+		t.Fatalf("the feed after compaction: %v", got)
+	}
+	if _, ok, _ := s.Get(ctx, "@running/j/1"); ok {
+		t.Fatal("an ended build's copy kept its tombstone")
+	}
+	through, err := s.CompactedThrough(ctx)
+	if err != nil || through < 7 {
+		t.Fatalf("compacted through %d (%v): the copy's deletion was seq 7", through, err)
+	}
+	if n, err := s.Compact(ctx, 24*time.Hour); err != nil || n != 0 {
+		t.Fatalf("compacting again: %d %v", n, err)
 	}
 }

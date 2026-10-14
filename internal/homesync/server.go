@@ -434,7 +434,12 @@ func (s *Server) changes(w http.ResponseWriter, r *http.Request, _ string) {
 			if list == nil {
 				list = []Change{}
 			}
-			writeJSON(w, http.StatusOK, map[string]any{"changes": list, "head": head})
+			compacted, err := s.Store.CompactedThrough(r.Context())
+			if err != nil {
+				s.fail(w, err)
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]any{"changes": list, "head": head, "compactedThrough": compacted})
 			return
 		}
 		select {

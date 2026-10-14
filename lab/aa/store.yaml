@@ -30,6 +30,22 @@ spec:
     roles:
       - {name: queue, login: true, ensure: present, passwordSecret: {name: queue-db-role}}
   storage: {storageClass: local-path, size: 2Gi}
+  # Backups (ADR-083): WAL archived continuously and a base backup daily (ScheduledBackup below) to
+  # S3-compatible storage -- the lab's SeaweedFS behind the lab CA; Ceph RGW or MinIO at the site.
+  # Replication is not a backup: a job deleted by mistake is deleted on every instance at once.
+  # In-tree barman-cloud, deprecated in CloudNativePG in favour of its Barman Cloud plugin (which
+  # needs cert-manager); the settings carry over.
+  backup:
+    retentionPolicy: "7d"
+    barmanObjectStore:
+      destinationPath: s3://netci-jenkins-backups/netci-store/aa-p2
+      endpointURL: https://172.17.0.1:8333
+      endpointCA: {name: store-s3, key: ca.crt}
+      s3Credentials:
+        accessKeyId: {name: store-s3, key: ACCESS_KEY_ID}
+        secretAccessKey: {name: store-s3, key: ACCESS_SECRET_KEY}
+      wal: {compression: gzip, maxParallel: 2}
+      data: {compression: gzip}
   # One instance per machine, never two: two on one machine is one machine's death taking the
   # primary and the only synchronous standby together.
   affinity: {enablePodAntiAffinity: true, podAntiAffinityType: required, topologyKey: kubernetes.io/hostname}
@@ -48,3 +64,11 @@ apiVersion: postgresql.cnpg.io/v1
 kind: Database
 metadata: {name: netci-queue, namespace: aa-p2}
 spec: {name: netci_queue, owner: queue, cluster: {name: store}}
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: ScheduledBackup
+metadata: {name: store-daily, namespace: aa-p2}
+spec:
+  schedule: "0 0 2 * * *"   # seconds first: 02:00 every day
+  backupOwnerReference: self
+  cluster: {name: store}

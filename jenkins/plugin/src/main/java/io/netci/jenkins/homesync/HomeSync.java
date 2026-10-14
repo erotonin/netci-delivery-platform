@@ -167,6 +167,15 @@ public final class HomeSync {
         while (true) {
             try {
                 HomeSyncClient.Changes page = client.changes(applied.get(), POLL);
+                if (page.compactedThrough() > applied.get()) {
+                    // The feed dropped entries this home had not read (it was behind past the
+                    // compaction bound, ADR-083): going on could apply a child before its parent,
+                    // or miss a change. Everything is read again from the store instead.
+                    LOGGER.warning(() -> "netCI homesync: the feed was compacted past this home's position (" + applied.get()
+                            + " < " + page.compactedThrough() + "); catching up from the store again");
+                    bootstrap();
+                    continue;
+                }
                 applyAll(page.changes());
             } catch (IOException e) {
                 LOGGER.log(Level.WARNING, "netCI homesync: the feed is unreachable; retrying", e);
@@ -299,6 +308,9 @@ public final class HomeSync {
     void catchUp(long head) throws IOException, InterruptedException {
         while (applied.get() < head) {
             HomeSyncClient.Changes page = client.changes(applied.get(), Duration.ZERO);
+            if (page.compactedThrough() > applied.get()) {
+                throw new IOException("this home is behind the feed's compaction; the follower reads everything again");
+            }
             if (page.changes().isEmpty()) {
                 advance(page.head());
                 break;

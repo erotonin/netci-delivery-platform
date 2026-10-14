@@ -511,3 +511,19 @@ def test_an_unreadable_queue_is_still_unknown():
     adapter = _adapter()
     _wire(adapter, {("GET", QUEUE): _ok({"unexpected": True})})
     assert adapter.queued_builds() is None
+
+
+def test_a_generated_job_is_durable_enough_to_adopt_and_keeps_a_bounded_history(monkeypatch):
+    """ADR-079/083: written at every step, so a replica can adopt the run; and its builds are
+    discarded, here and in the replicas' store, instead of kept for ever."""
+
+    xml = _adapter(keep_builds=50, keep_days=14)._job_config_xml("container-ci-cd-v1").decode()
+    assert "<hint>MAX_SURVIVABILITY</hint>" in xml
+    assert "<numToKeep>50</numToKeep>" in xml and "<daysToKeep>14</daysToKeep>" in xml
+    default = _adapter()._job_config_xml("container-ci-cd-v1").decode()
+    assert "<numToKeep>100</numToKeep>" in default and "<daysToKeep>30</daysToKeep>" in default
+    monkeypatch.setenv("NETCI_JENKINS_KEEP_BUILDS", "0")
+    for name in ("J_URL", "J_USERNAME", "J_API_TOKEN"):
+        monkeypatch.setenv(name, "x" if name != "J_URL" else "http://jenkins")
+    with pytest.raises(ValueError, match="NETCI_JENKINS_KEEP_BUILDS"):
+        JenkinsHttpConfig.from_env("J")

@@ -3,6 +3,8 @@
 #
 #   HOMESYNC=<image@digest> lab/aa/store.sh install   operator, the cluster, the data, homesync repointed
 #   lab/aa/store.sh update                             operator and cluster settings again (no data copy)
+#   lab/aa/store.sh backup                             backups to the lab's S3, and a base backup now
+#   lab/aa/store.sh restore-test                       recover a copy from the backups and compare it
 #   lab/aa/store.sh status                             instances, roles, synchronous standbys
 #
 # install is meant to run once: it refuses to copy data into a store that already has tables.
@@ -94,6 +96,75 @@ spec:
   kubectl -n "$NS" rollout status deployment/homesync --timeout=300s
 }
 
+# Backups to the lab's S3 (SeaweedFS, scripts/corp/up.sh): the credentials as a Secret
+# (from the files, never the command line), and a first base backup now.
+backup() {
+  local C=.netci-gate/corp S=.netci-gate/aa/s3
+  # The key files end in a newline, which went into the S3 signature's header ("Invalid header
+  # value"); trimmed copies, mode 600, so the values never reach a command line.
+  ( umask 077; mkdir -p "$S"
+    tr -d '\r\n' < "$C/s3-access-key" > "$S/access-key"
+    tr -d '\r\n' < "$C/s3-secret-key" > "$S/secret-key" )
+  # The lab's S3 identity may write to netci-jenkins-backups only (scripts/corp/up.sh): the store's
+  # backups go under their own prefix there.
+  kubectl -n "$NS" create secret generic store-s3 --from-file=ACCESS_KEY_ID="$S/access-key" \
+    --from-file=ACCESS_SECRET_KEY="$S/secret-key" --from-file=ca.crt="$C/pki/ca.crt" --dry-run=client -o yaml | kubectl apply -f - >/dev/null
+  kubectl apply -f lab/aa/store.yaml >/dev/null
+  kubectl -n "$NS" wait cluster/store --for=jsonpath='{.status.conditions[?(@.type=="ContinuousArchiving")].status}'=True --timeout=300s
+  local name="store-now-$(date -u +%Y%m%d%H%M%S)"
+  kubectl -n "$NS" apply -f - >/dev/null <<YAML
+apiVersion: postgresql.cnpg.io/v1
+kind: Backup
+metadata: {name: ${name}, namespace: ${NS}}
+spec: {cluster: {name: store}}
+YAML
+  kubectl -n "$NS" wait "backups.postgresql.cnpg.io/${name}" --for=jsonpath='{.status.phase}'=completed --timeout=600s
+  echo "base backup ${name} completed"
+}
+
+# A restore that is not tried is not a backup: a new one-instance cluster recovered from the object
+# store, its rows compared with the store's, then removed. Exit 1 when they differ.
+restore_test() {
+  kubectl -n "$NS" delete cluster store-restore --ignore-not-found --wait=true >/dev/null
+  kubectl -n "$NS" apply -f - >/dev/null <<YAML
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata: {name: store-restore, namespace: ${NS}}
+spec:
+  instances: 1
+  imageName: $(kubectl -n "$NS" get cluster store -o jsonpath='{.spec.imageName}')
+  imagePullSecrets: [{name: harbor-pull}]
+  storage: {storageClass: local-path, size: 2Gi}
+  resources: {requests: {cpu: 50m, memory: 128Mi}, limits: {memory: 384Mi}}
+  env:
+    - {name: KUBERNETES_SERVICE_HOST, valueFrom: {fieldRef: {fieldPath: status.hostIP}}}
+    - {name: KUBERNETES_SERVICE_PORT, value: "6443"}
+  bootstrap:
+    recovery: {source: store}
+  externalClusters:
+    - name: store
+      barmanObjectStore:
+        serverName: store
+        destinationPath: s3://netci-jenkins-backups/netci-store/aa-p2
+        endpointURL: https://172.17.0.1:8333
+        endpointCA: {name: store-s3, key: ca.crt}
+        s3Credentials:
+          accessKeyId: {name: store-s3, key: ACCESS_KEY_ID}
+          secretAccessKey: {name: store-s3, key: ACCESS_SECRET_KEY}
+        wal: {maxParallel: 2}
+YAML
+  local t0=$SECONDS
+  kubectl -n "$NS" wait cluster/store-restore --for=condition=Ready --timeout=900s >/dev/null
+  local q="select (select count(*) from home_items) || ' ' || (select count(*) from home_build_numbers);"
+  local live restored
+  live=$(echo "$q" | kubectl -n "$NS" exec -i "$(primary)" -c postgres -- psql -U postgres -d netci_homesync -At)
+  restored=$(echo "$q" | kubectl -n "$NS" exec -i store-restore-1 -c postgres -- psql -U postgres -d netci_homesync -At)
+  echo "restored in $((SECONDS - t0)) s; items and numbers: store ${live}, restored ${restored}"
+  kubectl -n "$NS" delete cluster store-restore --wait=false >/dev/null
+  # The restore is to the end of the archived WAL: rows written since may be missing, never extra.
+  [[ "${restored%% *}" -le "${live%% *}" && "${restored%% *}" -gt 0 ]]
+}
+
 status() {
   kubectl -n "$NS" get pods -l cnpg.io/cluster=store -o custom-columns=POD:.metadata.name,ROLE:.metadata.labels.cnpg\\.io/instanceRole,NODE:.spec.nodeName,READY:.status.containerStatuses[0].ready
   echo "select application_name, state, sync_state from pg_stat_replication order by 1;" | psql_new
@@ -110,6 +181,8 @@ update() {
 case "${1:-}" in
   install) install ;;
   update) update ;;
+  backup) backup ;;
+  restore-test) restore_test ;;
   status) status ;;
   *) sed -n '2,9p' "$0"; exit 2 ;;
 esac

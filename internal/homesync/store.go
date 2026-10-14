@@ -254,6 +254,49 @@ func (s *Store) Changes(ctx context.Context, after int64, limit int) ([]Change, 
 	return changes, head, err
 }
 
+// CompactedThrough is the highest seq compaction has deleted: a reader below it re-reads all.
+func (s *Store) CompactedThrough(ctx context.Context) (int64, error) {
+	var n int64
+	err := s.Pool.QueryRow(ctx, `SELECT compacted_through FROM home_feed WHERE id = 1`).Scan(&n)
+	return n, err
+}
+
+// Compact deletes, among changes older than olderThan, those a later change of the same path has
+// superseded, and every change and the tombstone of a running build's copy whose build has ended.
+// It returns how many changes were deleted. The latest change of every other path is kept.
+func (s *Store) Compact(ctx context.Context, olderThan time.Duration) (int64, error) {
+	tx, err := s.Pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback(context.Background()) //nolint:errcheck
+	// The feed lock: no change is placed in the feed meanwhile, so "superseded" is decided on a
+	// prefix of the feed (the same lock every change takes before its insert).
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock($1)`, feedLock); err != nil {
+		return 0, err
+	}
+	cutoff := fmt.Sprintf("%d milliseconds", olderThan.Milliseconds())
+	var deleted, through int64
+	err = tx.QueryRow(ctx, `WITH gone AS (
+			DELETE FROM home_changes c
+			WHERE c.at < now() - $1::interval
+			  AND (EXISTS (SELECT 1 FROM home_changes later WHERE later.path = c.path AND later.seq > c.seq)
+			       OR (c.path LIKE '@running/%' AND EXISTS (
+			             SELECT 1 FROM home_items i WHERE i.path = c.path AND i.deleted AND i.updated_at < now() - $1::interval)))
+			RETURNING seq)
+		SELECT count(*), COALESCE(max(seq), 0) FROM gone`, cutoff).Scan(&deleted, &through)
+	if err != nil {
+		return 0, err
+	}
+	if _, err := tx.Exec(ctx, `DELETE FROM home_items WHERE path LIKE '@running/%' AND deleted AND updated_at < now() - $1::interval`, cutoff); err != nil {
+		return 0, err
+	}
+	if _, err := tx.Exec(ctx, `UPDATE home_feed SET compacted_through = greatest(compacted_through, $1) WHERE id = 1`, through); err != nil {
+		return 0, err
+	}
+	return deleted, tx.Commit(ctx)
+}
+
 // Head is the last seq of the feed (0 when empty).
 func (s *Store) Head(ctx context.Context) (int64, error) {
 	var head int64
