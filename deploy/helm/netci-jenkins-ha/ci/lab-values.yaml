@@ -1,0 +1,78 @@
+images:
+  controller: "172.17.0.1:8930/netci/jenkins-controller@sha256:e645c629a64fb32e6f4d78d1af6203f6151cbca583d744dd45e8004a9860b473"
+  netci: "172.17.0.1:8930/netci/netci@sha256:cd6745b8c58e1f47bd843c51aef85c63f8fefe746cba2f210a53c4356ee96dfd"
+  haproxy: "haproxy@sha256:e3229153dd6429fc71f8a9a1f1ccbf8dab6962422d7043c81e84dd6a075e90ee"
+  kubeVip: "ghcr.io/kube-vip/kube-vip@sha256:c6d4f3a3fc2b7e95a23a20a0b05b7c64b2e5620783c8fa69a9bac753f99cc8bc"
+  postgres: "172.17.0.1:8930/netci/cnpg-postgresql:16.15-system-trixie@sha256:236091e55fda2ba92dbb60c020a5c63e788303c4faf816d2950ae6d3ef345b13"
+
+imagePullSecrets:
+  - name: harbor-pull
+
+replicas: 2
+
+jenkins:
+  storageClass: local-path
+  storageSize: 2Gi
+  javaOpts: "-Xms512m -Xmx900m -Djenkins.install.runSetupWizard=false -Dhudson.slaves.ChannelPinger.pingIntervalSeconds=5 -Dhudson.slaves.ChannelPinger.pingTimeoutSeconds=10"
+  resources:
+    requests:
+      cpu: 300m
+      memory: 1Gi
+    limits:
+      memory: 1536Mi
+  adminSecret: admin
+  homeSecretsSecret: home-secrets
+  homesyncTokensSecret: homesync-tokens
+  sessionKeySecret: session-key
+  cascConfigMap: casc
+  fence: kubernetes-power
+  drainSeconds: 6
+  terminationGracePeriodSeconds: 30
+  minReadySeconds: 30
+
+agents:
+  homes:
+    agent-0: jenkins-0
+    agent-1: jenkins-1
+
+homesync:
+  replicas: 2
+  replicasSecret: homesync-replicas
+  compactAfter: 24h
+
+store:
+  mode: cnpg
+  externalUrlSecret: ""
+  cnpg:
+    instances: 3
+    storageClass: local-path
+    size: 2Gi
+    resources:
+      requests:
+        cpu: 50m
+        memory: 128Mi
+      limits:
+        memory: 384Mi
+    backup:
+      enabled: true
+      mode: plugin
+      destinationPath: "s3://netci-jenkins-backups/netci-store/aa-p2"
+      endpointURL: "https://172.17.0.1:8333"
+      credentialsSecret: store-s3
+      caSecret: store-s3
+      retention: 7d
+      schedule: "0 0 2 * * *"
+
+balancer:
+  vip:
+    mode: kubevip
+    address: "192.168.122.240"
+    interface: "enp1s0"
+    loadBalancerClass: ""
+    annotations: {}
+
+queue:
+  enabled: true
+  configMap: queue
+  jenkinsSecret: queue-jenkins
+  nodePort: 30091

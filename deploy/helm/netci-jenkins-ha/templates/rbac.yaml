@@ -1,0 +1,62 @@
+# The fence's view (ADR-079): read pods here and nodes, nothing else, nothing written.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: jenkins
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "netci-jenkins-ha.labels" . | nindent 4 }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: jenkins-fence
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "netci-jenkins-ha.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: jenkins-fence
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "netci-jenkins-ha.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: jenkins-fence
+subjects:
+  - kind: ServiceAccount
+    name: jenkins
+    namespace: {{ .Release.Namespace }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: netci-aa-fence-nodes
+  labels:
+    {{- include "netci-jenkins-ha.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: [nodes]
+    verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: netci-aa-fence-nodes
+  labels:
+    {{- include "netci-jenkins-ha.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: netci-aa-fence-nodes
+subjects:
+  - kind: ServiceAccount
+    name: jenkins
+    namespace: {{ .Release.Namespace }}

@@ -21,4 +21,18 @@ refuses "the platform without a digest" "digest" "${ROOT}/deploy/helm/netci" -f 
 refuses "a cell without a digest" "netci.digest" "${ROOT}/deploy/helm/netci-cell" -f "${ROOT}/deploy/helm/netci-cell/ci/lab-values.yaml" --set netci.digest=
 refuses "a toleration that is not a number" "outOfServiceTolerationSeconds" "${ROOT}/deploy/helm/netci-cell" "${C[@]}" --set outOfServiceTolerationSeconds=soon
 refuses "log shipping without a pinned image" "pinned by digest" "${ROOT}/deploy/helm/netci-cell" "${C[@]}" --set logShipping.enabled=true --set logShipping.lokiUrl=http://loki:3100 --set logShipping.image=fluent-bit:latest
+# The active-active Jenkins chart (ADR-085): both values files render; it refuses an image by tag,
+# a store image without its tag, an agent homed on a replica that does not exist, a missing Secret.
+H="${ROOT}/deploy/helm/netci-jenkins-ha"
+for v in lab production; do
+  helm lint --strict "$H" -f "$H/ci/$v-values.yaml"
+  helm template h "$H" -n jenkins -f "$H/ci/$v-values.yaml" >/dev/null
+done
+helm template h "$H" -n jenkins -f "$H/ci/lab-values.yaml" --set store.cnpg.backup.mode=inTree --set balancer.vip.mode=loadBalancer >/dev/null
+refuses "a controller by tag" "pinned by digest" "$H" -f "$H/ci/production-values.yaml" --set images.controller=jenkins/jenkins:lts
+refuses "a store image without its tag" "major version from the tag" "$H" -f "$H/ci/production-values.yaml" --set images.postgres="r/postgres@${D}"
+refuses "an agent homed on no replica" "must name a replica" "$H" -f "$H/ci/production-values.yaml" --set agents.homes.agent-9=jenkins-2
+refuses "no session key Secret" "jenkins.sessionKeySecret" "$H" -f "$H/ci/production-values.yaml" --set jenkins.sessionKeySecret=
+refuses "kube-vip without an address" "balancer.vip.address" "$H" -f "$H/ci/production-values.yaml" --set balancer.vip.mode=kubevip --set images.kubeVip="r/kube-vip@${D}"
+refuses "a lenient fence by typo" "kubernetes-power" "$H" -f "$H/ci/production-values.yaml" --set jenkins.fence=power
 echo "charts: ok"

@@ -1,0 +1,80 @@
+images:
+  controller: "registry.example.com/netci/jenkins-controller:2.555.3@sha256:0000000000000000000000000000000000000000000000000000000000000000"
+  netci: "registry.example.com/netci/netci:0.1.0@sha256:0000000000000000000000000000000000000000000000000000000000000000"
+  haproxy: "registry.example.com/netci/haproxy:2.8@sha256:0000000000000000000000000000000000000000000000000000000000000000"
+  kubeVip: ""
+  postgres: "registry.example.com/netci/cnpg-postgresql:16.15@sha256:0000000000000000000000000000000000000000000000000000000000000000"
+
+imagePullSecrets: []
+
+replicas: 2
+
+jenkins:
+  storageClass: local-path
+  storageSize: 50Gi
+  javaOpts: "-Xms1g -Xmx2g -Djenkins.install.runSetupWizard=false -Dhudson.slaves.ChannelPinger.pingIntervalSeconds=5 -Dhudson.slaves.ChannelPinger.pingTimeoutSeconds=10"
+  resources:
+    requests:
+      cpu: "1"
+      memory: 3Gi
+    limits:
+      memory: 3Gi
+  adminSecret: jenkins-admin
+  homeSecretsSecret: jenkins-home-secrets
+  homesyncTokensSecret: homesync-tokens
+  sessionKeySecret: jenkins-session-key
+  cascConfigMap: jenkins-casc
+  fence: kubernetes-power
+  drainSeconds: 6
+  terminationGracePeriodSeconds: 60
+  minReadySeconds: 30
+
+agents:
+  homes:
+    agent-0: jenkins-0
+    agent-1: jenkins-1
+
+homesync:
+  replicas: 2
+  replicasSecret: homesync-replicas
+  compactAfter: 24h
+
+store:
+  mode: cnpg
+  externalUrlSecret: ""
+  cnpg:
+    instances: 3
+    storageClass: local-path
+    size: 10Gi
+    resources:
+      requests:
+        cpu: 100m
+        memory: 256Mi
+      limits:
+        memory: 1Gi
+    backup:
+      enabled: true
+      mode: plugin
+      destinationPath: "s3://netci-backups/jenkins-store"
+      endpointURL: "https://s3.example.com"
+      credentialsSecret: store-s3
+      caSecret: ""
+      retention: 7d
+      schedule: "0 0 2 * * *"
+
+balancer:
+  vip:
+    mode: loadBalancer
+    address: ""
+    interface: ""
+    loadBalancerClass: ""
+    # Example Octavia load balancer annotations:
+    # loadbalancer.openstack.org/flavor-id: "lb-flavor-uuid"
+    # loadbalancer.openstack.org/subnet-id: "00000000-0000-0000-0000-000000000000"
+    annotations: {}
+
+queue:
+  enabled: true
+  configMap: queue-config
+  jenkinsSecret: queue-jenkins
+  nodePort: null

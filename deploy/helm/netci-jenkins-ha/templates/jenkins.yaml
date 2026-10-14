@@ -1,0 +1,176 @@
+# Headless: jenkins-0.jenkins and jenkins-1.jenkins resolve to each replica (HAProxy addresses them so).
+apiVersion: v1
+kind: Service
+metadata:
+  name: jenkins
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "netci-jenkins-ha.labels" . | nindent 4 }}
+spec:
+  clusterIP: None
+  publishNotReadyAddresses: false
+  selector:
+    app: jenkins
+  ports:
+    - name: http
+      port: 8080
+---
+# The replicas, now on the controller that carries the plugin side, each with its own token.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: jenkins
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "netci-jenkins-ha.labels" . | nindent 4 }}
+spec:
+  serviceName: jenkins
+  replicas: {{ .Values.replicas }}
+  podManagementPolicy: Parallel
+  # A restarted replica is ready to Kubernetes before the balancers have resolved its new address
+  # and checked it twice; rolling on at once took the other replica down in that gap, and the
+  # balancers logged "0 active servers left" (phase 5 setup). Wait before the next one.
+  minReadySeconds: {{ .Values.jenkins.minReadySeconds }}
+  selector:
+    matchLabels:
+      app: jenkins
+  template:
+    metadata:
+      labels:
+        app: jenkins
+    spec:
+      # Read-only access to pods and nodes, for the fence that says an owner is gone (ADR-079).
+      serviceAccountName: jenkins
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      terminationGracePeriodSeconds: {{ .Values.jenkins.terminationGracePeriodSeconds }}
+      securityContext:
+        fsGroup: 1000
+        runAsUser: 1000
+        runAsGroup: 1000
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels:
+                  app: jenkins
+              topologyKey: kubernetes.io/hostname
+      initContainers:
+        # ADR-076 phase 5: one secrets/ set for every replica (lab/aa/phase5_secrets.py made it from
+        # jenkins-0's). An inbound agent's secret is an HMAC under these keys, and credentials are
+        # encrypted with them: different keys per replica made each a different Jenkins to its agents.
+        - name: same-secrets
+          image: {{ include "netci-jenkins-ha.image" (list "images.controller" .Values.images.controller) }}
+          command: [sh, -c, 'if [ -d /seed ] && [ -n "$(ls /seed)" ]; then mkdir -p /var/jenkins_home/secrets && for f in /seed/*; do n=$(basename $f); case $n in identity.key.enc) cp $f /var/jenkins_home/$n;; *) cp $f /var/jenkins_home/secrets/$n;; esac; done; chmod 700 /var/jenkins_home/secrets; fi']
+          volumeMounts:
+            - name: home
+              mountPath: /var/jenkins_home
+            - name: home-secrets
+              mountPath: /seed
+              readOnly: true
+      containers:
+        - name: jenkins
+          image: {{ include "netci-jenkins-ha.image" (list "images.controller" .Values.images.controller) }}
+          env:
+            - name: CASC_JENKINS_CONFIG
+              value: /var/jenkins_config/jenkins.yaml
+            # A remoting ping every 5 s, a channel dead after 10 s without an answer (Jenkins: 300 s and
+            # 240 s). An agent's connection through a balancer on a machine that lost power is not
+            # reset, it goes silent: in the soak agent-0 sat "Connected" to the dead jenkins-0 for 9
+            # minutes, and the build it was running waited that long to be adopted. The controller
+            # sets the agent's pinger too.
+            - name: JAVA_OPTS
+              value: {{ .Values.jenkins.javaOpts | quote }}
+            - name: ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "jenkins.adminSecret: Secret with key password" .Values.jenkins.adminSecret }}
+                  key: password
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: NETCI_HOMESYNC_URL
+              value: {{ printf "http://homesync.%s.svc.cluster.local:8080" .Release.Namespace | quote }}
+            - name: NETCI_HOMESYNC_TOKEN_FILE
+              value: "/run/secrets/netci-homesync/$(POD_NAME)"
+            # ADR-077: the key every replica verifies a sign-in's shared cookie with.
+            - name: NETCI_SESSION_KEY_FILE
+              value: /run/secrets/netci-session/key
+            # ADR-078: which balancer cookie sends a request to which replica.
+            - name: NETCI_REPLICA_COOKIES
+              value: {{ include "netci-jenkins-ha.replicaCookies" . | quote }}
+            # ... and where this replica reaches another to make a build there for the same person.
+            # ADR-079: adopt a dead replica's running builds, once Kubernetes says it is gone.
+            # Strict (ADR-084): a runner is gone only once the supervisor has its machine confirmed
+            # off (the out-of-service taint), or a Ready node's kubelet reports its process ended.
+            # "kubernetes" also took a NotReady node or a deleted pod, which a partition shows too.
+            - name: NETCI_ADOPT_FENCE
+              value: {{ .Values.jenkins.fence | quote }}
+            {{- $agentHomes := list }}
+            {{- range $agent := keys .Values.agents.homes | sortAlpha }}
+            {{- $agentHomes = append $agentHomes (printf "%s=%s" $agent (index $.Values.agents.homes $agent)) }}
+            {{- end }}
+            # Each agent's home replica, as the balancer routes it; an idle agent visiting goes home.
+            - name: NETCI_AGENT_HOMES
+              value: {{ join "," $agentHomes | quote }}
+            - name: NETCI_REPLICA_URLS
+              value: {{ include "netci-jenkins-ha.replicaUrls" . | quote }}
+          ports:
+            - containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /login
+              port: 8080
+            periodSeconds: 2
+            failureThreshold: 3
+          # Drain before stopping (ADR-080): the balancer checks /netci-ready/, which answers 503 once
+          # this file exists, so within its 2 s it sends everyone to the other replica; Jenkins is
+          # told to stop when nothing is in flight. /tmp is the container's own: a new container
+          # starts without the file.
+          lifecycle:
+            preStop:
+              exec:
+                command: [sh, -c, {{ printf "touch /tmp/netci-draining && sleep %d" (int .Values.jenkins.drainSeconds) | quote }}]
+          resources:
+            {{- toYaml .Values.jenkins.resources | nindent 12 }}
+          volumeMounts:
+            - name: home
+              mountPath: /var/jenkins_home
+            - name: casc
+              mountPath: /var/jenkins_config
+              readOnly: true
+            - name: homesync
+              mountPath: /run/secrets/netci-homesync
+              readOnly: true
+            - name: session-key
+              mountPath: /run/secrets/netci-session
+              readOnly: true
+      volumes:
+        - name: casc
+          configMap:
+            name: {{ required "jenkins.cascConfigMap: the site's JCasC ConfigMap" .Values.jenkins.cascConfigMap }}
+        - name: homesync
+          secret:
+            secretName: {{ required "jenkins.homesyncTokensSecret: Secret with each replica's homesync token, one key per pod" .Values.jenkins.homesyncTokensSecret }}
+            defaultMode: 0440
+        - name: session-key
+          secret:
+            secretName: {{ required "jenkins.sessionKeySecret: Secret with key `key`, the session cookie key every replica shares" .Values.jenkins.sessionKeySecret }}
+            defaultMode: 0440
+        - name: home-secrets
+          secret:
+            secretName: {{ required "jenkins.homeSecretsSecret: Secret holding the replicas' shared secrets/ files" .Values.jenkins.homeSecretsSecret }}
+            defaultMode: 0400
+            optional: true
+  volumeClaimTemplates:
+    - metadata:
+        name: home
+      spec:
+        accessModes: [ReadWriteOnce]
+        storageClassName: {{ .Values.jenkins.storageClass }}
+        resources:
+          requests:
+            storage: {{ .Values.jenkins.storageSize }}

@@ -3,6 +3,7 @@
 #
 #   HOMESYNC=<image@digest> lab/aa/store.sh install   operator, the cluster, the data, homesync repointed
 #   lab/aa/store.sh update                             operator and cluster settings again (no data copy)
+#   lab/aa/store.sh plugin                             cert-manager and the Barman Cloud plugin (from Harbor)
 #   lab/aa/store.sh backup                             backups to the lab's S3, and a base backup now
 #   lab/aa/store.sh restore-test                       recover a copy from the backups and compare it
 #   lab/aa/store.sh status                             instances, roles, synchronous standbys
@@ -51,6 +52,105 @@ spec:
         - {key: node.kubernetes.io/not-ready, operator: Exists, effect: NoExecute, tolerationSeconds: 10}
         - {key: node.kubernetes.io/unreachable, operator: Exists, effect: NoExecute, tolerationSeconds: 10}' >/dev/null
   kubectl -n cnpg-system rollout status deployment/cnpg-controller-manager --timeout=300s
+}
+
+# The Barman Cloud plugin, which replaces the in-tree barmanObjectStore (removed in CloudNativePG
+# 1.31), and cert-manager, which it needs for the TLS between the operator and itself. Both by
+# checksum, as the operator is; their images are Harbor's copies (the nodes pull from Harbor), by
+# digest, the plugin's sidecar included -- the plugin injects it into every instance pod.
+CERT_MANAGER_VERSION=v1.21.2
+CERT_MANAGER_SHA256=e03b668ec8675214af6b0a671699d088f2601fa3878e0dbe1b41d3feafd1879f
+BARMAN_VERSION=v0.15.1
+BARMAN_SHA256=8f377ff4a7d0d3f74fc64b0f7ac4f449fc38ca9e83a40107cca2f9315a9bd920
+HARBOR=172.17.0.1:8930/netci
+
+fetch() {  # url file sha256
+  [[ -f "$2" ]] || curl -sfL -o "$2" "$1"
+  echo "$3  $2" | sha256sum -c --quiet
+}
+
+# The pull secret into another namespace, through a pipe: its value never reaches a command line.
+pull_secret() {
+  kubectl -n "$NS" get secret harbor-pull -o json | python3 -c '
+import json, sys
+s = json.load(sys.stdin); m = s["metadata"]
+s["metadata"] = {"name": m["name"], "namespace": sys.argv[1]}
+print(json.dumps(s))' "$1" | kubectl apply -f - >/dev/null
+}
+
+# Each image of a manifest replaced by Harbor's copy, by digest (.netci-gate/aa/mirror-digests:
+# "<upstream ref> <digest>" per line), and the namespace's pods given the pull secret.
+from_harbor() {  # manifest
+  python3 - "$1" "${STATE}/mirror-digests" "$HARBOR" <<'PY'
+import base64, sys, yaml
+manifest, digests, harbor = sys.argv[1:]
+mirror = {}
+for line in open(digests):
+    ref, digest = line.split()
+    mirror[ref] = f"{harbor}/{ref.rsplit('/', 1)[1].split(':')[0]}@{digest}"
+docs = [d for d in yaml.safe_load_all(open(manifest)) if d]
+for d in docs:
+    if d["kind"] == "Deployment":
+        pod = d["spec"]["template"]["spec"]
+        pod["imagePullSecrets"] = [{"name": "harbor-pull"}]
+        for c in pod["containers"]:
+            c["image"] = mirror[c["image"]]
+    if d["kind"] == "Secret" and "SIDECAR_IMAGE" in d.get("data", {}):
+        ref = base64.b64decode(d["data"]["SIDECAR_IMAGE"]).decode().strip()
+        d["data"]["SIDECAR_IMAGE"] = base64.b64encode(mirror[ref].encode()).decode()
+print(yaml.safe_dump_all(docs))
+PY
+}
+
+plugin() {
+  local cm="${STATE}/cert-manager-${CERT_MANAGER_VERSION}.yaml" bc="${STATE}/plugin-barman-cloud-${BARMAN_VERSION}.yaml"
+  fetch "https://github.com/cert-manager/cert-manager/releases/download/${CERT_MANAGER_VERSION}/cert-manager.yaml" "$cm" "$CERT_MANAGER_SHA256"
+  fetch "https://github.com/cloudnative-pg/plugin-barman-cloud/releases/download/${BARMAN_VERSION}/manifest.yaml" "$bc" "$BARMAN_SHA256"
+  kubectl create namespace cert-manager --dry-run=client -o yaml | kubectl apply -f - >/dev/null
+  pull_secret cert-manager
+  pull_secret cnpg-system
+  from_harbor "$cm" | kubectl apply --server-side --force-conflicts -f - >/dev/null
+  kubectl -n cert-manager rollout status deployment/cert-manager-webhook --timeout=300s
+  from_harbor "$bc" | kubectl apply --server-side --force-conflicts -f - >/dev/null
+  # The plugin is on the failover path: while the operator cannot reach it, it reconciles nothing
+  # for the cluster ("cannot proceed to reconciliation due to an error while interacting with
+  # plugins"). Measured: its one pod stopped and the primary deleted, no standby was promoted in
+  # 189 s; started again, a primary 16 s later. So two, on two machines, as the operator is, with
+  # leader election (in the release) and the same tolerations and API server choice.
+  # Only the leader serves (port 9090, which the readiness probe checks): the other pod is never
+  # Ready until it takes the lease. The release updates it by Recreate, which is right: a rolling
+  # update would stall (the new pod cannot become Ready while the old leader holds the lease, and
+  # the old leader is not removed until it does). Recreate leaves the store without failover for
+  # the seconds between the old pods stopping and a new one serving.
+  # The primary's machine lost with the plugin's leader on it, the operator called the dead pod
+  # through the Service until the other took the lease (15 s) and passed its readiness check
+  # (every 10 s in the release): edits refused 74 s against 39 s with the leader elsewhere.
+  # Checked every 2 s instead.
+  kubectl -n cnpg-system patch deployment barman-cloud --type strategic -p '
+spec:
+  replicas: 2
+  template:
+    spec:
+      containers:
+        - name: barman-cloud
+          readinessProbe: {periodSeconds: 2, initialDelaySeconds: 2}
+          env:
+            - {name: KUBERNETES_SERVICE_HOST, valueFrom: {fieldRef: {fieldPath: status.hostIP}}}
+            - {name: KUBERNETES_SERVICE_PORT, value: "6443"}
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector: {matchLabels: {app: barman-cloud}}
+              topologyKey: kubernetes.io/hostname
+      tolerations:
+        - {key: node.kubernetes.io/not-ready, operator: Exists, effect: NoExecute, tolerationSeconds: 10}
+        - {key: node.kubernetes.io/unreachable, operator: Exists, effect: NoExecute, tolerationSeconds: 10}' >/dev/null
+  local i
+  for i in $(seq 1 100); do
+    [[ "$(kubectl -n cnpg-system get deployment barman-cloud -o jsonpath='{.status.updatedReplicas} {.status.readyReplicas}')" == "2 1" ]] && break
+    sleep 3
+  done
+  kubectl -n cnpg-system get pods -l app=barman-cloud -o custom-columns=POD:.metadata.name,NODE:.spec.nodeName,SERVING:.status.containerStatuses[0].ready
 }
 
 psql_old() { kubectl -n netci-system exec -i netci-pg-0 -- sh -c 'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d netci_homesync -At'; }
@@ -109,18 +209,21 @@ backup() {
   # backups go under their own prefix there.
   kubectl -n "$NS" create secret generic store-s3 --from-file=ACCESS_KEY_ID="$S/access-key" \
     --from-file=ACCESS_SECRET_KEY="$S/secret-key" --from-file=ca.crt="$C/pki/ca.crt" --dry-run=client -o yaml | kubectl apply -f - >/dev/null
-  kubectl apply -f lab/aa/store.yaml >/dev/null
+  # The store's backup settings are the chart's now (lab/aa/chart.sh), not store.yaml's.
   kubectl -n "$NS" wait cluster/store --for=jsonpath='{.status.conditions[?(@.type=="ContinuousArchiving")].status}'=True --timeout=300s
   local name="store-now-$(date -u +%Y%m%d%H%M%S)"
   kubectl -n "$NS" apply -f - >/dev/null <<YAML
 apiVersion: postgresql.cnpg.io/v1
 kind: Backup
 metadata: {name: ${name}, namespace: ${NS}}
-spec: {cluster: {name: store}}
+spec: {cluster: {name: store}$(plugin_mode && echo ', method: plugin, pluginConfiguration: {name: barman-cloud.cloudnative-pg.io}')}
 YAML
   kubectl -n "$NS" wait "backups.postgresql.cnpg.io/${name}" --for=jsonpath='{.status.phase}'=completed --timeout=600s
   echo "base backup ${name} completed"
 }
+
+# Through the Barman Cloud plugin (the chart's backup.mode plugin) or the in-tree barmanObjectStore.
+plugin_mode() { [[ "$(kubectl -n "$NS" get cluster store -o jsonpath='{.spec.plugins[*].name}')" == *barman-cloud* ]]; }
 
 # A restore that is not tried is not a backup: a new one-instance cluster recovered from the object
 # store, its rows compared with the store's, then removed. Exit 1 when they differ.
@@ -143,7 +246,9 @@ spec:
     recovery: {source: store}
   externalClusters:
     - name: store
-      barmanObjectStore:
+$(if plugin_mode; then echo '      plugin:
+        name: barman-cloud.cloudnative-pg.io
+        parameters: {barmanObjectName: store-backups, serverName: store}'; else echo '      barmanObjectStore:
         serverName: store
         destinationPath: s3://netci-jenkins-backups/netci-store/aa-p2
         endpointURL: https://172.17.0.1:8333
@@ -151,7 +256,7 @@ spec:
         s3Credentials:
           accessKeyId: {name: store-s3, key: ACCESS_KEY_ID}
           secretAccessKey: {name: store-s3, key: ACCESS_SECRET_KEY}
-        wal: {maxParallel: 2}
+        wal: {maxParallel: 2}'; fi)
 YAML
   local t0=$SECONDS
   kubectl -n "$NS" wait cluster/store-restore --for=condition=Ready --timeout=900s >/dev/null
@@ -172,7 +277,7 @@ status() {
 
 update() {
   operator
-  kubectl apply -f lab/aa/store.yaml >/dev/null
+  lab/aa/chart.sh upgrade >/dev/null
   # The instances restart one at a time, the primary last by a switchover.
   sleep 10
   kubectl -n "$NS" wait cluster/store --for=condition=Ready --timeout=900s
@@ -180,9 +285,10 @@ update() {
 
 case "${1:-}" in
   install) install ;;
+  plugin) plugin ;;
   update) update ;;
   backup) backup ;;
   restore-test) restore_test ;;
   status) status ;;
-  *) sed -n '2,9p' "$0"; exit 2 ;;
+  *) sed -n '2,10p' "$0"; exit 2 ;;
 esac

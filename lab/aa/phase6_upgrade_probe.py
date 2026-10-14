@@ -4,6 +4,9 @@ a time, while people use it. Does the UI or API ever fail, and are edits refused
 
     CONTROLLER=<image@digest> python3 lab/aa/phase6_upgrade_probe.py
     python3 lab/aa/phase6_upgrade_probe.py --restart     the same roll, the image unchanged
+    python3 lab/aa/phase6_upgrade_probe.py --during "lab/aa/chart.sh upgrade"
+                                                          any change (here the Helm chart applied),
+                                                          then every workload's rollout awaited
 
 A reader asks the VIP for /api/json twice a second, unpinned (the balancer picks a replica, as for a
 person arriving); two writers, one pinned to each replica by the balancer's cookie, create a job each
@@ -17,6 +20,7 @@ from __future__ import annotations
 import datetime as dt
 import json
 import os
+import subprocess
 import sys
 import threading
 import time
@@ -33,8 +37,9 @@ NS = p3.NS
 
 def main() -> int:
     restart = "--restart" in sys.argv[1:]
+    during = sys.argv[sys.argv.index("--during") + 1] if "--during" in sys.argv[1:] else ""
     image = os.environ.get("CONTROLLER", "")
-    if not restart and "@sha256:" not in image:
+    if not restart and not during and "@sha256:" not in image:
         raise SystemExit("CONTROLLER=<controller image by digest>, or --restart")
     started = dt.datetime.now(dt.timezone.utc)
     run = started.strftime("%H%M%S")
@@ -77,7 +82,14 @@ def main() -> int:
         t.start()
     time.sleep(15)
     t0 = time.time()
-    if restart:
+    if during:
+        subprocess.run(during, shell=True, check=True)
+        print(f"ran {during}", flush=True)
+        for kind in ("daemonset/haproxy", "deployment/homesync", "deployment/queue"):
+            p3.k("-n", NS, "rollout", "status", kind, "--timeout=900s")
+        p3.k("-n", "kube-system", "rollout", "status", "daemonset/kube-vip", "--timeout=900s")
+        image = p3.k("-n", NS, "get", "statefulset", "jenkins", "-o", "jsonpath={.spec.template.spec.containers[0].image}")
+    elif restart:
         image = before
         p3.k("-n", NS, "rollout", "restart", "statefulset/jenkins")
         print("restarted", flush=True)
@@ -95,7 +107,7 @@ def main() -> int:
         x["t"] = round(x.pop("at") - t0, 1)
     p5.whole()
     acked = [w for r in writes for w in writes[r] if w["code"] == 200]
-    facts: dict = {"scenario": "aa-phase6-upgrade", "started": started.isoformat(timespec="seconds"), "restartOnly": restart,
+    facts: dict = {"scenario": "aa-phase6-upgrade", "started": started.isoformat(timespec="seconds"), "restartOnly": restart, "during": during,
                    "imageBefore": before, "imageAfter": image, "rolledOutAfterSeconds": round(rolled, 1),
                    "reads": {"count": len(reads), "failed": [(x["t"], x["why"], x["served"]) for x in reads if not x["ok"]],
                              "servedBy": {r: sum(x["served"] == r for x in reads) for r in ("r0", "r1")}},

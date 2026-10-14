@@ -1,0 +1,5 @@
+apiVersion: v2
+name: netci-jenkins-ha
+description: Active-active Jenkins with replicated homes behind an HA balancer
+version: 0.1.0
+appVersion: "2.555.3"

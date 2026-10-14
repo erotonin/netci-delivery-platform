@@ -1,0 +1,187 @@
+{{- if eq .Values.store.mode "cnpg" }}
+# Active-active, the store made HA (ADR-080): netci-homesync's PostgreSQL as three CloudNativePG
+# instances, one per machine, each on its own machine's disk (local-path), as the homes are.
+# Needs the CloudNativePG operator installed first, and for plugin backups cert-manager and the
+# Barman Cloud plugin (docs/JENKINS-HA-PRODUCTION.md).
+#
+# Synchronous to ANY 1 of the two standbys, durability required: a write is acknowledged only once
+# a standby has it, so the standby promoted after the primary's machine dies has every acknowledged
+# write -- a build number reserved, a version compared-and-set -- and the store does not answer
+# "done" for something a failover would forget. With one machine down one standby remains and
+# writes go on; with two down writes stop, which is the store refusing rather than forgetting.
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: store
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "netci-jenkins-ha.labels" . | nindent 4 }}
+spec:
+  instances: {{ .Values.store.cnpg.instances }}
+  {{- if not (regexMatch ":[^/@]+@sha256:" .Values.images.postgres) }}
+  {{- fail "images.postgres: CloudNativePG reads the PostgreSQL major version from the tag, so it is repo:tag@sha256:..." }}
+  {{- end }}
+  imageName: {{ include "netci-jenkins-ha.image" (list "images.postgres" .Values.images.postgres) }}
+  {{- with .Values.imagePullSecrets }}
+  imagePullSecrets:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  primaryUpdateStrategy: unsupervised
+  failoverDelay: 0
+  postgresql:
+    synchronous:
+      method: any
+      number: 1
+      dataDurability: required
+    parameters:
+      max_connections: "100"
+      shared_buffers: "64MB"
+  bootstrap:
+    initdb:
+      database: netci_homesync
+      owner: homesync
+  {{- if .Values.queue.enabled }}
+  # netci-queue's database lives on the same HA store (lab/aa/queue.sh): the role is declared here,
+  # its password in the Secret queue-db-role (basic-auth), the database below.
+  managed:
+    roles:
+      - name: queue
+        login: true
+        ensure: present
+        passwordSecret:
+          name: queue-db-role
+  {{- end }}
+  storage:
+    storageClass: {{ .Values.store.cnpg.storageClass }}
+    size: {{ .Values.store.cnpg.size }}
+  {{- if and .Values.store.cnpg.backup.enabled (eq .Values.store.cnpg.backup.mode "inTree") }}
+  # Backups (ADR-083): WAL archived continuously and a base backup daily (ScheduledBackup below) to
+  # S3-compatible storage -- the lab's SeaweedFS behind the lab CA; Ceph RGW or MinIO at the site.
+  # Replication is not a backup: a job deleted by mistake is deleted on every instance at once.
+  # In-tree barman-cloud, deprecated in CloudNativePG in favour of its Barman Cloud plugin (which
+  # needs cert-manager); the settings carry over.
+  backup:
+    retentionPolicy: {{ .Values.store.cnpg.backup.retention | quote }}
+    barmanObjectStore:
+      destinationPath: {{ required "store.cnpg.backup.destinationPath is required when backup is enabled" .Values.store.cnpg.backup.destinationPath }}
+      {{- if .Values.store.cnpg.backup.endpointURL }}
+      endpointURL: {{ .Values.store.cnpg.backup.endpointURL }}
+      {{- end }}
+      {{- if .Values.store.cnpg.backup.caSecret }}
+      endpointCA:
+        name: {{ .Values.store.cnpg.backup.caSecret }}
+        key: ca.crt
+      {{- end }}
+      s3Credentials:
+        accessKeyId:
+          name: {{ required "store.cnpg.backup.credentialsSecret is required when backup is enabled" .Values.store.cnpg.backup.credentialsSecret }}
+          key: ACCESS_KEY_ID
+        secretAccessKey:
+          name: {{ .Values.store.cnpg.backup.credentialsSecret }}
+          key: ACCESS_SECRET_KEY
+      wal:
+        compression: gzip
+        maxParallel: 2
+      data:
+        compression: gzip
+  {{- end }}
+  {{- if and .Values.store.cnpg.backup.enabled (eq .Values.store.cnpg.backup.mode "plugin") }}
+  plugins:
+    - name: barman-cloud.cloudnative-pg.io
+      isWALArchiver: true
+      parameters:
+        barmanObjectName: store-backups
+  {{- end }}
+  # One instance per machine, never two: two on one machine is one machine's death taking the
+  # primary and the only synchronous standby together.
+  affinity:
+    enablePodAntiAffinity: true
+    podAntiAffinityType: required
+    topologyKey: kubernetes.io/hostname
+  resources:
+    {{- toYaml .Values.store.cnpg.resources | nindent 4 }}
+  # Each instance's manager talks to its own machine's API server, not the Service in front of all
+  # three. Through the Service, the soak's power-off of a standby's machine left the primary's pooled
+  # connection on that machine's dead API server for ~40 s; CloudNativePG's isolation check then saw
+  # neither the API server nor that standby, failed the primary's liveness, and the kubelet
+  # restarted a healthy primary (an outage of edits that losing a standby should never cause).
+  # Its own machine's API server lives and dies with it.
+  env:
+    - name: KUBERNETES_SERVICE_HOST
+      valueFrom:
+        fieldRef:
+          fieldPath: status.hostIP
+    - name: KUBERNETES_SERVICE_PORT
+      value: "6443"
+{{- if and .Values.store.cnpg.backup.enabled (eq .Values.store.cnpg.backup.mode "plugin") }}
+---
+apiVersion: barmancloud.cnpg.io/v1
+kind: ObjectStore
+metadata:
+  name: store-backups
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "netci-jenkins-ha.labels" . | nindent 4 }}
+spec:
+  configuration:
+    destinationPath: {{ required "store.cnpg.backup.destinationPath is required when backup is enabled" .Values.store.cnpg.backup.destinationPath }}
+    {{- if .Values.store.cnpg.backup.endpointURL }}
+    endpointURL: {{ .Values.store.cnpg.backup.endpointURL }}
+    {{- end }}
+    {{- if .Values.store.cnpg.backup.caSecret }}
+    endpointCA:
+      name: {{ .Values.store.cnpg.backup.caSecret }}
+      key: ca.crt
+    {{- end }}
+    s3Credentials:
+      accessKeyId:
+        name: {{ required "store.cnpg.backup.credentialsSecret is required when backup is enabled" .Values.store.cnpg.backup.credentialsSecret }}
+        key: ACCESS_KEY_ID
+      secretAccessKey:
+        name: {{ .Values.store.cnpg.backup.credentialsSecret }}
+        key: ACCESS_SECRET_KEY
+    wal:
+      compression: gzip
+      maxParallel: 2
+    data:
+      compression: gzip
+  # Beside configuration, not in it: the plugin's CRD has it here, and the API server drops a field
+  # its schema does not have without a word -- the backups would then be kept forever.
+  retentionPolicy: {{ .Values.store.cnpg.backup.retention | quote }}
+{{- end }}
+{{- if .Values.queue.enabled }}
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Database
+metadata:
+  name: netci-queue
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "netci-jenkins-ha.labels" . | nindent 4 }}
+spec:
+  name: netci_queue
+  owner: queue
+  cluster:
+    name: store
+{{- end }}
+{{- if .Values.store.cnpg.backup.enabled }}
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: ScheduledBackup
+metadata:
+  name: store-daily
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "netci-jenkins-ha.labels" . | nindent 4 }}
+spec:
+  schedule: {{ .Values.store.cnpg.backup.schedule | quote }}
+  backupOwnerReference: self
+  cluster:
+    name: store
+  {{- if eq .Values.store.cnpg.backup.mode "plugin" }}
+  method: plugin
+  pluginConfiguration:
+    name: barman-cloud.cloudnative-pg.io
+  {{- end }}
+{{- end }}
+{{- end }}

@@ -1,0 +1,198 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "images",
+    "imagePullSecrets",
+    "replicas",
+    "jenkins",
+    "agents",
+    "homesync",
+    "store",
+    "balancer",
+    "queue"
+  ],
+  "properties": {
+    "images": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "controller": { "type": "string" },
+        "netci": { "type": "string" },
+        "haproxy": { "type": "string" },
+        "kubeVip": { "type": "string" },
+        "postgres": { "type": "string" }
+      }
+    },
+    "imagePullSecrets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "name": { "type": "string" }
+        },
+        "required": ["name"]
+      }
+    },
+    "replicas": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "jenkins": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "storageClass": { "type": "string" },
+        "storageSize": { "type": "string" },
+        "javaOpts": { "type": "string" },
+        "resources": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "requests": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "cpu": { "type": ["string", "number"] },
+                "memory": { "type": ["string", "number"] }
+              }
+            },
+            "limits": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "cpu": { "type": ["string", "number"] },
+                "memory": { "type": ["string", "number"] }
+              }
+            }
+          }
+        },
+        "adminSecret": { "type": "string" },
+        "homeSecretsSecret": { "type": "string" },
+        "homesyncTokensSecret": { "type": "string" },
+        "sessionKeySecret": { "type": "string" },
+        "cascConfigMap": { "type": "string" },
+        "fence": {
+          "type": "string",
+          "enum": ["kubernetes", "kubernetes-power"]
+        },
+        "drainSeconds": { "type": "integer" },
+        "terminationGracePeriodSeconds": { "type": "integer" },
+        "minReadySeconds": { "type": "integer" }
+      }
+    },
+    "agents": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "homes": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        }
+      }
+    },
+    "homesync": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "replicas": { "type": "integer", "minimum": 1 },
+        "replicasSecret": { "type": "string" },
+        "compactAfter": { "type": "string" }
+      }
+    },
+    "store": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": ["cnpg", "external"]
+        },
+        "externalUrlSecret": { "type": "string" },
+        "cnpg": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "instances": { "type": "integer", "minimum": 1 },
+            "storageClass": { "type": "string" },
+            "size": { "type": "string" },
+            "resources": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "requests": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "cpu": { "type": ["string", "number"] },
+                    "memory": { "type": ["string", "number"] }
+                  }
+                },
+                "limits": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "cpu": { "type": ["string", "number"] },
+                    "memory": { "type": ["string", "number"] }
+                  }
+                }
+              }
+            },
+            "backup": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "enabled": { "type": "boolean" },
+                "mode": {
+                  "type": "string",
+                  "enum": ["plugin", "inTree"]
+                },
+                "destinationPath": { "type": "string" },
+                "endpointURL": { "type": "string" },
+                "credentialsSecret": { "type": "string" },
+                "caSecret": { "type": "string" },
+                "retention": { "type": "string" },
+                "schedule": { "type": "string" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "balancer": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "vip": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "mode": {
+              "type": "string",
+              "enum": ["kubevip", "loadBalancer"]
+            },
+            "address": { "type": "string" },
+            "interface": { "type": "string" },
+            "loadBalancerClass": { "type": "string" },
+            "annotations": {
+              "type": "object",
+              "additionalProperties": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+    "queue": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "configMap": { "type": "string" },
+        "jenkinsSecret": { "type": "string" },
+        "nodePort": { "type": ["integer", "null"] }
+      }
+    }
+  }
+}

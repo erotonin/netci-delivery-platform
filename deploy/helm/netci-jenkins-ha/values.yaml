@@ -1,0 +1,90 @@
+images:
+  controller: ""   # required: repo:tag@sha256:...
+  netci: ""        # required: the netCI image (netci-homesync, netci-queue), by digest
+  haproxy: ""      # required, by digest
+  kubeVip: ""      # required when vip.mode=kubevip
+  postgres: ""     # required when store.mode=cnpg: repo:tag@sha256 (CNPG needs the tag)
+
+imagePullSecrets: []
+
+# Number of active Jenkins controller replicas (generated into URLs, cookies, and HAProxy servers).
+replicas: 2
+
+jenkins:
+  storageClass: local-path
+  storageSize: 50Gi
+  # ChannelPinger: a remoting ping every 5 s, a channel dead after 10 s without an answer.
+  # An agent's connection through a balancer on a machine that lost power goes silent;
+  # without tight pings it sits connected for minutes, delaying build adoption (ADR-078).
+  javaOpts: "-Xms1g -Xmx2g -Djenkins.install.runSetupWizard=false -Dhudson.slaves.ChannelPinger.pingIntervalSeconds=5 -Dhudson.slaves.ChannelPinger.pingTimeoutSeconds=10"
+  resources: {requests: {cpu: "1", memory: 3Gi}, limits: {memory: 3Gi}}
+  adminSecret: ""        # required: Secret with key `password`
+  homeSecretsSecret: ""  # required: Secret holding the replicas' shared secrets/ files (lab/aa/phase5_secrets.py)
+  # required: Secret with one key per replica pod (jenkins-0, jenkins-1, ...): that replica's
+  # homesync token. Not homesync.replicasSecret, which is the server's side of the same tokens.
+  homesyncTokensSecret: ""
+  # required: Secret with key `key`: the one key every replica verifies a sign-in's cookie with
+  # (ADR-077). Different keys per replica sign everyone out whenever the balancer moves them.
+  sessionKeySecret: ""
+  cascConfigMap: ""      # required: the site's JCasC (security realm, jobs); mounted as in phase3.yaml
+  # Strict adoption fence: a runner is gone only once confirmed off via power management
+  # (out-of-service taint) or node kubelet reports process ended (ADR-079, ADR-084).
+  fence: kubernetes-power   # enum: kubernetes | kubernetes-power
+  # Drain before stopping (ADR-080): balancer checks /netci-ready/, answering 503 once
+  # /tmp/netci-draining exists, allowing traffic to route to surviving replicas.
+  drainSeconds: 6
+  terminationGracePeriodSeconds: 60
+  # Rolling restarts wait for balancers to resolve new addresses and pass health checks (phase 5).
+  minReadySeconds: 30
+
+agents:
+  # Map agent name -> replica pod name; becomes NETCI_AGENT_HOMES and the haproxy use-server rules.
+  # An inbound agent connects over WebSocket; HAProxy routes each to its home replica, and to
+  # the other when the home replica is down.
+  homes: {}
+
+homesync:
+  replicas: 2
+  replicasSecret: ""   # required: Secret with key `replicas`: the replicas homesync accepts and their tokens
+  # Feed compaction (ADR-083): superseded changes and ended builds' copies older than this duration purged.
+  compactAfter: 24h
+
+store:
+  mode: cnpg            # enum: cnpg | external
+  externalUrlSecret: "" # required when external: Secret with key `url`
+  cnpg:
+    # 3 instances on local disks, one per machine; synchronous ANY 1 with durability required
+    # guarantees zero acknowledged writes lost on failover (ADR-080).
+    instances: 3
+    storageClass: local-path
+    size: 10Gi
+    resources: {requests: {cpu: 100m, memory: 256Mi}, limits: {memory: 1Gi}}
+    backup:
+      enabled: true
+      mode: plugin        # enum: plugin | inTree   (inTree is removed in CloudNativePG 1.31)
+      destinationPath: "" # required when enabled
+      endpointURL: ""
+      credentialsSecret: ""  # keys ACCESS_KEY_ID, ACCESS_SECRET_KEY
+      caSecret: ""           # optional, key ca.crt
+      retention: 7d
+      schedule: "0 0 2 * * *"
+
+balancer:
+  vip:
+    mode: kubevip   # enum: kubevip | loadBalancer
+    address: ""     # required when kubevip
+    interface: ""   # kube-vip's vip_interface; empty = autodetect
+    loadBalancerClass: ""
+    annotations: {}
+
+queue:
+  # netci-queue in front of the active-active replicas (ADR-081): accepts builds durably and dispatches once.
+  # DATABASE_URL comes from Secret `queue-db` key `url` (created by the operator of the chart).
+  # It reaches Jenkins through `haproxy-local` (Service haproxy-local): it is a pod, and through the VIP
+  # kube-proxy may send it to the balancer of a machine that just lost power -- the black hole the agents met (ADR-080).
+  enabled: true
+  # required when enabled: ConfigMap with config.json (cells, routes, clients), see lab/aa/queue.sh.
+  # A ConfigMap because it holds no secret: clients are named by their token's SHA-256.
+  configMap: ""
+  jenkinsSecret: ""    # required when enabled: Secret with keys user, token
+  nodePort: null       # optional int; Service type NodePort when set, else ClusterIP

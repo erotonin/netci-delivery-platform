@@ -1,0 +1,119 @@
+{{- if .Values.queue.enabled }}
+# netci-queue in front of the active-active replicas (ADR-081): the IDP's builds are accepted here,
+# durably, and dispatched once.
+#
+# Its database is netci_queue on the HA store (store.yaml). It reaches Jenkins through the balancer
+# on its own machine (Service haproxy-local): it is a pod, and through the VIP kube-proxy may send
+# it to the balancer of a machine that just lost power -- the black hole the agents met (ADR-080).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: queue
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "netci-jenkins-ha.labels" . | nindent 4 }}
+spec:
+  replicas: 2   # both dispatch: claims skip each other, dispatch is idempotent
+  selector:
+    matchLabels:
+      app: queue
+  template:
+    metadata:
+      labels:
+        app: queue
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels:
+                  app: queue
+              topologyKey: kubernetes.io/hostname
+      containers:
+        - name: queue
+          image: {{ include "netci-jenkins-ha.image" (list "images.netci" .Values.images.netci) }}
+          command: [/netci-queue]
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: queue-db
+                  key: url
+            - name: NETCI_QUEUE_CONFIG
+              value: /etc/netci/queue/config.json
+          ports:
+            - name: http
+              containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: 8080
+            periodSeconds: 2
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: config
+              mountPath: /etc/netci/queue
+              readOnly: true
+            - name: cells
+              mountPath: /etc/netci/cells
+              readOnly: true
+      volumes:
+        - name: config
+          configMap:
+            name: {{ required "queue.configMap is required when queue.enabled: ConfigMap with config.json" .Values.queue.configMap }}
+        - name: cells
+          secret:
+            secretName: {{ required "queue.jenkinsSecret is required when queue.enabled: Secret with keys user, token" .Values.queue.jenkinsSecret }}
+            defaultMode: 0440
+            items:
+              - key: user
+                path: aa/user
+              - key: token
+                path: aa/token
+---
+# Reachable from the host on every node: the IDP (outside the cluster in the lab) and the probes.
+apiVersion: v1
+kind: Service
+metadata:
+  name: queue
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "netci-jenkins-ha.labels" . | nindent 4 }}
+spec:
+  type: {{ if .Values.queue.nodePort }}NodePort{{ else }}ClusterIP{{ end }}
+  selector:
+    app: queue
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+      {{- if .Values.queue.nodePort }}
+      nodePort: {{ .Values.queue.nodePort }}
+      {{- end }}
+{{- end }}

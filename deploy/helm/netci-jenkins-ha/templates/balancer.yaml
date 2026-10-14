@@ -1,0 +1,159 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: haproxy
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "netci-jenkins-ha.labels" . | nindent 4 }}
+data:
+  haproxy.cfg: |
+    global
+      # httplog without captures: no request header is logged, so an agent's Secret-Key never is.
+      log stdout format raw local0 info
+    defaults
+      mode http
+      log global
+      option httplog
+      timeout connect 1s
+      timeout client 60s
+      timeout server 60s
+      timeout tunnel 1h        # an agent's WebSocket lives for hours
+      timeout check 1s
+      retries 3
+      option redispatch 1
+      # 503 too: a replica stopping answers 503 for the ~2 s before its check marks it down (the
+      # rolling upgrade's two failed polls of 280). Jenkins says 503 before it acts on a request,
+      # and so does the plugin when it refuses an edit, so a retry on the other replica is safe.
+      retry-on conn-failure empty-response response-timeout 503
+    resolvers k8s
+      parse-resolv-conf
+      hold valid 2s
+      hold obsolete 2s
+    frontend ui
+      bind :8080
+      default_backend jenkins
+    backend jenkins
+      balance roundrobin
+      # preserve: the plugin sets this cookie to send a request to a job's owner (ADR-078).
+      cookie NETCI_REPLICA insert indirect nocache httponly preserve
+      # The plugin's readiness (ADR-080): 503 while the replica starts or drains before a stop.
+      # Needs a controller of netci25 or later on every replica before it is applied.
+      option httpchk GET /netci-ready/
+      http-check expect status 200
+      http-response set-header X-Netci-Replica %s
+      # Each agent to its replica; a use-server rule is ignored while that server is down, so an
+      # agent whose replica died reconnects to the other one.
+      {{- range $agent := keys .Values.agents.homes | sortAlpha }}
+      {{- $replica := index $.Values.agents.homes $agent }}
+      {{- if or (not (regexMatch "^jenkins-[0-9]+$" $replica)) (ge (int (trimPrefix "jenkins-" $replica)) (int $.Values.replicas)) }}
+      {{- fail (printf "agents.homes.%s is %q: it must name a replica, jenkins-0 to jenkins-%d" $agent $replica (sub (int $.Values.replicas) 1)) }}
+      {{- end }}
+      {{- $r := printf "r%s" (trimPrefix "jenkins-" $replica) }}
+      use-server {{ $r }} if { req.hdr(Node-Name) -m str {{ $agent }} }
+      {{- end }}
+      # shutdown-sessions: a server marked down has its open sessions closed. An agent's WebSocket
+      # through a balancer whose server's machine lost power stayed open for the tunnel's hour (no
+      # RST comes from a dead machine): the agent never reconnected, so its build was never adopted.
+      default-server inter 1s fall 2 rise 2 resolvers k8s init-addr none on-marked-down shutdown-sessions
+      {{- $replicas := int .Values.replicas }}
+      {{- $ns := .Release.Namespace }}
+      {{- range $i := until $replicas }}
+      server r{{ $i }} jenkins-{{ $i }}.jenkins.{{ $ns }}.svc.cluster.local:8080 check cookie r{{ $i }}
+      {{- end }}
+---
+# On every machine: with externalTrafficPolicy Local the VIP may only sit where a balancer runs,
+# so a balancer everywhere leaves every surviving machine able to take it.
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: haproxy
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "netci-jenkins-ha.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      app: haproxy
+  template:
+    metadata:
+      labels:
+        app: haproxy
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: haproxy
+          image: {{ include "netci-jenkins-ha.image" (list "images.haproxy" .Values.images.haproxy) }}
+          args: [-f, /usr/local/etc/haproxy/haproxy.cfg]
+          ports:
+            - containerPort: 8080
+          readinessProbe:
+            tcpSocket:
+              port: 8080
+            periodSeconds: 1
+            failureThreshold: 2
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              memory: 256Mi
+          volumeMounts:
+            - name: cfg
+              mountPath: /usr/local/etc/haproxy
+              readOnly: true
+      volumes:
+        - name: cfg
+          configMap:
+            name: haproxy
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ui
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "netci-jenkins-ha.labels" . | nindent 4 }}
+  {{- if or (eq .Values.balancer.vip.mode "kubevip") .Values.balancer.vip.annotations }}
+  annotations:
+    {{- if eq .Values.balancer.vip.mode "kubevip" }}
+    kube-vip.io/loadbalancerIPs: {{ required "balancer.vip.address is required when balancer.vip.mode=kubevip" .Values.balancer.vip.address | quote }}
+    {{- end }}
+    {{- with .Values.balancer.vip.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  {{- end }}
+spec:
+  type: LoadBalancer
+  {{- with .Values.balancer.vip.loadBalancerClass }}
+  loadBalancerClass: {{ . }}
+  {{- end }}
+  # Local: the VIP is only ever on a machine running a balancer, and traffic stays there. With
+  # Cluster, kube-proxy on the VIP's machine spread requests over every balancer, including one
+  # on a machine that had just died, until its endpoint was removed (aa-phase2-20261013T094235Z).
+  externalTrafficPolicy: Local
+  selector:
+    app: haproxy
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8080
+---
+# The balancer on the caller's own machine, for the agents and netci-queue.
+apiVersion: v1
+kind: Service
+metadata:
+  name: haproxy-local
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "netci-jenkins-ha.labels" . | nindent 4 }}
+spec:
+  selector:
+    app: haproxy
+  internalTrafficPolicy: Local
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8080

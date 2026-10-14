@@ -1,0 +1,99 @@
+# Active-active: the two replicas' homes kept the same through netci-homesync (ADR-076).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: homesync
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "netci-jenkins-ha.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.homesync.replicas }}
+  selector:
+    matchLabels:
+      app: homesync
+  template:
+    metadata:
+      labels:
+        app: homesync
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      # The image runs as 65532; the credentials file is readable by that group only.
+      securityContext:
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        runAsNonRoot: true
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels:
+                  app: homesync
+              topologyKey: kubernetes.io/hostname
+      containers:
+        - name: homesync
+          image: {{ include "netci-jenkins-ha.image" (list "images.netci" .Values.images.netci) }}
+          command: [/netci-homesync]
+          env:
+            {{- if eq .Values.store.mode "cnpg" }}
+            # The app Secret's uri names the read-write Service; target_session_attrs keeps a connection
+            # from settling on an instance that is (still, or again) a standby.
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: store-app
+                  key: uri
+            {{- else if eq .Values.store.mode "external" }}
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "store.externalUrlSecret: Secret with key url when store.mode=external" .Values.store.externalUrlSecret }}
+                  key: url
+            {{- end }}
+            - name: PGTARGETSESSIONATTRS
+              value: read-write
+            - name: PGCONNECT_TIMEOUT
+              value: "5"
+            - name: NETCI_HOMESYNC_REPLICAS_FILE
+              value: /run/secrets/netci-homesync/replicas
+            - name: NETCI_HOMESYNC_COMPACT_AFTER
+              value: {{ .Values.homesync.compactAfter | quote }}
+          ports:
+            - containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            periodSeconds: 2
+            failureThreshold: 2
+          resources:
+            requests:
+              cpu: 50m
+              memory: 32Mi
+            limits:
+              memory: 128Mi
+          volumeMounts:
+            - name: replicas
+              mountPath: /run/secrets/netci-homesync
+              readOnly: true
+      volumes:
+        - name: replicas
+          secret:
+            secretName: {{ required "homesync.replicasSecret: Secret with key replicas, the replicas homesync accepts" .Values.homesync.replicasSecret }}
+            defaultMode: 0440
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: homesync
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "netci-jenkins-ha.labels" . | nindent 4 }}
+spec:
+  selector:
+    app: homesync
+  ports:
+    - port: 8080
