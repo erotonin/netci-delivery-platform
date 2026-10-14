@@ -983,9 +983,12 @@ Vì vậy chọn **mỗi replica một home riêng** trên đĩa của chính m�
 | 40 lần sửa đồng thời trên 2 replica | 25 nhận, 15 bị từ chối có lý do, không mất lần nào, hai bên hội tụ |
 | Build đang chạy, giết pod chủ | Nhận nuôi sau 4,3 s, SUCCESS, đủ 90/90 dòng, không dòng nào hai lần |
 | Build đang chạy, mất điện máy chủ | Nhận nuôi sau 49,5 s, SUCCESS, đủ 90/90 dòng, build vẫn xong đúng giờ |
+| Mất điện máy chạy primary của kho (PostgreSQL HA, ADR-080) | 271 lần ghi đã trả 200, không mất lần nào; số build giữ nguyên; sửa bị từ chối (503) 26 s; UI 148/149 |
+| Nâng cấp cuốn chiếu controller (netci22 → netci23) | 68 s; UI 286/286; 270 lần tạo job đều có trên cả hai replica; mỗi replica khởi động lại làm hỏng 1 POST (crumb CSRF) |
 
 **Giới hạn, nói thẳng:**
-- PostgreSQL của kho phải HA. Một lần nó nằm trên máy chết, nên việc sửa và nhận nuôi phải chờ khoảng 80 s.
+- Kho đã HA (3 instance CloudNativePG trên `local-path`, đồng bộ tới 1 standby, ADR-080), nhưng trong lúc nó
+  failover thì việc sửa bị từ chối khoảng 25 s. Đọc, UI và build đang chạy vẫn tiếp tục.
 - Chưa đồng bộ view, đổi tên và di chuyển item.
 - Một POST gửi từ trang do replica đã chết phục vụ sẽ hỏng crumb CSRF một lần; tải lại trang là được.
 - Fence trong lab là góc nhìn của Kubernetes. Một máy bị cô lập mạng mà vẫn sống thì phải có fence
@@ -1000,6 +1003,9 @@ Vì vậy chọn **mỗi replica một home riêng** trên đĩa của chính m�
 - Tên agent trong log là một ConsoleNote.
 - HAProxy giữ tunnel của agent tới máy chết suốt một giờ.
 - Kết nối có sẵn trong pool cứ rơi vào API server của máy chết.
+- Deadlock: một job tạo trên r1 giữ khoá của Jenkins rồi chờ khoá của homesync, trong khi follower giữ khoá
+  homesync và chờ khoá của Jenkins. Sửa bằng khoá theo từng item (ADR-080); lần chạy failover của kho phát
+  hiện ra, trước cả lúc cắt điện.
 
 
 ---
@@ -1121,7 +1127,7 @@ Cách tìm cũng giống nhau: dựng lại đúng điều kiện thật, đo, v
 
 # Bước 4 — Các quyết định kiến trúc (ADR, tiếng Anh)
 
-> **Tuần 3.** Mỗi ADR ghi một quyết định: bối cảnh, quyết định, bằng chứng, phương án bị loại. Thứ tự: 060 (quan trọng nhất), 063 (hàng đợi), 065 (netciOnce), 061 và 064 (fabric), rồi 066–072, mỗi cái một bài học cụ thể; cuối cùng 074 và 076–079: active-active, từ cái gì hỏng khi dùng chung một home tới nhận nuôi build đang chạy.
+> **Tuần 3.** Mỗi ADR ghi một quyết định: bối cảnh, quyết định, bằng chứng, phương án bị loại. Thứ tự: 060 (quan trọng nhất), 063 (hàng đợi), 065 (netciOnce), 061 và 064 (fabric), rồi 066–072, mỗi cái một bài học cụ thể; cuối cùng 074 và 076–080: active-active, từ cái gì hỏng khi dùng chung một home tới nhận nuôi build đang chạy và kho HA.
 
 ## ADR-060: Jenkins cells, a global queue outside Jenkins, and fenced takeover
 
@@ -2897,7 +2903,7 @@ console note) matched nothing; adoption waited on the job's lease, which had mov
 other; HAProxy kept an agent's tunnel to a dead machine open for an hour; the fence's pooled
 connection kept landing on the dead API server; an agent was sent home from a build just adopted
 for it. Once, the lab's PostgreSQL was on the lost machine: the store answered 503 for ~80 s and
-adoption waited for it -- the store must be HA.
+adoption waited for it -- the store must be HA (done since, ADR-080).
 
 ### What it costs, said plainly
 
@@ -2918,6 +2924,120 @@ adoption waited for it -- the store must be HA.
 - **Resuming on every replica and letting one win**: the losers would have run controller-side
   steps already.
 - **Calling `onResume()` after loading the run**: a second resumption; it failed the build by hand.
+
+## ADR-080: The store made HA; a rolling upgrade measured; a deadlock the failover run found
+
+- Status: accepted; measured in the lab (below)
+- Date: 2026-10-14
+- Refines: ADR-076, ADR-079
+
+### Context
+
+The active-active replicas (ADR-076..079) keep their homes the same through netci-homesync, and
+netci-homesync was one PostgreSQL on a Longhorn volume. That was the last single machine whose
+loss stopped edits. It had already happened:
+- the lab's PostgreSQL was on the machine lost in ADR-079's run, and the store answered 503 for ~80 s;
+- after the host restarted on 2026-10-14, every Longhorn volume came back faulted, and the store was
+  down for ~10 minutes until Longhorn salvaged them.
+
+The site mostly runs local-path, and so do the homes.
+
+### Decision
+
+1. **The store is three CloudNativePG instances, one per machine, each on its own machine's disk**
+   (`local-path`). PostgreSQL replicates itself, as the homes are replicated through it. There is no
+   shared volume, so no volume can come back faulted for all of them at once.
+2. **Synchronous to ANY 1 of the two standbys, durability required.** A write is acknowledged only
+   once a standby has it, so the standby promoted after the primary's death has every acknowledged
+   write: a version compared-and-set, a build number reserved.
+   - With one machine down, a standby remains and writes go on.
+   - With two down, writes stop: the store refuses rather than forgets.
+3. **The operator decides failover, so there are two of it, on two machines** (leader election,
+   tolerations of 10 s for a dead node). One operator pod on the dead machine would have waited ~5
+   minutes to be evicted before anyone promoted a standby.
+4. **netci-homesync notices a dead peer in 10 s** (keepalives after 3 s, `TCP_USER_TIMEOUT` 10 s).
+   pgx keeps the kernel's defaults, which retransmit for ~15 minutes. Under them, every pooled
+   connection to the dead primary cost a request the plugin's 10 s timeout, and the LISTEN
+   connection waited forever. It connects with `target_session_attrs=read-write`, so a connection
+   never settles on an instance that is still a standby, or one again.
+5. **Applying and publishing are ordered per item, not under one lock** (the plugin; see "Found").
+   A publish can run inside Jenkins' locks. It waits for its item at most 10 s; after that it is
+   deferred to the lease thread and redone from the home's content, read under the item's lock.
+
+`lab/aa/store.sh install` sets this up:
+- applies the operator release by checksum, with its image by digest;
+- applies `lab/aa/store.yaml`, with PostgreSQL 16.15 copied into Harbor because the nodes could not
+  finish pulling it from ghcr.io;
+- copies the data with homesync stopped, checking the row counts on both sides;
+- points homesync at the new store.
+
+### Found: a deadlock, before anything was killed
+
+The first failover run (`aa-phase6-store-20261014T023528Z.json`) went like this:
+- r1 stopped taking changes 6 s *before* the power-off, and never recovered.
+- r1's thread dump showed the cause:
+  - A job created on r1 held Jenkins' item-group lock and, publishing from `onCreated`, waited for
+    homesync's single lock.
+  - The follower held that lock while applying a job r0 had created, and waited for the item-group
+    lock.
+- From then on, every edit on r1 queued behind the two.
+
+Nothing about failover is needed: two replicas creating jobs at once can hit it. Phase 3's
+concurrent edits changed existing jobs; they never created any.
+
+Two tests now cover it:
+- The lab's interleaving, forced through the fake store. It fails on the old code with "the create
+  here never finished".
+- A contended publish, deferred within its bound and done later. Writing it caught the deferred
+  publish reading the home before taking the item's lock, which undid an applied change in the store.
+
+### Measured (the lab, controller netci23, homesync 3e9469e)
+
+**The store's primary machine powered off** (`lab/aa/phase6_store_probe.py`,
+`aa-phase6-store-20261014T035606Z.json`). netci-lab-1 ran the primary, one homesync, one HAProxy and
+jenkins-1. Each replica created a job every second; the UI was polled every second.
+
+| | |
+|---|---|
+| Acknowledged creates | 271, every one present on both replicas afterwards |
+| Build numbers reserved before | all on the promoted primary |
+| Edits refused (503, fail closed) | from the power-off to 26 s; accepted again from 26-27 s |
+| Failover | "Failing over" at 4.7 s, store-2 primary at 24.2 s, healthy at 71 s |
+| UI | 148 of 149 polls answered (the one at the power-off failed) |
+| The machine back | store-1 rejoined as a synchronous standby by itself |
+
+**A rolling upgrade** (`lab/aa/phase6_upgrade_probe.py`, `aa-phase6-upgrade-20261014T035213Z.json`).
+The controller image went from netci22 to netci23: jenkins-1 restarted, then jenkins-0, with
+`minReadySeconds: 30` between them. It took 68 s, with the same writers and the UI polled twice a
+second.
+
+| | |
+|---|---|
+| UI | 286 of 286 polls answered |
+| Creates | 270 accepted, every one present on both replicas |
+| Refused | one POST per restarted replica: 403, a CSRF crumb from the replica that restarted (the probe fetches a new crumb and goes on) |
+
+One more create timed out 15 s *before* the upgrade began: r1 was still in the deadlock above from
+netci22, which the upgrade replaced.
+
+### What it costs, said plainly
+
+- **Edits are refused for ~25 s when the store's primary dies.** Most of that is CloudNativePG
+  between noticing (4.7 s) and promoting (24.2 s). Reads, the UI and running builds go on: a build
+  needs the store only to start (its number) and to be adopted.
+- The 403 after a replica's restart is Jenkins' CSRF crumb, bound to the replica's session. A
+  person's browser fetches a new one when the page reloads; a script must retry once.
+- Three PostgreSQL instances cost ~150 MB of memory each in the lab, plus two operator pods.
+- A publish deferred because its item was being applied is done within 5 s by the lease thread.
+  Until then the other replicas lack that change; it is logged as such.
+
+### Rejected
+
+- **PostgreSQL on Longhorn with one instance**, as before: one volume, and it came back faulted.
+- **Patroni with etcd**: a second consensus system to run beside Kubernetes'. The operator uses the
+  API server's leases.
+- **Asynchronous replication**: a failover could forget a reserved build number or an accepted
+  version, and the replicas would hand the same number to two builds.
 
 
 ---

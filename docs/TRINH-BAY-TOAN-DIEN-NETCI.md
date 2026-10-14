@@ -1021,9 +1021,12 @@ Vì vậy chọn **mỗi replica một home riêng** trên đĩa của chính m�
 | 40 lần sửa đồng thời trên 2 replica | 25 nhận, 15 bị từ chối có lý do, không mất lần nào, hai bên hội tụ |
 | Build đang chạy, giết pod chủ | Nhận nuôi sau 4,3 s, SUCCESS, đủ 90/90 dòng, không dòng nào hai lần |
 | Build đang chạy, mất điện máy chủ | Nhận nuôi sau 49,5 s, SUCCESS, đủ 90/90 dòng, build vẫn xong đúng giờ |
+| Mất điện máy chạy primary của kho (PostgreSQL HA, ADR-080) | 271 lần ghi đã trả 200, không mất lần nào; số build giữ nguyên; sửa bị từ chối (503) 26 s; UI 148/149 |
+| Nâng cấp cuốn chiếu controller (netci22 → netci23) | 68 s; UI 286/286; 270 lần tạo job đều có trên cả hai replica; mỗi replica khởi động lại làm hỏng 1 POST (crumb CSRF) |
 
 **Giới hạn, nói thẳng:**
-- PostgreSQL của kho phải HA. Một lần nó nằm trên máy chết, nên việc sửa và nhận nuôi phải chờ khoảng 80 s.
+- Kho đã HA (3 instance CloudNativePG trên `local-path`, đồng bộ tới 1 standby, ADR-080), nhưng trong lúc nó
+  failover thì việc sửa bị từ chối khoảng 25 s. Đọc, UI và build đang chạy vẫn tiếp tục.
 - Chưa đồng bộ view, đổi tên và di chuyển item.
 - Một POST gửi từ trang do replica đã chết phục vụ sẽ hỏng crumb CSRF một lần; tải lại trang là được.
 - Fence trong lab là góc nhìn của Kubernetes. Một máy bị cô lập mạng mà vẫn sống thì phải có fence
@@ -1038,6 +1041,9 @@ Vì vậy chọn **mỗi replica một home riêng** trên đĩa của chính m�
 - Tên agent trong log là một ConsoleNote.
 - HAProxy giữ tunnel của agent tới máy chết suốt một giờ.
 - Kết nối có sẵn trong pool cứ rơi vào API server của máy chết.
+- Deadlock: một job tạo trên r1 giữ khoá của Jenkins rồi chờ khoá của homesync, trong khi follower giữ khoá
+  homesync và chờ khoá của Jenkins. Sửa bằng khoá theo từng item (ADR-080); lần chạy failover của kho phát
+  hiện ra, trước cả lúc cắt điện.
 
 ## 12. Dựng lại từ đầu, theo đúng thứ tự
 

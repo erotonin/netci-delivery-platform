@@ -49,8 +49,10 @@ kube-vip VIP, 2 inbound agents with 2 executors each.
 | Build numbers used once; every build listed everywhere | One owner per job (a lease with an epoch); each number reserved in PostgreSQL before the build takes it; finished builds published and listed by `recognizeNumber` (ADR-078) | **Lab**: listed on the other replica in 104-229 ms; a cron job on both replicas built once a minute; owner killed, numbers continued (`aa-phase4-20261013T161858Z.json`) |
 | "Build now" on any replica | Made on the job's owner by the replica that got it, for the same person | **Lab**: 201, built once, on the owner |
 | A running build survives its replica's death | Copied every 3 s while it runs; adopted where its agent is, once the fence says its runner is gone, claimed by compare-and-set; loading it resumes it; a returning replica sets its own unfinished builds aside (ADR-079) | **Lab**: pod killed, adopted in 4.3 s; machine lost, in 49.5 s; both SUCCESS, 90 of 90 ticks, none twice, not resumed again by the replica that came back (`aa-phase5-20261013T192242Z.json`) |
+| Edits survive the store's machine | netci-homesync's PostgreSQL as three CloudNativePG instances on `local-path`, synchronous to one standby; homesync drops a dead connection in 10 s (ADR-080) | **Lab**: the primary's machine powered off during a create a second on each replica: 271 acknowledged, none missing on either, numbers kept; edits refused (503) for 26 s, UI 148 of 149 polls (`aa-phase6-store-20261014T035606Z.json`) |
+| A rolling upgrade without downtime | One replica at a time, `minReadySeconds` between | **Lab**: netci22 to netci23 in 68 s: UI 286 of 286 polls, 270 creates accepted and on both; one 403 (CSRF crumb) per restarted replica (`aa-phase6-upgrade-20261014T035213Z.json`) |
 | No CloudBees limit kept | Agents keep several executors; Pipeline resumes; REST answers from any replica | Agents ran with 2 executors each. Freestyle is not covered (the site has none) |
-| Not done, said plainly | The store's PostgreSQL must be HA (a single one on the lost machine left adoption and edits waiting ~80 s once); views, renames and moves of items are not replicated; a POST from a page served by the dead replica fails its CSRF crumb once; the fence is Kubernetes' view, not a power fence | -- |
+| Not done, said plainly | Edits are refused for ~25 s while the store fails over; views, renames and moves of items are not replicated; a POST from a page served by the dead replica fails its CSRF crumb once; the fence is Kubernetes' view, not a power fence | -- |
 
 ## Builds on the agent fabric
 
@@ -105,6 +107,7 @@ deploy/helm/netci/ci/test-rules.sh   # promtool checks and unit tests of the ale
 - [ADR-077 — a sign-in that survives its replica](decisions/ADR-077-a-sign-in-that-survives-its-replica.md)
 - [ADR-078 — one owner per job, numbers reserved in order](decisions/ADR-078-one-owner-per-job-numbers-reserved-in-order.md)
 - [ADR-079 — adopting a running build](decisions/ADR-079-adopting-a-running-build.md)
+- [ADR-080 — the store made HA; a rolling upgrade; a deadlock](decisions/ADR-080-the-store-made-ha.md)
 
 Installing it: [docs/INSTALL.md](INSTALL.md) (prerequisites, images, both charts, the
 checks before anyone depends on it). Operating it: [the runbook](RUNBOOK.md) (every alert,

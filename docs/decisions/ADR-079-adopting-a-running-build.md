@@ -65,7 +65,7 @@ console note) matched nothing; adoption waited on the job's lease, which had mov
 other; HAProxy kept an agent's tunnel to a dead machine open for an hour; the fence's pooled
 connection kept landing on the dead API server; an agent was sent home from a build just adopted
 for it. Once, the lab's PostgreSQL was on the lost machine: the store answered 503 for ~80 s and
-adoption waited for it -- the store must be HA.
+adoption waited for it -- the store must be HA (done since, ADR-080).
 
 ## What it costs, said plainly
 
