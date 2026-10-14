@@ -52,8 +52,14 @@ kube-vip VIP, 2 inbound agents with 2 executors each.
 | Edits survive the store's machine | netci-homesync's PostgreSQL as three CloudNativePG instances on `local-path`, synchronous to one standby, the feed in commit order (ADR-080) | **Lab**: the primary's machine powered off under a create a second on each replica: 268 acknowledged, none missing on either, numbers kept; edits refused (503) for 28 s; a standby's machine lost: no edit refused (`aa-phase6-store-20261014T045629Z.json`, `...043239Z.json`) |
 | Faults one after another under load | A soak: jenkins pod and machine, store pod and machine, homesync pod, the VIP's HAProxy, each in the middle of a 90 s build (ADR-080) | **Lab**: 11 of 11 builds SUCCESS, every tick once, each done 83-85 s after its fault; 3235 acknowledged creates on both replicas; UI 1742 of 1750 polls (`aa-phase6-soak-20261014T073506Z.json` and two more) |
 | A rolling upgrade without downtime | One replica at a time; each drains first (its readiness answers 503, the balancer moves everyone) | **Lab**: UI 306 of 306 polls, 303 creates on both; one 403 per restarted replica for a client holding a session crumb, none with an API token (`aa-phase6-upgrade-20261014T083045Z.json`) |
+| A queued run runs once across replicas | netci-queue in front of the replicas: the run id reserved with the build number (unique), dispatch forwarded to the job's live owner, 503 while a replica catches up (ADR-081) | **Lab**: 17 of 17 queued runs SUCCESS, each once on both replicas, through a machine's loss (`aa-phase7-queue-*.json`) |
+| The IDP builds through the queue | The IDP's adapter submits to netci-queue with one entry point, retries a submit with the same key, never shows the callback token (ADR-082) | **Lab**: the generated job on both replicas in 0.16 s, the build submitted, read and cancelled by run id (`aa-idp-queue-20261014T105149Z.json`) |
+| The store is backed up and restored; its feed stays small | WAL archived and a base backup daily to S3 through the Barman Cloud plugin; superseded changes compacted (ADR-083, ADR-085) | **Lab**: restored from the backups in 211 s, every item and build number identical; a lagging follower re-bootstraps after compaction |
+| A partitioned machine never runs a build twice | The supervisor powers off a labelled lost node (Nova at the site, Redfish in the lab) before the out-of-service taint; replicas adopt only on that taint (ADR-084) | **Lab**: a cable pulled under a build: adopted 57.8 s after, 6 s after the machine was confirmed off; SUCCESS, every tick once (`aa-phase8-partition-20261014T171635Z.json`) |
+| One chart installs it | `deploy/helm/netci-jenkins-ha`: replicas, homesync, balancer, VIP (kube-vip or Octavia), store, queue; refuses a tag without digest (ADR-085) | **Lab**: the running lab adopted and upgraded by the chart under load, UI 219 of 219, creates 220 of 220 (`aa-phase6-upgrade-20261014T175148Z.json`) |
+| A form works on every replica | The CSRF crumb bound to the shared sign-in, not to one JVM's session (ADR-086) | **Lab**: a rolling restart, two people signed in through the form: 239 creates, none refused, one crumb answered by both replicas (`aa-phase6-upgrade-20261014T193437Z.json`) |
 | No CloudBees limit kept | Agents keep several executors; Pipeline resumes; REST answers from any replica | Agents ran with 2 executors each. Freestyle is not covered (the site has none) |
-| Not done, said plainly | Edits are refused for ~25 s while the store's primary fails over; views, renames and moves of items are not replicated; a POST from a page served by the dead replica fails its CSRF crumb once; the fence is Kubernetes' view, not a power fence | -- |
+| Not done, said plainly | Edits are refused for 28-45 s while the store's primary fails over (longer when the Barman Cloud plugin's leader died with it, ADR-085); views, renames and moves of items are not replicated; a script that signs in with a password keeps Jenkins' own session-bound crumb (an API token needs none, ADR-086); Nova fencing, Octavia and kube-vip with allowed-address-pairs are tested against fakes or not at all, never against a real OpenStack | -- |
 
 ## Builds on the agent fabric
 
@@ -109,6 +115,15 @@ deploy/helm/netci/ci/test-rules.sh   # promtool checks and unit tests of the ale
 - [ADR-078 — one owner per job, numbers reserved in order](decisions/ADR-078-one-owner-per-job-numbers-reserved-in-order.md)
 - [ADR-079 — adopting a running build](decisions/ADR-079-adopting-a-running-build.md)
 - [ADR-080 — the store made HA; a rolling upgrade; a deadlock](decisions/ADR-080-the-store-made-ha.md)
+- [ADR-081 — a queued run runs once across replicas](decisions/ADR-081-a-queued-run-runs-once-across-replicas.md)
+- [ADR-082 — the IDP submits builds through netci-queue](decisions/ADR-082-the-idp-submits-builds-through-netci-queue.md)
+- [ADR-083 — the store in production: backups and compaction](decisions/ADR-083-the-store-in-production-backups-and-compaction.md)
+- [ADR-084 — fencing active-active replicas by power](decisions/ADR-084-fencing-active-active-replicas-by-power.md)
+- [ADR-085 — installed by one chart; backups through the Barman Cloud plugin](decisions/ADR-085-active-active-jenkins-installed-by-one-chart.md)
+- [ADR-086 — a CSRF crumb every replica accepts](decisions/ADR-086-a-crumb-every-replica-accepts.md)
+
+Deploying it at a site: [docs/JENKINS-HA-PRODUCTION.md](JENKINS-HA-PRODUCTION.md) (Vietnamese: prerequisites,
+operators, Secrets, the chart, VIP, Nova fencing, agents, the IDP, checks, operations).
 
 Installing it: [docs/INSTALL.md](INSTALL.md) (prerequisites, images, both charts, the
 checks before anyone depends on it). Operating it: [the runbook](RUNBOOK.md) (every alert,

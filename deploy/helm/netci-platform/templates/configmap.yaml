@@ -52,6 +52,13 @@ data:
   {{- $ids := list }}
   {{- range .Values.jenkins.controllers }}{{ $ids = append $ids (required "every jenkins.controllers entry needs an id" .id) }}{{ end }}
   NETCI_JENKINS_CONTROLLERS: {{ join "," $ids | quote }}
+  {{- with .Values.jenkins.runQueueUrl }}
+  {{- if ne (len $ids) 1 }}
+  {{- fail "jenkins.runQueueUrl: netci-queue fronts one active-active Jenkins, so jenkins.controllers must be exactly one entry (its VIP)" }}
+  {{- end }}
+  NETCI_RUN_QUEUE_URL: {{ . | trimSuffix "/" | quote }}
+  NETCI_RUN_QUEUE_TOKEN_FILE: /run/secrets/netci-app/run-queue-token
+  {{- end }}
   NETCI_ADMISSION_MAX_JENKINS_QUEUE: {{ .Values.jenkins.admissionMaxQueue | default 2 | quote }}
   NETCI_ALLOWED_AGENT_LABELS: {{ .Values.jenkins.allowedAgentLabels | default "" | quote }}
   NETCI_RECONCILE_RUN_TIMEOUT_SECONDS: {{ .Values.jenkins.reconcileRunTimeoutSeconds | default 3600 | quote }}

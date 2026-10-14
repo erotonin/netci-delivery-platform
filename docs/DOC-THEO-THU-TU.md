@@ -1134,7 +1134,7 @@ Cách tìm cũng giống nhau: dựng lại đúng điều kiện thật, đo, v
 
 # Bước 4 — Các quyết định kiến trúc (ADR, tiếng Anh)
 
-> **Tuần 3.** Mỗi ADR ghi một quyết định: bối cảnh, quyết định, bằng chứng, phương án bị loại. Thứ tự: 060 (quan trọng nhất), 063 (hàng đợi), 065 (netciOnce), 061 và 064 (fabric), rồi 066–072, mỗi cái một bài học cụ thể; cuối cùng 074 và 076–080: active-active, từ cái gì hỏng khi dùng chung một home tới nhận nuôi build đang chạy và kho HA.
+> **Tuần 3.** Mỗi ADR ghi một quyết định: bối cảnh, quyết định, bằng chứng, phương án bị loại. Thứ tự: 060 (quan trọng nhất), 063 (hàng đợi), 065 (netciOnce), 061 và 064 (fabric), rồi 066–072, mỗi cái một bài học cụ thể; rồi 074 và 076–080: active-active, từ cái gì hỏng khi dùng chung một home tới nhận nuôi build đang chạy và kho HA; cuối cùng 081–086: đưa lên production (hàng đợi, IDP, backup, fence bằng Nova, một chart, crumb).
 
 ## ADR-060: Jenkins cells, a global queue outside Jenkins, and fenced takeover
 
@@ -3175,6 +3175,574 @@ by a replica just back; the probe now asks again).
   API server's leases.
 - **Asynchronous replication**: a failover could forget a reserved build number or an accepted
   version, and the replicas would hand the same number to two builds.
+
+## ADR-081: A run from netci-queue runs once across active-active replicas
+
+- Status: accepted; unit- and store-tested, measured in the lab (below)
+- Date: 2026-10-14
+- Refines: ADR-063 (the durable run queue), ADR-078, ADR-079
+
+### Context
+
+The IDP is to submit builds through netci-queue (ADR-063, ADR-073), not to a Jenkins directly.
+netci-queue dispatches a run to a controller's plugin (`/netci/dispatch`), follows it
+(`/netci/run`), and decides from the answers. It was built for cells, one controller per cell, and
+it reads three answers as final:
+- a **409** means the run is refused for good;
+- **absent** for a started run means it finished (result unknown);
+- a **new controller session** with the run absent means the run was lost with that controller's
+  queue, so it is dispatched again.
+
+In front of active-active replicas these calls go through the VIP and land on either replica. Read
+from the code, before any lab run, each of the three goes wrong without a fault:
+- A dispatch on the replica that does not own the job is refused by Jenkins' queue (only the owner
+  schedules, ADR-078). The plugin answered 409, so the run was refused for good.
+- A lookup on that replica does not see a build running on the owner. It answered absent, so the
+  run was marked finished while it ran.
+- The worst case, when the owner dies with the run's build on it:
+  1. the lease moves to the other replica;
+  2. netci-queue sees a new session and dispatches again;
+  3. the new owner has nothing yet (the build waits for adoption), and schedules a second build;
+  4. the adoption resumes the first build, so the run runs twice.
+
+### Decision
+
+1. **Each call goes to the job's live owner** when that is another replica. The receiving replica
+   makes the same call there with the caller's API token (users are replicated; API tokens need no
+   CSRF crumb), marks it routed so it is never forwarded twice, and relays the owner's answer.
+2. **The store records which build number a run was given.** The reservation made before a build
+   takes its number (ADR-078) carries the run id.
+   - A unique index refuses a run a second number, on any replica and for any job.
+   - The item that asked for it is cancelled (by id: canRun's item is not the object the queue
+     holds).
+   - This is the guard that holds when everything else races.
+3. **A replica that does not hold a run asks the store**, outside Jenkins' queue lock:
+   - a number with a running copy, or with a finished build not yet listed here, is answered
+     **started, building**;
+   - a number and nothing else is answered **starting**, unless its replica is gone: this replica
+     itself having restarted, or the fence saying so. Then the number is let go (the number stays
+     used) and the run may be scheduled once more.
+   - This replica never guesses a result.
+4. **With replicas, a passing refusal is a 503, never a 409**: another replica owns the job, or the
+   store cannot be reached. netci-queue retries a 503.
+
+### Tests
+
+Store (PostgreSQL):
+- a run gets one number across replicas and jobs, and is told where it went;
+- 20 rounds of two replicas reserving one run at once give exactly one winner. This fails without
+  the unique index mapping;
+- release, lookup and authentication over HTTP.
+
+Plugin (fake store and fake owner):
+- dispatch and lookup forwarded to the owner;
+- a run with a build running elsewhere is reported started and never scheduled. With the store
+  lookup disabled it was queued again (`"state":"queued","created":true`);
+- a number this replica gave before restarting runs once, and the next number is used;
+- a second item for a numbered run is cancelled;
+- with the store down, 503 for both calls.
+
+### Lab (`lab/aa/phase7_queue_probe.py`)
+
+netci-queue in front of the replicas (`lab/aa/queue.sh`: two instances, its database on the HA
+store, Jenkins reached through the machine-local balancer).
+
+**First run, on netci26** (`aa-phase7-queue-20261014T095524Z.json`). The owner's machine (with the
+store's primary) was powered off under `long`:
+- `long` was SUCCESS, every tick once;
+- six runs submitted while the machine was off were all SUCCESS, with one build each on both
+  replicas;
+- but 5 of 10 runs submitted as the machine came back were **refused for good**. The restarted
+  replica, not yet caught up with the store, answered 409 like a lone Jenkins. Fixed in netci27:
+  503 until caught up, and kept out of the balancer until then.
+
+**On netci27** (`aa-phase7-queue-20261014T103155Z.json`): **17 of 17 runs SUCCESS, each with
+exactly one build on each replica**:
+- 10 steady;
+- `long` with its owner's machine powered off at tick 10, every tick once;
+- 6 runs submitted while the machine was off;
+- `long`'s key submitted again: the same run.
+
+While the store's primary failed over, the queue answered no submission (not ready). A client
+retries with the same key, as the IDP's adapter does (ADR-082).
+
+### What it costs, said plainly
+
+- A dispatch or lookup on the non-owner costs one more hop.
+- A replica that cannot reach the owner answers 503, and netci-queue retries until the lease moves
+  (15 s).
+- The fence decides "its replica is gone". Without one (the lab's tests), a number reserved by a
+  dead replica that never started its build waits for that replica to come back.
+- netci-queue still treats a new session as a lost queue. With replicas that is safe now (a
+  dispatch again finds the run, or the store refuses a second number), but it costs re-dispatches
+  when calls alternate between replicas.
+
+### Rejected
+
+- **Pointing netci-queue at one replica.** That replica would be the single point of failure the
+  VIP removes.
+- **Making netci-queue replica-aware** (two URLs, one session per replica). It would put homesync's
+  ownership rules in a second program, while the plugin already knows them.
+
+## ADR-082: The IDP submits its builds through netci-queue
+
+- Status: accepted; unit-tested, lab smoke below
+- Date: 2026-10-14
+- Refines: ADR-063, ADR-073, ADR-081
+
+### Context
+
+The IDP triggered builds with `buildWithParameters` on a Jenkins it chose, and followed them by
+Jenkins queue item and build number. Every Jenkins HA guarantee measured in the lab (ADR-060..081)
+is for runs that come through netci-queue. A build the IDP triggered directly could be lost, because
+Jenkins' queue is in memory: the lab lost exactly that kind of trigger.
+
+Three behaviours of the launcher do not survive replicas or a durable queue:
+- **Falling through to the next controller.** When a trigger failed, the launcher tried the next
+  controller. If the first one had accepted the build and only its answer was lost, the run was
+  built twice.
+- **Queue item ids.** They belong to one replica, and so does `/stop` on a build. Behind the VIP,
+  both land on either replica.
+- **A new callback token on every launch.** A retried launch looked like a different run to an
+  idempotent intake.
+
+### Decision
+
+1. With `NETCI_RUN_QUEUE_URL` (and its client token) set, the Jenkins adapter is
+   `JenkinsQueueAdapter`.
+   - A build is a `POST /v1/runs` keyed by the IDP's pipeline run id, carrying the same parameters
+     as before (`_ci_parameters`, shared with the direct adapter).
+   - It is read (`GET /v1/runs/{id}`) and cancelled (`POST /v1/runs/{id}/cancel`) by that run id.
+   - The job is still created through Jenkins at the one entry point, where it is replicated
+     (ADR-076). The log is read there too.
+2. **One entry point only.** With a queue, `NETCI_JENKINS_CONTROLLERS` must name exactly one
+   controller: the queue routes builds, not netCI. Startup is refused otherwise.
+3. **A submission is retried with the same key while the queue is unavailable** (503 or no answer;
+   its database failing over took ~30 s in the lab), for up to `NETCI_RUN_QUEUE_SUBMIT_RETRY_SECONDS`
+   (120 s). Any other refusal fails the launch at once. Accepted means durable.
+4. **The callback token is a secret parameter of the queue** (`secretParameters`).
+   - The queue keeps it, because the run is dispatched from what was stored.
+   - It never shows it back.
+   - It is left out of what makes a retry the same run: a retry carries a newly minted token, and
+     the run keeps its first one.
+5. **Statuses map to the IDP's existing vocabulary.**
+   - accepted and dispatched: queued; started: running;
+   - finished by result: SUCCESS succeeded, FAILURE or UNSTABLE failed, ABORTED cancelled;
+   - cancelled: cancelled; refused: failed;
+   - a result the queue could not learn: unknown, which the IDP does not act on.
+   - Runs with ids from before the queue are still read from Jenkins.
+
+### Tests
+
+`backend/tests/test_jenkins_queue_adapter.py`, against a real HTTP fake of the intake:
+- one run per pipeline run, retried, with a newly minted token;
+- the queue unavailable for three submissions, waited for with the same key;
+- a 403 not retried, a queue down past the bound failing the launch, no answer at all;
+- every state and result mapped;
+- the log read through Jenkins under a folder, empty before the build exists;
+- cancel by run id;
+- an old run id read from Jenkins;
+- the token required, one entry point required;
+- no error carries the callback token.
+
+The full gate: `pytest backend/tests tests/contract` 62 + 1507 passed, `pyflakes` clean,
+`schema.sql` matches 35 migrations.
+
+### Lab smoke (`lab/aa/idp_queue_smoke.py`, `aa-idp-queue-20261014T105149Z.json`)
+
+The IDP's own adapter, against the replicas behind the VIP and netci-queue on the HA store
+(controller netci28):
+- the job the IDP generates was on both replicas 0.16 s after its creation;
+- the build was submitted with every IDP parameter and read by run id (queued, then failed), and
+  submitted again with a new token it was the same run;
+- its 23 log lines were read through the VIP;
+- the queue's answers never held the token;
+- a second build was cancelled through the queue.
+
+The build failed where it had to: `Could not find any definition of libraries
+[netci-shared-library]`. The lab's replicas have no netCI shared library, so this proves the path,
+not the pipeline. The rolling upgrade to netci28 under load answered 358 of 358 UI polls.
+
+### What it costs, said plainly
+
+- The IDP's admission budget (ADR-050) still counts the queue of the one Jenkins it reaches. With
+  replicas that is one replica's queue. The queue's own budget per cell (ADR-063) is what bounds
+  Jenkins now.
+- The log of a build is read through the entry point. A replica that does not have the build sends
+  the request to the one that does (owner routing, ADR-078). During a cell's takeover there is no
+  log until it is back, except in Loki (ADR-068).
+
+## ADR-083: The store in production: backups that are restored, a feed that is compacted
+
+- Status: accepted; measured in the lab (below)
+- Date: 2026-10-14
+- Refines: ADR-076, ADR-080
+
+### Context
+
+The HA store (ADR-080) survives the loss of a machine, but two things would still have stopped it
+in production:
+- **No backups.** Replication copies a mistake to every instance at once: a job deleted by hand,
+  or a bad migration. Nothing outside the cluster held the data.
+- **No end to the feed.** `home_changes` keeps one row per change. A running build's copy is
+  published every 3 s, so each build leaves dozens of rows, and a day of lab tests left 18,000.
+  Nothing removed any.
+
+### Decision
+
+1. **Backups to S3-compatible storage**: Ceph RGW or MinIO at the site, the lab's SeaweedFS behind
+   its CA.
+   - WAL is archived continuously, and a base backup is taken daily (`ScheduledBackup`), kept 7 days.
+   - CloudNativePG 1.30 still has the in-tree `barmanObjectStore`, deprecated and **removed in
+     1.31.0**. The production chart uses the Barman Cloud plugin, which needs cert-manager; the
+     settings carry over unchanged.
+2. **A backup is only one when it has been restored.** `lab/aa/store.sh restore-test` recovers a
+   new one-instance cluster from the object store and compares its rows with the store's. Run it
+   after every change to backups, and on a schedule at the site.
+3. **The feed is compacted, like a log.** Among changes older than a bound
+   (`NETCI_HOMESYNC_COMPACT_AFTER`, 24 h), compaction deletes:
+   - each change a later change of the same path has superseded;
+   - everything of a running build's copy whose build has ended, its tombstone included.
+
+   The latest change of every other path stays, so a replica reading from the start still learns
+   every item, deletions included. Compaction takes the feed lock (ADR-080), so it decides on a
+   prefix. Every homesync instance runs it hourly, taking turns on that lock.
+4. **A replica behind the compaction reads everything again.** The feed's answer carries
+   `compactedThrough`, the highest seq deleted.
+   - A follower below it bootstraps again instead of going on: going on could apply a child before
+     its parent, or never publish what only it has.
+   - An edit catching up below it is refused until then.
+
+### Measured / tested
+
+- **Backup and restore** (lab, CloudNativePG 1.30.1, SeaweedFS):
+  - continuous archiving and a base backup ran;
+  - a cluster recovered from them in 384 s held 18,398 items and 126 build-number reservations,
+    the same as the store.
+  - On the way: the lab's key files end in a newline, which went into the S3 signature ("Invalid
+    header value"), and the lab's S3 identity may write to one bucket only (AccessDenied). The keys
+    are trimmed, and the backups use a prefix of that bucket.
+- **Compaction** (Go, PostgreSQL): superseded old changes and an ended build's copy are deleted,
+  recent ones kept, the feed afterwards is `a@3 b@1 c@1 c@2`, the mark is set, and a second pass
+  deletes nothing.
+- **Catch-up** (plugin): a home behind the compaction reads everything again. A job made while the
+  store was down got published. With the re-bootstrap disabled it never was.
+
+### What it costs, said plainly
+
+- A replica down for longer than the compaction bound comes back by a full bootstrap, which it
+  does on any start anyway.
+- Backups need object storage that is outside the cluster's failure domain, and credentials for it
+  in the cluster (a Secret). Restores are 6 minutes for this size in the lab.
+- Finished builds' archives (`@builds/`) stay in the store until Jenkins deletes the build. Give
+  every job a build discarder; the IDP's generated jobs carry one.
+
+## ADR-084: Active-active replicas are fenced by power, on OpenStack through Nova
+
+- Status: accepted; unit-tested, measured in the lab (below)
+- Date: 2026-10-14
+- Refines: ADR-060 (the supervisor fences cells), ADR-079 (adoption needs the runner gone)
+
+### Context
+
+A replica adopts another's running build only once its fence says the runner is gone (ADR-079).
+The lab's fence read Kubernetes: a missing or deleted pod, or a node not Ready, meant gone. That
+holds for a machine that lost power. It does not hold for one cut off from the network, which keeps
+running its pod while the API shows the node NotReady and, later, the pod deleted. Adopting then
+runs the build twice. The cells never had this problem: the supervisor powers a cell's machine off
+and confirms it off before anything takes over. The replicas had no cell Lease for it to act on.
+
+At the site the controllers are OpenStack VMs, and the owner answered that the cluster may hold an
+application credential allowed to stop and start them.
+
+### Decision
+
+1. **A Nova fencer** (`internal/fence/nova.go`):
+   - Keystone application-credential login, token reused until a minute before it expires;
+   - the compute endpoint from the catalog (interface, region);
+   - stop and start by `os-stop` / `os-start`.
+   - Off is only SHUTOFF with power state SHUTDOWN and no task in progress. Anything else is
+     Unknown, which never counts as off.
+   - Keystone's 401 is a refusal. Nova's 401 means log in again. Nova's 409 means busy, so ask again.
+   - The secret is never in an error.
+   - Configured per node in the fence config:
+     `{"nova": {"authURL", "region", "server", "credentials"}}`.
+   - The controllers' image should carry `os_shutdown_timeout=0`, so that the stop is immediate.
+2. **The supervisor fences a lost node that has no cell** when the node is labelled
+   `netci.io/fence-on-loss=true` (`FenceLostNode`):
+   - the trigger is a kubelet silent for `NETCI_NODE_FENCE_AFTER` (45 s) and the node not Ready;
+   - the machine is powered off, or confirmed off, through `EnsureOff`, and only then the node gets
+     the out-of-service taint;
+   - the cells' guards apply: nothing is powered off while failures look shared, at most one
+     running machine per decision, an unreadable power state is an alert;
+   - `recovery()` removes the taint when the machine is back.
+3. **The replicas' fence has a strict mode**, `NETCI_ADOPT_FENCE=kubernetes-power`, for production.
+   A runner counts as gone only on proof that it cannot write:
+   - its node carries the out-of-service taint;
+   - or the kubelet of a node that is Ready reports the old process ended (container stopped, or a
+     newer one).
+
+   A missing or deleted pod and a NotReady node are not enough. `kubernetes` (lenient) stays for
+   the lab's quick runs.
+
+### Tests
+
+- Nova, against a fake Keystone and Nova:
+  - fenced end to end with one login;
+  - Off only when the hypervisor has stopped the server (five in-between states are Unknown);
+  - refusals vs retries;
+  - a server id that is a path refused;
+  - fence-config parsing, including two nodes on one server refused.
+- Supervisor:
+  - a labelled lost node is fenced, powered off or confirmed off;
+  - an unreadable state is an alert;
+  - not labelled, still Ready, silent briefly, or already fenced: left alone;
+  - two lost of three: nothing powered off;
+  - zero disables it.
+- Plugin (`FenceTest`):
+  - a partitioned machine is gone to the lenient fence and not to the strict one, until the taint;
+  - a reporting kubelet proves a new or ended process in both modes;
+  - a missing pod is gone only to the lenient fence.
+
+### Lab: a partition (`lab/aa/phase8_partition_probe.py`, `aa-phase8-partition-20261014T171635Z.json`)
+
+The setup:
+- the replicas on netci29 with `NETCI_ADOPT_FENCE=kubernetes-power`;
+- the supervisor on lost-node fencing, through the lab's Redfish emulator;
+- `long` on agent-0, owned by r0.
+
+At tick 10, r0's machine (netci-lab-2) lost its link (`virsh domif-setlink ... down`): the VM kept
+running, and its Jenkins with it. Seconds after the link went down:
+- 51.7: the node NotReady;
+- 51.6: the supervisor's out-of-service taint, put on after its power controller confirmed the
+  machine off (the probe, polling, saw the VM off at 54.0);
+- **57.8: jenkins-1 adopted the build, after the fence and not before**;
+- 81.9: the build ended SUCCESS, 90 of 90 ticks, none twice, resumed once.
+
+The lenient fence would have adopted at the NotReady with the old replica still running. Here it
+happened to come at the same second, which is why only the power-off may decide.
+
+### What it costs, said plainly
+
+- With the strict fence, a lost replica's builds are adopted after the supervisor's fence: 45 s of
+  silence, then the power-off and its confirmation. That is longer than the lenient fence's ~50 s
+  NotReady, but it is the one a partition cannot fool.
+- A VM whose hypervisor host died cannot be stopped by Nova, which keeps reporting its last state.
+  It stays unfenced, and its builds unadopted, until an operator forces the compute service down.
+  That is a stall, not a double run.
+- The application credential is a Secret in the cluster that can stop the controllers' VMs.
+  Restrict it to them (an application credential with access rules, or a project holding only
+  them).
+
+## ADR-085: Active-active Jenkins is installed by one chart; backups go through the Barman Cloud plugin
+
+- Status: accepted; the lab now runs from the chart (measured below)
+- Date: 2026-10-15
+- Refines: ADR-076..084
+
+### Context
+
+Until now the lab was a set of manifests applied by hand in order (`lab/aa/phase2.yaml`,
+`phase3.yaml` with digests substituted, `phase5.yaml`, `store.yaml`, `queue.yaml`), plus patches from
+`store.sh`. A site cannot install from that, and nothing checked that a change to one manifest still
+matched the others. The site's answers decide the variants: the VIP may come from Octavia or from
+kube-vip; backups go to S3-compatible storage (Ceph RGW or MinIO); cluster-scoped operators are
+allowed.
+
+The store's backups used CloudNativePG's in-tree `barmanObjectStore`. It is deprecated and is
+removed in 1.31, so a site that upgrades the operator loses its backups.
+
+### Decision
+
+1. **One chart, `deploy/helm/netci-jenkins-ha`**, renders everything the lab ran:
+   - the replicas;
+   - homesync;
+   - the balancer and its config;
+   - the VIP;
+   - the CNPG store and its backups;
+   - netci-queue;
+   - the fence's RBAC.
+
+   The names stay the lab's (`jenkins`, `homesync`, `haproxy`, `ui`, `store`, `queue`), because the
+   plugin's configuration and `haproxy.cfg` refer to them. Everything that depends on the number of
+   replicas is generated from `replicas`: replica URLs, cookies, `server` lines and agent homes.
+2. **It refuses rather than guesses:**
+   - every image must be pinned by digest;
+   - the store's image must also carry a tag, because CNPG reads the major version from it;
+   - an agent's home must be a replica that exists;
+   - every Secret the replicas need must be named;
+   - the fence must be one of `kubernetes` or `kubernetes-power`.
+
+   The chart creates no Secret. Each is named in values and made by the site.
+3. **VIP in two modes.**
+   - `kubevip`: an ARP VIP. On OpenStack the port needs allowed-address-pairs for that address.
+   - `loadBalancer`: a `LoadBalancer` Service with the site's annotations, which is Octavia through
+     cloud-provider-openstack.
+
+   Both use `externalTrafficPolicy: Local`, so the client's address reaches HAProxy and no hop goes
+   through another machine.
+4. **Backups through the Barman Cloud plugin** (`backup.mode: plugin`):
+   - an `ObjectStore` with the same S3 settings;
+   - the Cluster's `plugins` entry as WAL archiver;
+   - `method: plugin` on the ScheduledBackup.
+
+   `inTree` remains for a CNPG older than the plugin.
+5. **The plugin is on the store's failover path, so it runs like the operator:**
+   - two pods on two machines, with the release's leader election;
+   - the 10 s not-ready/unreachable tolerations;
+   - each pod uses its own machine's API server;
+   - the readiness check runs every 2 s instead of 10 s.
+
+   It is updated by Recreate, as the release ships it, because only the leader serves: a rolling
+   update would wait forever for the new pod to become Ready.
+
+### Measured in the lab
+
+- **The chart against the live lab.**
+  - `kubectl diff` of the render showed only labels, two pull secrets, and the homesync/queue image
+    meant to change.
+  - Helm then adopted the lab's 22 objects (`lab/aa/chart.sh adopt`) and applied the chart under
+    the upgrade probe (`aa-phase6-upgrade-20261014T175148Z.json`): 219 of 219 UI reads, 220 of 220
+    creates, none missing on either replica.
+- **Switching the live store to the plugin through the chart** (`aa-phase6-upgrade-20261014T175428Z.json`).
+  - The instances restarted one at a time with the plugin's sidecar, the primary last by
+    switchover.
+  - The UI answered 602 of 602 reads. Of 584 creates, 573 were accepted and none of those is missing.
+  - The 11 refused all fell in the ~11 s of the switchover: 503, or 403 from the crumb problem (below).
+- **Backup and restore through the plugin.** `store.sh backup` took a base backup.
+  `store.sh restore-test` recovered a new cluster from it in 211 s: 19,192 items and 127 build
+  numbers, identical to the store. The WAL it replayed was written partly in-tree, partly by the
+  plugin.
+- **The plugin found on the failover path.**
+  - With its one pod stopped, the operator reconciled nothing for the cluster ("cannot proceed to
+    reconciliation due to an error while interacting with plugins"). A deleted standby was not
+    recreated, and the deleted primary was not replaced for 189 s. Started again, there was a
+    primary 16 s later.
+  - The primary's machine powered off (`phase6_store_probe.py --kill primary`), nothing lost in any
+    run. Edits accepted again after:
+
+| Plugin | Edits accepted again after | Evidence |
+|---|---|---|
+| none (in-tree, ADR-080) | 27.7 s, 42.1 s | `aa-phase6-store-20261014T045629Z`, `…043727Z` |
+| two pods, leader on another machine | 38.7 s | `aa-phase6-store-20261014T182757Z` |
+| two pods, leader on the primary's machine, readiness every 10 s | 73.8 s | `aa-phase6-store-20261014T182323Z` |
+| the same, readiness every 2 s | 44.5 s | `aa-phase6-store-20261014T183829Z` |
+
+  With the leader on the primary's machine, the operator kept calling the dead pod through the
+  Service until the other pod took the lease (15 s) and passed its readiness check. Each row is one
+  run.
+
+### Rejected
+
+- **Keeping the in-tree backups.** Rejected because CNPG 1.31 removes them.
+- **A `pg_dump` CronJob instead of WAL archiving.** It needs no plugin, but it restores only to the
+  last dump. A day of build numbers and edits would be gone.
+- **One plugin pod.** That makes one machine's loss a store with no failover until Kubernetes moves
+  the pod (minutes).
+- **Each manifest kept beside the chart.** Rejected because two sources of one install drift apart.
+  The phase manifests stay as the record of how the lab was built; `lab/aa/chart.sh` is how it is
+  run now.
+
+### What it costs, said plainly
+
+- **cert-manager and the plugin are two more cluster-wide components.** While the plugin cannot be
+  reached, the store does not fail over.
+- **Placing the plugin away from the store.** Where the cluster has machines that run no store
+  instance, the plugin belongs there. Then no store machine's loss takes its leader with it.
+- **Upgrading the plugin** (Recreate) leaves a few seconds with no failover. Upgrade it when no
+  machine is being worked on.
+- **Crumbs on failover (ADR-077's open item).** A replica that refused an edit with 503 had HAProxy
+  retry it on the other replica, where a browser session's crumb was not valid: 403 instead of "try
+  again". Fixed in ADR-086 (controller netci31). Clients using an API token (the IDP, netci-queue)
+  send no crumb.
+
+## ADR-086: A CSRF crumb every replica accepts, bound to the shared sign-in
+
+- Status: accepted; unit-tested, measured in the lab (below)
+- Date: 2026-10-15
+- Refines: ADR-077 (a sign-in that survives its replica)
+
+### Context
+
+Jenkins binds a CSRF crumb to the user and to the HTTP session. A session belongs to one JVM.
+ADR-077 made the *sign-in* survive the replica, but not the crumb. So a form served by jenkins-0
+and posted to jenkins-1 was refused with 403 "No valid crumb", although the person was signed in
+on both. That happens in three cases:
+- HAProxy retries a 503 on the other replica;
+- the next click after jenkins-0 died;
+- each step of a rolling restart (3 refused creates in every upgrade probe so far).
+
+ADR-085 found it again on a store failover: a "try again" (503) became a "forbidden" (403).
+
+The salt is not the problem: it is the `jenkins.model.Jenkins.crumbSalt` secret, already the same on
+every replica. Only the session id differs.
+
+### Decision
+
+1. **Each shared sign-in has an id** (`sid`, 18 random bytes) inside the signed `NETCI_SESSION`
+   cookie:
+   - kept when the cookie is renewed, so a crumb in an open page stays valid;
+   - new at the next sign-in;
+   - gone at sign-out.
+2. **`SharedCrumbIssuer`** binds the crumb to user id + sid, under Jenkins' own salt. A request with
+   no shared sign-in gets Jenkins' own crumb, unchanged:
+   - an API token (which needs no crumb);
+   - a script sending its password, whose first crumb comes before any cookie.
+
+   Either form is accepted where it is valid. The bound form carries a prefix, so it can never equal
+   a Jenkins crumb for some session.
+3. **A POST that is the first request on a replica is checked against the cookie's sign-in.** The
+   filter that restores a sign-in from the cookie may run after Jenkins' CSRF filter. A cookie
+   naming a user other than the request's own binds nothing.
+4. **Installed at start-up over Jenkins' default issuer only**, when shared sign-ins are on. A
+   site's own choice is kept. JCasC can name it: `crumbIssuer: netciSharedSession`.
+5. **Read back from config.xml, it is made anew** (`readResolve`). XStream builds objects without
+   their constructor, and `DefaultCrumbIssuer`'s own `readResolve` is private, so it is not run for a
+   subclass. That left its digest null.
+
+### Why it is as safe as Jenkins' own
+
+A crumb defends against a page on another site making the browser post. Such a page cannot read
+the crumb or compute it:
+- the sid lives in an HttpOnly cookie, and the crumb salt is secret;
+- the cookie is signed, so a sid cannot be chosen;
+- signing in again, signing out, and "Invalidate sessions" (the user's seed) each end the sid.
+
+### Tests (`SharedCrumbTest`)
+
+1. **The main test.** A crumb served on one replica is accepted from a browser that has only the
+   shared cookie and no session. With Jenkins' default issuer this test fails with 403, the failure
+   seen in the lab.
+2. A crumb is refused when:
+   - it was served to alice and is posted as bob;
+   - it is missing, or made up;
+   - it belongs to the sign-in before a sign-out.
+3. A renewed cookie keeps its sid, and the open page's crumb still works.
+4. After a save and reload of the configuration, crumbs are still issued. This test fails without
+   `readResolve`.
+5. Only Jenkins' default issuer is replaced.
+
+The plugin's 80 tests pass; SpotBugs reports 0 bugs.
+
+### Lab (controller netci31)
+
+- **The first build of this, netci30, shipped the bug in decision 5.** After its rolling start both
+  replicas answered `"crumb": null`, and every form was refused. That is how it was found; netci31
+  fixes it.
+- **Rolling restart under load** (`aa-phase6-upgrade-20261014T193437Z.json`). Two people signed in
+  through the form, each creating a job every second with the crumb their page gave them:
+  - none of their 239 creates was refused;
+  - person r1 held one crumb for 149 creates, answered 60 times by r0 and 89 times by r1.
+- The two scripts that send a password were still refused twice (403). Their crumb came before any
+  shared sign-in, so it is Jenkins' own, bound to one JVM.
+- The UI answered 331 of 331 reads.
+
+### What it costs, said plainly
+
+- **Scripts that sign in with a password and keep a crumb** still get 403 after their replica
+  restarts. The answer is Jenkins' own advice: an API token, which needs no crumb.
+- **Removing the plugin** leaves config.xml naming a class that is gone. Jenkins then falls back to
+  no crumb issuer configured, so set the issuer again (or through JCasC) when removing the plugin.
 
 
 ---

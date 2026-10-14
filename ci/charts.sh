@@ -35,4 +35,17 @@ refuses "an agent homed on no replica" "must name a replica" "$H" -f "$H/ci/prod
 refuses "no session key Secret" "jenkins.sessionKeySecret" "$H" -f "$H/ci/production-values.yaml" --set jenkins.sessionKeySecret=
 refuses "kube-vip without an address" "balancer.vip.address" "$H" -f "$H/ci/production-values.yaml" --set balancer.vip.mode=kubevip --set images.kubeVip="r/kube-vip@${D}"
 refuses "a lenient fence by typo" "kubernetes-power" "$H" -f "$H/ci/production-values.yaml" --set jenkins.fence=power
+# The IDP's chart: it renders with the lab's values, and builds through netci-queue (ADR-082) need
+# exactly one controller and the queue's token.
+I="${ROOT}/deploy/helm/netci-platform"
+IV=(-f "$I/examples/values-lab-kind.yaml")
+ONE="$(mktemp)"; trap 'rm -f "$ONE"' EXIT
+printf 'jenkins:\n  controllers: [{id: A, url: "http://vip", username: netci}]\n  runQueueUrl: http://queue:8080\n' > "$ONE"
+Q=(-f "$ONE")
+helm template p "$I" "${IV[@]}" >/dev/null
+helm template p "$I" "${IV[@]}" "${Q[@]}" | grep -q NETCI_RUN_QUEUE_URL
+refuses "the queue with two controllers" "exactly one entry" "$I" "${IV[@]}" --set jenkins.runQueueUrl=http://queue:8080
+refuses "the queue without its token" "secrets.runQueueToken" "$I" "${IV[@]}" "${Q[@]}" --set existingSecret= \
+  --set secrets.databaseUrl=postgresql://x --set secrets.workloadTokenKeys=k1:0123456789abcdef0123456789abcdef \
+  --set secrets.cosignPublicKey=pub --set secrets.jenkinsApiTokens.A=t
 echo "charts: ok"

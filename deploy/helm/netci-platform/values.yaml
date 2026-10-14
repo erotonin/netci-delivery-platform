@@ -38,6 +38,7 @@ secrets:
   workloadTokenKeys: ""        # "k1:<32+ random chars>"; see ADR-015
   cosignPublicKey: ""          # the public half of the key the pipeline signs with
   jenkinsApiTokens: {}         # {A: "<token for controllers[id=A]>"}
+  runQueueToken: ""            # only with jenkins.runQueueUrl: this IDP's client token at netci-queue
   dcimApiToken: ""             # only when dcim.provider is set
   admissionWebhookToken: ""    # only when admission.webhook.enabled; 32+ random characters
   # Commit statuses and pull-request comments (ADR-048), sent by the outbox. Without the
@@ -75,6 +76,11 @@ jenkins:
   sharedLibrary: netci-shared-library
   callbackCredentialsId: netci-pipeline-api-key
   cosignCredentialsId: netci-cosign-key
+  # Builds through netci-queue in front of an active-active Jenkins (ADR-081, ADR-082), e.g.
+  # http://queue.jenkins.svc.cluster.local:8080. Then `controllers` is exactly one entry, the
+  # replicas' VIP, through which netCI still creates jobs and reads logs; the queue starts each
+  # build once on whichever replica owns the job. Empty: builds go to the controllers directly.
+  runQueueUrl: ""
   # A Jenkins folder for netCI's jobs ("platform/netci"; nested with "/"). Empty: the root.
   # It must already exist -- netCI never creates it -- and the account needs Job/Create
   # (and the rest above) inside it. Segments: letters, digits, '.', '_', '-'.

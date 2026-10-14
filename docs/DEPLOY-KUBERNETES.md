@@ -152,6 +152,7 @@ biến `*_FILE` tới từng file này.
 | `workload-token-keys` | có | `k1:<chuỗi ngẫu nhiên ≥32 ký tự>` — khoá ký token cho build và deployment |
 | `cosign.pub` | có | **public** key tương ứng với `netci-cosign-key` trên Jenkins. netCI không bao giờ cần private key. |
 | `jenkins-<id>-api-token` | có, mỗi controller một key | ví dụ `jenkins-a-api-token` cho controller `id: A`. Token của một **service account** chỉ có quyền Job (Build/Cancel/Configure/Create/Discover/Read) và Overall/Read, không phải admin. |
+| `run-queue-token` | khi `jenkins.runQueueUrl` được đặt | token client của IDP tại netci-queue (ADR-082); netci-queue chỉ giữ SHA-256 của nó |
 | `scm-gitlab-token` / `scm-github-token` | khi dùng designer hoặc SCM status | token nhóm/bot tối thiểu (GitLab: `api`, vai trò Developer). Cần kèm `scm.gitlabTokenInSecret: true`. |
 | `dcim-api-token` | khi `dcim.provider` được đặt | token NetBox/DCIM |
 | `build-cluster-kubeconfig` | khi `buildIsolation.mode: kubernetes` | kubeconfig của cụm build |
