@@ -1,4 +1,4 @@
-package homesync
+package pgpool
 
 import (
 	"context"
@@ -24,7 +24,7 @@ func TestPoolConfigDialsWithDeadPeerBounds(t *testing.T) {
 			time.Sleep(time.Second)
 		}
 	}()
-	cfg, err := PoolConfig("postgresql://u:p@" + ln.Addr().String() + "/db")
+	cfg, err := Config("postgresql://u:p@" + ln.Addr().String() + "/db")
 	if err != nil {
 		t.Fatal(err)
 	}

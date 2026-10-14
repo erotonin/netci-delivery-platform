@@ -1,4 +1,6 @@
-package homesync
+// Package pgpool opens PostgreSQL pools for netCI's services: homesync, netci-queue and
+// netci-fabric all reach an HA PostgreSQL whose primary can lose its machine.
+package pgpool
 
 import (
 	"context"
@@ -19,8 +21,8 @@ import (
 // promoted standby is already up. Unanswered data or keepalives drop the connection after this.
 const DeadPeerAfter = 10 * time.Second
 
-// PoolConfig parses dsn and dials so that a dead peer is noticed in DeadPeerAfter.
-func PoolConfig(dsn string) (*pgxpool.Config, error) {
+// Config parses dsn and dials so that a dead peer is noticed in DeadPeerAfter.
+func Config(dsn string) (*pgxpool.Config, error) {
 	cfg, err := pgxpool.ParseConfig(dsn)
 	if err != nil {
 		return nil, err

@@ -16,6 +16,8 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/erotonin/netci-delivery-platform/internal/pgpool"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/collectors"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -61,7 +63,11 @@ func run(log *slog.Logger) error {
 	if err := fabric.CheckRuntimeClasses(ctx, client, cfg.Pools); err != nil {
 		return err
 	}
-	pool, err := pgxpool.New(ctx, dsn)
+	poolCfg, err := pgpool.Config(dsn)
+	if err != nil {
+		return fmt.Errorf("database: %w", err)
+	}
+	pool, err := pgxpool.NewWithConfig(ctx, poolCfg)
 	if err != nil {
 		return fmt.Errorf("database: %w", err)
 	}

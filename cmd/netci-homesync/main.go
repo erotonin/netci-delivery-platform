@@ -17,6 +17,8 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/erotonin/netci-delivery-platform/internal/pgpool"
+
 	"github.com/erotonin/netci-delivery-platform/internal/homesync"
 )
 
@@ -41,7 +43,7 @@ func run(log *slog.Logger) error {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer stop()
-	cfg, err := homesync.PoolConfig(dsn)
+	cfg, err := pgpool.Config(dsn)
 	if err != nil {
 		return fmt.Errorf("database: %w", err)
 	}
