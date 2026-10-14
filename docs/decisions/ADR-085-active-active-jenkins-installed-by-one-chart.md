@@ -115,7 +115,7 @@ removed in 1.31, so a site that upgrades the operator loses its backups.
   instance, the plugin belongs there. Then no store machine's loss takes its leader with it.
 - **Upgrading the plugin** (Recreate) leaves a few seconds with no failover. Upgrade it when no
   machine is being worked on.
-- **Crumbs on failover (ADR-077's open item).** A replica that refuses an edit with 503 has HAProxy
-  retry it on the other replica. There, a browser session's crumb is not valid, and the person gets
-  403 instead of "try again". Clients using an API token (the IDP, netci-queue) send no crumb and
-  get the 503.
+- **Crumbs on failover (ADR-077's open item).** A replica that refused an edit with 503 had HAProxy
+  retry it on the other replica, where a browser session's crumb was not valid: 403 instead of "try
+  again". Fixed in ADR-086 (controller netci31). Clients using an API token (the IDP, netci-queue)
+  send no crumb.

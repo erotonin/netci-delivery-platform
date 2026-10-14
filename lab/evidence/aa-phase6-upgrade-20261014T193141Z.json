@@ -1,0 +1,60 @@
+{
+  "scenario": "aa-phase6-upgrade",
+  "started": "2026-10-14T19:31:41+00:00",
+  "restartOnly": false,
+  "during": "lab/aa/chart.sh upgrade >/dev/null",
+  "imageBefore": "172.17.0.1:8930/netci/jenkins-controller@sha256:7d22232b6c3b75ac6714c84f2af5fb439e14c9a8065dd6770385c49db105a855",
+  "imageAfter": "172.17.0.1:8930/netci/jenkins-controller@sha256:e502eff806930684ef0d7ce15e3f81ed2aa8ce6dcb4606d11a75918762a09eb3",
+  "rolledOutAfterSeconds": 88.3,
+  "reads": {
+    "count": 327,
+    "failed": [
+      [
+        60.1,
+        "RemoteDisconnected",
+        ""
+      ]
+    ],
+    "servedBy": {
+      "r0": 164,
+      "r1": 162
+    }
+  },
+  "acknowledged": 0,
+  "missingOn": {
+    "r0": [],
+    "r1": []
+  },
+  "people": {
+    "r0": {
+      "count": 0,
+      "refused": []
+    },
+    "r1": {
+      "count": 0,
+      "refused": []
+    }
+  },
+  "writes": {
+    "r0": [],
+    "r1": []
+  },
+  "peopleWrites": {
+    "r0": [],
+    "r1": []
+  },
+  "r0NotAccepted": {
+    "count": 0,
+    "of": 0,
+    "codes": [],
+    "at": [],
+    "slowest": null
+  },
+  "r1NotAccepted": {
+    "count": 0,
+    "of": 0,
+    "codes": [],
+    "at": [],
+    "slowest": null
+  }
+}

@@ -1,0 +1,54 @@
+{
+  "scenario": "aa-phase6-upgrade",
+  "started": "2026-10-14T19:16:20+00:00",
+  "restartOnly": true,
+  "during": "",
+  "imageBefore": "172.17.0.1:8930/netci/jenkins-controller@sha256:7d22232b6c3b75ac6714c84f2af5fb439e14c9a8065dd6770385c49db105a855",
+  "imageAfter": "172.17.0.1:8930/netci/jenkins-controller@sha256:7d22232b6c3b75ac6714c84f2af5fb439e14c9a8065dd6770385c49db105a855",
+  "rolledOutAfterSeconds": 84.1,
+  "reads": {
+    "count": 318,
+    "failed": [],
+    "servedBy": {
+      "r0": 160,
+      "r1": 158
+    }
+  },
+  "acknowledged": 0,
+  "missingOn": {
+    "r0": [],
+    "r1": []
+  },
+  "people": {
+    "r0": {
+      "count": 0,
+      "refused": []
+    },
+    "r1": {
+      "count": 0,
+      "refused": []
+    }
+  },
+  "writes": {
+    "r0": [],
+    "r1": []
+  },
+  "peopleWrites": {
+    "r0": [],
+    "r1": []
+  },
+  "r0NotAccepted": {
+    "count": 0,
+    "of": 0,
+    "codes": [],
+    "at": [],
+    "slowest": null
+  },
+  "r1NotAccepted": {
+    "count": 0,
+    "of": 0,
+    "codes": [],
+    "at": [],
+    "slowest": null
+  }
+}
