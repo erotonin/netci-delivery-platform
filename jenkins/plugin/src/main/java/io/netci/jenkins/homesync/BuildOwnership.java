@@ -146,10 +146,24 @@ public final class BuildOwnership {
                     // did nothing -- the test's item stayed blocked for good.
                     long id = item.getId();
                     jenkins.util.Timer.get().submit(() -> {
-                        hudson.model.Queue q = hudson.model.Queue.getInstance();
-                        hudson.model.Queue.Item now = q.getItem(id);
-                        if (now != null) {
-                            q.cancel(now);
+                        try {
+                            // Looked up and cancelled under one hold of the queue's lock: looked up
+                            // before it, the item was a WaitingItem the queue had since replaced by
+                            // a BlockedItem, and cancelling the old object did nothing (the test
+                            // passed only when a later pass got lucky).
+                            hudson.model.Queue q = hudson.model.Queue.getInstance();
+                            hudson.model.Queue.Item[] found = new hudson.model.Queue.Item[1];
+                            boolean[] cancelled = new boolean[1];
+                            hudson.model.Queue.withLock(() -> {
+                                found[0] = q.getItem(id);
+                                cancelled[0] = found[0] != null && q.cancel(found[0]);
+                            });
+                            hudson.model.Queue.Item now = found[0];
+                            boolean done = cancelled[0];
+                            LOGGER.info(() -> "netCI homesync: second item " + id + " for run " + run.getRunId()
+                                    + (done ? " cancelled" : " not cancelled (" + (now == null ? "gone" : now.getClass().getSimpleName()) + ")"));
+                        } catch (RuntimeException e) {
+                            LOGGER.log(Level.WARNING, "netCI homesync: could not cancel item " + id, e);
                         }
                     });
                     return blockage("netCI: this run is " + r.holder + " #" + r.current + " already");

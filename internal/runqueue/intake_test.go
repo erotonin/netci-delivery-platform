@@ -1,6 +1,7 @@
 package runqueue
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -11,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/prometheus/client_golang/prometheus"
 )
 
@@ -159,5 +161,40 @@ func TestConfigIsCheckedAtStart(t *testing.T) {
 		if c.Validate() == nil {
 			t.Errorf("case %d accepted", i)
 		}
+	}
+}
+
+// The IDP's callback token rides as a parameter: a credential for one run. It is kept (the run is
+// dispatched from what was stored) but never shown back, and a retry carrying a newly minted one
+// is still the same run -- only the other parameters decide that.
+func TestASecretParameterIsKeptButNeverShownAndDoesNotMakeARetryAnotherRun(t *testing.T) {
+	s := testStore(t)
+	cfg := testConfig()
+	cfg.SecretParameters = []string{"NETCI_CALLBACK_TOKEN"}
+	in := &Intake{Store: s, Config: cfg, Log: slog.New(slog.NewTextHandler(io.Discard, nil)), Metrics: NewMetrics(prometheus.NewRegistry())}
+	srv := httptest.NewServer(in.Handler())
+	t.Cleanup(srv.Close)
+	a := &api{t: t, srv: srv}
+	code, run := a.do("POST", "/v1/runs", "release-token", `{"job":"tools/build","parameters":{"SHA":"abc","NETCI_CALLBACK_TOKEN":"first-token"},"idempotencyKey":"p-1"}`)
+	if code != http.StatusAccepted {
+		t.Fatalf("%d %v", code, run)
+	}
+	if p := run["parameters"].(map[string]any); p["NETCI_CALLBACK_TOKEN"] != Hidden || p["SHA"] != "abc" {
+		t.Fatalf("the accepted run shows its secret: %v", p)
+	}
+	code, again := a.do("POST", "/v1/runs", "release-token", `{"job":"tools/build","parameters":{"SHA":"abc","NETCI_CALLBACK_TOKEN":"second-token"},"idempotencyKey":"p-1"}`)
+	if code != http.StatusOK || again["id"] != run["id"] {
+		t.Fatalf("a retry with a new token made another run: %d %v", code, again)
+	}
+	if code, _ := a.do("POST", "/v1/runs", "release-token", `{"job":"tools/build","parameters":{"SHA":"zzz","NETCI_CALLBACK_TOKEN":"first-token"},"idempotencyKey":"p-1"}`); code != http.StatusConflict {
+		t.Fatalf("a reused key with another commit: %d", code)
+	}
+	code, got := a.do("GET", "/v1/runs/"+run["id"].(string), "release-token", "")
+	if code != http.StatusOK || got["parameters"].(map[string]any)["NETCI_CALLBACK_TOKEN"] != Hidden {
+		t.Fatalf("read back: %d %v", code, got)
+	}
+	stored, err := s.Get(context.Background(), "release", uuid.MustParse(run["id"].(string)))
+	if err != nil || stored.Parameters["NETCI_CALLBACK_TOKEN"] != "first-token" {
+		t.Fatalf("the dispatcher must have the first token: %v %v", stored, err)
 	}
 }

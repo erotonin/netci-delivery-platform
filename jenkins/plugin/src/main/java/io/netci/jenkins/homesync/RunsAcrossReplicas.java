@@ -32,6 +32,16 @@ public final class RunsAcrossReplicas {
 
     private RunsAcrossReplicas() {}
 
+    /**
+     * Whether this replica is one of several (homesync configured), caught up or not. A replica that
+     * is still catching up must answer "retry", never what a lone Jenkins would: the lab's restarted
+     * replica answered five dispatches 409 in its first second, and netci-queue refused the five
+     * runs for good.
+     */
+    public static boolean configured() {
+        return HomeSync.get() != null;
+    }
+
     /** Whether runs are shared between replicas here (homesync on and caught up). */
     public static boolean active() {
         HomeSync sync = HomeSync.get();

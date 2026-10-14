@@ -24,6 +24,11 @@ spec:
     parameters: {max_connections: "100", shared_buffers: "64MB"}
   bootstrap:
     initdb: {database: netci_homesync, owner: homesync}
+  # netci-queue's database lives on the same HA store (lab/aa/queue.sh): the role is declared here,
+  # its password in the Secret queue-db-role (basic-auth), the database below.
+  managed:
+    roles:
+      - {name: queue, login: true, ensure: present, passwordSecret: {name: queue-db-role}}
   storage: {storageClass: local-path, size: 2Gi}
   # One instance per machine, never two: two on one machine is one machine's death taking the
   # primary and the only synchronous standby together.
@@ -38,3 +43,8 @@ spec:
   env:
     - {name: KUBERNETES_SERVICE_HOST, valueFrom: {fieldRef: {fieldPath: status.hostIP}}}
     - {name: KUBERNETES_SERVICE_PORT, value: "6443"}
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Database
+metadata: {name: netci-queue, namespace: aa-p2}
+spec: {name: netci_queue, owner: queue, cluster: {name: store}}

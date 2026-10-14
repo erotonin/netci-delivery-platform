@@ -116,7 +116,8 @@ func (in *Intake) create(w http.ResponseWriter, r *http.Request) {
 		problem(w, http.StatusUnprocessableEntity, "no cell owns job "+s.Job)
 		return
 	}
-	run, created, err := in.Store.Accept(r.Context(), NewRun{Client: client, IdempotencyKey: s.IdempotencyKey, Cell: cell, Job: s.Job, Parameters: s.Parameters})
+	run, created, err := in.Store.Accept(r.Context(), NewRun{Client: client, IdempotencyKey: s.IdempotencyKey, Cell: cell, Job: s.Job,
+		Parameters: s.Parameters, Secret: in.Config.Secret})
 	switch {
 	case errors.Is(err, ErrIdempotencyMismatch):
 		problem(w, http.StatusConflict, err.Error())
@@ -134,7 +135,7 @@ func (in *Intake) create(w http.ResponseWriter, r *http.Request) {
 		in.Metrics.accepted.WithLabelValues(cell, client).Inc()
 	}
 	w.Header().Set("Location", "/v1/runs/"+run.ID.String())
-	writeJSON(w, status, view(run, nil))
+	writeJSON(w, status, view(run, nil, in.Config.Secret))
 }
 
 func (in *Intake) get(w http.ResponseWriter, r *http.Request) {
@@ -161,7 +162,7 @@ func (in *Intake) get(w http.ResponseWriter, r *http.Request) {
 		problem(w, http.StatusServiceUnavailable, "the queue cannot be read now")
 		return
 	}
-	writeJSON(w, http.StatusOK, view(run, events))
+	writeJSON(w, http.StatusOK, view(run, events, in.Config.Secret))
 }
 
 func validJob(job string) string {
@@ -202,8 +203,18 @@ type eventView struct {
 	Detail map[string]any `json:"detail,omitempty"`
 }
 
-func view(r *Run, events []Event) runView {
-	v := runView{ID: r.ID.String(), Job: r.Job, Cell: r.Cell, Parameters: r.Parameters, State: r.State,
+// Hidden stands for a secret parameter's value in every answer.
+const Hidden = "(secret)"
+
+func view(r *Run, events []Event, secret func(string) bool) runView {
+	params := make(map[string]string, len(r.Parameters))
+	for k, val := range r.Parameters {
+		if secret != nil && secret(k) {
+			val = Hidden
+		}
+		params[k] = val
+	}
+	v := runView{ID: r.ID.String(), Job: r.Job, Cell: r.Cell, Parameters: params, State: r.State,
 		BuildNumber: r.BuildNumber, BuildURL: r.BuildURL, Result: r.Result, Attempts: r.Attempts, LastError: r.LastError,
 		AcceptedAt: r.AcceptedAt, StartedAt: r.StartedAt, FinishedAt: r.FinishedAt}
 	for _, e := range events {

@@ -84,6 +84,9 @@ public final class NetciEndpoint implements RootAction {
         } catch (JSONException | IOException e) {
             return error(400, "the body must be a JSON object of at most 64 KiB");
         }
+        if (RunsAcrossReplicas.configured() && !RunsAcrossReplicas.active()) {
+            return error(503, "this replica is catching up with the replicas' store; retry");
+        }
         HttpResponse routed = route(req, "POST", "/netci/dispatch", raw, body.optString("job", ""));
         if (routed != null) {
             return routed;
@@ -156,7 +159,7 @@ public final class NetciEndpoint implements RootAction {
             }
         };
         JSONObject result = Queue.withLock(dispatch);
-        if (result == null && RunsAcrossReplicas.active()) {
+        if (result == null && RunsAcrossReplicas.configured()) {
             // With replicas the refusal is the owner's rule or the store, both passing: never a
             // refusal of the run for good, which netci-queue takes a 409 to be.
             return error(503, "this replica cannot schedule the run now (another replica owns the job, or the store is unreachable); retry");
@@ -173,6 +176,9 @@ public final class NetciEndpoint implements RootAction {
             return error(400, "runId must be a lower-case UUID");
         }
         String name = req.getParameter("job");
+        if (RunsAcrossReplicas.configured() && !RunsAcrossReplicas.active()) {
+            return error(503, "this replica is catching up with the replicas' store; retry");
+        }
         HttpResponse routed = route(req, "GET", "/netci/run?" + req.getQueryString(), null, name == null ? "" : name);
         if (routed != null) {
             return routed;

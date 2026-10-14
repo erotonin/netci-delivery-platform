@@ -1,0 +1,271 @@
+{
+  "scenario": "aa-phase7-queue",
+  "started": "2026-10-14T09:55:24+00:00",
+  "steady": {
+    "steady-095524-0": {
+      "run": "5174b285-bcb8-4309-911d-ce4b23410847",
+      "state": "refused",
+      "result": null,
+      "build": null,
+      "attempts": null,
+      "buildsOnReplicas": {
+        "r0": [],
+        "r1": []
+      },
+      "once": false
+    },
+    "steady-095524-1": {
+      "run": "e166d9df-a0ad-45d4-a617-550f089d2048",
+      "state": "refused",
+      "result": null,
+      "build": null,
+      "attempts": null,
+      "buildsOnReplicas": {
+        "r0": [],
+        "r1": []
+      },
+      "once": false
+    },
+    "steady-095524-2": {
+      "run": "e8dd3405-dbca-420e-890e-1bfa55a63ee7",
+      "state": "refused",
+      "result": null,
+      "build": null,
+      "attempts": null,
+      "buildsOnReplicas": {
+        "r0": [],
+        "r1": []
+      },
+      "once": false
+    },
+    "steady-095524-3": {
+      "run": "abcf5d21-1f67-4278-881b-e3cc19f7beb1",
+      "state": "refused",
+      "result": null,
+      "build": null,
+      "attempts": null,
+      "buildsOnReplicas": {
+        "r0": [],
+        "r1": []
+      },
+      "once": false
+    },
+    "steady-095524-4": {
+      "run": "9563e995-f5c0-41f5-aebf-f77810376459",
+      "state": "finished",
+      "result": "SUCCESS",
+      "build": 14,
+      "attempts": null,
+      "buildsOnReplicas": {
+        "r0": [
+          14
+        ],
+        "r1": [
+          14
+        ]
+      },
+      "once": true
+    },
+    "steady-095524-5": {
+      "run": "5b009eb1-333f-4432-b47c-3ed13c7c5ac3",
+      "state": "finished",
+      "result": "SUCCESS",
+      "build": 15,
+      "attempts": null,
+      "buildsOnReplicas": {
+        "r0": [
+          15
+        ],
+        "r1": [
+          15
+        ]
+      },
+      "once": true
+    },
+    "steady-095524-6": {
+      "run": "27c34491-6ae0-4ab7-a77b-57c12eb5e83b",
+      "state": "finished",
+      "result": "SUCCESS",
+      "build": 12,
+      "attempts": null,
+      "buildsOnReplicas": {
+        "r0": [
+          12
+        ],
+        "r1": [
+          12
+        ]
+      },
+      "once": true
+    },
+    "steady-095524-7": {
+      "run": "41b79dae-2e59-4e86-be4a-38de030aba7b",
+      "state": "refused",
+      "result": null,
+      "build": null,
+      "attempts": null,
+      "buildsOnReplicas": {
+        "r0": [],
+        "r1": []
+      },
+      "once": false
+    },
+    "steady-095524-8": {
+      "run": "4c07f3f8-5514-4dbb-bcb4-2f2d9bf1dc20",
+      "state": "finished",
+      "result": "SUCCESS",
+      "build": 13,
+      "attempts": null,
+      "buildsOnReplicas": {
+        "r0": [
+          13
+        ],
+        "r1": [
+          13
+        ]
+      },
+      "once": true
+    },
+    "steady-095524-9": {
+      "run": "8e549900-32b7-4c57-ac79-ab0b4111c9d7",
+      "state": "finished",
+      "result": "SUCCESS",
+      "build": 11,
+      "attempts": null,
+      "buildsOnReplicas": {
+        "r0": [
+          11
+        ],
+        "r1": [
+          11
+        ]
+      },
+      "once": true
+    }
+  },
+  "machine": {
+    "victim": "netci-lab-1",
+    "holder": "r1",
+    "build": 60,
+    "doneWithin": 84.7,
+    "long": {
+      "run": "7690754b-8f89-428a-b4ed-1dc5271e9386",
+      "state": "finished",
+      "result": "SUCCESS",
+      "build": 60,
+      "attempts": null,
+      "buildsOnReplicas": {
+        "r0": [
+          60
+        ],
+        "r1": []
+      },
+      "once": false,
+      "ticks": 90,
+      "missing": [],
+      "twice": []
+    },
+    "during": {
+      "during-095524-0": {
+        "run": "d8676451-9b5a-4111-831f-1dc58fee0612",
+        "state": "finished",
+        "result": "SUCCESS",
+        "build": 16,
+        "attempts": null,
+        "buildsOnReplicas": {
+          "r0": [
+            16
+          ],
+          "r1": []
+        },
+        "once": false
+      },
+      "during-095524-1": {
+        "run": "09875741-8b35-44be-a5f0-4adadd9e2572",
+        "state": "finished",
+        "result": "SUCCESS",
+        "build": 17,
+        "attempts": null,
+        "buildsOnReplicas": {
+          "r0": [
+            17
+          ],
+          "r1": []
+        },
+        "once": false
+      },
+      "during-095524-2": {
+        "run": "f72c07bc-9ceb-4789-8bae-69b338d67cf4",
+        "state": "finished",
+        "result": "SUCCESS",
+        "build": 18,
+        "attempts": null,
+        "buildsOnReplicas": {
+          "r0": [
+            18
+          ],
+          "r1": []
+        },
+        "once": false
+      },
+      "during-095524-3": {
+        "run": "4d84f1d1-3151-41ff-aa0c-7ddc54a1f0f6",
+        "state": "finished",
+        "result": "SUCCESS",
+        "build": 19,
+        "attempts": null,
+        "buildsOnReplicas": {
+          "r0": [
+            19
+          ],
+          "r1": []
+        },
+        "once": false
+      },
+      "during-095524-4": {
+        "run": "b8ee75a9-8985-4ad8-ab4c-9e4ce9488420",
+        "state": "finished",
+        "result": "SUCCESS",
+        "build": 20,
+        "attempts": null,
+        "buildsOnReplicas": {
+          "r0": [
+            20
+          ],
+          "r1": []
+        },
+        "once": false
+      },
+      "during-095524-5": {
+        "run": "badf30e5-3531-445e-944f-2627e1b987da",
+        "state": "finished",
+        "result": "SUCCESS",
+        "build": 21,
+        "attempts": null,
+        "buildsOnReplicas": {
+          "r0": [
+            21
+          ],
+          "r1": []
+        },
+        "once": false
+      }
+    }
+  },
+  "retried": {
+    "sameRun": true,
+    "builds": {
+      "r0": [
+        60
+      ],
+      "r1": []
+    }
+  },
+  "refusedThenAccepted": [],
+  "summary": {
+    "runs": 17,
+    "allSuccess": false,
+    "allOnce": false,
+    "longEveryTickOnce": true
+  }
+}

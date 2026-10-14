@@ -28,6 +28,20 @@ type Config struct {
 	Routes  []Route                 `json:"routes"`
 	Clients map[string]ClientConfig `json:"clients"`
 	Hooks   map[string]*Hook        `json:"hooks,omitempty"`
+	// SecretParameters are parameters whose values are credentials (the IDP's per-run callback
+	// token): kept, since a run is dispatched from what was stored, but never shown back, and not
+	// part of what makes a retried submission the same run -- a retry mints a new token.
+	SecretParameters []string `json:"secretParameters,omitempty"`
+}
+
+// Secret reports whether the parameter's value is a credential.
+func (c *Config) Secret(name string) bool {
+	for _, s := range c.SecretParameters {
+		if s == name {
+			return true
+		}
+	}
+	return false
 }
 
 // CellConfig: where a cell's controller is and the service account netCI uses there (files
@@ -75,6 +89,11 @@ func (c *Config) Validate() error {
 	}
 	if len(c.Clients) == 0 {
 		return errors.New("no clients: nobody could submit a run")
+	}
+	for _, s := range c.SecretParameters {
+		if s == "" {
+			return errors.New("secretParameters: an empty name")
+		}
 	}
 	for name, cell := range c.Cells {
 		if !strings.HasPrefix(cell.URL, "http://") && !strings.HasPrefix(cell.URL, "https://") {

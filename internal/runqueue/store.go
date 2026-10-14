@@ -95,6 +95,8 @@ type NewRun struct {
 	Cell           string
 	Job            string
 	Parameters     map[string]string
+	// Secret names parameters left out of the comparison that makes a retry the same run.
+	Secret func(name string) bool
 }
 
 // ErrIdempotencyMismatch: the key was used before for a different job or parameters.
@@ -131,7 +133,7 @@ func (s *Store) Accept(ctx context.Context, n NewRun) (*Run, bool, error) {
 		if err != nil {
 			return nil, false, err
 		}
-		if existing.Job != n.Job || existing.Cell != n.Cell || !sameParams(existing.Parameters, n.Parameters) {
+		if existing.Job != n.Job || existing.Cell != n.Cell || !sameParams(existing.Parameters, n.Parameters, n.Secret) {
 			return nil, false, ErrIdempotencyMismatch
 		}
 		return existing, false, tx.Commit(ctx)
@@ -146,12 +148,15 @@ func (s *Store) Accept(ctx context.Context, n NewRun) (*Run, bool, error) {
 	return r, true, tx.Commit(ctx)
 }
 
-func sameParams(a, b map[string]string) bool {
+// sameParams: the same names, and the same values but for secret ones. The stored run keeps
+// its first secret values: the build was (or will be) dispatched with those.
+func sameParams(a, b map[string]string, secret func(string) bool) bool {
 	if len(a) != len(b) {
 		return false
 	}
 	for k, v := range a {
-		if w, ok := b[k]; !ok || w != v {
+		w, ok := b[k]
+		if !ok || (w != v && (secret == nil || !secret(k))) {
 			return false
 		}
 	}

@@ -47,6 +47,12 @@ public final class ReadyForTraffic implements UnprotectedRootAction {
         if (Jenkins.get().getInitLevel() != InitMilestone.COMPLETED) {
             return HttpResponses.status(503);
         }
+        // Not until this home has caught up with the store: before that it refuses edits and
+        // knows of no other replica's runs, so traffic belongs on the replica that does.
+        HomeSync sync = HomeSync.get();
+        if (sync != null && !sync.ready()) {
+            return HttpResponses.status(503);
+        }
         return HttpResponses.text("ready");
     }
 }
