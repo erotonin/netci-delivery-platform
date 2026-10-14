@@ -20,6 +20,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.MessageDigest;
+import java.security.SecureRandom;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Base64;
@@ -49,11 +50,19 @@ import org.springframework.security.web.context.HttpSessionSecurityContextReposi
  * refused when tampered with, expired, for a user that no longer exists, or after the user's seed
  * changed ("Invalidate sessions" in Jenkins, which is replicated with the user); sign-out clears it.
  *
+ * <p>Each sign-in also has a random id ({@code sid}), kept when the cookie is renewed and new at
+ * the next sign-in: the CSRF crumb is bound to it ({@link SharedCrumbIssuer}, ADR-086), as Jenkins
+ * binds its own to the HTTP session -- which is one JVM's, so a crumb from one replica was refused
+ * by the other.
+ *
  * <p>Off unless {@code NETCI_SESSION_KEY_FILE} names a key of at least 32 bytes.
  */
 public final class SharedSession implements Filter {
     private static final Logger LOGGER = Logger.getLogger(SharedSession.class.getName());
     static final String COOKIE = "NETCI_SESSION";
+    /** The sign-in id of the cookie this request holds or was just given (for a crumb it renders). */
+    static final String SID = SharedSession.class.getName() + ".sid";
+    private static final SecureRandom RANDOM = new SecureRandom();
 
     private static volatile SharedSession instance;
 
@@ -95,19 +104,31 @@ public final class SharedSession implements Filter {
         PluginServletFilter.addFilter(s);
     }
 
-    /** The cookie value for a user, valid until now + ttl. */
+    /** The cookie value for a new sign-in of a user, valid until now + ttl. */
     String issue(User user, Instant now) {
+        return issue(user, now, newSid());
+    }
+
+    /** The cookie value for a user's sign-in {@code sid}, valid until now + ttl. */
+    String issue(User user, Instant now, String sid) {
         JSONObject claims = new JSONObject()
                 .element("u", user.getId())
                 .element("iat", now.getEpochSecond())
                 .element("exp", now.plus(ttl).getEpochSecond())
-                .element("s", seedHash(user));
+                .element("s", seedHash(user))
+                .element("sid", sid);
         String payload = b64(claims.toString().getBytes(StandardCharsets.UTF_8));
         return payload + "." + b64(mac(payload));
     }
 
-    /** A cookie this key signed, still valid: whose it is and when it was issued. */
-    record Claims(User user, long issuedAt) {}
+    static String newSid() {
+        byte[] b = new byte[18];
+        RANDOM.nextBytes(b);
+        return b64(b);
+    }
+
+    /** A cookie this key signed, still valid: whose it is, when it was issued, which sign-in ("" for a cookie from before sids). */
+    record Claims(User user, long issuedAt, String sid) {}
 
     /** The user a cookie value names, or null if it is not one this key signed and still valid. */
     User verify(String value, Instant now) {
@@ -145,7 +166,7 @@ public final class SharedSession implements Filter {
                 claims.optString("s").getBytes(StandardCharsets.UTF_8))) {
             return null;
         }
-        return new Claims(user, claims.optLong("iat"));
+        return new Claims(user, claims.optLong("iat"), claims.optString("sid"));
     }
 
     private static String seedHash(User user) {
@@ -205,13 +226,51 @@ public final class SharedSession implements Filter {
                 try (ACLContext ignored = ACL.as2(ACL.SYSTEM2)) {
                     held = value == null ? null : claims(value, now);
                 }
-                if (held == null || !held.user().getId().equals(current.getId())
-                        || held.issuedAt() < now.minus(ttl.dividedBy(2)).getEpochSecond()) {
-                    rsp.addHeader("Set-Cookie", setCookie(req, issue(current, now), ttl.toSeconds()));
+                // The same sign-in keeps its sid through renewals (a crumb in an open page stays valid);
+                // anything else is a new sign-in.
+                boolean same = held != null && held.user().getId().equals(current.getId()) && !held.sid().isEmpty();
+                String sid = same ? held.sid() : newSid();
+                if (!same || held.issuedAt() < now.minus(ttl.dividedBy(2)).getEpochSecond()) {
+                    rsp.addHeader("Set-Cookie", setCookie(req, issue(current, now, sid), ttl.toSeconds()));
                 }
+                req.setAttribute(SID, sid);
             }
         }
         chain.doFilter(request, response);
+    }
+
+    /**
+     * What this request's crumb is bound to: the user's id and the sign-in's sid, or null when the
+     * request has no shared sign-in (an API token, a cookie from before sids, the feature off) and
+     * Jenkins' own crumb applies. The request's own user, or -- signed in nowhere yet -- the
+     * cookie's: the filter that restores a sign-in from the cookie may run after Jenkins' CSRF
+     * filter, and a POST that is the first request on this replica (a retry from the balancer) is
+     * checked before it. A cookie for someone else than the request's user binds nothing.
+     */
+    static String crumbBinding(ServletRequest request) {
+        SharedSession s = instance;
+        if (s == null || !(request instanceof HttpServletRequest req)) {
+            return null;
+        }
+        Authentication a = jenkins.model.Jenkins.getAuthentication2();
+        boolean anonymous = ACL.isAnonymous2(a);
+        Object given = req.getAttribute(SID);
+        User current = anonymous ? null : User.current();
+        if (given instanceof String sid && current != null) {
+            return current.getId() + ";" + sid;
+        }
+        String value = cookieValue(req);
+        if (value == null) {
+            return null;
+        }
+        Claims c;
+        try (ACLContext ignored = ACL.as2(ACL.SYSTEM2)) {
+            c = s.claims(value, Instant.now());
+        }
+        if (c == null || c.sid().isEmpty() || (!anonymous && (current == null || !current.getId().equals(c.user().getId())))) {
+            return null;
+        }
+        return c.user().getId() + ";" + c.sid();
     }
 
     private static String cookieValue(HttpServletRequest req) {

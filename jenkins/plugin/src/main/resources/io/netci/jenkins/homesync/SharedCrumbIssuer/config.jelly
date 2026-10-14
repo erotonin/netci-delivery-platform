@@ -1,0 +1,3 @@
+<?jelly escape-by-default='true'?>
+<!-- Nothing to configure: the crumb is bound to the shared sign-in (ADR-086). -->
+<j:jelly xmlns:j="jelly:core"/>
