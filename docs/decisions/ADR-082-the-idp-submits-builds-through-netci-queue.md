@@ -62,6 +62,21 @@ Three behaviours of the launcher do not survive replicas or a durable queue:
 The full gate: `pytest backend/tests tests/contract` 62 + 1507 passed, `pyflakes` clean,
 `schema.sql` matches 35 migrations.
 
+## Lab smoke (`lab/aa/idp_queue_smoke.py`, `aa-idp-queue-20261014T105149Z.json`)
+
+The IDP's own adapter, against the replicas behind the VIP and netci-queue on the HA store
+(controller netci28):
+- the job the IDP generates was on both replicas 0.16 s after its creation;
+- the build was submitted with every IDP parameter and read by run id (queued, then failed), and
+  submitted again with a new token it was the same run;
+- its 23 log lines were read through the VIP;
+- the queue's answers never held the token;
+- a second build was cancelled through the queue.
+
+The build failed where it had to: `Could not find any definition of libraries
+[netci-shared-library]`. The lab's replicas have no netCI shared library, so this proves the path,
+not the pipeline. The rolling upgrade to netci28 under load answered 358 of 358 UI polls.
+
 ## What it costs, said plainly
 
 - The IDP's admission budget (ADR-050) still counts the queue of the one Jenkins it reaches. With

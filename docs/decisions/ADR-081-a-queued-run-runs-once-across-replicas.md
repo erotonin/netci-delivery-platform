@@ -1,6 +1,6 @@
 # ADR-081: A run from netci-queue runs once across active-active replicas
 
-- Status: accepted; unit- and store-tested, lab run below
+- Status: accepted; unit- and store-tested, measured in the lab (below)
 - Date: 2026-10-14
 - Refines: ADR-063 (the durable run queue), ADR-078, ADR-079
 
@@ -63,6 +63,30 @@ Plugin (fake store and fake owner):
 - a number this replica gave before restarting runs once, and the next number is used;
 - a second item for a numbered run is cancelled;
 - with the store down, 503 for both calls.
+
+## Lab (`lab/aa/phase7_queue_probe.py`)
+
+netci-queue in front of the replicas (`lab/aa/queue.sh`: two instances, its database on the HA
+store, Jenkins reached through the machine-local balancer).
+
+**First run, on netci26** (`aa-phase7-queue-20261014T095524Z.json`). The owner's machine (with the
+store's primary) was powered off under `long`:
+- `long` was SUCCESS, every tick once;
+- six runs submitted while the machine was off were all SUCCESS, with one build each on both
+  replicas;
+- but 5 of 10 runs submitted as the machine came back were **refused for good**. The restarted
+  replica, not yet caught up with the store, answered 409 like a lone Jenkins. Fixed in netci27:
+  503 until caught up, and kept out of the balancer until then.
+
+**On netci27** (`aa-phase7-queue-20261014T103155Z.json`): **17 of 17 runs SUCCESS, each with
+exactly one build on each replica**:
+- 10 steady;
+- `long` with its owner's machine powered off at tick 10, every tick once;
+- 6 runs submitted while the machine was off;
+- `long`'s key submitted again: the same run.
+
+While the store's primary failed over, the queue answered no submission (not ready). A client
+retries with the same key, as the IDP's adapter does (ADR-082).
 
 ## What it costs, said plainly
 

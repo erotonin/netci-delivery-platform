@@ -1,0 +1,29 @@
+{
+  "scenario": "aa-idp-queue",
+  "started": "2026-10-14T10:51:49+00:00",
+  "job": "netci-c58c0627-054f-46e2-b95c-c52e7d3c6f25",
+  "jobOnBothReplicasAfterSeconds": 0.16,
+  "build": {
+    "runId": "queue:40ae0ff2-92b9-414e-aa08-31bd49c235a6",
+    "retriedIsSameRun": true,
+    "statuses": [
+      "queued",
+      "failed"
+    ],
+    "logLines": 23,
+    "logLoadsTheLibrary": true,
+    "queueShowsTheToken": false,
+    "queueView": {
+      "state": "finished",
+      "result": "FAILURE",
+      "buildNumber": 1,
+      "buildUrl": "job/netci-c58c0627-054f-46e2-b95c-c52e7d3c6f25/1/"
+    }
+  },
+  "cancelled": {
+    "runId": "queue:051a6138-2910-4b09-aa9e-09a644014bf7",
+    "statuses": [
+      "cancelled"
+    ]
+  }
+}
