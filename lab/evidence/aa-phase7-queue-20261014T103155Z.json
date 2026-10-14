@@ -1,0 +1,312 @@
+{
+  "scenario": "aa-phase7-queue",
+  "started": "2026-10-14T10:31:55+00:00",
+  "steady": {
+    "steady-103155-0": {
+      "run": "b1c40051-6ebe-4edf-b4ca-147bd8ebc333",
+      "state": "finished",
+      "result": "SUCCESS",
+      "build": 22,
+      "attempts": null,
+      "buildsOnReplicas": {
+        "r0": [
+          22
+        ],
+        "r1": [
+          22
+        ]
+      },
+      "once": true
+    },
+    "steady-103155-1": {
+      "run": "0c604b56-ef8a-43c4-856d-d295302c713c",
+      "state": "finished",
+      "result": "SUCCESS",
+      "build": 27,
+      "attempts": null,
+      "buildsOnReplicas": {
+        "r0": [
+          27
+        ],
+        "r1": [
+          27
+        ]
+      },
+      "once": true
+    },
+    "steady-103155-2": {
+      "run": "7c3380f4-eb69-477d-8984-dc6e40b4c623",
+      "state": "finished",
+      "result": "SUCCESS",
+      "build": 23,
+      "attempts": null,
+      "buildsOnReplicas": {
+        "r0": [
+          23
+        ],
+        "r1": [
+          23
+        ]
+      },
+      "once": true
+    },
+    "steady-103155-3": {
+      "run": "c9e64938-627f-4e96-9908-8462894c2173",
+      "state": "finished",
+      "result": "SUCCESS",
+      "build": 28,
+      "attempts": null,
+      "buildsOnReplicas": {
+        "r0": [
+          28
+        ],
+        "r1": [
+          28
+        ]
+      },
+      "once": true
+    },
+    "steady-103155-4": {
+      "run": "058e5bfa-cdb9-4d43-8d73-b62596c6cdc7",
+      "state": "finished",
+      "result": "SUCCESS",
+      "build": 29,
+      "attempts": null,
+      "buildsOnReplicas": {
+        "r0": [
+          29
+        ],
+        "r1": [
+          29
+        ]
+      },
+      "once": true
+    },
+    "steady-103155-5": {
+      "run": "3a63afe9-18f9-4cd3-89fb-cd9f8730662a",
+      "state": "finished",
+      "result": "SUCCESS",
+      "build": 24,
+      "attempts": null,
+      "buildsOnReplicas": {
+        "r0": [
+          24
+        ],
+        "r1": [
+          24
+        ]
+      },
+      "once": true
+    },
+    "steady-103155-6": {
+      "run": "317ad5a9-4cdd-4021-917d-2d6912766fa8",
+      "state": "finished",
+      "result": "SUCCESS",
+      "build": 25,
+      "attempts": null,
+      "buildsOnReplicas": {
+        "r0": [
+          25
+        ],
+        "r1": [
+          25
+        ]
+      },
+      "once": true
+    },
+    "steady-103155-7": {
+      "run": "d9feacb2-246a-4b0a-bd7c-38c21d3a176b",
+      "state": "finished",
+      "result": "SUCCESS",
+      "build": 30,
+      "attempts": null,
+      "buildsOnReplicas": {
+        "r0": [
+          30
+        ],
+        "r1": [
+          30
+        ]
+      },
+      "once": true
+    },
+    "steady-103155-8": {
+      "run": "dae03e72-93f4-47fb-916c-eb62679792d7",
+      "state": "finished",
+      "result": "SUCCESS",
+      "build": 26,
+      "attempts": null,
+      "buildsOnReplicas": {
+        "r0": [
+          26
+        ],
+        "r1": [
+          26
+        ]
+      },
+      "once": true
+    },
+    "steady-103155-9": {
+      "run": "14db1fe6-6897-43ff-90c2-93bac12ef497",
+      "state": "finished",
+      "result": "SUCCESS",
+      "build": 31,
+      "attempts": null,
+      "buildsOnReplicas": {
+        "r0": [
+          31
+        ],
+        "r1": [
+          31
+        ]
+      },
+      "once": true
+    }
+  },
+  "machine": {
+    "victim": "netci-lab-2",
+    "holder": "r0",
+    "build": 61,
+    "doneWithin": 83.4,
+    "long": {
+      "run": "7f82d524-0dc1-49f7-a8a6-28f801e17095",
+      "state": "finished",
+      "result": "SUCCESS",
+      "build": 61,
+      "attempts": null,
+      "buildsOnReplicas": {
+        "r0": [
+          61
+        ],
+        "r1": [
+          61
+        ]
+      },
+      "once": true,
+      "ticks": 90,
+      "missing": [],
+      "twice": []
+    },
+    "during": {
+      "during-103155-0": {
+        "run": "0b84f23f-bf30-4e47-9420-438dd66788da",
+        "state": "finished",
+        "result": "SUCCESS",
+        "build": 32,
+        "attempts": null,
+        "buildsOnReplicas": {
+          "r0": [
+            32
+          ],
+          "r1": [
+            32
+          ]
+        },
+        "once": true
+      },
+      "during-103155-1": {
+        "run": "4aa1b65e-ab54-4a50-bc41-a26e7cb0b249",
+        "state": "finished",
+        "result": "SUCCESS",
+        "build": 33,
+        "attempts": null,
+        "buildsOnReplicas": {
+          "r0": [
+            33
+          ],
+          "r1": [
+            33
+          ]
+        },
+        "once": true
+      },
+      "during-103155-2": {
+        "run": "324f3c14-f457-4e64-8704-4f5517241e72",
+        "state": "finished",
+        "result": "SUCCESS",
+        "build": 34,
+        "attempts": null,
+        "buildsOnReplicas": {
+          "r0": [
+            34
+          ],
+          "r1": [
+            34
+          ]
+        },
+        "once": true
+      },
+      "during-103155-3": {
+        "run": "e8f4eafd-d894-4ebd-8c65-e98f0423161a",
+        "state": "finished",
+        "result": "SUCCESS",
+        "build": 35,
+        "attempts": null,
+        "buildsOnReplicas": {
+          "r0": [
+            35
+          ],
+          "r1": [
+            35
+          ]
+        },
+        "once": true
+      },
+      "during-103155-4": {
+        "run": "6b3caaaa-2413-42f9-8b32-d1432596187f",
+        "state": "finished",
+        "result": "SUCCESS",
+        "build": 36,
+        "attempts": null,
+        "buildsOnReplicas": {
+          "r0": [
+            36
+          ],
+          "r1": [
+            36
+          ]
+        },
+        "once": true
+      },
+      "during-103155-5": {
+        "run": "705b221c-91c3-4463-9be2-218b60b777a0",
+        "state": "finished",
+        "result": "SUCCESS",
+        "build": 37,
+        "attempts": null,
+        "buildsOnReplicas": {
+          "r0": [
+            37
+          ],
+          "r1": [
+            37
+          ]
+        },
+        "once": true
+      }
+    }
+  },
+  "retried": {
+    "sameRun": true,
+    "builds": {
+      "r0": [
+        61
+      ],
+      "r1": [
+        61
+      ]
+    }
+  },
+  "refusedThenAccepted": [
+    {
+      "key": "during-103155-0",
+      "acceptedAfterSeconds": 28.1
+    }
+  ],
+  "summary": {
+    "runs": 17,
+    "allSuccess": true,
+    "allOnce": true,
+    "longEveryTickOnce": true
+  }
+}

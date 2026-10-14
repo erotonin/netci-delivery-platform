@@ -63,7 +63,8 @@ hash="$(tr -d '\n' < "$Q/client-token" | sha256sum | cut -d' ' -f1)"
 cat > "$Q/config.json" <<JSON
 {"cells": {"aa": {"url": "http://haproxy-local.${NS}.svc.cluster.local", "credentials": "/etc/netci/cells/aa", "budget": 50}},
  "routes": [{"prefix": "", "cell": "aa"}],
- "clients": {"idp": {"tokenSha256": "${hash}", "jobs": [""]}}}
+ "clients": {"idp": {"tokenSha256": "${hash}", "jobs": [""]}},
+ "secretParameters": ["NETCI_CALLBACK_TOKEN"]}
 JSON
 kubectl -n "$NS" create secret generic queue-db --from-file=url="$Q/db-url" --dry-run=client -o yaml | kubectl apply -f - >/dev/null
 kubectl -n "$NS" create secret generic queue-jenkins --from-file=user="$Q/jenkins-user" --from-file=token="$Q/jenkins-token" \
