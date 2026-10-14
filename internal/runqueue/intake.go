@@ -27,6 +27,8 @@ type Intake struct {
 	Config  *Config
 	Log     *slog.Logger
 	Metrics *Metrics
+	// Cells by name: a cancel of a run a controller has goes to that controller.
+	Cells map[string]Controller
 }
 
 const maxIntakeBody = 256 << 10
@@ -44,6 +46,7 @@ func (in *Intake) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /v1/runs", in.create)
 	mux.HandleFunc("GET /v1/runs/{id}", in.get)
+	mux.HandleFunc("POST /v1/runs/{id}/cancel", in.cancel)
 	mux.HandleFunc("POST /v1/hooks/{name}", in.hook)
 	mux.HandleFunc("POST /v1/once", in.once)
 	return mux
@@ -136,6 +139,76 @@ func (in *Intake) create(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Location", "/v1/runs/"+run.ID.String())
 	writeJSON(w, status, view(run, nil, in.Config.Secret))
+}
+
+// cancel: a run of the caller's, cancelled wherever it is. Before any controller has it, here, at
+// once; in a controller's queue, taken out of it; building, stopped -- the build ends ABORTED and the
+// dispatcher records that, so the answer is 202 until then. A run that has ended is left as it is.
+func (in *Intake) cancel(w http.ResponseWriter, r *http.Request) {
+	client, ok := in.client(w, r)
+	if !ok {
+		return
+	}
+	id, err := uuid.Parse(r.PathValue("id"))
+	if err != nil {
+		problem(w, http.StatusNotFound, "no such run")
+		return
+	}
+	for attempt := 0; attempt < 3; attempt++ {
+		run, err := in.Store.Get(r.Context(), client, id)
+		if errors.Is(err, ErrNotFound) {
+			problem(w, http.StatusNotFound, "no such run")
+			return
+		}
+		if err != nil {
+			problem(w, http.StatusServiceUnavailable, "the queue cannot be read now")
+			return
+		}
+		switch run.State {
+		case Finished, Cancelled, Refused:
+			writeJSON(w, http.StatusOK, view(run, nil, in.Config.Secret))
+			return
+		case Accepted:
+			err := in.Store.Transition(r.Context(), id, Accepted, Update{To: Cancelled, Detail: map[string]any{"by": client, "why": "cancelled before any controller had it"}})
+			if errors.Is(err, ErrConflict) {
+				continue // a dispatcher took it meanwhile: cancel it there
+			}
+			if err != nil {
+				problem(w, http.StatusServiceUnavailable, "the cancel was not recorded; retry")
+				return
+			}
+			run.State = Cancelled
+			writeJSON(w, http.StatusOK, view(run, nil, in.Config.Secret))
+			return
+		}
+		ctrl := in.Cells[run.Cell]
+		if ctrl == nil {
+			problem(w, http.StatusServiceUnavailable, "no controller for cell "+run.Cell)
+			return
+		}
+		st, err := ctrl.Cancel(r.Context(), run)
+		if err != nil {
+			in.Log.Warn("cancel run", "run", id, "cell", run.Cell, "error", err)
+			problem(w, http.StatusServiceUnavailable, "the controller could not be asked to cancel the run; retry")
+			return
+		}
+		if st.State == "cancelled" && run.State == Dispatched {
+			err := in.Store.Transition(r.Context(), id, Dispatched, Update{To: Cancelled, Detail: map[string]any{"by": client, "why": "taken out of the controller's queue"}})
+			if err == nil {
+				run.State = Cancelled
+				writeJSON(w, http.StatusOK, view(run, nil, in.Config.Secret))
+				return
+			}
+			if !errors.Is(err, ErrConflict) {
+				problem(w, http.StatusServiceUnavailable, "the cancel was not recorded; retry")
+				return
+			}
+			continue
+		}
+		writeJSON(w, http.StatusAccepted, view(run, nil, in.Config.Secret))
+		return
+	}
+	problem(w, http.StatusServiceUnavailable, "the run kept moving; retry")
 }
 
 func (in *Intake) get(w http.ResponseWriter, r *http.Request) {

@@ -240,4 +240,46 @@ class NetciEndpointTest {
         assertEquals("started", again.body().getString("state"));
         assertEquals(1, p.getBuilds().size());
     }
+
+    private Answer cancel(String user, String job, String runId) throws Exception {
+        return call(user, HttpMethod.POST, "netci/cancel", "{\"job\":\"" + job + "\",\"runId\":\"" + runId + "\"}");
+    }
+
+    /** netci-queue's cancel by run id: out of the queue, a running build stopped, an unknown run absent. */
+    @Test
+    void aRunIsCancelledByItsIdWhereverItIsOnTheController() throws Exception {
+        r.jenkins.setAuthorizationStrategy(new MockAuthorizationStrategy()
+                .grant(Jenkins.READ, Item.READ, Item.BUILD, Item.CANCEL).everywhere().to("builder")
+                .grant(Jenkins.READ, Item.READ, Item.BUILD).everywhere().to("starter"));
+        FreeStyleProject held = r.createFreeStyleProject("held-to-cancel");
+        held.setQuietPeriod(600);
+        String queued = run();
+        dispatch("builder", "held-to-cancel", queued, null);
+        assertEquals(403, cancel("starter", "held-to-cancel", queued).status(), "cancelled without CANCEL");
+        Answer out = cancel("builder", "held-to-cancel", queued);
+        assertEquals(200, out.status(), out.body().toString());
+        assertEquals("cancelled", out.body().getString("state"));
+        assertEquals(0, r.jenkins.getQueue().getItems().length);
+
+        FreeStyleProject slow = r.createFreeStyleProject("slow-to-stop");
+        slow.setQuietPeriod(0);
+        slow.getBuildersList().add(new SleepBuilder(60_000));
+        String running = run();
+        dispatch("builder", "slow-to-stop", running, null);
+        FreeStyleBuild b = null;
+        for (int i = 0; i < 200 && ((b = slow.getLastBuild()) == null || !b.isBuilding()); i++) {
+            Thread.sleep(50);
+        }
+        assertNotNull(b);
+        Answer stopping = cancel("builder", "slow-to-stop", running);
+        assertEquals(200, stopping.status(), stopping.body().toString());
+        assertEquals("stopping", stopping.body().getString("state"));
+        r.waitForCompletion(b);
+        assertEquals(hudson.model.Result.ABORTED, b.getResult());
+        assertEquals("ended", cancel("builder", "slow-to-stop", running).body().getString("state"));
+
+        Answer absent = cancel("builder", "slow-to-stop", run());
+        assertEquals(404, absent.status());
+        assertEquals("absent", absent.body().getString("state"));
+    }
 }

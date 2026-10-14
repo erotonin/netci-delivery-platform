@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"sync"
 	"testing"
@@ -112,6 +114,26 @@ func (f *fakeJenkins) Lookup(_ context.Context, r *Run) (*Status, bool, error) {
 	}
 	st, ok := f.status(r.ID.String())
 	return st, ok, nil
+}
+
+// Cancel as the plugin's /netci/cancel: a queued run leaves the queue, a building one is stopped
+// (it ends ABORTED; the dispatcher sees that on its next look).
+func (f *fakeJenkins) Cancel(_ context.Context, r *Run) (*Status, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.down {
+		return nil, errors.New("connection refused")
+	}
+	id := r.ID.String()
+	if _, ok := f.queue[id]; ok {
+		delete(f.queue, id)
+		return &Status{State: "cancelled", Session: f.session}, nil
+	}
+	if b, ok := f.builds[id]; ok && b.building {
+		b.building, b.result = false, "ABORTED"
+		return &Status{State: "stopping", Session: f.session}, nil
+	}
+	return &Status{State: "absent", Session: f.session}, nil
 }
 
 func (f *fakeJenkins) start(id string) {
@@ -487,4 +509,73 @@ func TestTwoDispatchersRacingScheduleEveryRunOnce(t *testing.T) {
 			t.Fatalf("%+v", got)
 		}
 	}
+}
+
+// A run is cancelled by its client wherever it is (the IDP's abort, a superseded build): before any
+// controller has it, here and for good; in a controller's queue, taken out of it; building, stopped
+// -- it then ends ABORTED, recorded by the dispatcher. An ended run is left as it was; another
+// client's run is not there to cancel.
+func TestARunIsCancelledByItsClientWhereverItIs(t *testing.T) {
+	s, f := testStore(t), newFake()
+	d := dispatcher(s, f, 10, prometheus.NewRegistry())
+	in := &Intake{Store: s, Config: testConfig(), Log: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Metrics: NewMetrics(prometheus.NewRegistry()), Cells: map[string]Controller{"cell-b": f}}
+	srv := httptest.NewServer(in.Handler())
+	t.Cleanup(srv.Close)
+	a := &api{t: t, srv: srv}
+	ctx := context.Background()
+	cancel := func(r *Run, token string) (int, map[string]any) {
+		return a.do("POST", "/v1/runs/"+r.ID.String()+"/cancel", token, "")
+	}
+
+	waiting := accept(t, s, "payments/api")
+	if code, v := cancel(waiting, "gitlab-token"); code != http.StatusOK || v["state"] != "cancelled" {
+		t.Fatalf("an accepted run: %d %v", code, v)
+	}
+	d.Tick(ctx)
+	if f.times(waiting.ID.String()) != 0 || state(t, s, waiting).State != Cancelled {
+		t.Fatal("a cancelled run was dispatched")
+	}
+
+	queued := accept(t, s, "payments/api")
+	d.Tick(ctx)
+	if code, v := cancel(queued, "gitlab-token"); code != http.StatusOK || v["state"] != "cancelled" {
+		t.Fatalf("a queued run: %d %v", code, v)
+	}
+	if _, inQueue := f.queue[queued.ID.String()]; inQueue {
+		t.Fatal("left in the controller's queue")
+	}
+
+	building := accept(t, s, "payments/api")
+	d.Tick(ctx)
+	f.start(building.ID.String())
+	d.Tick(ctx)
+	if code, v := cancel(building, "gitlab-token"); code != http.StatusAccepted || v["state"] != "started" {
+		t.Fatalf("a building run: %d %v", code, v)
+	}
+	d.Tick(ctx)
+	if got := state(t, s, building); got.State != Finished || got.Result != "ABORTED" {
+		t.Fatalf("a stopped build: %+v", got)
+	}
+	if code, v := cancel(building, "gitlab-token"); code != http.StatusOK || v["state"] != "finished" {
+		t.Fatalf("an ended run cancelled again: %d %v", code, v)
+	}
+
+	if code, _ := cancel(accept(t, s, "payments/api"), "release-token"); code != http.StatusNotFound {
+		t.Fatalf("another client's run: %d", code)
+	}
+	f.down = true
+	if code, _ := cancel(queuedRun(t, s, d, ctx), "gitlab-token"); code != http.StatusServiceUnavailable {
+		t.Fatalf("the controller unreachable: %d", code)
+	}
+}
+
+func queuedRun(t *testing.T, s *Store, d *Dispatcher, ctx context.Context) *Run {
+	t.Helper()
+	r := accept(t, s, "payments/api")
+	f := d.Cells[0].Controller.(*fakeJenkins)
+	f.down = false
+	d.Tick(ctx)
+	f.down = true
+	return r
 }

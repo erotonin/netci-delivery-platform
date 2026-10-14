@@ -257,6 +257,103 @@ public final class NetciEndpoint implements RootAction {
     }
 
     /**
+     * netci-queue's cancel of a run (the IDP's abort, a superseded build), by run id: wherever the
+     * run is. In this controller's queue it is taken out ("cancelled"); building here it is
+     * interrupted and ends ABORTED ("stopping"); building on another replica (adopted there), the
+     * call goes to that replica; nowhere, "absent". A run between the queue and its build
+     * ("starting") is a 503: asked again, it is one or the other.
+     */
+    @RequirePOST
+    public HttpResponse doCancel(StaplerRequest2 req) throws Exception {
+        JSONObject body;
+        String raw;
+        try {
+            raw = readBody(req);
+            body = JSONObject.fromObject(raw);
+        } catch (JSONException | IOException e) {
+            return error(400, "the body must be a JSON object of at most 64 KiB");
+        }
+        String runId = body.optString("runId", "");
+        if (!RUN_ID.matcher(runId).matches()) {
+            return error(400, "runId must be a lower-case UUID");
+        }
+        if (RunsAcrossReplicas.configured() && !RunsAcrossReplicas.active()) {
+            return error(503, "this replica is catching up with the replicas' store; retry");
+        }
+        HttpResponse routed = route(req, "POST", "/netci/cancel", raw, body.optString("job", ""));
+        if (routed != null) {
+            return routed;
+        }
+        Job<?, ?> job = Jenkins.get().getItemByFullName(body.optString("job", ""), Job.class);
+        if (job == null) {
+            return error(404, "no such job, or no permission to see it");
+        }
+        job.checkPermission(Item.CANCEL);
+        long notBefore = body.optLong("notBefore", 0);
+        Callable<JSONObject> here = () -> {
+            try (ACLContext ignored = ACL.as2(ACL.SYSTEM2)) {
+                RunLookup.Found f = RunLookup.find(job, runId, notBefore);
+                if (f == null) {
+                    return null;
+                }
+                switch (f.state()) {
+                    case QUEUED: {
+                        Queue q = Jenkins.get().getQueue();
+                        Queue.Item item = q.getItem(f.queueId());
+                        return new JSONObject().element("state", item != null && q.cancel(item) ? "cancelled" : "starting");
+                    }
+                    case STARTING:
+                        return new JSONObject().element("state", "starting");
+                    default: {
+                        Run<?, ?> b = f.build();
+                        JSONObject o = describe(f, false);
+                        if (b.isBuilding()) {
+                            hudson.model.Executor e = b.getExecutor();
+                            if (e == null) {
+                                return new JSONObject().element("state", "starting");
+                            }
+                            e.interrupt(Result.ABORTED);
+                            return o.element("state", "stopping");
+                        }
+                        return o.element("state", "ended");
+                    }
+                }
+            }
+        };
+        JSONObject result = Queue.withLock(here);
+        if (result == null && RunsAcrossReplicas.active()) {
+            try {
+                RunsAcrossReplicas.Elsewhere e = RunsAcrossReplicas.find(runId);
+                String auth = req.getHeader("Authorization");
+                if (e != null && e.started() && auth != null && !e.replica().equals(io.netci.jenkins.homesync.RunsAcrossReplicas.me())) {
+                    RunsAcrossReplicas.Answer a = RunsAcrossReplicas.forward(e.replica(), "POST", req.getContextPath() + "/netci/cancel", raw, auth);
+                    return new HttpResponse() {
+                        @Override
+                        public void generateResponse(StaplerRequest2 r, StaplerResponse2 rsp, Object node) throws IOException {
+                            rsp.setStatus(a.status());
+                            rsp.setContentType("application/json;charset=UTF-8");
+                            rsp.setHeader("X-Netci-Answered-By", e.replica());
+                            rsp.getWriter().print(a.body());
+                        }
+                    };
+                }
+                if (e != null) {
+                    return error(503, "the run is about to start on replica " + e.replica() + "; retry");
+                }
+            } catch (IOException e) {
+                return error(503, "the run's replica or the replicas' store cannot be reached; retry");
+            }
+        }
+        if (result == null) {
+            return json(404, new JSONObject().element("runId", runId).element("state", "absent").element("session", SESSION));
+        }
+        if ("starting".equals(result.getString("state"))) {
+            return error(503, "the run is between the queue and its build; retry");
+        }
+        return json(200, result.element("runId", runId).element("job", job.getFullName()).element("session", SESSION));
+    }
+
+    /**
      * A call for a job another replica owns, made there (ADR-081), or null to answer here: homesync
      * off, the call already routed, this replica the owner, or no credential to act with.
      */

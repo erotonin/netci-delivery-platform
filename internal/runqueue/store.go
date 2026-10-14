@@ -27,7 +27,7 @@ const (
 )
 
 var transitions = map[State][]State{
-	Accepted:   {Dispatched, Started, Refused},
+	Accepted:   {Dispatched, Started, Refused, Cancelled}, // cancelled: by its client, before any controller had it
 	Dispatched: {Dispatched, Started, Cancelled, Refused},
 	Started:    {Started, Finished},
 }

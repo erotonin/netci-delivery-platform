@@ -77,7 +77,11 @@ func run(log *slog.Logger) error {
 	}
 	metrics.Known(cellNames, clientNames)
 	store := &runqueue.Store{Pool: pool}
-	intake := &runqueue.Intake{Store: store, Config: cfg, Log: log, Metrics: metrics}
+	byName := make(map[string]runqueue.Controller, len(cells))
+	for _, c := range cells {
+		byName[c.Name] = c.Controller
+	}
+	intake := &runqueue.Intake{Store: store, Config: cfg, Log: log, Metrics: metrics, Cells: byName}
 
 	mux := http.NewServeMux()
 	mux.Handle("/v1/", intake.Handler())

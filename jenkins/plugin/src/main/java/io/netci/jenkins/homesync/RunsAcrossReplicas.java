@@ -42,6 +42,11 @@ public final class RunsAcrossReplicas {
         return HomeSync.get() != null;
     }
 
+    /** This replica's name among the replicas. */
+    public static String me() {
+        return OwnerRouting.me();
+    }
+
     /** Whether runs are shared between replicas here (homesync on and caught up). */
     public static boolean active() {
         HomeSync sync = HomeSync.get();

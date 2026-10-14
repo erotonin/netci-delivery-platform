@@ -20,6 +20,10 @@ type Controller interface {
 	Dispatch(ctx context.Context, r *Run, requestedBy string) (*Status, error)
 	// Lookup returns where the run is, or found=false (with the controller's session).
 	Lookup(ctx context.Context, r *Run) (st *Status, found bool, err error)
+	// Cancel takes the run out of the controller's queue ("cancelled") or stops its build
+	// ("stopping": the build ends ABORTED and the dispatcher records it); "absent" when the
+	// controller has neither.
+	Cancel(ctx context.Context, r *Run) (*Status, error)
 }
 
 // Status is the plugin's answer.
@@ -88,6 +92,25 @@ func (j *Jenkins) Lookup(ctx context.Context, r *Run) (*Status, bool, error) {
 		return st, false, nil
 	default:
 		return nil, false, classify(code, st)
+	}
+}
+
+func (j *Jenkins) Cancel(ctx context.Context, r *Run) (*Status, error) {
+	body, err := json.Marshal(map[string]any{"job": r.Job, "runId": r.ID.String(), "notBefore": notBefore(r)})
+	if err != nil {
+		return nil, err
+	}
+	st, code, err := j.do(ctx, http.MethodPost, "/netci/cancel", bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	switch {
+	case code == http.StatusOK:
+		return st, nil
+	case code == http.StatusNotFound && st != nil && st.State == "absent":
+		return st, nil
+	default:
+		return nil, classify(code, st)
 	}
 }
 
