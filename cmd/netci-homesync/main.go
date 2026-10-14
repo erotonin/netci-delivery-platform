@@ -41,7 +41,11 @@ func run(log *slog.Logger) error {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer stop()
-	pool, err := pgxpool.New(ctx, dsn)
+	cfg, err := homesync.PoolConfig(dsn)
+	if err != nil {
+		return fmt.Errorf("database: %w", err)
+	}
+	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
 		return fmt.Errorf("database: %w", err)
 	}
