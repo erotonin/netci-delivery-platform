@@ -102,6 +102,11 @@ spec:
             - {name: NETCI_REPLICA_URLS, value: "jenkins-0=http://jenkins-0.jenkins.aa-p2.svc.cluster.local:8080,jenkins-1=http://jenkins-1.jenkins.aa-p2.svc.cluster.local:8080"}
           ports: [{containerPort: 8080}]
           readinessProbe: {httpGet: {path: /login, port: 8080}, periodSeconds: 2, failureThreshold: 3}
+          # Drain before stopping (ADR-080): the balancer checks /netci-ready/, which answers 503 once
+          # this file exists, so within its 2 s it sends everyone to the other replica; Jenkins is
+          # told to stop when nothing is in flight. /tmp is the container's own: a new container
+          # starts without the file.
+          lifecycle: {preStop: {exec: {command: [sh, -c, "touch /tmp/netci-draining && sleep 6"]}}}
           resources: {requests: {cpu: 300m, memory: 1Gi}, limits: {memory: 1536Mi}}
           volumeMounts:
             - {name: home, mountPath: /var/jenkins_home}

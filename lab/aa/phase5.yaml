@@ -81,7 +81,9 @@ data:
       balance roundrobin
       # preserve: the plugin sets this cookie to send a request to a job's owner (ADR-078).
       cookie NETCI_REPLICA insert indirect nocache httponly preserve
-      option httpchk GET /login
+      # The plugin's readiness (ADR-080): 503 while the replica starts or drains before a stop.
+      # Needs a controller of netci25 or later on every replica before it is applied.
+      option httpchk GET /netci-ready/
       http-check expect status 200
       http-response set-header X-Netci-Replica %s
       # Each agent to its replica; a use-server rule is ignored while that server is down, so an
