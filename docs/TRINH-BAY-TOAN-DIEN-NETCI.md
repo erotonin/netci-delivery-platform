@@ -1021,8 +1021,9 @@ Vì vậy chọn **mỗi replica một home riêng** trên đĩa của chính m�
 | 40 lần sửa đồng thời trên 2 replica | 25 nhận, 15 bị từ chối có lý do, không mất lần nào, hai bên hội tụ |
 | Build đang chạy, giết pod chủ | Nhận nuôi sau 4,3 s, SUCCESS, đủ 90/90 dòng, không dòng nào hai lần |
 | Build đang chạy, mất điện máy chủ | Nhận nuôi sau 49,5 s, SUCCESS, đủ 90/90 dòng, build vẫn xong đúng giờ |
-| Mất điện máy chạy primary của kho (PostgreSQL HA, ADR-080) | 271 lần ghi đã trả 200, không mất lần nào; số build giữ nguyên; sửa bị từ chối (503) 26 s; UI 148/149 |
-| Nâng cấp cuốn chiếu controller (netci22 → netci23) | 68 s; UI 286/286; 270 lần tạo job đều có trên cả hai replica; mỗi replica khởi động lại làm hỏng 1 POST (crumb CSRF) |
+| Mất điện máy chạy primary của kho (PostgreSQL HA, ADR-080) | 268 lần ghi đã trả 200, không mất lần nào; số build giữ nguyên; sửa bị từ chối (503) 28 s; mất máy chứa standby thì không lần sửa nào bị từ chối |
+| Soak: 11 sự cố nối tiếp (pod, máy, kho, homesync, HAProxy), mỗi lần giữa một build 90 s | 11/11 build SUCCESS, mỗi dòng đúng 1 lần, xong 83–85 s sau sự cố; 3235 lần ghi có trên cả hai replica; UI 1742/1750 |
+| Khởi động lại cuốn chiếu, có drain | UI 306/306; 303 lần tạo job có trên cả hai replica |
 
 **Giới hạn, nói thẳng:**
 - Kho đã HA (3 instance CloudNativePG trên `local-path`, đồng bộ tới 1 standby, ADR-080), nhưng trong lúc nó
@@ -1041,6 +1042,12 @@ Vì vậy chọn **mỗi replica một home riêng** trên đĩa của chính m�
 - Tên agent trong log là một ConsoleNote.
 - HAProxy giữ tunnel của agent tới máy chết suốt một giờ.
 - Kết nối có sẵn trong pool cứ rơi vào API server của máy chết.
+- Feed của kho đánh số trước khi commit, nên một replica có thể bỏ qua một thay đổi commit muộn. Đã sửa bằng
+  một khoá để thứ tự feed trùng thứ tự commit.
+- Build được nhận nuôi bị thiếu 2 dòng log (log được chép trước `program.dat` và còn nằm trong bộ đệm). Đã
+  sửa: chép log sau cùng, flush trước khi chép.
+- Agent tưởng vẫn kết nối với máy đã chết suốt 9 phút (ping mặc định 5 phút). Đã sửa: ping 5 s, và agent
+  dùng HAProxy trên chính máy của nó.
 - Deadlock: một job tạo trên r1 giữ khoá của Jenkins rồi chờ khoá của homesync, trong khi follower giữ khoá
   homesync và chờ khoá của Jenkins. Sửa bằng khoá theo từng item (ADR-080); lần chạy failover của kho phát
   hiện ra, trước cả lúc cắt điện.

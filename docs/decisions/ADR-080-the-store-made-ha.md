@@ -1,6 +1,6 @@
 # ADR-080: The store made HA; a rolling upgrade measured; a deadlock the failover run found
 
-- Status: accepted; measured in the lab (below)
+- Status: accepted; measured in the lab (below), soak included
 - Date: 2026-10-14
 - Refines: ADR-076, ADR-079
 
@@ -41,6 +41,15 @@ The site mostly runs local-path, and so do the homes.
 7. **The store's instances and the operator talk to their own machine's API server**, not the
    Service in front of all three (see "Found"). A machine's API server lives and dies with the pods
    on it.
+8. **A running build's copy holds everything else first and its log last, flushed.** The log then
+   holds all the output program.dat says was read. Watched output also carries the agents' marks,
+   which the adopter puts back (see "Found").
+9. **Agents notice a dead path in seconds.** Replicas ping every 5 s with a 10 s timeout, for both
+   sides. The lab's agents use the balancer on their own machine and give up a connection attempt
+   after 3 s; an agent outside the cluster uses the VIP.
+10. **A replica leaves traffic before it stops.** The balancer checks the plugin's `/netci-ready/`.
+    The pod's preStop makes it answer 503 and waits 6 s before Jenkins is told to stop. A 503 that
+    still gets through is retried on the other replica.
 
 `lab/aa/store.sh install` sets this up:
 - applies the operator release by checksum, with its image by digest;
@@ -149,48 +158,74 @@ at each replica's restart. HAProxy retried connection failures and empty respons
 on the other replica. That is safe: Jenkins says 503 before it acts on a request, and so does the
 plugin when it refuses an edit.
 
-## Measured (the lab, controller netci23, homesync 3e9469e)
+## Measured (the lab: controller netci25, homesync with every fix above)
 
-**The store's primary machine powered off** (`lab/aa/phase6_store_probe.py`,
-`aa-phase6-store-20261014T035606Z.json`). netci-lab-1 ran the primary, one homesync, one HAProxy and
-jenkins-1. Each replica created a job every second; the UI was polled every second.
+Each run below is kept in `lab/evidence/`. The load was the same throughout:
+- each replica created a job every second through the VIP;
+- the UI was polled through the VIP (every second, or twice a second in the upgrades);
+- every create answered 200 was checked on both replicas afterwards.
+
+**The store's machines.** These are `phase6_store_probe.py` runs on the feed fix.
+
+| Machine powered off | Acknowledged creates | Missing on either replica | Edits refused | UI |
+|---|---|---|---|---|
+| The primary's, with jenkins-0 on it (`aa-phase6-store-20261014T045629Z.json`) | 268 | none; reserved numbers all on the promoted standby | 503 until 27.6 s (promoted at 22.6 s) | 148 of 149 |
+| A standby's, with jenkins-0 on it (`aa-phase6-store-20261014T043239Z.json`) | 317 | none | none on r1; r0 lost 2 only because jenkins-0 died | 148 of 149 |
+
+**The soak** (`phase6_soak.py`, `aa-phase6-soak-20261014T073506Z.json` plus 075230Z and 080719Z).
+Each round started `long` (90 one-second ticks on an inbound agent) and injected one fault 10 ticks
+in. There were 11 rounds:
+- a jenkins pod killed, its replica's machine powered off (4 rounds);
+- the store's primary pod killed, its machine powered off (3 rounds);
+- a homesync pod killed;
+- the HAProxy pod holding the VIP killed.
 
 | | |
 |---|---|
-| Acknowledged creates | 271, every one present on both replicas afterwards |
-| Build numbers reserved before | all on the promoted primary |
-| Edits refused (503, fail closed) | from the power-off to 26 s; accepted again from 26-27 s |
-| Failover | "Failing over" at 4.7 s, store-2 primary at 24.2 s, healthy at 71 s |
-| UI | 148 of 149 polls answered (the one at the power-off failed) |
-| The machine back | store-1 rejoined as a synchronous standby by itself |
+| Builds | 11 of 11 SUCCESS; every tick exactly once; each listed on both replicas; numbers distinct |
+| Build finished after the fault | 83-85 s every round, as if nothing had happened (90 ticks, 10 already done) |
+| Acknowledged creates | 3235, every one on both replicas |
+| UI | 1742 of 1750 polls answered (each failure at the instant of a death) |
 
-**A rolling upgrade** (`lab/aa/phase6_upgrade_probe.py`, `aa-phase6-upgrade-20261014T035213Z.json`).
-The controller image went from netci22 to netci23: jenkins-1 restarted, then jenkins-0, with
-`minReadySeconds: 30` between them. It took 68 s, with the same writers and the UI polled twice a
-second.
+**Rolling restarts and upgrades** (`phase6_upgrade_probe.py`). Each one went one replica at a time,
+with `minReadySeconds: 30`.
 
-| | |
-|---|---|
-| UI | 286 of 286 polls answered |
-| Creates | 270 accepted, every one present on both replicas |
-| Refused | one POST per restarted replica: 403, a CSRF crumb from the replica that restarted (the probe fetches a new crumb and goes on) |
+| Run | UI polls answered | Creates | Not accepted |
+|---|---|---|---|
+| netci22 to netci23 (`aa-phase6-upgrade-20261014T035213Z.json`) | 286 of 286 | 270, all on both | one 403 per restarted replica |
+| netci23 to netci24, before the 503 retry (`...061407Z`) | 278 of 280 | 279, all on both | one 403 per restarted replica |
+| restart, 503 retried, no drain (`...081554Z`) | 295 of 297 | 298, all on both | one 403 per restarted replica |
+| **restart with the drain** (`...083045Z`) | **306 of 306** | 303, all on both | one 403 per restarted replica |
 
-One more create timed out 15 s *before* the upgrade began: r1 was still in the deadlock above from
-netci22, which the upgrade replaced.
+The 403 is Jenkins' CSRF crumb. The probe signs in with a password and keeps a crumb bound to a
+session on the replica that restarted; it fetches a new one and goes on. A script using an API
+token needs no crumb and does not see it.
 
-**Nothing earlier regressed** with per-item locks and the HA store:
+**Nothing earlier regressed**, checked on netci23 with the HA store:
 - Phase 3, all eight checks (`aa-phase3-20261014T040322Z.json`): a job on r0 reached r1 in 135 ms
   (median); 40 concurrent edits gave 30 accepted and 10 refused with the holder named, and both
   replicas converged; edits were refused with homesync down; the sign-in survived its replica, 60
   of 60 polls.
-- Phase 5, pod killed (`aa-phase5-20261014T040446Z.json`): the build was adopted in 6.4 s, SUCCESS,
-  every tick once.
+- Phase 5, pod killed (`aa-phase5-20261014T040446Z.json`): adopted in 6.4 s, SUCCESS, every tick
+  once.
+
+Superseded, kept for what they found: `aa-phase6-store-20261014T023528Z.json` (the deadlock),
+`...035606Z` (on the feed bug, before it was known), `...043727Z` (the skipped create),
+`aa-phase6-soak-20261014T040915Z.json`, `...050449Z` and `...054113Z` (the liveness restart, the
+9-minute agent, the two lost lines).
 
 ## What it costs, said plainly
 
 - **Edits are refused for ~25 s when the store's primary dies.** Most of that is CloudNativePG
-  between noticing (4.7 s) and promoting (24.2 s). Reads, the UI and running builds go on: a build
-  needs the store only to start (its number) and to be adopted.
+  between noticing and promoting (noticing takes 4-20 s, longer when the operator's leader died
+  too). Reads, the UI and running builds go on: a build needs the store only to start (its number)
+  and to be adopted. Losing a standby's machine costs no edit.
+- A job created in the second before its machine lost power can be left empty on that machine's
+  disk (Jenkins writes it without a sync): it failed to load there ("Premature end of file"). The
+  replica's bootstrap wrote it again from the store, and both replicas had it.
+- Feed writes are ordered through one lock: the store takes one change at a time from the feed
+  insert to the commit (a synchronous standby's acknowledgement included). That is a few hundred
+  changes a second, far above what Jenkins edits and finished builds produce.
 - The 403 after a replica's restart is Jenkins' CSRF crumb, bound to the replica's session. A
   person's browser fetches a new one when the page reloads; a script must retry once.
 - Three PostgreSQL instances cost ~150 MB of memory each in the lab, plus two operator pods.
