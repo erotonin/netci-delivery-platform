@@ -212,7 +212,9 @@ token needs no crumb and does not see it.
 Superseded, kept for what they found: `aa-phase6-store-20261014T023528Z.json` (the deadlock),
 `...035606Z` (on the feed bug, before it was known), `...043727Z` (the skipped create),
 `aa-phase6-soak-20261014T040915Z.json`, `...050449Z` and `...054113Z` (the liveness restart, the
-9-minute agent, the two lost lines).
+9-minute agent, the two lost lines), `...061712Z` (the agent again, 525 s), `...064157Z` (a SYN to
+a dead balancer retried for 127 s, every round 145 s) and `...070341Z` (a "Build now" answered 302
+by a replica just back; the probe now asks again).
 
 ## What it costs, said plainly
 

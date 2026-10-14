@@ -1,0 +1,41 @@
+{
+  "partial": true,
+  "rounds": [
+    {
+      "fault": "jenkins-machine",
+      "done": "jenkins-machine",
+      "target": "jenkins-0",
+      "node": "netci-lab-2",
+      "build": 40,
+      "holder": "r0",
+      "at": 1791961446.2,
+      "result": "SUCCESS",
+      "finishedAfterSeconds": 82.8,
+      "ticks": 90,
+      "missing": [],
+      "twice": [],
+      "listedOn": {
+        "r0": true,
+        "r1": true
+      }
+    },
+    {
+      "fault": "jenkins-machine",
+      "done": "jenkins-machine",
+      "target": "jenkins-0",
+      "node": "netci-lab-2",
+      "build": 41,
+      "holder": "r0",
+      "at": 1791961667.4,
+      "result": "SUCCESS",
+      "finishedAfterSeconds": 83.1,
+      "ticks": 90,
+      "missing": [],
+      "twice": [],
+      "listedOn": {
+        "r0": false,
+        "r1": true
+      }
+    }
+  ]
+}
