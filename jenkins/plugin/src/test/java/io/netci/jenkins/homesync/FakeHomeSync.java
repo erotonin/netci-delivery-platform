@@ -37,6 +37,9 @@ final class FakeHomeSync {
     private long epochs = 1000;
     final List<Seen> seen = new ArrayList<>();
     volatile boolean down;
+    /** Called with the item's path before an item is read or changed, outside the store's monitor (a test's pause). */
+    volatile java.util.function.Consumer<String> beforeGet = path -> {};
+    volatile java.util.function.Consumer<String> beforeChange = path -> {};
     private long tokens = 100;
     private final HttpServer server;
 
@@ -61,6 +64,8 @@ final class FakeHomeSync {
         jobEpoch.clear();
         reserved.clear();
         down = false;
+        beforeGet = path -> {};
+        beforeChange = path -> {};
     }
 
     /** Another replica changes an item, as the store would record it. */
@@ -99,8 +104,14 @@ final class FakeHomeSync {
             Map<String, String> q = query(x.getRequestURI().getRawQuery());
             String route = x.getRequestMethod() + " " + x.getRequestURI().getPath();
             switch (route) {
-                case "GET /v1/items" -> getItem(x, q.get("path"));
-                case "PUT /v1/items", "DELETE /v1/items" -> change(x, q.get("path"));
+                case "GET /v1/items" -> {
+                    beforeGet.accept(q.get("path"));
+                    getItem(x, q.get("path"));
+                }
+                case "PUT /v1/items", "DELETE /v1/items" -> {
+                    beforeChange.accept(q.get("path"));
+                    change(x, q.get("path"));
+                }
                 case "POST /v1/locks" -> lock(x, q.get("path"));
                 case "DELETE /v1/locks" -> unlock(x, q.get("path"), Long.parseLong(q.get("token")));
                 case "GET /v1/changes" -> changes(x, Long.parseLong(q.get("after")), q.get("wait"));

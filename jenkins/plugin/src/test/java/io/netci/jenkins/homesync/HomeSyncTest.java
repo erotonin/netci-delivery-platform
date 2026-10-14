@@ -293,6 +293,101 @@ class HomeSyncTest {
                 && "Bob".equals(hudson.model.User.getById("bob", false).getFullName()));
     }
 
+    private static final String XML = "<flow-definition plugin=\"workflow-job\"><description>%s</description>"
+            + "<keepDependencies>false</keepDependencies><properties/><triggers/><disabled>false</disabled></flow-definition>";
+
+    private static Thread createHere(JenkinsRule j, String name, String description) {
+        Thread t = new Thread(() -> {
+            try (hudson.security.ACLContext ignored = hudson.security.ACL.as2(hudson.security.ACL.SYSTEM2)) {
+                j.jenkins.createProjectFromXML(name, new java.io.ByteArrayInputStream(String.format(XML, description).getBytes(StandardCharsets.UTF_8)));
+            } catch (IOException e) {
+                throw new java.io.UncheckedIOException(e);
+            }
+        }, "create " + name);
+        t.start();
+        return t;
+    }
+
+    /**
+     * The lab's deadlock (ADR-080): a job created here holds Jenkins' item-group lock while it is
+     * published; the follower, applying a job another replica created, held the one homesync lock
+     * and waited for that group lock. Here the follower is paused in the store fetching r1's job
+     * until this replica's create has had the chance to publish -- with one lock for both it never
+     * could, and neither thread ever finished.
+     */
+    @Test
+    void aJobCreatedHereWhileAnotherReplicasJobIsBeingAppliedDoesNotDeadlock(JenkinsRule j) throws Exception {
+        ready();
+        java.util.concurrent.CountDownLatch fetching = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.CountDownLatch publishedHere = new java.util.concurrent.CountDownLatch(1);
+        STORE.beforeGet = path -> {
+            if (path.equals("from-r1")) {
+                fetching.countDown();
+                try {
+                    publishedHere.await(5, java.util.concurrent.TimeUnit.SECONDS);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+            }
+        };
+        STORE.beforeChange = path -> {
+            if (path.equals("made-here")) {
+                publishedHere.countDown();
+            }
+        };
+        STORE.changeFrom("r1", "from-r1", String.format(XML, "r1"));
+        assertTrue(fetching.await(15, java.util.concurrent.TimeUnit.SECONDS), "the follower never fetched r1's job");
+        Thread here = createHere(j, "made-here", "here");
+        here.join(30_000);
+        org.junit.jupiter.api.Assertions.assertFalse(here.isAlive(), "the create here never finished: deadlocked with the follower");
+        await("r1's job applied here", () -> j.jenkins.getItemByFullName("from-r1") != null);
+        await("the job made here published", () -> stored("made-here") != null);
+    }
+
+    /**
+     * The same item applied and saved at once: the save waits for the item's lock a bounded time,
+     * then is deferred and done later by the lease thread -- the request is never held for good.
+     * Both replicas end on r1's job: the store had it first.
+     */
+    @Test
+    void aPublishThatCannotTakeItsItemsLockIsDeferredNotBlockedForGood(JenkinsRule j) throws Exception {
+        ready();
+        java.time.Duration wait = HomeSync.publishWait;
+        HomeSync.publishWait = java.time.Duration.ofSeconds(2);
+        try {
+            java.util.concurrent.CountDownLatch fetching = new java.util.concurrent.CountDownLatch(1);
+            java.util.concurrent.atomic.AtomicBoolean first = new java.util.concurrent.atomic.AtomicBoolean(true);
+            // The follower holds "both" for 6 s: past the publish's 2 s, inside the client's 10 s read timeout.
+            STORE.beforeGet = path -> {
+                if (path.equals("both") && first.getAndSet(false)) {
+                    fetching.countDown();
+                    try {
+                        Thread.sleep(6_000);
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                    }
+                }
+            };
+            STORE.changeFrom("r1", "both", String.format(XML, "r1"));
+            assertTrue(fetching.await(15, java.util.concurrent.TimeUnit.SECONDS));
+            long start = System.currentTimeMillis();
+            Thread here = createHere(j, "both", "here");
+            here.join(30_000);
+            org.junit.jupiter.api.Assertions.assertFalse(here.isAlive(), "the create here was held by the follower");
+            long took = System.currentTimeMillis() - start;
+            assertTrue(took < 4_500, "the create was held " + took + " ms, past the 2 s bound");
+            assertTrue(HomeSync.get().deferred.containsKey("both"), "the publish was not deferred");
+        } finally {
+            HomeSync.publishWait = wait;
+        }
+        await("r1's job applied over the one made here", () -> {
+            WorkflowJob job = j.jenkins.getItemByFullName("both", WorkflowJob.class);
+            return job != null && "r1".equals(job.getDescription());
+        });
+        await("the deferred publish done", () -> !HomeSync.get().deferred.containsKey("both"));
+        assertEquals("r1", stored("both").replaceAll("(?s).*<description>(.*)</description>.*", "$1"));
+    }
+
     @Test
     void aChangeThatCannotBeAppliedDoesNotStopTheOnesAfterIt(JenkinsRule j) throws Exception {
         ready();

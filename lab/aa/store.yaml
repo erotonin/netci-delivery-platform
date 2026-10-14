@@ -1,0 +1,31 @@
+# Active-active, the store made HA (ADR-080): netci-homesync's PostgreSQL as three CloudNativePG
+# instances, one per machine, each on its own machine's disk (local-path), as the homes are.
+# Applied by lab/aa/store.sh, which installs the operator first and moves the data over.
+#
+# Synchronous to ANY 1 of the two standbys, durability required: a write is acknowledged only once
+# a standby has it, so the standby promoted after the primary's machine dies has every acknowledged
+# write -- a build number reserved, a version compared-and-set -- and the store does not answer
+# "done" for something a failover would forget. With one machine down one standby remains and
+# writes go on; with two down writes stop, which is the store refusing rather than forgetting.
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata: {name: store, namespace: aa-p2}
+spec:
+  instances: 3
+  # CloudNativePG's PostgreSQL 16.15 (ghcr.io/cloudnative-pg/postgresql:16.15-system-trixie,
+  # sha256:9314ca1c...), copied into Harbor: the lab's nodes could not finish pulling it from
+  # ghcr.io's CDN (connections reset), and every other lab image comes from Harbor too.
+  imageName: 172.17.0.1:8930/netci/cnpg-postgresql:16.15-system-trixie@sha256:236091e55fda2ba92dbb60c020a5c63e788303c4faf816d2950ae6d3ef345b13
+  imagePullSecrets: [{name: harbor-pull}]
+  primaryUpdateStrategy: unsupervised
+  failoverDelay: 0
+  postgresql:
+    synchronous: {method: any, number: 1, dataDurability: required}
+    parameters: {max_connections: "100", shared_buffers: "64MB"}
+  bootstrap:
+    initdb: {database: netci_homesync, owner: homesync}
+  storage: {storageClass: local-path, size: 2Gi}
+  # One instance per machine, never two: two on one machine is one machine's death taking the
+  # primary and the only synchronous standby together.
+  affinity: {enablePodAntiAffinity: true, podAntiAffinityType: required, topologyKey: kubernetes.io/hostname}
+  resources: {requests: {cpu: 50m, memory: 128Mi}, limits: {memory: 384Mi}}

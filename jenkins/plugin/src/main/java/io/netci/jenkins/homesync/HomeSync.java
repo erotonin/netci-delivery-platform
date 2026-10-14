@@ -25,6 +25,9 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import javax.xml.transform.stream.StreamSource;
@@ -62,10 +65,26 @@ public final class HomeSync {
     final Map<String, Long> runningCopies = new ConcurrentHashMap<>();
     /** The SHA-256 of what this home last published, or applied, for each item. */
     final Map<String, String> published = new ConcurrentHashMap<>();
-    /** Applying and publishing are one at a time, so the feed never interleaves with a publish. */
-    final Object order = new Object();
+    /**
+     * Applying and publishing one item are one at a time, so a change from the feed is never written
+     * over this home's newer save of the same item. Per item, not one lock for everything: applying
+     * calls into Jenkins (creating an item takes its group's lock), and a publish runs inside Jenkins'
+     * locks (onCreated fires under them). One lock for both deadlocked the lab's r1 for good when a
+     * job was created there while the follower created another replica's (ADR-080): the request held
+     * the group's lock and waited for this one, the follower held this one and waited for the group's.
+     */
+    private final Map<String, ReentrantLock> itemLocks = new ConcurrentHashMap<>();
+    /**
+     * How long a publish, which may hold Jenkins' locks, waits for its item's lock before deferring.
+     * Not final only so a test can make it shorter than the store client's 10 s read timeout.
+     */
+    static volatile Duration publishWait = Duration.ofSeconds(10);
+    /** A publish that could not take its item's lock in time: redone by the lease thread, outside Jenkins' locks. */
+    record Deferred(byte[] content, boolean delete) {}
+    final Map<String, Deferred> deferred = new ConcurrentHashMap<>();
 
-    private volatile long applied;
+    /** Every change up to this sequence number is applied here. Only ever raised. */
+    private final AtomicLong applied = new AtomicLong();
     private Thread follower;
     private Thread renewer;
     private volatile boolean ready;
@@ -101,6 +120,7 @@ public final class HomeSync {
             for (long pass = 1; !Thread.currentThread().isInterrupted(); pass++) {
                 BuildOwnership.renewAll(sync);
                 if (sync.ready()) {
+                    sync.publishDeferred();
                     RunningBuilds.adoptOrphans(sync);
                     if (pass % 6 == 0) {
                         try (ACLContext ignored = ACL.as2(ACL.SYSTEM2)) {
@@ -136,7 +156,7 @@ public final class HomeSync {
             try {
                 bootstrap();
                 ready = true;
-                LOGGER.info(() -> "netCI homesync: home caught up with the store at seq " + applied + ", " + versions.size() + " items");
+                LOGGER.info(() -> "netCI homesync: home caught up with the store at seq " + applied.get() + ", " + versions.size() + " items");
             } catch (IOException e) {
                 LOGGER.log(Level.WARNING, "netCI homesync: cannot reach the store; edits stay refused until it answers", e);
                 sleep(Duration.ofSeconds(3));
@@ -146,10 +166,8 @@ public final class HomeSync {
         }
         while (true) {
             try {
-                HomeSyncClient.Changes page = client.changes(applied, POLL);
-                synchronized (order) {
-                    applyAll(page.changes());
-                }
+                HomeSyncClient.Changes page = client.changes(applied.get(), POLL);
+                applyAll(page.changes());
             } catch (IOException e) {
                 LOGGER.log(Level.WARNING, "netCI homesync: the feed is unreachable; retrying", e);
                 sleep(Duration.ofSeconds(2));
@@ -170,31 +188,33 @@ public final class HomeSync {
      * that one is applied here.
      */
     void bootstrap() throws IOException, InterruptedException {
-        synchronized (order) {
-            Map<String, HomeSyncClient.Change> latest = new HashMap<>();
-            long after = 0;
-            while (true) {
-                HomeSyncClient.Changes page = client.changes(after, Duration.ZERO);
-                for (HomeSyncClient.Change c : page.changes()) {
-                    latest.put(c.path(), c);
-                    after = c.seq();
-                }
-                if (page.changes().isEmpty() || after >= page.head()) {
-                    after = Math.max(after, page.head());
-                    break;
-                }
+        Map<String, HomeSyncClient.Change> latest = new HashMap<>();
+        long after = 0;
+        while (true) {
+            HomeSyncClient.Changes page = client.changes(after, Duration.ZERO);
+            for (HomeSyncClient.Change c : page.changes()) {
+                latest.put(c.path(), c);
+                after = c.seq();
             }
-            // Parents before children.
-            List<String> paths = latest.keySet().stream()
-                    .sorted(Comparator.comparingInt((String p) -> p.split("/").length).thenComparing(p -> p)).toList();
-            for (String path : paths) {
-                if (path.startsWith(RunningBuilds.RUNNING)) {
-                    if (!latest.get(path).deleted()) {
-                        runningCopies.put(path, latest.get(path).version());
-                    }
-                    versions.put(path, latest.get(path).version());
-                    continue;
+            if (page.changes().isEmpty() || after >= page.head()) {
+                after = Math.max(after, page.head());
+                break;
+            }
+        }
+        // Parents before children.
+        List<String> paths = latest.keySet().stream()
+                .sorted(Comparator.comparingInt((String p) -> p.split("/").length).thenComparing(p -> p)).toList();
+        for (String path : paths) {
+            if (path.startsWith(RunningBuilds.RUNNING)) {
+                if (!latest.get(path).deleted()) {
+                    runningCopies.put(path, latest.get(path).version());
                 }
+                versions.put(path, latest.get(path).version());
+                continue;
+            }
+            ReentrantLock l = lockOf(path);
+            l.lockInterruptibly();
+            try {
                 HomeSyncClient.Item item = client.get(path);
                 if (item.content() == null) {
                     apply(path, item.version(), null);
@@ -203,66 +223,87 @@ public final class HomeSync {
                 } else {
                     versions.put(path, item.version());
                 }
+            } finally {
+                l.unlock();
             }
-            applied = after;
-            try (ACLContext ignored = ACL.as2(ACL.SYSTEM2)) {
-                for (AbstractItem it : Jenkins.get().getAllItems(AbstractItem.class)) {
-                    if (!latest.containsKey(it.getFullName())) {
-                        publishInOrder(it.getFullName(), Files.readAllBytes(it.getConfigFile().getFile().toPath()), 0);
-                    }
+        }
+        advance(after);
+        try (ACLContext ignored = ACL.as2(ACL.SYSTEM2)) {
+            for (AbstractItem it : Jenkins.get().getAllItems(AbstractItem.class)) {
+                if (!latest.containsKey(it.getFullName())) {
+                    publishLocked(it.getFullName(), Files.readAllBytes(it.getConfigFile().getFile().toPath()), 0);
                 }
-                for (User u : User.getAll()) {
-                    byte[] config = local(userPath(u.getId()));
-                    if (config != null && !latest.containsKey(userPath(u.getId()))) {
-                        publishInOrder(userPath(u.getId()), config, 0);
-                    }
+            }
+            for (User u : User.getAll()) {
+                byte[] config = local(userPath(u.getId()));
+                if (config != null && !latest.containsKey(userPath(u.getId()))) {
+                    publishLocked(userPath(u.getId()), config, 0);
                 }
             }
         }
     }
 
-    /** Apply every change in a page not already held here; called with {@link #order} held. */
+    private ReentrantLock lockOf(String path) {
+        return itemLocks.computeIfAbsent(path, k -> new ReentrantLock());
+    }
+
+    private void advance(long seq) {
+        applied.accumulateAndGet(seq, Math::max);
+    }
+
+    /**
+     * Apply every change in a page not already held here, in order, each under its item's lock. The
+     * follower and an edit catching up may both run through the same changes: whichever takes an
+     * item's lock first applies it, the other finds its version already here.
+     */
     private void applyAll(List<HomeSyncClient.Change> changes) throws IOException, InterruptedException {
         for (HomeSyncClient.Change c : changes) {
-            if (c.path().startsWith(RunningBuilds.RUNNING)) {
-                // A copy of a running build: recorded, not fetched, not applied (ADR-079).
-                if (c.deleted()) {
-                    runningCopies.remove(c.path());
-                } else {
-                    runningCopies.put(c.path(), c.version());
-                }
-                versions.put(c.path(), c.version());
-                applied = c.seq();
-                continue;
+            ReentrantLock l = lockOf(c.path());
+            l.lockInterruptibly();
+            try {
+                applyOne(c);
+            } finally {
+                l.unlock();
             }
-            if (c.version() > versions.getOrDefault(c.path(), 0L)) {
-                // The latest content, which may be newer than this entry: later entries are then no-ops.
-                HomeSyncClient.Item item = client.get(c.path());
-                if (item.version() > versions.getOrDefault(c.path(), 0L)) {
-                    try {
-                        apply(c.path(), item.version(), item.content());
-                    } catch (IOException | RuntimeException e) {
-                        // One change that cannot be applied must not stop the rest; it is said loudly.
-                        LOGGER.log(Level.SEVERE, "netCI homesync: could not apply " + c.path() + " version " + item.version()
-                                + "; this home now differs from the others for it", e);
-                    }
+            advance(c.seq());
+        }
+    }
+
+    private void applyOne(HomeSyncClient.Change c) throws IOException, InterruptedException {
+        if (c.path().startsWith(RunningBuilds.RUNNING)) {
+            // A copy of a running build: recorded, not fetched, not applied (ADR-079).
+            if (c.deleted()) {
+                runningCopies.remove(c.path());
+            } else {
+                runningCopies.put(c.path(), c.version());
+            }
+            versions.put(c.path(), c.version());
+            return;
+        }
+        if (c.version() > versions.getOrDefault(c.path(), 0L)) {
+            // The latest content, which may be newer than this entry: later entries are then no-ops.
+            HomeSyncClient.Item item = client.get(c.path());
+            if (item.version() > versions.getOrDefault(c.path(), 0L)) {
+                try {
+                    apply(c.path(), item.version(), item.content());
+                } catch (IOException | RuntimeException e) {
+                    // One change that cannot be applied must not stop the rest; it is said loudly.
+                    LOGGER.log(Level.SEVERE, "netCI homesync: could not apply " + c.path() + " version " + item.version()
+                            + "; this home now differs from the others for it", e);
                 }
             }
-            applied = c.seq();
         }
     }
 
     /** Before an edit: apply everything the store had when the edit's lock was taken. */
     void catchUp(long head) throws IOException, InterruptedException {
-        synchronized (order) {
-            while (applied < head) {
-                HomeSyncClient.Changes page = client.changes(applied, Duration.ZERO);
-                if (page.changes().isEmpty()) {
-                    applied = Math.max(applied, page.head());
-                    break;
-                }
-                applyAll(page.changes());
+        while (applied.get() < head) {
+            HomeSyncClient.Changes page = client.changes(applied.get(), Duration.ZERO);
+            if (page.changes().isEmpty()) {
+                advance(page.head());
+                break;
             }
+            applyAll(page.changes());
         }
     }
 
@@ -273,8 +314,85 @@ public final class HomeSync {
      * lost local change it is.
      */
     void publish(String path, byte[] content, long lockToken) {
-        synchronized (order) {
+        ReentrantLock l = lockOf(path);
+        if (!tryLock(l, path, new Deferred(content, false))) {
+            return;
+        }
+        try {
             publishInOrder(path, content, lockToken);
+        } finally {
+            l.unlock();
+        }
+    }
+
+    /**
+     * The item's lock for a publish, which may be running inside Jenkins' locks: waited for at most
+     * {@link #publishWait}, then the publish is deferred rather than risk waiting for good on whoever
+     * holds the item's lock while it waits for a lock this thread holds.
+     */
+    private boolean tryLock(ReentrantLock l, String path, Deferred d) {
+        // Already deferred: the item's lock is still contended, and a create is heard twice (created,
+        // then saved) -- waiting again would hold the request twice the bound.
+        if (deferred.containsKey(path)) {
+            deferred.put(path, d);
+            return false;
+        }
+        try {
+            if (l.tryLock(publishWait.toMillis(), TimeUnit.MILLISECONDS)) {
+                return true;
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+        LOGGER.warning(() -> "netCI homesync: " + path + " is busy being applied; its publish is deferred"
+                + " (the other replicas lack this change until it is done)");
+        deferred.put(path, d);
+        return false;
+    }
+
+    /** Called from threads that hold no Jenkins lock: waits for the item's lock. */
+    private void publishLocked(String path, byte[] content, long lockToken) throws InterruptedException {
+        ReentrantLock l = lockOf(path);
+        l.lockInterruptibly();
+        try {
+            publishInOrder(path, content, lockToken);
+        } finally {
+            l.unlock();
+        }
+    }
+
+    /**
+     * Deferred publishes, done again from what this home holds now: an item or user is re-read (a
+     * later save may have changed it), a finished build is immutable and goes as it was archived.
+     */
+    void publishDeferred() {
+        for (String path : List.copyOf(deferred.keySet())) {
+            Deferred d = deferred.remove(path);
+            if (d == null) {
+                continue;
+            }
+            ReentrantLock l = lockOf(path);
+            try {
+                l.lockInterruptibly();
+            } catch (InterruptedException e) {
+                deferred.putIfAbsent(path, d);
+                Thread.currentThread().interrupt();
+                return;
+            }
+            try {
+                // Read under the item's lock: read before it, this home's content could be the one
+                // a change from the feed was replacing, and publishing it would undo that change in
+                // the store while this home kept it (the test caught exactly that).
+                byte[] now = d.delete() || path.startsWith(BUILDS) ? d.content() : local(path);
+                if (d.delete()) {
+                    deleteInOrder(path, 0);
+                } else if (now != null) {
+                    publishInOrder(path, now, 0);
+                }
+            } finally {
+                l.unlock();
+            }
+            LOGGER.info(() -> "netCI homesync: deferred publish of " + path + " done");
         }
     }
 
@@ -302,18 +420,28 @@ public final class HomeSync {
     }
 
     void publishDelete(String path, long lockToken) {
-        synchronized (order) {
-            long expect = versions.getOrDefault(path, 0L);
-            try {
-                versions.put(path, client.delete(path, expect, lockToken));
-            } catch (HomeSyncClient.Refused r) {
-                LOGGER.severe(() -> "netCI homesync: the deletion of " + path + " was refused (" + r.code + "); the shared version is applied");
-                reapply(path);
-            } catch (IOException e) {
-                LOGGER.log(Level.SEVERE, "netCI homesync: could not publish the deletion of " + path, e);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-            }
+        ReentrantLock l = lockOf(path);
+        if (!tryLock(l, path, new Deferred(null, true))) {
+            return;
+        }
+        try {
+            deleteInOrder(path, lockToken);
+        } finally {
+            l.unlock();
+        }
+    }
+
+    private void deleteInOrder(String path, long lockToken) {
+        long expect = versions.getOrDefault(path, 0L);
+        try {
+            versions.put(path, client.delete(path, expect, lockToken));
+        } catch (HomeSyncClient.Refused r) {
+            LOGGER.severe(() -> "netCI homesync: the deletion of " + path + " was refused (" + r.code + "); the shared version is applied");
+            reapply(path);
+        } catch (IOException e) {
+            LOGGER.log(Level.SEVERE, "netCI homesync: could not publish the deletion of " + path, e);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
         }
     }
 
