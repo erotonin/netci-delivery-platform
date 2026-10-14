@@ -2,6 +2,7 @@
 # Active-active: netci-homesync's store moved onto an HA PostgreSQL (ADR-080).
 #
 #   HOMESYNC=<image@digest> lab/aa/store.sh install   operator, the cluster, the data, homesync repointed
+#   lab/aa/store.sh update                             operator and cluster settings again (no data copy)
 #   lab/aa/store.sh status                             instances, roles, synchronous standbys
 #
 # install is meant to run once: it refuses to copy data into a store that already has tables.
@@ -26,12 +27,19 @@ operator() {
   sed "s#ghcr.io/cloudnative-pg/cloudnative-pg:${CNPG_VERSION}#${OPERATOR}#g" "$f" | kubectl apply --server-side --force-conflicts -f - >/dev/null
   # Failover is the operator's decision: one operator pod on the machine that died with the
   # primary would wait ~5 minutes to be evicted before anyone promotes a standby. Two, on two
-  # machines, with leader election (already on in the release).
+  # machines, with leader election (already on in the release). Each talks to its own machine's
+  # API server (as the instances do, store.yaml): through the Service, a pooled connection to a
+  # dead machine's API server delayed the operator's view by tens of seconds.
   kubectl -n cnpg-system patch deployment cnpg-controller-manager --type strategic -p '
 spec:
   replicas: 2
   template:
     spec:
+      containers:
+        - name: manager
+          env:
+            - {name: KUBERNETES_SERVICE_HOST, valueFrom: {fieldRef: {fieldPath: status.hostIP}}}
+            - {name: KUBERNETES_SERVICE_PORT, value: "6443"}
       affinity:
         podAntiAffinity:
           requiredDuringSchedulingIgnoredDuringExecution:
@@ -91,8 +99,17 @@ status() {
   echo "select application_name, state, sync_state from pg_stat_replication order by 1;" | psql_new
 }
 
+update() {
+  operator
+  kubectl apply -f lab/aa/store.yaml >/dev/null
+  # The instances restart one at a time, the primary last by a switchover.
+  sleep 10
+  kubectl -n "$NS" wait cluster/store --for=condition=Ready --timeout=900s
+}
+
 case "${1:-}" in
   install) install ;;
+  update) update ;;
   status) status ;;
   *) sed -n '2,9p' "$0"; exit 2 ;;
 esac

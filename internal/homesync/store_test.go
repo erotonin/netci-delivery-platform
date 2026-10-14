@@ -207,3 +207,68 @@ func TestConcurrentLocksHaveOneHolder(t *testing.T) {
 		t.Fatalf("holders: %v", holders)
 	}
 }
+
+// A change that took its place in the feed first but commits last must not be skipped by a
+// reader that follows the feed as the replicas do (from the last seq it saw). The failover run lost
+// an acknowledged create on one replica this way. Here the first change is held before its commit
+// while a second one is made: without the feed lock the second commits with the higher seq, the
+// reader moves past the first, and never sees it.
+func TestAReaderFollowingTheFeedNeverSkipsAChangeCommittedLate(t *testing.T) {
+	s, ctx := testStore(t), context.Background()
+	held, release := make(chan struct{}), make(chan struct{})
+	beforeCommit = func(path string) {
+		if path == "slow" {
+			close(held)
+			<-release
+		}
+	}
+	t.Cleanup(func() { beforeCommit = nil })
+
+	slow := make(chan error, 1)
+	go func() {
+		_, err := s.Put(ctx, "slow", []byte("a"), 0, "r0", 0)
+		slow <- err
+	}()
+	<-held
+	fast := make(chan error, 1)
+	go func() {
+		_, err := s.Put(ctx, "fast", []byte("b"), 0, "r1", 0)
+		fast <- err
+	}()
+	// The reader, as a replica's follower: from 0, then from the last seq it was given.
+	var after int64
+	seen := map[string]bool{}
+	read := func() {
+		changes, _, err := s.Changes(ctx, after, 100)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, c := range changes {
+			seen[c.Path] = true
+			after = c.Seq
+		}
+	}
+	var fastErr error
+	fastDone := false
+	select {
+	case fastErr = <-fast:
+		fastDone = true // without the feed lock "fast" commits while "slow" is held
+	case <-time.After(500 * time.Millisecond):
+		// with it, "fast" waits for "slow" to commit
+	}
+	read()
+	close(release)
+	if err := <-slow; err != nil {
+		t.Fatal(err)
+	}
+	if !fastDone {
+		fastErr = <-fast
+	}
+	if fastErr != nil {
+		t.Fatal(fastErr)
+	}
+	read()
+	if !seen["slow"] || !seen["fast"] {
+		t.Fatalf("the reader skipped a change: saw %v", seen)
+	}
+}

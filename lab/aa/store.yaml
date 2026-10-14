@@ -29,3 +29,12 @@ spec:
   # primary and the only synchronous standby together.
   affinity: {enablePodAntiAffinity: true, podAntiAffinityType: required, topologyKey: kubernetes.io/hostname}
   resources: {requests: {cpu: 50m, memory: 128Mi}, limits: {memory: 384Mi}}
+  # Each instance's manager talks to its own machine's API server, not the Service in front of all
+  # three. Through the Service, the soak's power-off of a standby's machine left the primary's pooled
+  # connection on that machine's dead API server for ~40 s; CloudNativePG's isolation check then saw
+  # neither the API server nor that standby, failed the primary's liveness, and the kubelet
+  # restarted a healthy primary (an outage of edits that losing a standby should never cause).
+  # Its own machine's API server lives and dies with it.
+  env:
+    - {name: KUBERNETES_SERVICE_HOST, valueFrom: {fieldRef: {fieldPath: status.hostIP}}}
+    - {name: KUBERNETES_SERVICE_PORT, value: "6443"}

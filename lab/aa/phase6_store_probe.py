@@ -3,12 +3,13 @@
 both replicas are being edited. Is any acknowledged edit lost, how long are edits refused, and does
 the UI stay up?
 
-    python3 lab/aa/phase6_store_probe.py
+    python3 lab/aa/phase6_store_probe.py [--kill primary|standby]
 
 Needs lab/aa/store.sh install (three instances, synchronous to one standby) over phases 2-5. Two
 writers, one per replica, create a job each second (a create takes the item's lock, compares and
 sets its version and publishes it: the store's whole write path); a reader asks the VIP for /api/json
-each second. 10 s in, the primary's machine is powered off (virsh destroy) and left off for 150 s.
+each second. 10 s in, the primary's machine (or, with --kill standby, a standby's) is powered off
+(virsh destroy) and left off for 150 s. A standby's machine lost should cost no edit at all.
 Checked afterwards, with the machine back:
   - every create answered 200 exists on both replicas (an acknowledged write the failover forgot
     would be missing on the replica that did not make it, or on both);
@@ -18,6 +19,7 @@ Evidence: lab/evidence/aa-phase6-store-<timestamp>.json.
 """
 from __future__ import annotations
 
+import argparse
 import datetime as dt
 import json
 import re
@@ -84,6 +86,9 @@ def settled() -> bool:
 
 
 def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--kill", choices=["primary", "standby"], default="primary")
+    kill = ap.parse_args().kill
     started = dt.datetime.now(dt.timezone.utc)
     run = started.strftime("%H%M%S")
     p5.whole()
@@ -91,12 +96,13 @@ def main() -> int:
         st = store().get("status", {})
         raise SystemExit(f"the store is not three instances with two synchronous candidates: {st.get('phase')}, {st.get('readyInstances')} ready")
     primary = store()["status"]["currentPrimary"]
+    target = primary if kill == "primary" else sorted(i for i in store()["status"]["instanceNames"] if i != primary)[0]
     pods = json.loads(kubectl("-n", NS, "get", "pods", "-o", "json"))["items"]
-    victim = next(p["spec"]["nodeName"] for p in pods if p["metadata"]["name"] == primary)
-    alongside = sorted(p["metadata"]["name"] for p in pods if p["spec"].get("nodeName") == victim and p["metadata"]["name"] != primary)
+    victim = next(p["spec"]["nodeName"] for p in pods if p["metadata"]["name"] == target)
+    alongside = sorted(p["metadata"]["name"] for p in pods if p["spec"].get("nodeName") == victim and p["metadata"]["name"] != target)
     reserved = numbers(primary)
     apiserver_not_on(victim)
-    print(f"primary {primary} on {victim}, alongside: {', '.join(alongside)}", flush=True)
+    print(f"{kill} {target} on {victim} (primary {primary}), alongside: {', '.join(alongside)}", flush=True)
 
     t0: list[float] = []
     stop = threading.Event()
@@ -167,7 +173,7 @@ def main() -> int:
     acked = [w for r in writes for w in writes[r] if w["code"] == 200]
     missing = {r: [w["name"] for w in acked if p3.R(r).job(w["name"]) is None] for r in ("r0", "r1")}
     facts: dict = {"scenario": "aa-phase6-store", "started": started.isoformat(timespec="seconds"),
-                   "victim": victim, "primaryBefore": primary, "alongside": alongside, "promoted": promoted,
+                   "killed": kill, "target": target, "victim": victim, "primaryBefore": primary, "alongside": alongside, "promoted": promoted,
                    "primaryTimeline": primaries,
                    "acknowledged": len(acked), "missingOn": missing,
                    "reservedBefore": reserved, "reservedOnPromoted": after,

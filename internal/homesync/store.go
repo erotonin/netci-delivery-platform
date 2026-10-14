@@ -30,6 +30,21 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool) error {
 // Notify is the channel a committed change is announced on; the feed's long polls wait on it.
 const Notify = "home_changes"
 
+// feedLock is the advisory lock every change takes before it is given its place in the feed.
+//
+// home_changes.seq comes from a sequence, handed out when the row is inserted, and transactions
+// commit in any order: one holding seq N could commit after one holding N+1. A replica reading the
+// feed then saw N+1, moved past it, and never read N -- the store failover run lost an
+// acknowledged create on one replica exactly so (r1's st-043727-r1-2, seq 3205), silently, with
+// synchronous replication making each commit long enough to be overtaken. Taken last, after the
+// item's row lock, and held to the commit, it makes the feed's order its commit order: a
+// committed N+1 means N is committed or will never exist, so what a reader sees is always a prefix.
+const feedLock int64 = 0x6e6574636966 // "netcif"
+
+// beforeCommit, when set by a test, runs in a change after it has its place in the feed and
+// before it commits: the moment another change could overtake it.
+var beforeCommit func(path string)
+
 var (
 	// ErrLocked: another replica holds the item's lock.
 	ErrLocked = errors.New("the item is locked by another replica")
@@ -141,6 +156,9 @@ func (s *Store) change(ctx context.Context, path string, content []byte, deleted
 		updated_by = $6, updated_at = now() WHERE path = $1`, path, next, deleted, content, sum, origin); err != nil {
 		return 0, err
 	}
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock($1)`, feedLock); err != nil {
+		return 0, err
+	}
 	var seq int64
 	if err := tx.QueryRow(ctx, `INSERT INTO home_changes (path, version, deleted, origin) VALUES ($1, $2, $3, $4)
 		RETURNING seq`, path, next, deleted, origin).Scan(&seq); err != nil {
@@ -148,6 +166,9 @@ func (s *Store) change(ctx context.Context, path string, content []byte, deleted
 	}
 	if _, err := tx.Exec(ctx, `SELECT pg_notify($1, $2)`, Notify, fmt.Sprint(seq)); err != nil {
 		return 0, err
+	}
+	if beforeCommit != nil {
+		beforeCommit(path)
 	}
 	return next, tx.Commit(ctx)
 }
