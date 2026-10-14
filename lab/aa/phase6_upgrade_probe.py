@@ -10,7 +10,9 @@ a time, while people use it. Does the UI or API ever fail, and are edits refused
 
 A reader asks the VIP for /api/json twice a second, unpinned (the balancer picks a replica, as for a
 person arriving); two writers, one pinned to each replica by the balancer's cookie, create a job each
-second. Then the StatefulSet's image is set to CONTROLLER, which restarts jenkins-1, then jenkins-0
+second; and two people, signed in through the form as a browser is (one per replica), create a job
+each second with the crumb their page gave them, fetched again only after a refusal (ADR-086: a crumb
+from one replica is accepted by the other). Then the StatefulSet's image is set to CONTROLLER, which restarts jenkins-1, then jenkins-0
 (minReadySeconds between them, phase 5), and the run goes on 60 s after the rollout. Every create
 answered 200 must exist on both replicas afterwards.
 Evidence: lab/evidence/aa-phase6-upgrade-<timestamp>.json.
@@ -29,6 +31,8 @@ import urllib.request
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
+import http.cookiejar  # noqa: E402
+import phase2_probe as p2  # noqa: E402  (a person's form sign-in)
 import phase3_probe as p3  # noqa: E402
 import phase5_probe as p5  # noqa: E402
 
@@ -48,6 +52,34 @@ def main() -> int:
     stop = threading.Event()
     writes: dict[str, list] = {"r0": [], "r1": []}
     reads: list = []
+    people: dict[str, list] = {"r0": [], "r1": []}
+
+    def person(r: str) -> None:
+        s = p2.Session()
+        s.jar.set_cookie(http.cookiejar.Cookie(0, "NETCI_REPLICA", r, None, False, "192.168.122.240", False, False,
+                                               "/", True, False, None, False, None, None, {}))
+        s.sign_in()
+        crumb, i = None, 0
+        while not stop.is_set():
+            at = time.time()
+            i += 1
+            name, code, served = f"pp-{run}-{r}-{i}", 0, ""
+            try:
+                if crumb is None:
+                    with s.opener.open(p3.VIP + "/crumbIssuer/api/json", timeout=5) as resp:
+                        crumb = json.loads(resp.read())["crumb"]
+                req = urllib.request.Request(p3.VIP + f"/createItem?name={name}", data=p3.JOB_XML.format(d="a person").encode(),
+                                             headers={"Content-Type": "application/xml", "Jenkins-Crumb": crumb})
+                with s.opener.open(req, timeout=15) as resp:
+                    code, served = resp.status, resp.headers.get("X-Netci-Replica", "")
+            except urllib.error.HTTPError as e:
+                code, served = e.code, e.headers.get("X-Netci-Replica", "")
+            except OSError:
+                pass
+            people[r].append({"name": name, "at": at, "code": code, "served": served, "took": round(time.time() - at, 2)})
+            if code == 403:
+                crumb = None
+            time.sleep(max(0.0, 1 - (time.time() - at)))
 
     def writer(r: str) -> None:
         c, i = p3.R(r), 0
@@ -77,7 +109,8 @@ def main() -> int:
             reads.append({"at": at, "ok": ok, "served": served, "why": why})
             time.sleep(max(0.0, 0.5 - (time.time() - at)))
 
-    threads = [threading.Thread(target=writer, args=(r,), daemon=True) for r in writes] + [threading.Thread(target=reader, daemon=True)]
+    threads = ([threading.Thread(target=writer, args=(r,), daemon=True) for r in writes] + [threading.Thread(target=reader, daemon=True)]
+               + [threading.Thread(target=person, args=(r,), daemon=True) for r in people])
     for t in threads:
         t.start()
     time.sleep(15)
@@ -103,22 +136,24 @@ def main() -> int:
     stop.set()
     for t in threads:
         t.join(30)
-    for x in [*writes["r0"], *writes["r1"], *reads]:
+    for x in [*writes["r0"], *writes["r1"], *reads, *people["r0"], *people["r1"]]:
         x["t"] = round(x.pop("at") - t0, 1)
     p5.whole()
-    acked = [w for r in writes for w in writes[r] if w["code"] == 200]
+    acked = [w for r in writes for w in writes[r] if w["code"] == 200] + [w for r in people for w in people[r] if w["code"] == 200]
     facts: dict = {"scenario": "aa-phase6-upgrade", "started": started.isoformat(timespec="seconds"), "restartOnly": restart, "during": during,
                    "imageBefore": before, "imageAfter": image, "rolledOutAfterSeconds": round(rolled, 1),
                    "reads": {"count": len(reads), "failed": [(x["t"], x["why"], x["served"]) for x in reads if not x["ok"]],
                              "servedBy": {r: sum(x["served"] == r for x in reads) for r in ("r0", "r1")}},
                    "acknowledged": len(acked),
                    "missingOn": {r: [w["name"] for w in acked if p3.R(r).job(w["name"]) is None] for r in ("r0", "r1")},
-                   "writes": writes}
+                   "people": {r: {"count": len(ws), "refused": [(w["t"], w["code"], w["served"]) for w in ws if w["code"] != 200]}
+                              for r, ws in people.items()},
+                   "writes": writes, "peopleWrites": people}
     for r, ws in writes.items():
         bad = [w for w in ws if w["code"] != 200]
         facts[f"{r}NotAccepted"] = {"count": len(bad), "of": len(ws), "codes": sorted({w["code"] for w in bad}),
                                     "at": [w["t"] for w in bad], "slowest": max((w["took"] for w in ws), default=None)}
-    print(json.dumps({k: v for k, v in facts.items() if k != "writes"}, indent=1), flush=True)
+    print(json.dumps({k: v for k, v in facts.items() if k not in ("writes", "peopleWrites")}, indent=1), flush=True)
     out = p3.p0.EVIDENCE / f"aa-phase6-upgrade-{started.strftime('%Y%m%dT%H%M%SZ')}.json"
     out.write_text(json.dumps(facts, indent=2) + "\n")
     print("evidence:", out.name)

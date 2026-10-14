@@ -31,14 +31,26 @@ import org.kohsuke.stapler.DataBoundConstructor;
  * and gone at sign-out. A request without one (an API token needs no crumb; a session from before
  * the sid) gets Jenkins' own crumb, unchanged, and either kind is accepted where it is valid.
  *
- * <p>Installed at start-up in place of Jenkins' default when shared sign-ins are on, and not saved:
- * a site that configures a crumb issuer of its own keeps it (JCasC: {@code crumbIssuer: netciSharedSession}).
+ * <p>Installed at start-up in place of Jenkins' default when shared sign-ins are on; a site that
+ * configures a crumb issuer of its own keeps it (JCasC: {@code crumbIssuer: netciSharedSession}).
+ * Installing it does not save Jenkins' configuration, but the next save puts it in config.xml, and
+ * from then on it is read back from there (see {@link #readResolve}).
  */
 public final class SharedCrumbIssuer extends DefaultCrumbIssuer {
     private static final Logger LOGGER = Logger.getLogger(SharedCrumbIssuer.class.getName());
 
     @DataBoundConstructor
     public SharedCrumbIssuer() {}
+
+    /**
+     * Read back from config.xml, it is made anew. XStream builds an object without its constructor,
+     * and DefaultCrumbIssuer's readResolve, which sets up its digest, is private -- so it is not
+     * run for a subclass, and every Jenkins-form crumb was null (measured: after a restart both
+     * replicas answered {@code "crumb": null}, and every form was refused).
+     */
+    protected Object readResolve() {
+        return new SharedCrumbIssuer();
+    }
 
     @Override
     protected String issueCrumb(ServletRequest request, String salt) {

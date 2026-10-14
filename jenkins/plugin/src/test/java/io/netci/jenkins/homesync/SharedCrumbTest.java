@@ -152,6 +152,20 @@ class SharedCrumbTest {
     }
 
     @Test
+    void itStillIssuesCrumbsAfterBeingReadBackFromConfigXml(JenkinsRule j) throws Exception {
+        users(j);
+        j.jenkins.save();
+        j.jenkins.reload(); // config.xml read again: the issuer is made by XStream, not its constructor
+        assertInstanceOf(SharedCrumbIssuer.class, j.jenkins.getCrumbIssuer());
+        // Jenkins' own form (a script sending its password, no shared sign-in) and the bound one.
+        JenkinsRule.WebClient script = j.createWebClient().withBasicCredentials("alice", ALICE);
+        assertNotNull(JSONObject.fromObject(script.goTo("crumbIssuer/api/json", "application/json").getWebResponse().getContentAsString())
+                .optString("crumb", null), "no crumb for a request without a shared sign-in");
+        JenkinsRule.WebClient here = j.createWebClient().login("alice", ALICE);
+        assertEquals(200, create(j, elsewhere(j, cookie(here)), "after-reload", crumb(here)));
+    }
+
+    @Test
     void itReplacesOnlyJenkinsDefault(JenkinsRule j) {
         j.jenkins.setCrumbIssuer(new DefaultCrumbIssuer());
         SharedCrumbIssuer.install();
