@@ -1,0 +1,439 @@
+{
+  "run": "478f9e30-9c63-4f89-b83f-631bd1505b79",
+  "commit": "355cfd6d24b21d3febc07d41d374d010bca88680",
+  "killed": "machine",
+  "during": "build",
+  "owner": "r1",
+  "node": "netci-lab-1",
+  "adoptedBy": "r0",
+  "adoptedAfterSeconds": 59.4,
+  "runStatus": "succeeded",
+  "finishedAfterSeconds": 88.4,
+  "artifactDigest": "sha256:d94118b1f48bb3e94391675fb210655de0fa20dba3c26828c779449b728e59cb",
+  "stages": {
+    "checkout": "succeeded",
+    "unit-test": "succeeded",
+    "build": "succeeded",
+    "sbom": "succeeded",
+    "vulnerability-scan": "succeeded",
+    "sign": "succeeded",
+    "publish": "succeeded"
+  },
+  "adoptionLogged": {
+    "by": "jenkins-0",
+    "line": "2026-10-15 09:59:32.426+0000 [id=62]\tINFO\ti.n.j.homesync.RunningBuilds#adopt: netCI homesync: adopted netci-54a92407-0861-4cf7-8a95-4371f8477dd8 #18 (building: true)"
+  },
+  "stageCallbacks": {
+    "checkout": 0,
+    "unit-test": 0,
+    "build": 0,
+    "sbom": 0,
+    "vulnerability-scan": 0,
+    "sign": 0,
+    "publish": 0
+  },
+  "securityEvidence": {
+    "code": 200,
+    "reason": "artifact satisfies the netCI supply-chain policy",
+    "decision": "allow",
+    "buildRunId": "jenkins-netci-54a92407-0861-4cf7-8a95-4371f8477dd8-18",
+    "artifactRef": "172.17.0.1:8930/apps/payments-api@sha256:d94118b1f48bb3e94391675fb210655de0fa20dba3c26828c779449b728e59cb",
+    "applicationId": "54a92407-0861-4cf7-8a95-4371f8477dd8",
+    "pipelineRunId": "478f9e30-9c63-4f89-b83f-631bd1505b79",
+    "artifactDigest": "sha256:d94118b1f48bb3e94391675fb210655de0fa20dba3c26828c779449b728e59cb"
+  },
+  "timeline": [
+    {
+      "t": 6.7,
+      "holder": null,
+      "building": null,
+      "jenkinsResult": null,
+      "runStatus": "running"
+    },
+    {
+      "t": 13.0,
+      "holder": null,
+      "building": null,
+      "jenkinsResult": null,
+      "runStatus": "running"
+    },
+    {
+      "t": 14.2,
+      "holder": null,
+      "building": null,
+      "jenkinsResult": null,
+      "runStatus": "running"
+    },
+    {
+      "t": 18.3,
+      "holder": null,
+      "building": null,
+      "jenkinsResult": null,
+      "runStatus": "running"
+    },
+    {
+      "t": 22.5,
+      "holder": null,
+      "building": null,
+      "jenkinsResult": null,
+      "runStatus": "running"
+    },
+    {
+      "t": 27.6,
+      "holder": null,
+      "building": null,
+      "jenkinsResult": null,
+      "runStatus": "running"
+    },
+    {
+      "t": 29.0,
+      "holder": null,
+      "building": null,
+      "jenkinsResult": null,
+      "runStatus": "running"
+    },
+    {
+      "t": 30.2,
+      "holder": null,
+      "building": null,
+      "jenkinsResult": null,
+      "runStatus": "running"
+    },
+    {
+      "t": 31.5,
+      "holder": null,
+      "building": null,
+      "jenkinsResult": null,
+      "runStatus": "running"
+    },
+    {
+      "t": 32.8,
+      "holder": null,
+      "building": null,
+      "jenkinsResult": null,
+      "runStatus": "running"
+    },
+    {
+      "t": 34.1,
+      "holder": null,
+      "building": null,
+      "jenkinsResult": null,
+      "runStatus": "running"
+    },
+    {
+      "t": 35.4,
+      "holder": null,
+      "building": null,
+      "jenkinsResult": null,
+      "runStatus": "running"
+    },
+    {
+      "t": 36.7,
+      "holder": null,
+      "building": null,
+      "jenkinsResult": null,
+      "runStatus": "running"
+    },
+    {
+      "t": 38.0,
+      "holder": null,
+      "building": null,
+      "jenkinsResult": null,
+      "runStatus": "running"
+    },
+    {
+      "t": 39.2,
+      "holder": null,
+      "building": null,
+      "jenkinsResult": null,
+      "runStatus": "running"
+    },
+    {
+      "t": 40.5,
+      "holder": null,
+      "building": null,
+      "jenkinsResult": null,
+      "runStatus": "running"
+    },
+    {
+      "t": 41.9,
+      "holder": null,
+      "building": null,
+      "jenkinsResult": null,
+      "runStatus": "running"
+    },
+    {
+      "t": 43.4,
+      "holder": null,
+      "building": null,
+      "jenkinsResult": null,
+      "runStatus": "running"
+    },
+    {
+      "t": 44.7,
+      "holder": null,
+      "building": null,
+      "jenkinsResult": null,
+      "runStatus": "running"
+    },
+    {
+      "t": 46.2,
+      "holder": null,
+      "building": null,
+      "jenkinsResult": null,
+      "runStatus": "running"
+    },
+    {
+      "t": 47.5,
+      "holder": null,
+      "building": null,
+      "jenkinsResult": null,
+      "runStatus": "running"
+    },
+    {
+      "t": 48.8,
+      "holder": null,
+      "building": null,
+      "jenkinsResult": null,
+      "runStatus": "running"
+    },
+    {
+      "t": 50.1,
+      "holder": null,
+      "building": null,
+      "jenkinsResult": null,
+      "runStatus": "running"
+    },
+    {
+      "t": 51.3,
+      "holder": null,
+      "building": null,
+      "jenkinsResult": null,
+      "runStatus": "running"
+    },
+    {
+      "t": 52.6,
+      "holder": null,
+      "building": null,
+      "jenkinsResult": null,
+      "runStatus": "running"
+    },
+    {
+      "t": 53.9,
+      "holder": null,
+      "building": null,
+      "jenkinsResult": null,
+      "runStatus": "running"
+    },
+    {
+      "t": 55.1,
+      "holder": null,
+      "building": null,
+      "jenkinsResult": null,
+      "runStatus": "running"
+    },
+    {
+      "t": 56.4,
+      "holder": null,
+      "building": null,
+      "jenkinsResult": null,
+      "runStatus": "running"
+    },
+    {
+      "t": 57.7,
+      "holder": null,
+      "building": null,
+      "jenkinsResult": null,
+      "runStatus": "running"
+    },
+    {
+      "t": 59.4,
+      "holder": "r0",
+      "building": true,
+      "jenkinsResult": null,
+      "runStatus": "running"
+    },
+    {
+      "t": 60.5,
+      "holder": "r0",
+      "building": true,
+      "jenkinsResult": null,
+      "runStatus": "running"
+    },
+    {
+      "t": 61.6,
+      "holder": "r0",
+      "building": true,
+      "jenkinsResult": null,
+      "runStatus": "running"
+    },
+    {
+      "t": 62.7,
+      "holder": "r0",
+      "building": true,
+      "jenkinsResult": null,
+      "runStatus": "running"
+    },
+    {
+      "t": 63.9,
+      "holder": "r0",
+      "building": true,
+      "jenkinsResult": null,
+      "runStatus": "running"
+    },
+    {
+      "t": 65.0,
+      "holder": "r0",
+      "building": true,
+      "jenkinsResult": null,
+      "runStatus": "running"
+    },
+    {
+      "t": 66.1,
+      "holder": "r0",
+      "building": true,
+      "jenkinsResult": null,
+      "runStatus": "running"
+    },
+    {
+      "t": 67.2,
+      "holder": "r0",
+      "building": true,
+      "jenkinsResult": null,
+      "runStatus": "running"
+    },
+    {
+      "t": 68.3,
+      "holder": "r0",
+      "building": true,
+      "jenkinsResult": null,
+      "runStatus": "running"
+    },
+    {
+      "t": 69.5,
+      "holder": "r0",
+      "building": true,
+      "jenkinsResult": null,
+      "runStatus": "running"
+    },
+    {
+      "t": 70.6,
+      "holder": "r0",
+      "building": true,
+      "jenkinsResult": null,
+      "runStatus": "running"
+    },
+    {
+      "t": 71.7,
+      "holder": "r0",
+      "building": true,
+      "jenkinsResult": null,
+      "runStatus": "running"
+    },
+    {
+      "t": 72.8,
+      "holder": "r0",
+      "building": true,
+      "jenkinsResult": null,
+      "runStatus": "running"
+    },
+    {
+      "t": 74.0,
+      "holder": "r0",
+      "building": true,
+      "jenkinsResult": null,
+      "runStatus": "running"
+    },
+    {
+      "t": 75.1,
+      "holder": "r0",
+      "building": true,
+      "jenkinsResult": null,
+      "runStatus": "running"
+    },
+    {
+      "t": 76.2,
+      "holder": "r0",
+      "building": true,
+      "jenkinsResult": null,
+      "runStatus": "running"
+    },
+    {
+      "t": 77.3,
+      "holder": "r0",
+      "building": true,
+      "jenkinsResult": null,
+      "runStatus": "running"
+    },
+    {
+      "t": 78.4,
+      "holder": "r0",
+      "building": true,
+      "jenkinsResult": null,
+      "runStatus": "running"
+    },
+    {
+      "t": 79.5,
+      "holder": "r0",
+      "building": true,
+      "jenkinsResult": null,
+      "runStatus": "running"
+    },
+    {
+      "t": 80.6,
+      "holder": "r0",
+      "building": true,
+      "jenkinsResult": null,
+      "runStatus": "running"
+    },
+    {
+      "t": 81.7,
+      "holder": "r0",
+      "building": true,
+      "jenkinsResult": null,
+      "runStatus": "running"
+    },
+    {
+      "t": 82.9,
+      "holder": "r0",
+      "building": true,
+      "jenkinsResult": null,
+      "runStatus": "running"
+    },
+    {
+      "t": 84.0,
+      "holder": "r0",
+      "building": true,
+      "jenkinsResult": null,
+      "runStatus": "running"
+    },
+    {
+      "t": 85.1,
+      "holder": "r0",
+      "building": true,
+      "jenkinsResult": null,
+      "runStatus": "running"
+    },
+    {
+      "t": 86.2,
+      "holder": "r0",
+      "building": true,
+      "jenkinsResult": "SUCCESS",
+      "runStatus": "running"
+    },
+    {
+      "t": 87.3,
+      "holder": "r0",
+      "building": true,
+      "jenkinsResult": "SUCCESS",
+      "runStatus": "running"
+    },
+    {
+      "t": 88.4,
+      "holder": "r0",
+      "building": true,
+      "jenkinsResult": "SUCCESS",
+      "runStatus": "succeeded"
+    }
+  ]
+}

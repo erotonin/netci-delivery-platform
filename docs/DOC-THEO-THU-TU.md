@@ -4442,7 +4442,12 @@ a real build of payments-api on the lab's inbound agents at a different stage, w
 | vulnerability-scan (#16) | after 11.0 s | succeeded | signed, policy allow |
 | sign (#17) | after 5.2 s | succeeded | signed, policy allow |
 
-Each build was resumed once, and `build.sh` and `scan.sh` each ran once. In #15, decision 3
+Then the machine itself: `--kill machine` cut the power of `netci-lab-1`, which ran the owning
+replica, during Build (#18). The strict fence waited for the power supervisor's out-of-service
+taint. The survivor adopted the build after 59.4 s, and it succeeded after 88.4 s, every stage
+once, signed, policy allow. The machine was powered on again and the lab recovered by itself.
+
+Each of the four pod-kill builds was resumed once, and `build.sh` and `scan.sh` each ran once. In #15, decision 3
 applied, to the storage-setup `sh` inside a stage callback. The callback is best effort, so it
 logged "stage report skipped: exit code 75" and the build went on; before this ADR that step was
 waited for forever. Evidence: `lab/evidence/aa-idp-adoption-20261015T095*.json`. ADR-093's three
