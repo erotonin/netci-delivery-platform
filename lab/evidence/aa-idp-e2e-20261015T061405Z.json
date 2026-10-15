@@ -1,0 +1,197 @@
+{
+ "scenario": "aa-idp-e2e",
+ "started": "2026-10-15T06:12:34+00:00",
+ "steps": [
+  {
+   "step": "retry the push build",
+   "code": 201,
+   "ok": true,
+   "body": {
+    "id": "f8b367ef-3287-4e44-9c78-a7c7d695e703",
+    "applicationId": "54a92407-0861-4cf7-8a95-4371f8477dd8",
+    "status": "queued",
+    "commitSha": "b0920c696436d0cf8cec923189ee7689ceeb0113",
+    "branch": "main",
+    "environment": "dev",
+    "parameters": {
+     "app_name": "payments-api",
+     "target_hosts": [],
+     "task_settings": {},
+     "kubeconfig_ref": "aa-lab",
+     "image_pull_host": "172.17.0.1:8930",
+     "deployment_tasks": [],
+     "target_namespace": "dev",
+     "target_environment": "dev",
+     "runtime_health_verified": true
+    },
+    "correlationId": "retry-914f9fb1-ef7d-4520-8b6f-66c29dbd9ebb-56c140",
+    "jenkinsRunId": "jenkins-ha:queue:dd360659-6937-44b1-80a7-b24f09030150",
+    "workflowId": null,
+    "artifactDigest": null,
+    "consoleUrl": null,
+    "retryOf": "4c0af312-6d41-444b-b186-acd445bc2cca",
+    "configRevisionId": "a83fe664-ac2b-41f0-9c15-4398daed571e",
+    "startedBy": "dana",
+    "deployAfterBuild": true,
+    "publishArtifact": true,
+    "releaseTag": null,
+    "trigger": {
+     "ref": "refs/heads/main",
+     "tag": null,
+     "rule": 0,
+     "event": "push",
+     "branch": "main",
+     "reason": "rule 0: deploy to dev",
+     "sender": "root",
+     "fromFork": false,
+     "actorKind": "human",
+     "baseBranch": null,
+     "deliveryId": "1d00c90dc6d5c147820a672d92e5c3ecd961f523b81219c875f1fa91b0c23d7a",
+     "pullRequest": null,
+     "changedFiles": 1
+    },
+    "admittedAt": "2026-10-15T06:12:34.238311+00:00",
+    "concurrencyGroup": null,
+    "supersededBy": null,
+    "ciFinishedAt": null,
+    "promotedFrom": null,
+    "productionRequestId": null,
+    "createdAt": "2026-10-15T06:12:34.209943+00:00",
+    "updatedAt": "2026-10-15T06:12:34.992413+00:00"
+   }
+  },
+  {
+   "step": "run finished",
+   "code": 200,
+   "ok": true,
+   "body": {
+    "run": {
+     "id": "f8b367ef-3287-4e44-9c78-a7c7d695e703",
+     "applicationId": "54a92407-0861-4cf7-8a95-4371f8477dd8",
+     "status": "succeeded",
+     "commitSha": "b0920c696436d0cf8cec923189ee7689ceeb0113",
+     "branch": "main",
+     "environment": "dev",
+     "parameters": {
+      "app_name": "payments-api",
+      "target_hosts": [],
+      "task_settings": {},
+      "kubeconfig_ref": "aa-lab",
+      "image_pull_host": "172.17.0.1:8930",
+      "deployment_tasks": [],
+      "target_namespace": "dev",
+      "target_environment": "dev",
+      "runtime_health_verified": true
+     },
+     "correlationId": "retry-914f9fb1-ef7d-4520-8b6f-66c29dbd9ebb-56c140",
+     "jenkinsRunId": "jenkins-ha:queue:dd360659-6937-44b1-80a7-b24f09030150",
+     "workflowId": "netci-deploy-293d8046-1fa6-4f28-bc7f-074d43cee0e7",
+     "artifactDigest": "sha256:f770e5bc6698e872cd82c820aab7973f5209eaed0e72d116b17190def52450a3",
+     "consoleUrl": null,
+     "retryOf": "4c0af312-6d41-444b-b186-acd445bc2cca",
+     "configRevisionId": "a83fe664-ac2b-41f0-9c15-4398daed571e",
+     "startedBy": "dana",
+     "deployAfterBuild": true,
+     "publishArtifact": true,
+     "releaseTag": null,
+     "trigger": {
+      "ref": "refs/heads/main",
+      "tag": null,
+      "rule": 0,
+      "event": "push",
+      "branch": "main",
+      "reason": "rule 0: deploy to dev",
+      "sender": "root",
+      "fromFork": false,
+      "actorKind": "human",
+      "baseBranch": null,
+      "deliveryId": "1d00c90dc6d5c147820a672d92e5c3ecd961f523b81219c875f1fa91b0c23d7a",
+      "pullRequest": null,
+      "changedFiles": 1
+     },
+     "admittedAt": "2026-10-15T06:12:34.238311+00:00",
+     "concurrencyGroup": null,
+     "supersededBy": null,
+     "ciFinishedAt": "2026-10-15T06:14:02.273378+00:00",
+     "promotedFrom": null,
+     "productionRequestId": null,
+     "createdAt": "2026-10-15T06:12:34.209943+00:00",
+     "updatedAt": "2026-10-15T06:14:02.269751+00:00"
+    },
+    "stages": [
+     {
+      "stageId": "checkout",
+      "status": "succeeded",
+      "durationMs": null,
+      "errorMessage": null
+     },
+     {
+      "stageId": "unit-test",
+      "status": "succeeded",
+      "durationMs": 1864,
+      "errorMessage": null
+     },
+     {
+      "stageId": "build",
+      "status": "succeeded",
+      "durationMs": 7026,
+      "errorMessage": null
+     },
+     {
+      "stageId": "sbom",
+      "status": "succeeded",
+      "durationMs": 5121,
+      "errorMessage": null
+     },
+     {
+      "stageId": "vulnerability-scan",
+      "status": "succeeded",
+      "durationMs": 9740,
+      "errorMessage": null
+     },
+     {
+      "stageId": "sign",
+      "status": "succeeded",
+      "durationMs": 4585,
+      "errorMessage": null
+     },
+     {
+      "stageId": "publish",
+      "status": "succeeded",
+      "durationMs": 2771,
+      "errorMessage": null
+     },
+     {
+      "stageId": "deploy",
+      "status": "succeeded",
+      "durationMs": null,
+      "errorMessage": null
+     },
+     {
+      "stageId": "health-check",
+      "status": "succeeded",
+      "durationMs": null,
+      "errorMessage": null
+     }
+    ]
+   }
+  },
+  {
+   "step": "dev runs the push build",
+   "code": 200,
+   "ok": true,
+   "body": {
+    "environment": "dev",
+    "status": "healthy",
+    "deploymentId": "293d8046-1fa6-4f28-bc7f-074d43cee0e7",
+    "artifactDigest": "sha256:f770e5bc6698e872cd82c820aab7973f5209eaed0e72d116b17190def52450a3",
+    "version": null,
+    "pipelineRunId": "f8b367ef-3287-4e44-9c78-a7c7d695e703",
+    "commitSha": "b0920c696436d0cf8cec923189ee7689ceeb0113",
+    "strategy": "rolling",
+    "approvedBy": null,
+    "updatedAt": "2026-10-15T06:14:02.269751+00:00"
+   }
+  }
+ ]
+}

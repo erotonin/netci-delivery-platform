@@ -14,7 +14,7 @@ ROOT = Path(__file__).resolve().parents[2]
 KEEP = re.compile(
     r"^(NETCI_(AUTH_MODE|OIDC_[A-Z_]+|REQUIRE_SEPARATION_OF_DUTIES|ALLOW_DEVELOPER_PROD_CD|"
     r"REQUIRE_SECURITY_EVIDENCE|SIGNATURE_[A-Z_]+|COSIGN_[A-Z_]+|WORKLOAD_TOKEN_KEYS_FILE|ANSIBLE_[A-Z_]+|"
-    r"TOOLCHAIN_ENFORCE|PREFLIGHT_DISK_THRESHOLD|BACKUP_ENCRYPTION_KEY|LAB_USER_PASSWORD)|NETCI_ACCEPTANCE_[A-Z_]+)=")
+    r"PREFLIGHT_DISK_THRESHOLD|BACKUP_ENCRYPTION_KEY|LAB_USER_PASSWORD)|NETCI_ACCEPTANCE_[A-Z_]+)=")
 
 
 def main() -> None:
@@ -52,6 +52,13 @@ def main() -> None:
         "NETCI_BUILD_BASE_IMAGE": "172.17.0.1:8930/mirror/netci/python-base:3.12-alpine",
         "NETCI_TRIVY_DB_REPOSITORY": "172.17.0.1:8930/mirror/aquasec/trivy-db:2",
         "NETCI_BUILD_ISOLATION": "none",
+        # cosign, run by the worker to verify a digest before deploying it, must trust the
+        # registry's CA; without it the TLS attempt failed and go-containerregistry fell back to
+        # plain HTTP on an RFC 1918 address ("plain HTTP request was sent to HTTPS port").
+        "SSL_CERT_DIR": f"/etc/ssl/certs:{ROOT / '.netci-gate/aa/registry-ca'}",
+        # The scan's Trivy DB is mirrored on a timer (netci-trivy-db-mirror), so a stale one stops
+        # the artifact rather than being let through with a warning.
+        "NETCI_TOOLCHAIN_ENFORCE": "enforce",
         "NETCI_CD_MODE": "temporal",
         # kubeconfigRef "aa-lab" (lab/aa/idp.sh deploy-prepare): netci-deployer, three namespaces.
         "NETCI_KUBECONFIG_DIR": str(ROOT / ".netci-gate/aa/kubeconfigs"),

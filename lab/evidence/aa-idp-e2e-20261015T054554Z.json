@@ -1,0 +1,166 @@
+{
+ "scenario": "aa-idp-e2e",
+ "started": "2026-10-15T05:45:54+00:00",
+ "steps": [
+  {
+   "step": "create system",
+   "code": 409,
+   "ok": true,
+   "body": {
+    "code": "SYSTEM_EXISTS",
+    "message": "system already exists",
+    "correlationId": "7a46d225-61dd-472d-a3dd-3525700e0e4c",
+    "detail": {
+     "code": "SYSTEM_EXISTS",
+     "message": "system already exists"
+    }
+   }
+  },
+  {
+   "step": "create module",
+   "code": 201,
+   "ok": true,
+   "body": {
+    "id": "payments-api",
+    "systemId": "ha-payments",
+    "name": "payments-api",
+    "type": "Backend",
+    "description": "",
+    "runtime": "kubernetes",
+    "applicationId": "54a92407-0861-4cf7-8a95-4371f8477dd8",
+    "ownerTeam": null,
+    "repositoryUrl": "http://172.17.0.1:8929/platform/payments-api.git",
+    "pipelineTemplate": "kubernetes-ci-cd-v1",
+    "pipeline": null,
+    "versions": [],
+    "activeConfigRevisionId": "a83fe664-ac2b-41f0-9c15-4398daed571e",
+    "configVersion": 2,
+    "deploymentEnvironments": [
+     {
+      "tasks": [],
+      "runtime": "kubernetes",
+      "servers": [],
+      "namespace": "dev",
+      "displayName": "Development",
+      "environment": "dev",
+      "taskSettings": {
+       "healthCheck": null
+      },
+      "kubeconfigRef": "aa-lab",
+      "runtimeSettings": {
+       "become": null,
+       "appPort": null,
+       "appRoot": null,
+       "hostPort": null,
+       "networkMode": null,
+       "systemdScope": null,
+       "containerPort": null,
+       "imagePullHost": "172.17.0.1:8930"
+      }
+     },
+     {
+      "tasks": [],
+      "runtime": "kubernetes",
+      "servers": [],
+      "namespace": "staging",
+      "displayName": "Staging",
+      "environment": "staging",
+      "taskSettings": {
+       "healthCheck": null
+      },
+      "kubeconfigRef": "aa-lab",
+      "runtimeSettings": {
+       "become": null,
+       "appPort": null,
+       "appRoot": null,
+       "hostPort": null,
+       "networkMode": null,
+       "systemdScope": null,
+       "containerPort": null,
+       "imagePullHost": "172.17.0.1:8930"
+      }
+     },
+     {
+      "tasks": [],
+      "runtime": "kubernetes",
+      "servers": [],
+      "namespace": "prod",
+      "displayName": "Production",
+      "environment": "prod",
+      "taskSettings": {
+       "healthCheck": null
+      },
+      "kubeconfigRef": "aa-lab",
+      "runtimeSettings": {
+       "become": null,
+       "appPort": null,
+       "appRoot": null,
+       "hostPort": null,
+       "networkMode": null,
+       "systemdScope": null,
+       "containerPort": null,
+       "imagePullHost": "172.17.0.1:8930"
+      }
+     }
+    ],
+    "pipelineConfig": {},
+    "environments": [
+     {
+      "name": "dev",
+      "status": "not_deployed"
+     },
+     {
+      "name": "staging",
+      "status": "not_deployed"
+     },
+     {
+      "name": "prod",
+      "status": "not_deployed"
+     }
+    ],
+    "pipelineRuns": [],
+    "dora": [
+     {
+      "key": "deploymentFrequency",
+      "label": "Deployment Frequency",
+      "value": 0.0,
+      "unit": "/wk",
+      "hint": "Production deployments per week"
+     },
+     {
+      "key": "leadTime",
+      "label": "Lead Time for Changes",
+      "value": 0.0,
+      "unit": "h",
+      "hint": "Commit to production"
+     },
+     {
+      "key": "changeFailureRate",
+      "label": "Change Failure Rate",
+      "value": 0.0,
+      "unit": "%",
+      "hint": "Production deployments needing intervention"
+     },
+     {
+      "key": "timeToRestoreService",
+      "label": "Time to Restore Service",
+      "value": 0.0,
+      "unit": "h",
+      "hint": "Failure to restored service"
+     }
+    ]
+   }
+  },
+  {
+   "step": "read module",
+   "code": 200,
+   "ok": true,
+   "body": {
+    "id": "payments-api",
+    "applicationId": "54a92407-0861-4cf7-8a95-4371f8477dd8",
+    "runtime": "kubernetes",
+    "repositoryUrl": "http://172.17.0.1:8929/platform/payments-api.git"
+   }
+  }
+ ]
+}

@@ -1,0 +1,77 @@
+{
+ "scenario": "aa-idp-e2e",
+ "started": "2026-10-15T05:44:16+00:00",
+ "steps": [
+  {
+   "step": "create system",
+   "code": 201,
+   "ok": true,
+   "body": {
+    "id": "ha-payments",
+    "unit": "Payments",
+    "description": "Payments, on the active-active Jenkins",
+    "owner": "pat",
+    "status": "unknown",
+    "moduleCount": 0,
+    "pipelineRuns": 0,
+    "failedRuns": 0,
+    "succeededRuns": 0,
+    "inProgressRuns": 0,
+    "cancelledRuns": 0,
+    "modules": []
+   }
+  },
+  {
+   "step": "create module",
+   "code": 422,
+   "ok": false,
+   "body": {
+    "code": "VALIDATION_ERROR",
+    "message": "deploymentEnvironments.0.runtimeSettings.kubeContext: Extra inputs are not permitted; deploymentEnvironments.0.targetNamespace: Extra inputs are not permitted; deploymentEnvironments.1.runtimeSettings.kubeContext: Extra inputs are not permitted; deploymentEnvironments.1.targetNamespace: Extra inputs are not permitted; deploymentEnvironments.2.runtimeSettings.kubeContext: Extra inputs are not permitted",
+    "correlationId": "930ed05c-c697-43ed-83e8-2b3c743de1ef",
+    "detail": {
+     "fields": [
+      {
+       "field": "deploymentEnvironments.0.runtimeSettings.kubeContext",
+       "message": "Extra inputs are not permitted"
+      },
+      {
+       "field": "deploymentEnvironments.0.targetNamespace",
+       "message": "Extra inputs are not permitted"
+      },
+      {
+       "field": "deploymentEnvironments.1.runtimeSettings.kubeContext",
+       "message": "Extra inputs are not permitted"
+      },
+      {
+       "field": "deploymentEnvironments.1.targetNamespace",
+       "message": "Extra inputs are not permitted"
+      },
+      {
+       "field": "deploymentEnvironments.2.runtimeSettings.kubeContext",
+       "message": "Extra inputs are not permitted"
+      },
+      {
+       "field": "deploymentEnvironments.2.targetNamespace",
+       "message": "Extra inputs are not permitted"
+      }
+     ]
+    }
+   }
+  },
+  {
+   "step": "read module",
+   "code": 404,
+   "ok": false,
+   "body": {
+    "code": "MODULE_NOT_FOUND",
+    "message": "'module not found'",
+    "correlationId": "804bf9a0-3b14-4a5e-b8dc-ccaf5240f7e4",
+    "detail": {
+     "code": "MODULE_NOT_FOUND",
+     "message": "'module not found'"
+    }
+   }
+  }
+ ]
+}

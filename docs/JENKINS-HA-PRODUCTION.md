@@ -281,6 +281,25 @@ secrets:
 
 Chart IDP từ chối nếu `runQueueUrl` đi cùng nhiều hơn một controller, hoặc thiếu token.
 
+## 9b. Build của IDP chạy trên các replica (ADR-091)
+
+- **Pod build:** bật `buildPods` (namespace do site tạo). JCasC của site cần thêm cloud Kubernetes,
+  shared library và credential; mẫu ở `lab/aa/casc-ci.yaml`. `jenkinsUrl` của cloud phải là
+  `http://${POD_NAME}.jenkins.<ns>.svc.cluster.local:8080/`, để pod gọi về đúng replica đã tạo ra nó.
+- **Credential:** dùng `jenkins.extraSecretMounts` và đọc bằng `${readFile:...}`. Không đặt bí mật
+  vào ConfigMap.
+- **AppArmor:** trên mọi node build phải nạp `deploy/apparmor/netci-builder`
+  (`sudo apparmor_parser -r -W ...`). Ubuntu 24.04 chặn user namespace của buildah rootless; nếu
+  không nạp profile, build sẽ lỗi `remount /: permission denied`.
+- **Repo private:** đặt `NETCI_GIT_CREDENTIALS_FILE` cho API (file git credential-store chứa token
+  chỉ-đọc, quyền 600), để dialog chọn branch và commit hoạt động.
+- **CA của registry:** worker cần tin CA của registry (`SSL_CERT_DIR`), nếu không cosign không xác
+  minh được chữ ký và mọi lần deploy đều bị chặn.
+- **Trivy DB:** mirror theo lịch (timer `netci-trivy-db-mirror`). Với `NETCI_TOOLCHAIN_ENFORCE=enforce`,
+  DB cũ hơn 72 giờ sẽ chặn artifact.
+- **Giới hạn:** pipeline hiện chỉ chạy được trên pod Kubernetes, chưa chạy được trên agent inbound
+  đặt trên VM.
+
 ## 10. Kiểm tra sau khi cài (làm tại site, ghi kết quả)
 
 1. **Mỗi replica sẵn sàng.** Chạy

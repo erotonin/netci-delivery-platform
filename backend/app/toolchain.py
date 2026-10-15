@@ -242,7 +242,10 @@ def compare_plugins(
     observation is not "no drift": the caller could not read the controller, and says so.
     """
     spec = declared_map if declared_map is not None else declared()
-    wanted: dict[str, str] = dict(spec.get("jenkins", {}).get("plugins") or {})
+    jenkins = spec.get("jenkins", {})
+    # netCI's own plugins (ownPlugins) are declared beside the published ones: undeclared, the
+    # controller netCI ships failed its own gate under NETCI_TOOLCHAIN_ENFORCE=enforce.
+    wanted: dict[str, str] = {**dict(jenkins.get("plugins") or {}), **dict(jenkins.get("ownPlugins") or {})}
     have = dict(observed or {})
     drifts: list[dict[str, Any]] = []
     for name in sorted(set(wanted) | set(have)):

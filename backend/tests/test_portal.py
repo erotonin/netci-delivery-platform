@@ -100,6 +100,21 @@ def test_a_run_without_an_outcome_is_not_counted_as_a_success_or_as_degraded_hea
     assert (kpis['cancelledRuns'], kpis['inProgressRuns'], kpis['successRate']) == (1, 0, 0)
 
 
+def test_the_module_views_say_what_a_run_was_as_the_run_itself_does():
+    # The Portal's copy of a run omitted deployAfterBuild and trigger: a build-only run read
+    # "deploys to dev" in the module's lists (the HA lab, ADR-091).
+    started = client.post('/modules/hello-container/pipeline-runs', headers={'Idempotency-Key': 'intent-1'},
+                          json={'commitSha': '0123456789abcdef0123456789abcdef01234567', 'environment': 'dev', 'deploy': False})
+    assert started.status_code == 202
+    own = client.get(f"/pipeline-runs/{started.json()['id']}").json()
+    listed = client.get('/modules/hello-container/pipeline-runs').json()['items'][0]
+    recent = client.get('/modules/hello-container/overview').json()['recentRuns'][0]
+    for view in (listed, recent):
+        assert view == own
+    assert own['deployAfterBuild'] is False and own['trigger']['event'] == 'manual'
+    assert own['promotedFrom'] is None and own['productionRequestId'] is None
+
+
 def test_portal_system_detail_and_module_overview_are_hierarchical():
     system = client.get('/systems/hello-container')
     assert system.status_code == 200

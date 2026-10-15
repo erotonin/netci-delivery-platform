@@ -1,0 +1,41 @@
+{
+ "scenario": "aa-idp-e2e",
+ "started": "2026-10-15T06:10:02+00:00",
+ "steps": [
+  {
+   "step": "register the repository with netCI",
+   "code": 201,
+   "ok": true,
+   "body": {
+    "id": "2f13ffe2-e95c-4906-99dc-abe7bbd49f26",
+    "applicationId": "54a92407-0861-4cf7-8a95-4371f8477dd8",
+    "provider": "gitlab",
+    "repositoryIdentity": "platform/payments-api",
+    "credentialReference": null,
+    "enabled": true,
+    "createdAt": "2026-10-15T06:10:02.199332+00:00",
+    "updatedAt": "2026-10-15T06:10:02.199333+00:00"
+   }
+  },
+  {
+   "step": "GitLab may call 172.17.0.1",
+   "code": 200,
+   "ok": true,
+   "body": {
+    "allowlist": [
+     "172.17.0.1",
+     "netci.corp.local"
+    ]
+   }
+  },
+  {
+   "step": "GitLab push hook",
+   "code": 201,
+   "ok": true,
+   "body": {
+    "id": 5,
+    "url": "http://172.17.0.1:18100/webhooks/scm/gitlab"
+   }
+  }
+ ]
+}

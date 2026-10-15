@@ -40,6 +40,7 @@ from .persistence import (
     VersionConflict,
 )
 from .projections.dora import DoraEvent, project_dora
+from .projections.runs import pipeline_run_json
 from .domain.models import (
     ConfigRevisionStatus,
     DeliveryEvent,
@@ -2696,26 +2697,7 @@ class PortalService:
 
     @staticmethod
     def _run_json(run) -> dict[str, object]:
-        return {
-            "id": str(run.id),
-            "applicationId": str(run.application_id),
-            "status": run.status.value,
-            "commitSha": run.commit_sha,
-            "branch": run.branch,
-            "environment": run.environment.value,
-            "parameters": dict(run.parameters),
-            "correlationId": run.correlation_id,
-            "createdAt": run.created_at.isoformat(),
-            "updatedAt": run.updated_at.isoformat(),
-            "jenkinsRunId": run.jenkins_run_id,
-            "workflowId": run.workflow_id,
-            "artifactDigest": run.artifact_digest,
-            # The module's run list is what the run view opens from; without the console
-            # URL here "Open Jenkins" stayed disabled although the run had one.
-            "consoleUrl": run.console_url,
-            "retryOf": str(run.retry_of) if getattr(run, "retry_of", None) else None,
-            "startedBy": run.started_by,
-        }
+        return pipeline_run_json(run)
 
     @staticmethod
     def _environment_status(deployments, environment: Environment) -> str:

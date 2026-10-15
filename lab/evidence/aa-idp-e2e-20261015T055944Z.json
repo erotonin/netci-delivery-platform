@@ -1,0 +1,187 @@
+{
+ "scenario": "aa-idp-e2e",
+ "started": "2026-10-15T05:59:29+00:00",
+ "steps": [
+  {
+   "step": "register v1.0.0",
+   "code": 201,
+   "ok": true,
+   "body": {
+    "moduleId": "payments-api",
+    "version": "v1.0.0",
+    "gitTagUrl": "",
+    "artifactUrl": "",
+    "pipelineRunId": "dbcbfdd0-4cb7-41c1-8ae8-673c20921c83",
+    "artifactDigest": "sha256:f28ea2ce0fb0364046186ec1074aa354099f18d491e6fba361496fb51859df4d",
+    "promotable": true,
+    "signed": true,
+    "sbom": "available",
+    "scan": "passed",
+    "createdBy": "dana",
+    "createdAt": "2026-10-15T05:59:29.562713+00:00",
+    "ciReport": {
+     "runner": "unittest",
+     "autoTest": "passed",
+     "coverage": null,
+     "testsRun": 2,
+     "source": "pipeline-run"
+    }
+   }
+  },
+  {
+   "step": "request production release",
+   "code": 201,
+   "ok": true,
+   "body": {
+    "id": "6d34a221-c8e5-4cc8-8604-b109f8605cfb",
+    "modules": [
+     {
+      "moduleId": "payments-api",
+      "moduleName": "payments-api",
+      "systemId": "ha-payments",
+      "version": "v1.0.0",
+      "deploymentOrder": 1,
+      "dependencies": [],
+      "status": "pending",
+      "deploymentId": null,
+      "startedAt": null,
+      "completedAt": null,
+      "errorMessage": null
+     }
+    ],
+    "requestedBy": "dana",
+    "scheduledFor": "2026-10-15T05:59:29.577864+00:00",
+    "rollbackStrategy": "automatic",
+    "runAutomationTests": false,
+    "status": "waiting_approval",
+    "deploymentId": null,
+    "comment": null,
+    "releasePlan": {
+     "totalModules": 1,
+     "totalWaves": 1,
+     "waves": [
+      {
+       "wave": 1,
+       "deploymentOrder": 1,
+       "moduleIds": [
+        "payments-api"
+       ],
+       "status": "pending"
+      }
+     ],
+     "dependencies": {
+      "payments-api": []
+     }
+    },
+    "strategy": "rolling",
+    "strategyConfig": {},
+    "canaryRules": {},
+    "createdAt": null
+   }
+  },
+  {
+   "step": "the requester cannot approve their own request",
+   "code": 403,
+   "ok": true,
+   "body": {
+    "code": "FORBIDDEN",
+    "message": "this action requires one of: platform-admin, reviewer; dana holds: developer",
+    "correlationId": "67c4f1f0-0d00-4a0b-914b-0155b19716ca",
+    "detail": {
+     "code": "FORBIDDEN",
+     "message": "this action requires one of: platform-admin, reviewer; dana holds: developer"
+    }
+   }
+  },
+  {
+   "step": "a second person approves",
+   "code": 202,
+   "ok": true,
+   "body": {
+    "id": "6d34a221-c8e5-4cc8-8604-b109f8605cfb",
+    "modules": [
+     {
+      "moduleId": "payments-api",
+      "moduleName": "payments-api",
+      "systemId": "ha-payments",
+      "version": "v1.0.0",
+      "deploymentOrder": 1,
+      "dependencies": [],
+      "status": "deploying",
+      "deploymentId": "d4c49d41-82f8-4f1a-a245-c483953674df",
+      "startedAt": "2026-10-15T05:59:29.628543+00:00",
+      "completedAt": null,
+      "errorMessage": null
+     }
+    ],
+    "requestedBy": "dana",
+    "scheduledFor": "2026-10-15T05:59:29.577864+00:00",
+    "rollbackStrategy": "automatic",
+    "runAutomationTests": false,
+    "status": "approved",
+    "deploymentId": "d4c49d41-82f8-4f1a-a245-c483953674df",
+    "comment": "deploying module payments-api",
+    "releasePlan": {
+     "waves": [
+      {
+       "wave": 1,
+       "status": "in_progress",
+       "moduleIds": [
+        "payments-api"
+       ],
+       "deploymentOrder": 1
+      }
+     ],
+     "totalWaves": 1,
+     "dependencies": {
+      "payments-api": []
+     },
+     "totalModules": 1
+    },
+    "strategy": "rolling",
+    "strategyConfig": {},
+    "canaryRules": {},
+    "createdAt": "2026-10-15T05:59:29.581731+00:00",
+    "policyDecision": {
+     "id": "195e43b3-aeac-477a-8929-75e22797fa5a",
+     "allowed": true,
+     "riskScore": 65,
+     "reason": "All governance policies satisfied",
+     "checks": {
+      "environment_permission": "pass",
+      "separation_of_duties": "pass",
+      "quota": "pass"
+     }
+    }
+   }
+  },
+  {
+   "step": "production deployment started",
+   "code": 200,
+   "ok": true,
+   "body": {
+    "deploymentId": "d4c49d41-82f8-4f1a-a245-c483953674df"
+   }
+  },
+  {
+   "step": "deployment finished",
+   "code": 200,
+   "ok": true,
+   "body": {
+    "id": "d4c49d41-82f8-4f1a-a245-c483953674df",
+    "applicationId": "54a92407-0861-4cf7-8a95-4371f8477dd8",
+    "pipelineRunId": "6aecb169-d61c-4d5b-94e2-b09c94281e47",
+    "runtime": "kubernetes",
+    "environment": "prod",
+    "status": "healthy",
+    "artifactDigest": "sha256:f28ea2ce0fb0364046186ec1074aa354099f18d491e6fba361496fb51859df4d",
+    "previousArtifactDigest": null,
+    "approvedBy": "rae",
+    "fencingToken": 1,
+    "configRevisionId": null,
+    "createdAt": "2026-10-15T05:59:29.625241+00:00",
+    "updatedAt": "2026-10-15T05:59:40.743310+00:00"
+   }
+  }
+ ]
+}

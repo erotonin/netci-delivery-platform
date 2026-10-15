@@ -198,7 +198,7 @@ export function DeliveryTab({ moduleId, onOpenRun, onRunBuild, onRequestRelease 
       <section className="panel"><div className="panel-heading"><div><h2>Recent builds</h2><p>Every build of this module, newest first</p></div></div>
         <div className="build-list">{overview.recentRuns.map((run) => <button className="build-row" key={run.id} onClick={() => onOpenRun(run)} title={run.id}>
           <RunStatus run={run} />
-          <span className="build-main"><strong><GitCommitHorizontal size={14} /><span className="mono">{shortSha(run.commitSha)}</span> · {run.branch}</strong><small>{triggerText(run)} · {runIntent(run) === 'deploys' ? `deploys to ${run.environment}` : runIntent(run)}{run.releaseTag ? ` · ${run.releaseTag}` : ''}</small></span>
+          <span className="build-main"><strong><GitCommitHorizontal size={14} /><span className="mono">{shortSha(run.commitSha)}</span> · {run.branch}</strong><small>{triggerText(run)} · {runIntent(run) === 'deploys' ? `deploys to ${run.environment}` : runIntent(run) === 'release' ? `releases to ${run.environment}, no build` : runIntent(run)}{run.releaseTag ? ` · ${run.releaseTag}` : ''}</small></span>
           <span className="build-meta"><span className="mono">{shortDigest(run.artifactDigest)}</span><small>{person(run.startedBy)} · {timeAgo(run.createdAt)}</small></span>
         </button>)}</div>
       </section>

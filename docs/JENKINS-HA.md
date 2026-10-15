@@ -62,6 +62,7 @@ kube-vip VIP, 2 inbound agents with 2 executors each.
 | A rename or move goes everywhere | One change of the store moves the item, its children, its builds, lease and numbers; the other replica renames its own copy; refused while a build under it runs on any replica (ADR-087) | **Lab**: renamed on r1, on both 1.1 s later with its builds, next build #3; refused (409, "running on jenkins-0") while building, renamed once finished; moved into a folder, the folder renamed (`aa-phase9-rename-20261015T014229Z.json`) |
 | Views go everywhere | Each root view is an entry of the store, published after a view request under its lock; a job's pages through `/view/<v>/` ordered and routed like its own (ADR-088) | **Lab**: a view made, changed, deleted on one replica, on the other 0.09-0.12 s later (`aa-phase10-views-20261015T024853Z.json`) |
 | A drain cuts nothing in flight | HAProxy's agent check: "maint" while draining (nothing new sent, in-flight requests finish), the preStop waits until none is in flight; a changed haproxy.cfg reloaded in place, the VIP staying (ADR-089) | **Lab**: rolling restart 324/324 reads, 630 creates none missing; a config change reloaded by all 3 balancers, 242/242 reads (`aa-phase6-upgrade-20261015T024350Z.json`, `…024008Z.json`) |
+| The IDP delivers on the replicas | Build pods from the replicas' Kubernetes cloud, the shared library and credentials by JCasC, the builder's AppArmor profile, private repositories read with a token file (ADR-091) | **Lab**: payments-api built through netci-queue, signed and verified, promoted dev → staging, released to prod by a second person; a real GitLab push webhook built and deployed to dev under `enforce` (`aa-idp-e2e-20261015T061405Z.json`) |
 | Not done, said plainly | Edits are refused for 28-45 s while the store's primary fails over (longer when the Barman Cloud plugin's leader died with it, ADR-085); a new HAProxy image still replaces the balancers, and kube-vip can then move the VIP (ADR-089); a script that signs in with a password keeps Jenkins' own session-bound crumb (an API token needs none, ADR-086); Nova fencing, Octavia and kube-vip with allowed-address-pairs are tested against fakes or not at all, never against a real OpenStack | -- |
 
 ## Builds on the agent fabric
@@ -127,6 +128,7 @@ deploy/helm/netci/ci/test-rules.sh   # promtool checks and unit tests of the ale
 - [ADR-087 — renames and moves are one change of the store](decisions/ADR-087-renames-and-moves-are-one-change-of-the-store.md)
 - [ADR-088 — root views are replicated](decisions/ADR-088-root-views-are-replicated.md)
 - [ADR-089 — a drain lets what is in flight finish](decisions/ADR-089-a-drain-lets-what-is-in-flight-finish.md)
+- [ADR-091 — the IDP delivers on the active-active replicas](decisions/ADR-091-the-idp-delivers-on-the-active-active-replicas.md)
 
 Deploying it at a site: [docs/JENKINS-HA-PRODUCTION.md](JENKINS-HA-PRODUCTION.md) (Vietnamese: prerequisites,
 operators, Secrets, the chart, VIP, Nova fencing, agents, the IDP, checks, operations).

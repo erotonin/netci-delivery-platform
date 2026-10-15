@@ -21,7 +21,8 @@ from app.adapters.jenkins_http import JenkinsHttpAdapter, JenkinsHttpConfig, Jen
 from app.adapters.jenkins_router import JenkinsController, JenkinsRouter
 
 DECLARED = toolchain.declared()
-PLUGINS = dict(DECLARED["jenkins"]["plugins"])
+# What a controller netCI built runs: the published plugins and netCI's own.
+PLUGINS = {**DECLARED["jenkins"]["plugins"], **DECLARED["jenkins"].get("ownPlugins", {})}
 
 
 def test_the_declaration_pins_every_plugin_and_the_base_by_digest():
@@ -171,3 +172,20 @@ def test_the_toolchain_page_shows_each_controllers_plugin_drift(monkeypatch):
     assert [d["plugin"] for d in by_id["a"]["drift"]] == ["credentials-binding"]
     assert by_id["b"]["readable"] is False and "denied" in by_id["b"]["error"]
     assert report["controller"]["tag"] == DECLARED["jenkins"]["controller"]["tag"] and report["enforced"] is True
+
+
+def test_netcis_own_plugin_is_declared_and_never_sent_to_the_update_site():
+    # The controller netCI ships carries its own plugin; undeclared, it failed netCI's own
+    # gate under NETCI_TOOLCHAIN_ENFORCE=enforce (the HA lab's first push build, ADR-091).
+    import re
+    from pathlib import Path
+
+    from app.toolchain import compare_plugins, declared
+
+    root = Path(__file__).resolve().parents[2]
+    own = declared()["jenkins"]["ownPlugins"]
+    revision = re.search(r"<revision>([^<]+)</revision>", (root / "jenkins/plugin/pom.xml").read_text()).group(1)
+    assert own == {"netci": revision}
+    observed = {**declared()["jenkins"]["plugins"], "netci": revision}
+    assert compare_plugins(observed) == []
+    assert not any(line.startswith("netci:") for line in (root / "jenkins/plugins.txt").read_text().splitlines())

@@ -39,6 +39,9 @@ describe('delivery intent in the portal', () => {
     expect(runIntent(run({}))).toBe('deploys')
     expect(runIntent(run({ deployAfterBuild: false }))).toBe('build only')
     expect(runIntent(run({ deployAfterBuild: false, publishArtifact: false }))).toBe('verify only')
+    // A production request's release run builds nothing (the HA lab's first release read "manual build").
+    expect(runIntent(run({ promotedFrom: 'r0', productionRequestId: 'req-1' }))).toBe('release')
+    expect(triggerText(run({ promotedFrom: 'r0', productionRequestId: 'req-1', trigger: {} }))).toBe('production request')
   })
 
   it('offers promotion only for a run that published an artifact', () => {

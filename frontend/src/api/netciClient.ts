@@ -133,6 +133,9 @@ export type PipelineRun = {
   supersededBy?: string | null
   createdAt: string
   updatedAt: string
+  /** A production request's release run: no build, the digest of this run released (ADR-090). */
+  promotedFrom?: string | null
+  productionRequestId?: string | null
 }
 
 export type PipelineStage = {

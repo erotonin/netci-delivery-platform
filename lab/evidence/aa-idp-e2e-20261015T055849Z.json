@@ -1,0 +1,40 @@
+{
+ "scenario": "aa-idp-e2e",
+ "started": "2026-10-15T05:58:34+00:00",
+ "steps": [
+  {
+   "step": "promote to staging",
+   "code": 202,
+   "ok": true,
+   "body": {
+    "moduleId": "payments-api",
+    "environment": "staging",
+    "sourcePipelineRunId": "dbcbfdd0-4cb7-41c1-8ae8-673c20921c83",
+    "artifactDigest": "sha256:f28ea2ce0fb0364046186ec1074aa354099f18d491e6fba361496fb51859df4d",
+    "deploymentId": "67cd57d7-aa37-414a-b750-7e1edb531bac",
+    "status": "deploying",
+    "evidence": "healthy in dev for 0 min (serving now)"
+   }
+  },
+  {
+   "step": "deployment finished",
+   "code": 200,
+   "ok": true,
+   "body": {
+    "id": "67cd57d7-aa37-414a-b750-7e1edb531bac",
+    "applicationId": "54a92407-0861-4cf7-8a95-4371f8477dd8",
+    "pipelineRunId": "dbcbfdd0-4cb7-41c1-8ae8-673c20921c83",
+    "runtime": "kubernetes",
+    "environment": "staging",
+    "status": "healthy",
+    "artifactDigest": "sha256:f28ea2ce0fb0364046186ec1074aa354099f18d491e6fba361496fb51859df4d",
+    "previousArtifactDigest": null,
+    "approvedBy": null,
+    "fencingToken": 1,
+    "configRevisionId": "a83fe664-ac2b-41f0-9c15-4398daed571e",
+    "createdAt": "2026-10-15T05:58:34.536370+00:00",
+    "updatedAt": "2026-10-15T05:58:45.185232+00:00"
+   }
+  }
+ ]
+}

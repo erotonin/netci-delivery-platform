@@ -115,6 +115,7 @@ from .domain.verification import VerificationConfigError, VerificationResult, re
 from .exposure import SEVERITY_ORDER, exposure as vulnerability_exposure, rescan_in_service
 from .projections.scorecard import all_scorecards, module_scorecard
 from .projections.finops import ci_cost
+from .projections.runs import pipeline_run_json
 from .projections.insights import delivery_insights
 from .store import build_database
 from .toolchain import compare as compare_toolchain, compare_plugins, declared as get_declared_toolchain, trivy_db_age
@@ -977,33 +978,7 @@ def application_json(item: Application) -> dict[str, object]:
 
 
 def pipeline_json(item: PipelineRun) -> dict[str, object]:
-    return {
-        "id": str(item.id),
-        "applicationId": str(item.application_id),
-        "status": item.status.value,
-        "commitSha": item.commit_sha,
-        "branch": item.branch,
-        "environment": item.environment.value,
-        "parameters": dict(item.parameters),
-        "correlationId": item.correlation_id,
-        "jenkinsRunId": item.jenkins_run_id,
-        "workflowId": item.workflow_id,
-        "artifactDigest": item.artifact_digest,
-        "consoleUrl": item.console_url,
-        "retryOf": str(item.retry_of) if item.retry_of else None,
-        "configRevisionId": str(item.config_revision_id) if item.config_revision_id else None,
-        "startedBy": item.started_by,
-        "deployAfterBuild": item.deploy_after_build,
-        "publishArtifact": item.publish_artifact,
-        "releaseTag": item.release_tag,
-        "trigger": dict(item.trigger),
-        "admittedAt": item.admitted_at.isoformat() if item.admitted_at else None,
-        "concurrencyGroup": item.concurrency_group,
-        "supersededBy": str(item.superseded_by) if item.superseded_by else None,
-        "ciFinishedAt": item.ci_finished_at.isoformat() if item.ci_finished_at else None,
-        "createdAt": item.created_at.isoformat(),
-        "updatedAt": item.updated_at.isoformat(),
-    }
+    return pipeline_run_json(item)
 
 
 def stage_json(item: PipelineStage) -> dict[str, object]:

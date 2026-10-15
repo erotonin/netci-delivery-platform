@@ -1,0 +1,67 @@
+{
+ "scenario": "aa-idp-e2e",
+ "started": "2026-10-15T06:10:23+00:00",
+ "steps": [
+  {
+   "step": "run finished",
+   "code": 200,
+   "ok": false,
+   "body": {
+    "run": {
+     "id": "4c0af312-6d41-444b-b186-acd445bc2cca",
+     "applicationId": "54a92407-0861-4cf7-8a95-4371f8477dd8",
+     "status": "failed",
+     "commitSha": "b0920c696436d0cf8cec923189ee7689ceeb0113",
+     "branch": "main",
+     "environment": "dev",
+     "parameters": {
+      "app_name": "payments-api",
+      "target_hosts": [],
+      "task_settings": {},
+      "kubeconfig_ref": "aa-lab",
+      "image_pull_host": "172.17.0.1:8930",
+      "deployment_tasks": [],
+      "target_namespace": "dev",
+      "target_environment": "dev",
+      "runtime_health_verified": true
+     },
+     "correlationId": "914f9fb1-ef7d-4520-8b6f-66c29dbd9ebb",
+     "jenkinsRunId": null,
+     "workflowId": null,
+     "artifactDigest": null,
+     "consoleUrl": null,
+     "retryOf": null,
+     "configRevisionId": "a83fe664-ac2b-41f0-9c15-4398daed571e",
+     "startedBy": "scm:gitlab:root",
+     "deployAfterBuild": true,
+     "publishArtifact": true,
+     "releaseTag": null,
+     "trigger": {
+      "ref": "refs/heads/main",
+      "tag": null,
+      "rule": 0,
+      "event": "push",
+      "branch": "main",
+      "reason": "rule 0: deploy to dev",
+      "sender": "root",
+      "fromFork": false,
+      "actorKind": "human",
+      "baseBranch": null,
+      "deliveryId": "1d00c90dc6d5c147820a672d92e5c3ecd961f523b81219c875f1fa91b0c23d7a",
+      "pullRequest": null,
+      "changedFiles": 1
+     },
+     "admittedAt": "2026-10-15T06:10:15.216685+00:00",
+     "concurrencyGroup": "54a92407-0861-4cf7-8a95-4371f8477dd8:branch/main",
+     "supersededBy": null,
+     "ciFinishedAt": "2026-10-15T06:10:15.247328+00:00",
+     "promotedFrom": null,
+     "productionRequestId": null,
+     "createdAt": "2026-10-15T06:10:15.191434+00:00",
+     "updatedAt": "2026-10-15T06:10:15.247229+00:00"
+    },
+    "stages": []
+   }
+  }
+ ]
+}

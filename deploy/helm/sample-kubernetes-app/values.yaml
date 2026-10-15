@@ -48,8 +48,10 @@ traits:
     host: ""
     clusterIssuer: selfsigned-issuer
     tlsSecretName: ""
+  # Off unless the cluster runs KEDA: on, it renders a ScaledObject, and a cluster without
+  # KEDA's CRDs refuses the whole release (the HA lab's first deployment, ADR-091).
   kedaAutoscaling:
-    enabled: true
+    enabled: false
     minReplicas: 1
     maxReplicas: 5
     cooldownPeriod: 300

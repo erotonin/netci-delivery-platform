@@ -4432,6 +4432,12 @@ components:
         artifactDigest: { type: string, nullable: true }
         consoleUrl: { type: string, nullable: true }
         retryOf: { type: string, format: uuid, nullable: true }
+        promotedFrom:
+          type: string
+          format: uuid
+          nullable: true
+          description: A release run (a production request's) built nothing; the run whose artifact it released.
+        productionRequestId: { type: string, nullable: true, description: The production request that made this release run. }
         startedBy: { type: string, nullable: true }
         configRevisionId: { type: string, format: uuid, nullable: true }
         deployAfterBuild:

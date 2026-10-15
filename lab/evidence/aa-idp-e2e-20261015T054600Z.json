@@ -1,0 +1,15 @@
+{
+ "scenario": "aa-idp-e2e",
+ "started": "2026-10-15T05:46:00+00:00",
+ "steps": [
+  {
+   "step": "read git refs",
+   "code": 200,
+   "ok": false,
+   "body": {
+    "main": null,
+    "error": "n instead of a password. If a token was provided, it was either incorrect, expired, or improperly scoped. See http://172.17.0.1:8929/help/topics/git/troubleshooting_git.md#error-on-git-fetch-http-basic-access-denied\nfatal: Authentication failed for 'http://172.17.0.1:8929/platform/payments-api.git/'"
+   }
+  }
+ ]
+}

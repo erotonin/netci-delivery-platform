@@ -68,6 +68,7 @@ function buildLabel(run: PipelineRun): string {
 
 /** What started a run, in a few words: the server's record, not a guess from the branch. */
 export function triggerText(run: PipelineRun): string {
+  if (run.productionRequestId) return 'production request'
   const t = run.trigger ?? {}
   switch (t.event) {
     case 'push': return `push ${t.branch ?? run.branch}`
@@ -79,7 +80,9 @@ export function triggerText(run: PipelineRun): string {
 }
 
 /** Whether the run deploys, only builds, or only verifies (ADR-043). */
-export function runIntent(run: PipelineRun): 'deploys' | 'build only' | 'verify only' {
+export function runIntent(run: PipelineRun): 'deploys' | 'build only' | 'verify only' | 'release' {
+  // A production request's run builds nothing: it releases another run's digest.
+  if (run.promotedFrom) return 'release'
   if (run.publishArtifact === false) return 'verify only'
   if (run.deployAfterBuild === false) return 'build only'
   return 'deploys'
@@ -407,7 +410,7 @@ function environmentPipelines(config: Partial<ModulePipelineConfig> = {}, enviro
 function PipelineTab({ moduleId, pipelineConfig, deploymentEnvironments, initialRun, openRunModalOnMount = false }: { moduleId: string; pipelineConfig: Partial<ModulePipelineConfig>; deploymentEnvironments?: DeploymentEnvironmentConfig[]; initialRun?: PipelineRun | null; openRunModalOnMount?: boolean }) {
   const { notify } = usePortalFeedback()
   const definitions = environmentPipelines(pipelineConfig, deploymentEnvironments)
-  const [filter, setFilter] = useState<'all' | 'deploys' | 'build only' | 'verify only'>('all')
+  const [filter, setFilter] = useState<'all' | 'deploys' | 'build only' | 'verify only' | 'release'>('all')
   const [run, setRun] = useState<{ pipeline: PipelineDefinition; liveRun: PipelineRun | null } | null>(() => {
     if (!initialRun) return null
     const pipeline = definitions.find((d) => d.id === `cd-${initialRun.environment}`) ?? definitions[0]
@@ -554,7 +557,7 @@ function PipelineTab({ moduleId, pipelineConfig, deploymentEnvironments, initial
     {showStagesEditor && <div className="stages-editor-wrap"><PipelineStagesSettings moduleId={moduleId} /></div>}
     <section className="panel repo-strip"><div><span>Repository</span><strong className="mono">{refs?.repositoryUrl ?? '…'}</strong></div>{firstPipeline && <div><span>Build branch</span><strong className="mono">{firstPipeline.branch}</strong></div>}{refs?.error ? <div className="repo-error"><ShieldAlert size={14} />Failed to read branches from repository: {refs.error}</div> : <div><span>Branches</span><strong>{refs ? refs.branches.map((b) => `${b.name} @ ${b.sha.slice(0, 7)}`).join(' · ') || 'no branches' : 'loading…'}</strong></div>}{refs && refs.tags.length > 0 && <div><span>Latest tags</span><strong>{refs.tags.slice(0, 3).map((t) => t.name).join(' · ')}</strong></div>}</section>
     <section className="panel table-panel">
-      <div className="table-toolbar"><div className="segmented" role="group" aria-label="Filter builds">{(['all', 'deploys', 'build only', 'verify only'] as const).map((f) => <button key={f} className={filter === f ? 'active' : ''} aria-pressed={filter === f} onClick={() => setFilter(f)}>{f === 'all' ? 'All' : f === 'deploys' ? 'Deploys' : f === 'build only' ? 'Build only' : 'PR verify'}</button>)}</div><span className="toolbar-count">{shown.length} of {liveRuns.length}</span></div>
+      <div className="table-toolbar"><div className="segmented" role="group" aria-label="Filter builds">{(['all', 'deploys', 'build only', 'verify only', 'release'] as const).map((f) => <button key={f} className={filter === f ? 'active' : ''} aria-pressed={filter === f} onClick={() => setFilter(f)}>{f === 'all' ? 'All' : f === 'deploys' ? 'Deploys' : f === 'build only' ? 'Build only' : f === 'verify only' ? 'PR verify' : 'Releases'}</button>)}</div><span className="toolbar-count">{shown.length} of {liveRuns.length}</span></div>
       <div className="data-table builds-table"><div className="table-row table-head"><span>Build</span><span>Status</span><span>Commit</span><span>Trigger</span><span>Artifact</span><span>Target</span><span>Started</span><span /></div>
         {shown.map((item) => <button className="table-row table-button" onClick={() => setRun({ pipeline: definitionFor(item), liveRun: item })} key={item.id} aria-label={`Open build ${buildLabel(item)}`}>
           <span className="request-id" title={item.jenkinsRunId ?? item.id}>{buildLabel(item)}</span>
@@ -562,7 +565,7 @@ function PipelineTab({ moduleId, pipelineConfig, deploymentEnvironments, initial
           <span className="build-commit"><span className="mono" title={item.commitSha}>{shortSha(item.commitSha)}</span><small>{item.branch}{item.releaseTag ? ` · ${item.releaseTag}` : ''}</small></span>
           <span title={item.trigger?.reason ?? ''}>{triggerText(item)}<small className="run-intent"> · {person(item.startedBy)}</small></span>
           <span className="mono" title={item.artifactDigest ?? ''}>{shortDigest(item.artifactDigest)}</span>
-          <span>{runIntent(item) === 'deploys' ? <span className={`env-badge env-${item.environment}`}>{environmentLabel[item.environment] ?? item.environment}</span> : <small>{runIntent(item)}</small>}</span>
+          <span>{runIntent(item) === 'deploys' || runIntent(item) === 'release' ? <span className={`env-badge env-${item.environment}`}>{environmentLabel[item.environment] ?? item.environment}{runIntent(item) === 'release' ? ' · release' : ''}</span> : <small>{runIntent(item)}</small>}</span>
           <span title={item.createdAt}>{timeAgo(item.createdAt)}</span>
           <ExternalLink size={15} />
         </button>)}
