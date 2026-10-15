@@ -97,6 +97,7 @@ public final class OwnerRouting implements Filter {
         while (i < parts.length && parts[i].isEmpty()) {
             i++;
         }
+        i = EditOrder.pastViews(parts, i);
         while (i + 1 < parts.length && "job".equals(parts[i])) {
             names.add(URLDecoder.decode(parts[i + 1], StandardCharsets.UTF_8));
             i += 2;

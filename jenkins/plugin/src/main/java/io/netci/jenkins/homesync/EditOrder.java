@@ -61,6 +61,53 @@ public final class EditOrder implements Filter {
         }
     }
 
+    /** What a POST to a root view's page changes (ADR-088); anything under {@code /job/} is the job's. */
+    static final Set<String> VIEW_EDITS = Set.of("configSubmit", "config.xml", "submitDescription", "doDelete",
+            "addJobToView", "removeJobFromView");
+
+    /**
+     * Past {@code /view/<name>} (as many as there are): a job's pages are reached through the view
+     * a person is looking at as well, {@code /view/team/job/app/configSubmit} -- the links a view's
+     * own page gives. Not skipped, such an edit was not ordered at all.
+     */
+    static int pastViews(String[] parts, int i) {
+        while (i + 2 < parts.length && "view".equals(parts[i])) {
+            i += 2;
+        }
+        return i;
+    }
+
+    /**
+     * The root view a request changes, as its store path ({@code @views/<name>}): {@code /createView}
+     * (name), or an edit on {@code /view/<name>/...} that is not a job's. A view inside a view (a
+     * nested view) is part of the outer one's configuration. Null when it changes no view.
+     */
+    static String editedView(String method, String path, String newViewName) {
+        if (!"POST".equals(method)) {
+            return null;
+        }
+        String[] parts = path.split("/");
+        int i = 0;
+        while (i < parts.length && parts[i].isEmpty()) {
+            i++;
+        }
+        if (i == parts.length - 1 && "createView".equals(parts[i])) {
+            return newViewName == null || newViewName.isBlank() ? null : HomeSync.viewPath(newViewName.trim());
+        }
+        if (i + 2 >= parts.length || !"view".equals(parts[i])) {
+            return null;
+        }
+        String root = URLDecoder.decode(parts[i + 1], StandardCharsets.UTF_8);
+        int j = i;
+        while (j + 2 < parts.length && "view".equals(parts[j])) {
+            j += 2;
+        }
+        if (j != parts.length - 1 || !(VIEW_EDITS.contains(parts[j]) || "createView".equals(parts[j]))) {
+            return null;
+        }
+        return HomeSync.viewPath(root);
+    }
+
     /** The lock token the current request holds for {@code path}, or 0 (a save no request ordered). */
     static long tokenFor(String path) {
         Held held = HELD.get();
@@ -97,6 +144,7 @@ public final class EditOrder implements Filter {
         while (i < parts.length && parts[i].isEmpty()) {
             i++;
         }
+        i = pastViews(parts, i);
         while (i + 1 < parts.length && "job".equals(parts[i])) {
             names.add(URLDecoder.decode(parts[i + 1], StandardCharsets.UTF_8));
             i += 2;
@@ -139,6 +187,7 @@ public final class EditOrder implements Filter {
         if (i + 2 < parts.length && "user".equals(parts[i])) {
             return HomeSync.userPath(URLDecoder.decode(parts[i + 1], StandardCharsets.UTF_8));
         }
+        i = pastViews(parts, i);
         while (i + 1 < parts.length && "job".equals(parts[i])) {
             names.add(URLDecoder.decode(parts[i + 1], StandardCharsets.UTF_8));
             i += 2;
@@ -171,6 +220,11 @@ public final class EditOrder implements Filter {
         }
         String path = editedItem(http.getMethod(), rest,
                 rest.endsWith("/createItem") ? http.getParameter("name") : null);
+        boolean view = false;
+        if (path == null && sync != null) {
+            path = editedView(http.getMethod(), rest, rest.endsWith("/createView") ? http.getParameter("name") : null);
+            view = path != null;
+        }
         if (path == null || sync == null) {
             chain.doFilter(req, rsp);
             return;
@@ -201,6 +255,12 @@ public final class EditOrder implements Filter {
         HELD.set(new Held(Map.of(path, lock.token())));
         try {
             chain.doFilter(req, rsp);
+            if (view) {
+                // Views live in Jenkins' own config.xml, saved for many reasons: what this request
+                // changed is found by comparing every view with what was published, here, under
+                // the lock, outside Jenkins' monitor (its save holds it).
+                sync.publishViews();
+            }
         } finally {
             HELD.remove();
             unlock(sync, path, lock.token());

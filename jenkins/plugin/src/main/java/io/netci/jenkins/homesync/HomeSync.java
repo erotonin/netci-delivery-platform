@@ -33,6 +33,7 @@ import java.util.logging.Logger;
 import javax.xml.transform.stream.StreamSource;
 import hudson.model.Items;
 import hudson.model.TopLevelItem;
+import hudson.model.View;
 import jenkins.model.DirectlyModifiableTopLevelItemGroup;
 import jenkins.model.Jenkins;
 import jenkins.model.ModifiableTopLevelItemGroup;
@@ -45,9 +46,10 @@ import jenkins.model.ModifiableTopLevelItemGroup;
  * <p>Off unless {@code NETCI_HOMESYNC_URL} is set: a single controller (a cell) has no other home
  * to agree with.
  *
- * <p>Items, users, finished builds, renames and moves (ADR-087) are replicated. What this does not
- * do yet, said here rather than discovered: views are not replicated; a folder's deletion removes
- * its children here and on the others, but the children's own entries are not tombstoned in the store.
+ * <p>Items, users, finished builds, renames and moves (ADR-087) and root views (ADR-088) are
+ * replicated. What this does not do yet, said here rather than discovered: which view is the
+ * primary one is each replica's own (JCasC sets it); a folder's deletion removes its children here
+ * and on the others, but the children's own entries are not tombstoned in the store.
  */
 public final class HomeSync {
     private static final Logger LOGGER = Logger.getLogger(HomeSync.class.getName());
@@ -237,7 +239,9 @@ public final class HomeSync {
                 } else if (!Arrays.equals(local(path), item.content())) {
                     apply(path, item.version(), item.content());
                 } else {
-                    versions.put(path, item.version());
+                    // The same here already: held as applied, so it is not published again as a
+                    // change (the views are compared at every save of Jenkins' configuration).
+                    recordApplied(path, item.version(), item.content());
                 }
             } finally {
                 l.unlock();
@@ -254,6 +258,11 @@ public final class HomeSync {
                 byte[] config = local(userPath(u.getId()));
                 if (config != null && !latest.containsKey(userPath(u.getId()))) {
                     publishLocked(userPath(u.getId()), config, 0);
+                }
+            }
+            for (View v : Jenkins.get().getViews()) {
+                if (!latest.containsKey(viewPath(v.getViewName()))) {
+                    publishLocked(viewPath(v.getViewName()), viewXml(v), 0);
                 }
             }
         }
@@ -481,6 +490,7 @@ public final class HomeSync {
         long expect = versions.getOrDefault(path, 0L);
         try {
             versions.put(path, client.delete(path, expect, lockToken));
+            published.remove(path);
         } catch (HomeSyncClient.Refused r) {
             LOGGER.severe(() -> "netCI homesync: the deletion of " + path + " was refused (" + r.code + "); the shared version is applied");
             reapply(path);
@@ -666,6 +676,93 @@ public final class HomeSync {
         u.load();
     }
 
+    /**
+     * Root views (ADR-088), under {@code @views/<name>}: they live in Jenkins' own config.xml, which
+     * is not replicated (it is each replica's, from JCasC). A folder's views are in the folder's
+     * configuration and a user's in the user's, both replicated already.
+     */
+    static final String VIEWS = "@views/";
+
+    static String viewPath(String name) {
+        return VIEWS + name.replace("%", "%25").replace("/", "%2F");
+    }
+
+    static String viewName(String path) {
+        return path.substring(VIEWS.length()).replace("%2F", "/").replace("%25", "%");
+    }
+
+    static byte[] viewXml(View v) throws IOException {
+        java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+        v.writeXml(out);
+        return out.toByteArray();
+    }
+
+    /** Debounces publishViews for saves no view request made (see {@link #viewsChanged}). */
+    private final java.util.concurrent.atomic.AtomicBoolean viewsPending = new java.util.concurrent.atomic.AtomicBoolean();
+
+    /**
+     * Jenkins' configuration was saved, not by a view request (a list view following a renamed job,
+     * a script): the views are compared a moment later, off this thread -- Jenkins saves holding its
+     * monitor, which applying another replica's view needs too.
+     */
+    void viewsChanged() {
+        if (viewsPending.compareAndSet(false, true)) {
+            jenkins.util.Timer.get().schedule(() -> {
+                viewsPending.set(false);
+                publishViews();
+            }, 1, TimeUnit.SECONDS);
+        }
+    }
+
+    /**
+     * Publish every root view that differs from what this home last published or applied, and the
+     * deletion of each one that is gone. Under a view request's lock its own view goes in order; the
+     * rest go like any save no request ordered.
+     */
+    void publishViews() {
+        if (!ready) {
+            return;
+        }
+        Map<String, byte[]> now = new HashMap<>();
+        try (ACLContext ignored = ACL.as2(ACL.SYSTEM2)) {
+            for (View v : Jenkins.get().getViews()) {
+                now.put(viewPath(v.getViewName()), viewXml(v));
+            }
+        } catch (IOException e) {
+            LOGGER.log(Level.SEVERE, "netCI homesync: cannot read this replica's views to publish them", e);
+            return;
+        }
+        for (Map.Entry<String, byte[]> e : now.entrySet()) {
+            if (!sha256(e.getValue()).equals(published.get(e.getKey()))) {
+                publish(e.getKey(), e.getValue(), EditOrder.tokenFor(e.getKey()));
+            }
+        }
+        for (String path : List.copyOf(published.keySet())) {
+            if (path.startsWith(VIEWS) && !now.containsKey(path)) {
+                publishDelete(path, EditOrder.tokenFor(path));
+            }
+        }
+    }
+
+    private static void applyView(String path, byte[] content) throws IOException {
+        Jenkins j = Jenkins.get();
+        String name = viewName(path);
+        View v = j.getView(name);
+        if (content == null) {
+            if (v != null && v != j.getPrimaryView()) {
+                j.deleteView(v);
+            } else if (v != null) {
+                LOGGER.warning(() -> "netCI homesync: view " + name + " was deleted on another replica, but is the primary view here");
+            }
+            return;
+        }
+        if (v != null) {
+            v.updateByXml(new StreamSource(new ByteArrayInputStream(content)));
+        } else {
+            j.addView(View.createViewFromXML(name, new ByteArrayInputStream(content)));
+        }
+    }
+
     /** Finished builds (ADR-078) are kept the same too, under {@code @builds/<job>/<number>}. */
     static final String BUILDS = "@builds/";
 
@@ -735,6 +832,11 @@ public final class HomeSync {
                 recordApplied(path, version, content);
                 return;
             }
+            if (path.startsWith(VIEWS)) {
+                applyView(path, content);
+                recordApplied(path, version, content);
+                return;
+            }
             Item existing = j.getItemByFullName(path);
             if (content == null) {
                 if (existing != null) {
@@ -798,6 +900,10 @@ public final class HomeSync {
                 User u = User.getById(userId(path), false);
                 File config = u == null ? null : new File(u.getUserFolder(), "config.xml");
                 return config != null && config.exists() ? Files.readAllBytes(config.toPath()) : null;
+            }
+            if (path.startsWith(VIEWS)) {
+                View v = Jenkins.get().getView(viewName(path));
+                return v == null ? null : viewXml(v);
             }
             Item it = Jenkins.get().getItemByFullName(path);
             if (it instanceof AbstractItem ai && ai.getConfigFile().exists()) {

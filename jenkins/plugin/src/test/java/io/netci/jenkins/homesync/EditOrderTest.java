@@ -76,4 +76,23 @@ class EditOrderTest {
         assertTrue(new EditOrder.Move("a", "b").covers("b"));
         assertTrue(!new EditOrder.Move("a", "b").covers("ab"));
     }
+
+    @Test
+    void aViewsEditNamesTheViewAndAJobsPageThroughAViewNamesTheJob() {
+        assertEquals("@views/team", EditOrder.editedView("POST", "/createView", "team"));
+        assertEquals("@views/team", EditOrder.editedView("POST", "/view/team/configSubmit", null));
+        assertEquals("@views/team", EditOrder.editedView("POST", "/view/team/addJobToView", null));
+        assertEquals("@views/a b", EditOrder.editedView("POST", "/view/a%20b/doDelete", null));
+        assertEquals("@views/outer", EditOrder.editedView("POST", "/view/outer/view/inner/configSubmit", null));
+        assertNull(EditOrder.editedView("GET", "/view/team/configSubmit", null));
+        assertNull(EditOrder.editedView("POST", "/view/team/job/app/configSubmit", null));
+        assertNull(EditOrder.editedView("POST", "/view/team/build", null));
+        assertNull(EditOrder.editedView("POST", "/createView", ""));
+        assertEquals("app", EditOrder.editedItem("POST", "/view/team/job/app/configSubmit", null));
+        assertEquals("f/app", EditOrder.editedItem("POST", "/view/team/view/inner/job/f/job/app/disable", null));
+        assertEquals("new", EditOrder.editedItem("POST", "/view/team/createItem", "new"));
+        assertNull(EditOrder.editedItem("POST", "/view/team/configSubmit", null));
+        assertEquals(new EditOrder.Move("app", "svc"), EditOrder.moved("POST", "/view/team/job/app/confirmRename", "svc", null));
+        assertEquals("app", OwnerRouting.target("POST", "/view/team/job/app/build").job());
+    }
 }

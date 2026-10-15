@@ -65,6 +65,10 @@ public final class PublishChanges {
             if (sync == null || !sync.ready() || HomeSync.APPLYING.get()) {
                 return;
             }
+            if (o instanceof jenkins.model.Jenkins) {
+                sync.viewsChanged(); // the root views are in Jenkins' config.xml (ADR-088)
+                return;
+            }
             if (o instanceof User user && file.getFile().getName().equals("config.xml")) {
                 String path = HomeSync.userPath(user.getId());
                 try {

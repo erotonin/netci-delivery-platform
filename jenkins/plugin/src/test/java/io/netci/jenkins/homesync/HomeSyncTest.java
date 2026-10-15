@@ -734,4 +734,50 @@ class HomeSyncTest {
         assertEquals(1, STORE.seen().stream().filter(x -> x.method().equals("MOVE")).count(), STORE.seen().toString());
         assertNull(movedTo("squad/svc"));
     }
+
+    @Test
+    void aViewMadeOrChangedHereIsPublishedAndOrderedLikeAnEdit(JenkinsRule j) throws Exception {
+        // Root views live in Jenkins' own config.xml, which is each replica's: before ADR-088 a view
+        // made on one replica never reached the other.
+        ready();
+        j.jenkins.addView(new hudson.model.ListView("team"));
+        await("the new view published", () -> stored("@views/team") != null && stored("@views/team").contains("hudson.model.ListView"));
+        Page done = post(j, "view/team/submitDescription?description=ours");
+        assertTrue(done.getWebResponse().getStatusCode() < 400, done.getWebResponse().getContentAsString());
+        await("the description published", () -> stored("@views/team").contains("ours"));
+        assertTrue(STORE.seen().stream().anyMatch(x -> x.path().equals("@views/team") && x.lockToken() > 0),
+                "the view's edit was not made under its lock: " + STORE.seen());
+        j.jenkins.deleteView(j.jenkins.getView("team"));
+        await("the deletion published", () -> deleted("@views/team"));
+    }
+
+    @Test
+    void anotherReplicasViewIsMadeChangedAndDeletedHere(JenkinsRule j) throws Exception {
+        ready();
+        String xml = "<?xml version='1.1' encoding='UTF-8'?><hudson.model.ListView><name>theirs</name><description>from r1</description>"
+                + "<filterExecutors>false</filterExecutors><filterQueue>false</filterQueue><properties class=\"hudson.model.View$PropertyList\"/>"
+                + "<jobNames><comparator class=\"java.lang.String$CaseInsensitiveComparator\"/></jobNames><jobFilters/><columns/>"
+                + "<recurse>false</recurse></hudson.model.ListView>";
+        STORE.changeFrom("r1", "@views/theirs", xml);
+        await("r1's view here", () -> j.jenkins.getView("theirs") != null && "theirs".equals(j.jenkins.getView("theirs").getViewName()));
+        assertEquals("from r1", j.jenkins.getView("theirs").getDescription());
+        STORE.changeFrom("r1", "@views/theirs", xml.replace("from r1", "changed on r1"));
+        await("r1's change here", () -> "changed on r1".equals(j.jenkins.getView("theirs").getDescription()));
+        STORE.changeFrom("r1", "@views/theirs", (String) null);
+        await("r1's deletion here", () -> j.jenkins.getView("theirs") == null);
+        // Applied, not published back.
+        assertTrue(STORE.seen().stream().noneMatch(x -> x.path().equals("@views/theirs")), STORE.seen().toString());
+    }
+
+    @Test
+    void aJobsPagesThroughAViewAreOrderedAndRoutedLikeItsOwn(JenkinsRule j) throws Exception {
+        ready();
+        pipeline(j, "seen-through");
+        await("the create published", () -> storedVersion("seen-through") >= 1);
+        Page done = post(j, "view/all/job/seen-through/submitDescription?description=via%20the%20view");
+        assertTrue(done.getWebResponse().getStatusCode() < 400, done.getWebResponse().getContentAsString());
+        await("the edit published", () -> stored("seen-through").contains("via the view"));
+        assertTrue(STORE.seen().stream().anyMatch(x -> x.path().equals("seen-through") && x.lockToken() > 0),
+                "an edit through a view's URL was not ordered: " + STORE.seen());
+    }
 }
