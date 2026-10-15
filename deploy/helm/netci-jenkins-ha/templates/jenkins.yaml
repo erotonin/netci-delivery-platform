@@ -118,22 +118,40 @@ spec:
               value: {{ join "," $agentHomes | quote }}
             - name: NETCI_REPLICA_URLS
               value: {{ include "netci-jenkins-ha.replicaUrls" . | quote }}
+            {{- if .Values.jenkins.drainAgentPort }}
+            # ADR-089: the balancer's agent check, "maint" while this replica drains.
+            - name: NETCI_DRAIN_AGENT_PORT
+              value: {{ .Values.jenkins.drainAgentPort | quote }}
+            {{- end }}
           ports:
             - containerPort: 8080
+            {{- if .Values.jenkins.drainAgentPort }}
+            - containerPort: {{ .Values.jenkins.drainAgentPort }}
+              name: drain-agent
+            {{- end }}
           readinessProbe:
             httpGet:
               path: /login
               port: 8080
             periodSeconds: 2
             failureThreshold: 3
-          # Drain before stopping (ADR-080): the balancer checks /netci-ready/, which answers 503 once
-          # this file exists, so within its 2 s it sends everyone to the other replica; Jenkins is
-          # told to stop when nothing is in flight. /tmp is the container's own: a new container
-          # starts without the file.
+          # Drain before stopping (ADR-080, ADR-089): once this file exists the balancer sends nothing
+          # new here (the agent check says "maint" within its 1 s; without it, /netci-ready/ answers
+          # 503), and Jenkins is told to stop when nothing is in flight -- at most drainSeconds later.
+          # /tmp is the container's own: a new container starts without the file.
+          {{- $grace := int .Values.jenkins.terminationGracePeriodSeconds }}
+          {{- $drain := int .Values.jenkins.drainSeconds }}
+          {{- if lt $grace (add $drain 20) }}
+          {{- fail (printf "jenkins.terminationGracePeriodSeconds (%d) must be at least drainSeconds (%d) + 20: Jenkins needs time to stop after the drain, or it is killed" $grace $drain) }}
+          {{- end }}
           lifecycle:
             preStop:
               exec:
-                command: [sh, -c, {{ printf "touch /tmp/netci-draining && sleep %d" (int .Values.jenkins.drainSeconds) | quote }}]
+                {{- if .Values.jenkins.drainAgentPort }}
+                command: [sh, -c, {{ printf `touch /tmp/netci-draining; sleep 2; i=0; while [ $i -lt %d ]; do n=$(curl -sf --max-time 1 http://127.0.0.1:8080/netci-ready/busy) || break; [ "$n" -le 0 ] && break; sleep 1; i=$((i+1)); done` $drain | quote }}]
+                {{- else }}
+                command: [sh, -c, {{ printf "touch /tmp/netci-draining && sleep %d" $drain | quote }}]
+                {{- end }}
           resources:
             {{- toYaml .Values.jenkins.resources | nindent 12 }}
           volumeMounts:

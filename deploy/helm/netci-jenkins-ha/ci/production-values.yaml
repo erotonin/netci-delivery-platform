@@ -25,7 +25,7 @@ jenkins:
   sessionKeySecret: jenkins-session-key
   cascConfigMap: jenkins-casc
   fence: kubernetes-power
-  drainSeconds: 6
+  drainSeconds: 30
   terminationGracePeriodSeconds: 60
   minReadySeconds: 30
 

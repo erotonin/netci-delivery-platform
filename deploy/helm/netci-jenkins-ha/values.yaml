@@ -30,9 +30,12 @@ jenkins:
   # Strict adoption fence: a runner is gone only once confirmed off via power management
   # (out-of-service taint) or node kubelet reports process ended (ADR-079, ADR-084).
   fence: kubernetes-power   # enum: kubernetes | kubernetes-power
-  # Drain before stopping (ADR-080): balancer checks /netci-ready/, answering 503 once
-  # /tmp/netci-draining exists, allowing traffic to route to surviving replicas.
-  drainSeconds: 6
+  # Drain before stopping (ADR-080, ADR-089): with drainAgentPort the balancer's agent check puts a
+  # draining replica in maintenance (nothing new sent, what is in flight finishes) and the stop waits
+  # until no request is in flight, at most drainSeconds; without it, the health check answers 503
+  # and the stop waits drainSeconds. The grace period must be at least drainSeconds + 20.
+  drainAgentPort: 8098
+  drainSeconds: 30
   terminationGracePeriodSeconds: 60
   # Rolling restarts wait for balancers to resolve new addresses and pass health checks (phase 5).
   minReadySeconds: 30

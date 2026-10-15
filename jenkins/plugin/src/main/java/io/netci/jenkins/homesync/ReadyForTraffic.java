@@ -10,7 +10,7 @@ import org.kohsuke.stapler.HttpResponses;
 
 /**
  * The balancer's health check (ADR-080): 200 while this replica takes traffic, 503 while it starts
- * or drains.
+ * or drains (with the drain agent, ADR-089, only while it starts).
  *
  * <p>Draining is a file, created by the pod's preStop hook before Jenkins is told to stop: the
  * balancer marks the replica down within its check interval and sends everyone to the other one,
@@ -41,7 +41,10 @@ public final class ReadyForTraffic implements UnprotectedRootAction {
     }
 
     public HttpResponse doIndex() {
-        if (drainFile().exists()) {
+        // With the drain agent (ADR-089) the balancer learns of a drain from it, and this stays up
+        // until Jenkins is gone: a 503 here would mark the replica down, and the balancer would
+        // close every request in flight on it.
+        if (drainFile().exists() && !DrainAgent.on()) {
             return HttpResponses.status(503); // the body is left out: a status is all the balancer reads
         }
         if (Jenkins.get().getInitLevel() != InitMilestone.COMPLETED) {
@@ -54,5 +57,10 @@ public final class ReadyForTraffic implements UnprotectedRootAction {
             return HttpResponses.status(503);
         }
         return HttpResponses.text("ready");
+    }
+
+    /** How many requests this replica is serving: the pod's preStop waits for 0 before Jenkins stops. */
+    public HttpResponse doBusy() {
+        return HttpResponses.text(Integer.toString(DrainAgent.inFlight()));
     }
 }

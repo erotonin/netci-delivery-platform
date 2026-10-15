@@ -78,7 +78,8 @@
           "type": "string",
           "enum": ["kubernetes", "kubernetes-power"]
         },
-        "drainSeconds": { "type": "integer" },
+        "drainAgentPort": { "type": "integer", "minimum": 0, "maximum": 65535 },
+        "drainSeconds": { "type": "integer", "minimum": 1 },
         "terminationGracePeriodSeconds": { "type": "integer" },
         "minReadySeconds": { "type": "integer" }
       }

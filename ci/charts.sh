@@ -35,6 +35,12 @@ refuses "an agent homed on no replica" "must name a replica" "$H" -f "$H/ci/prod
 refuses "no session key Secret" "jenkins.sessionKeySecret" "$H" -f "$H/ci/production-values.yaml" --set jenkins.sessionKeySecret=
 refuses "kube-vip without an address" "balancer.vip.address" "$H" -f "$H/ci/production-values.yaml" --set balancer.vip.mode=kubevip --set images.kubeVip="r/kube-vip@${D}"
 refuses "a lenient fence by typo" "kubernetes-power" "$H" -f "$H/ci/production-values.yaml" --set jenkins.fence=power
+refuses "a grace period the drain does not fit in" "at least drainSeconds" "$H" -f "$H/ci/production-values.yaml" --set jenkins.terminationGracePeriodSeconds=40
+# ADR-089: the balancer asks each replica's drain agent, and the preStop waits for what is in flight.
+helm template t "$H" -f "$H/ci/production-values.yaml" | grep -q "agent-check agent-port 8098" || { echo "FAIL: no agent check" >&2; exit 1; }
+helm template t "$H" -f "$H/ci/production-values.yaml" | grep -q "netci-ready/busy" || { echo "FAIL: the preStop does not wait" >&2; exit 1; }
+helm template t "$H" -f "$H/ci/production-values.yaml" --set jenkins.drainAgentPort=0 | grep -q "agent-check" && { echo "FAIL: an agent check with no agent" >&2; exit 1; }
+echo "ok: the drain agent is asked, and only when there is one"
 # The IDP's chart: it renders with the lab's values, and builds through netci-queue (ADR-082) need
 # exactly one controller and the queue's token.
 I="${ROOT}/deploy/helm/netci-platform"

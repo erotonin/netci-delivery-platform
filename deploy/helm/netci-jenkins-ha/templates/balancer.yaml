@@ -1,3 +1,66 @@
+{{- /*
+The balancer's configuration, one place: the ConfigMap holds it and the DaemonSet's pods carry its
+digest, so a change rolls the balancers. Without the digest a changed haproxy.cfg sat unread in the
+ConfigMap until someone restarted them by hand.
+*/ -}}
+{{- define "netci-jenkins-ha.haproxyCfg" -}}
+global
+  # httplog without captures: no request header is logged, so an agent's Secret-Key never is.
+  log stdout format raw local0 info
+defaults
+  mode http
+  log global
+  option httplog
+  timeout connect 1s
+  timeout client 60s
+  timeout server 60s
+  timeout tunnel 1h        # an agent's WebSocket lives for hours
+  timeout check 1s
+  retries 3
+  option redispatch 1
+  # 503 too: a replica stopping answers 503 for the ~2 s before its check marks it down (the
+  # rolling upgrade's two failed polls of 280). Jenkins says 503 before it acts on a request,
+  # and so does the plugin when it refuses an edit, so a retry on the other replica is safe.
+  retry-on conn-failure empty-response response-timeout 503
+resolvers k8s
+  parse-resolv-conf
+  hold valid 2s
+  hold obsolete 2s
+frontend ui
+  bind :8080
+  default_backend jenkins
+backend jenkins
+  balance roundrobin
+  # preserve: the plugin sets this cookie to send a request to a job's owner (ADR-078).
+  cookie NETCI_REPLICA insert indirect nocache httponly preserve
+  # The plugin's readiness (ADR-080): 503 while the replica starts (and, without the drain agent,
+  # while it drains before a stop). The agent check (ADR-089) says "maint" while it drains: nothing
+  # new is sent there, cookie-pinned requests included, and what is in flight finishes -- marked
+  # down instead, shutdown-sessions below closed it (a 17 s dashboard, cut in a rolling upgrade).
+  # Needs a controller of netci25 or later on every replica before it is applied.
+  option httpchk GET /netci-ready/
+  http-check expect status 200
+  http-response set-header X-Netci-Replica %s
+  # Each agent to its replica; a use-server rule is ignored while that server is down, so an
+  # agent whose replica died reconnects to the other one.
+  {{- range $agent := keys .Values.agents.homes | sortAlpha }}
+  {{- $replica := index $.Values.agents.homes $agent }}
+  {{- if or (not (regexMatch "^jenkins-[0-9]+$" $replica)) (ge (int (trimPrefix "jenkins-" $replica)) (int $.Values.replicas)) }}
+  {{- fail (printf "agents.homes.%s is %q: it must name a replica, jenkins-0 to jenkins-%d" $agent $replica (sub (int $.Values.replicas) 1)) }}
+  {{- end }}
+  {{- $r := printf "r%s" (trimPrefix "jenkins-" $replica) }}
+  use-server {{ $r }} if { req.hdr(Node-Name) -m str {{ $agent }} }
+  {{- end }}
+  # shutdown-sessions: a server marked down has its open sessions closed. An agent's WebSocket
+  # through a balancer whose server's machine lost power stayed open for the tunnel's hour (no
+  # RST comes from a dead machine): the agent never reconnected, so its build was never adopted.
+  default-server inter 1s fall 2 rise 2 resolvers k8s init-addr none on-marked-down shutdown-sessions
+  {{- $replicas := int .Values.replicas }}
+  {{- $ns := .Release.Namespace }}
+  {{- range $i := until $replicas }}
+  server r{{ $i }} jenkins-{{ $i }}.jenkins.{{ $ns }}.svc.cluster.local:8080 check cookie r{{ $i }}{{ if $.Values.jenkins.drainAgentPort }} agent-check agent-port {{ $.Values.jenkins.drainAgentPort }} agent-inter 1s{{ end }}
+  {{- end }}
+{{- end }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -7,59 +70,7 @@ metadata:
     {{- include "netci-jenkins-ha.labels" . | nindent 4 }}
 data:
   haproxy.cfg: |
-    global
-      # httplog without captures: no request header is logged, so an agent's Secret-Key never is.
-      log stdout format raw local0 info
-    defaults
-      mode http
-      log global
-      option httplog
-      timeout connect 1s
-      timeout client 60s
-      timeout server 60s
-      timeout tunnel 1h        # an agent's WebSocket lives for hours
-      timeout check 1s
-      retries 3
-      option redispatch 1
-      # 503 too: a replica stopping answers 503 for the ~2 s before its check marks it down (the
-      # rolling upgrade's two failed polls of 280). Jenkins says 503 before it acts on a request,
-      # and so does the plugin when it refuses an edit, so a retry on the other replica is safe.
-      retry-on conn-failure empty-response response-timeout 503
-    resolvers k8s
-      parse-resolv-conf
-      hold valid 2s
-      hold obsolete 2s
-    frontend ui
-      bind :8080
-      default_backend jenkins
-    backend jenkins
-      balance roundrobin
-      # preserve: the plugin sets this cookie to send a request to a job's owner (ADR-078).
-      cookie NETCI_REPLICA insert indirect nocache httponly preserve
-      # The plugin's readiness (ADR-080): 503 while the replica starts or drains before a stop.
-      # Needs a controller of netci25 or later on every replica before it is applied.
-      option httpchk GET /netci-ready/
-      http-check expect status 200
-      http-response set-header X-Netci-Replica %s
-      # Each agent to its replica; a use-server rule is ignored while that server is down, so an
-      # agent whose replica died reconnects to the other one.
-      {{- range $agent := keys .Values.agents.homes | sortAlpha }}
-      {{- $replica := index $.Values.agents.homes $agent }}
-      {{- if or (not (regexMatch "^jenkins-[0-9]+$" $replica)) (ge (int (trimPrefix "jenkins-" $replica)) (int $.Values.replicas)) }}
-      {{- fail (printf "agents.homes.%s is %q: it must name a replica, jenkins-0 to jenkins-%d" $agent $replica (sub (int $.Values.replicas) 1)) }}
-      {{- end }}
-      {{- $r := printf "r%s" (trimPrefix "jenkins-" $replica) }}
-      use-server {{ $r }} if { req.hdr(Node-Name) -m str {{ $agent }} }
-      {{- end }}
-      # shutdown-sessions: a server marked down has its open sessions closed. An agent's WebSocket
-      # through a balancer whose server's machine lost power stayed open for the tunnel's hour (no
-      # RST comes from a dead machine): the agent never reconnected, so its build was never adopted.
-      default-server inter 1s fall 2 rise 2 resolvers k8s init-addr none on-marked-down shutdown-sessions
-      {{- $replicas := int .Values.replicas }}
-      {{- $ns := .Release.Namespace }}
-      {{- range $i := until $replicas }}
-      server r{{ $i }} jenkins-{{ $i }}.jenkins.{{ $ns }}.svc.cluster.local:8080 check cookie r{{ $i }}
-      {{- end }}
+{{ include "netci-jenkins-ha.haproxyCfg" . | indent 4 }}
 ---
 # On every machine: with externalTrafficPolicy Local the VIP may only sit where a balancer runs,
 # so a balancer everywhere leaves every surviving machine able to take it.
@@ -74,11 +85,23 @@ spec:
   selector:
     matchLabels:
       app: haproxy
+  # One new balancer beside the old on each machine, ready before the old one stops: with
+  # externalTrafficPolicy Local a machine without a ready balancer drops what the VIP sends it.
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
   template:
     metadata:
       labels:
         app: haproxy
+      annotations:
+        checksum/haproxy-cfg: {{ include "netci-jenkins-ha.haproxyCfg" . | sha256sum }}
     spec:
+      # The image stops HAProxy with SIGUSR1, a soft stop: it closes its listener and lets open
+      # connections finish, up to this (an agent's WebSocket is then cut, and reconnects).
+      terminationGracePeriodSeconds: 30
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
@@ -87,6 +110,11 @@ spec:
         - name: haproxy
           image: {{ include "netci-jenkins-ha.image" (list "images.haproxy" .Values.images.haproxy) }}
           args: [-f, /usr/local/etc/haproxy/haproxy.cfg]
+          lifecycle:
+            # Out of the Service's endpoints before it stops listening.
+            preStop:
+              exec:
+                command: [sleep, "3"]
           ports:
             - containerPort: 8080
           readinessProbe:
