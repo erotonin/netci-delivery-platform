@@ -1,7 +1,8 @@
 {{- /*
-The balancer's configuration, one place: the ConfigMap holds it and the DaemonSet's pods carry its
-digest, so a change rolls the balancers. Without the digest a changed haproxy.cfg sat unread in the
-ConfigMap until someone restarted them by hand.
+The balancer's configuration. A change is reloaded by the running balancers (below), not by
+replacing them: kube-vip elects the VIP's machine among the Service's endpoints and restarts the
+election whenever one goes away, so replacing a balancer took the VIP down -- 2 s of refused
+connections in the rolling upgrade to netci34 (ADR-089).
 */ -}}
 {{- define "netci-jenkins-ha.haproxyCfg" -}}
 global
@@ -96,8 +97,6 @@ spec:
     metadata:
       labels:
         app: haproxy
-      annotations:
-        checksum/haproxy-cfg: {{ include "netci-jenkins-ha.haproxyCfg" . | sha256sum }}
     spec:
       # The image stops HAProxy with SIGUSR1, a soft stop: it closes its listener and lets open
       # connections finish, up to this (an agent's WebSocket is then cut, and reconnects).
@@ -109,7 +108,28 @@ spec:
       containers:
         - name: haproxy
           image: {{ include "netci-jenkins-ha.image" (list "images.haproxy" .Values.images.haproxy) }}
-          args: [-f, /usr/local/etc/haproxy/haproxy.cfg]
+          # HAProxy in master-worker mode, and its configuration reloaded when the ConfigMap changes
+          # (the kubelet updates the mounted file within a minute): checked first, a configuration
+          # HAProxy refuses is left unapplied and said so; a valid one is reloaded with SIGUSR2,
+          # the old worker finishing its connections. The pod, its endpoint and the VIP stay. The
+          # image's stop signal (SIGUSR1, a soft stop) is passed on.
+          command: [sh, -c]
+          args:
+            - |
+              cfg=/usr/local/etc/haproxy/haproxy.cfg
+              haproxy -W -db -f "$cfg" & pid=$!
+              trap 'kill -USR1 $pid; wait $pid; exit 0' USR1 TERM
+              sum=$(sha256sum "$cfg")
+              while kill -0 $pid 2>/dev/null; do
+                sleep 2
+                now=$(sha256sum "$cfg")
+                [ "$now" = "$sum" ] && continue
+                if haproxy -c -q -f "$cfg"; then
+                  echo "netci: haproxy.cfg changed; reloading"; kill -USR2 $pid; sum=$now
+                else
+                  echo "netci: the changed haproxy.cfg is refused by haproxy -c; the running one is kept"; sum=$now
+                fi
+              done
           lifecycle:
             # Out of the Service's endpoints before it stops listening.
             preStop:

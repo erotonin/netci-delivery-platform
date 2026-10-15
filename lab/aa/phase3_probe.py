@@ -63,7 +63,12 @@ class R:
             r.add_header("Content-Type", ctype)
         if r.get_method() == "POST":
             if self.crumb is None:
-                c = json.loads(self.req("/crumbIssuer/api/json")[1])
+                # A failed fetch is this request's answer, not the writer's end: one thrown here
+                # stopped the upgrade probe's r1 writer for the rest of a run (20 writes of 185).
+                code, body, served = self.req("/crumbIssuer/api/json")
+                if code != 200:
+                    return code, body, served
+                c = json.loads(body)
                 self.crumb = (c["crumbRequestField"], c["crumb"])
             r.add_header(*self.crumb)
         try:
