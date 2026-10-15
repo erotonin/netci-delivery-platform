@@ -60,3 +60,52 @@ subjects:
   - kind: ServiceAccount
     name: jenkins
     namespace: {{ .Release.Namespace }}
+{{- if .Values.buildPods.enabled }}
+{{- $ns := required "buildPods.namespace: the namespace build pods run in (created by the site)" .Values.buildPods.namespace }}
+---
+# Build pods (ADR-091): each replica's Kubernetes cloud creates, watches, execs into and deletes
+# its builds' pods here -- and only here. The pods' own account can do nothing: its token is not
+# even mounted.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ .Values.buildPods.serviceAccount }}
+  namespace: {{ $ns }}
+  labels:
+    {{- include "netci-jenkins-ha.labels" . | nindent 4 }}
+automountServiceAccountToken: false
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: jenkins-build-pods
+  namespace: {{ $ns }}
+  labels:
+    {{- include "netci-jenkins-ha.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [create, delete, get, list, patch, update, watch]
+  - apiGroups: [""]
+    resources: [pods/exec]
+    verbs: [create, get]
+  - apiGroups: [""]
+    resources: [pods/log, events]
+    verbs: [get, list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: jenkins-build-pods
+  namespace: {{ $ns }}
+  labels:
+    {{- include "netci-jenkins-ha.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: jenkins-build-pods
+subjects:
+  - kind: ServiceAccount
+    name: jenkins
+    namespace: {{ .Release.Namespace }}
+{{- end }}

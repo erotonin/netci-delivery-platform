@@ -166,6 +166,11 @@ spec:
             - name: session-key
               mountPath: /run/secrets/netci-session
               readOnly: true
+            {{- range $i, $m := .Values.jenkins.extraSecretMounts }}
+            - name: extra-secret-{{ $i }}
+              mountPath: {{ $m.mountPath }}
+              readOnly: true
+            {{- end }}
       volumes:
         - name: casc
           configMap:
@@ -183,6 +188,12 @@ spec:
             secretName: {{ required "jenkins.homeSecretsSecret: Secret holding the replicas' shared secrets/ files" .Values.jenkins.homeSecretsSecret }}
             defaultMode: 0400
             optional: true
+        {{- range $i, $m := .Values.jenkins.extraSecretMounts }}
+        - name: extra-secret-{{ $i }}
+          secret:
+            secretName: {{ $m.secretName }}
+            defaultMode: 0440
+        {{- end }}
   volumeClaimTemplates:
     - metadata:
         name: home

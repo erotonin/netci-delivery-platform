@@ -40,6 +40,17 @@ jenkins:
   # Rolling restarts wait for balancers to resolve new addresses and pass health checks (phase 5).
   minReadySeconds: 30
 
+  # Secrets mounted as files, read by the site's JCasC with ${readFile:<mountPath>/<key>} -- a
+  # credential never written into the JCasC ConfigMap. [{secretName: ci-credentials, mountPath: /run/secrets/ci}]
+  extraSecretMounts: []
+
+# Build pods (ADR-091): the replicas' Kubernetes cloud creates each build's pod in this namespace,
+# which the site creates. Off: builds run on inbound agents only (agents.homes).
+buildPods:
+  enabled: false
+  namespace: ""
+  serviceAccount: jenkins-agent
+
 agents:
   # Map agent name -> replica pod name; becomes NETCI_AGENT_HOMES and the haproxy use-server rules.
   # An inbound agent connects over WebSocket; HAProxy routes each to its home replica, and to
