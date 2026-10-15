@@ -160,19 +160,80 @@ public final class RunningBuilds {
     /**
      * One copy, if it can be adopted: a run's directory before its build.xml is written is a log and
      * nothing else -- the first test's only copy, which no replica could load.
+     *
+     * <p>Nor one taken while the run {@linkplain #blocksRestart blocks a restart} (ADR-094): a step
+     * running background code then -- {@code withCredentials} binding or unbinding, the IDP's pipeline
+     * does it around every callback -- is saved with its thread recorded, and resumed it fails the
+     * build ({@code SynchronousResumeNotSupportedException}, the lab's IDP build #13). Jenkins does not
+     * restart then either. The copy before stands; the next one comes at the next step boundary.
      */
     static void publishCopy(HomeSync sync, Run<?, ?> run) {
         if (!run.isBuilding() || !new File(run.getRootDir(), "build.xml").exists()) {
             return;
         }
-        {
+        synchronized (COPYING.computeIfAbsent(path(run), p -> new Object())) {
             try {
+                if (blocksRestart(run)) {
+                    return;
+                }
                 writeMarks(run);
-                sync.publish(path(run), archive(run.getRootDir()), 0);
+                byte[] copy = archive(run.getRootDir());
+                if (blocksRestart(run)) {
+                    return; // it began while the directory was read
+                }
+                sync.publish(path(run), copy, 0);
             } catch (IOException e) {
                 LOGGER.log(Level.WARNING, "netCI homesync: cannot copy the running " + run, e);
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
+            }
+        }
+    }
+
+    /** Jenkins's own test before a restart: the CPS VM busy, or a step running background code. */
+    static boolean blocksRestart(Run<?, ?> run) {
+        hudson.model.Executor executor = run.getExecutor();
+        jenkins.model.queue.AsynchronousExecution execution = executor == null ? null : executor.getAsynchronousExecution();
+        return execution != null && execution.blocksRestart();
+    }
+
+    /**
+     * A copy as soon as a step ends or begins (ADR-094), besides the timer's. The timer's copy was up
+     * to 3 s behind, and an IDP build runs a dozen short {@code sh} steps in 3 s: adopted from such a
+     * copy, a step that had already finished -- its agent had removed its control directory -- was
+     * waited for forever (the lab's IDP build #12). Asked for here, made on a timer thread a moment
+     * later: one copy for a burst of nodes, never on the CPS VM thread.
+     */
+    static void stepBoundary(Run<?, ?> run) {
+        HomeSync sync = HomeSync.get();
+        String path = path(run);
+        if (sync == null || !PUBLISHERS.containsKey(path)) {
+            return;
+        }
+        java.util.concurrent.atomic.AtomicBoolean asked = ASKED.computeIfAbsent(path, p -> new java.util.concurrent.atomic.AtomicBoolean());
+        if (asked.compareAndSet(false, true)) {
+            Timer.get().schedule(() -> {
+                asked.set(false);
+                publishCopy(sync, run);
+            }, BOUNDARY_MILLIS, TimeUnit.MILLISECONDS);
+        }
+    }
+
+    /** How long a step boundary's copy waits for the nodes that come with it. */
+    static final long BOUNDARY_MILLIS = 100;
+    private static final Map<String, Object> COPYING = new ConcurrentHashMap<>();
+    private static final Map<String, java.util.concurrent.atomic.AtomicBoolean> ASKED = new ConcurrentHashMap<>();
+
+    @Extension
+    public static final class Boundary implements org.jenkinsci.plugins.workflow.flow.GraphListener {
+        @Override
+        public void onNewHead(org.jenkinsci.plugins.workflow.graph.FlowNode node) {
+            try {
+                if (node.getExecution().getOwner().getExecutable() instanceof Run<?, ?> run) {
+                    stepBoundary(run);
+                }
+            } catch (IOException e) {
+                LOGGER.log(Level.FINE, "netCI homesync: no run for " + node, e);
             }
         }
     }
@@ -210,6 +271,8 @@ public final class RunningBuilds {
 
         @Override
         public void onFinalized(Run<?, ?> run) {
+            COPYING.remove(path(run));
+            ASKED.remove(path(run));
             ScheduledFuture<?> f = PUBLISHERS.remove(path(run));
             if (f != null) {
                 f.cancel(false);
@@ -467,6 +530,11 @@ public final class RunningBuilds {
                 continue;
             }
             FilePath mark = new FilePath(channel, f[1]);
+            FilePath control = mark.getParent();
+            if (control != null && !control.exists()) {
+                endedAfterTheCopy(control, f[0]);
+                continue;
+            }
             long copied = Long.parseLong(f[3]);
             long now = mark.exists() ? Long.parseLong(mark.readToString().trim()) : 0;
             if (now <= copied) {
@@ -482,6 +550,31 @@ public final class RunningBuilds {
             LOGGER.info(() -> "netCI homesync: " + f[0] + "'s step output put back from " + now + " to " + back
                     + " (the copy's log held " + held + " bytes past its mark); " + (now - back) + " bytes are sent again");
         }
+    }
+
+    /**
+     * The exit code of a step that ended on the replica that stopped, after its last copy:
+     * EX_TEMPFAIL, "try again".
+     */
+    static final int ENDED_ELSEWHERE = 75;
+
+    /**
+     * A step whose control directory is gone ended after the copy: its agent removes the directory
+     * once the replica it ran for has the result, and that replica stopped before copying it. Its
+     * result is nowhere any more. Resumed as it was, the step waited for that directory forever --
+     * durable-task gives up watching a missing one without a word (the lab's IDP build #12, cancelled
+     * after 15 minutes). Its result is not invented: the directory is written back with a failure
+     * that says what happened, so the build ends now and can be run again.
+     */
+    static void endedAfterTheCopy(FilePath controlDir, String agent) throws IOException, InterruptedException {
+        controlDir.mkdirs();
+        controlDir.child("jenkins-log.txt").write("netCI homesync: this step ended on the replica that stopped, after that replica's"
+                + " last copy of the build; its result was lost with it. Failing the step (exit " + ENDED_ELSEWHERE
+                + ") rather than guessing; run the build again.\n", StandardCharsets.UTF_8.name());
+        controlDir.child("last-location.txt").write("0", StandardCharsets.UTF_8.name());
+        controlDir.child("jenkins-result.txt").write(Integer.toString(ENDED_ELSEWHERE), StandardCharsets.UTF_8.name());
+        LOGGER.warning(() -> "netCI homesync: a step on " + agent + " ended after the copy (" + controlDir.getRemote()
+                + " is gone); it fails with exit " + ENDED_ELSEWHERE + " instead of being waited for");
     }
 
     /**
