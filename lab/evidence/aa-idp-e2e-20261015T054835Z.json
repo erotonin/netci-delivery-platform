@@ -1,0 +1,111 @@
+{
+ "scenario": "aa-idp-e2e",
+ "started": "2026-10-15T05:47:34+00:00",
+ "steps": [
+  {
+   "step": "read git refs",
+   "code": 200,
+   "ok": true,
+   "body": {
+    "main": "545d56ab7faf759287d5f8b10ac0c9d48695632e",
+    "error": null
+   }
+  },
+  {
+   "step": "start run",
+   "code": 202,
+   "ok": true,
+   "body": {
+    "id": "c803d6a7-1cdd-4847-a463-a5ec0fe10f08",
+    "applicationId": "54a92407-0861-4cf7-8a95-4371f8477dd8",
+    "status": "queued",
+    "commitSha": "545d56ab7faf759287d5f8b10ac0c9d48695632e",
+    "branch": "main",
+    "environment": "dev",
+    "parameters": {},
+    "correlationId": "f7ca704e-9534-49a7-ba97-a8d6f4dc1103",
+    "jenkinsRunId": "jenkins-ha:queue:4db148f5-d6a8-4a8d-94ad-7bd0da7bd0cf",
+    "workflowId": null,
+    "artifactDigest": null,
+    "consoleUrl": null,
+    "retryOf": null,
+    "configRevisionId": "a83fe664-ac2b-41f0-9c15-4398daed571e",
+    "startedBy": "dana",
+    "deployAfterBuild": false,
+    "publishArtifact": true,
+    "releaseTag": null,
+    "trigger": {
+     "event": "manual",
+     "reason": "started from the portal, build only",
+     "sender": "dana",
+     "actorKind": "human"
+    },
+    "admittedAt": "2026-10-15T05:47:35.121945+00:00",
+    "concurrencyGroup": null,
+    "supersededBy": null,
+    "ciFinishedAt": null,
+    "createdAt": "2026-10-15T05:47:35.099000+00:00",
+    "updatedAt": "2026-10-15T05:47:35.262006+00:00"
+   }
+  },
+  {
+   "step": "run finished",
+   "code": 200,
+   "ok": false,
+   "body": {
+    "run": {
+     "id": "c803d6a7-1cdd-4847-a463-a5ec0fe10f08",
+     "applicationId": "54a92407-0861-4cf7-8a95-4371f8477dd8",
+     "status": "failed",
+     "commitSha": "545d56ab7faf759287d5f8b10ac0c9d48695632e",
+     "branch": "main",
+     "environment": "dev",
+     "parameters": {},
+     "correlationId": "f7ca704e-9534-49a7-ba97-a8d6f4dc1103",
+     "jenkinsRunId": "jenkins-ha:queue:4db148f5-d6a8-4a8d-94ad-7bd0da7bd0cf",
+     "workflowId": null,
+     "artifactDigest": null,
+     "consoleUrl": null,
+     "retryOf": null,
+     "configRevisionId": "a83fe664-ac2b-41f0-9c15-4398daed571e",
+     "startedBy": "dana",
+     "deployAfterBuild": false,
+     "publishArtifact": true,
+     "releaseTag": null,
+     "trigger": {
+      "event": "manual",
+      "reason": "started from the portal, build only",
+      "sender": "dana",
+      "actorKind": "human"
+     },
+     "admittedAt": "2026-10-15T05:47:35.121945+00:00",
+     "concurrencyGroup": null,
+     "supersededBy": null,
+     "ciFinishedAt": "2026-10-15T05:48:29.723706+00:00",
+     "createdAt": "2026-10-15T05:47:35.099000+00:00",
+     "updatedAt": "2026-10-15T05:48:29.723084+00:00"
+    },
+    "stages": [
+     {
+      "stageId": "checkout",
+      "status": "succeeded",
+      "durationMs": null,
+      "errorMessage": null
+     },
+     {
+      "stageId": "unit-test",
+      "status": "succeeded",
+      "durationMs": 1762,
+      "errorMessage": null
+     },
+     {
+      "stageId": "build",
+      "status": "failed",
+      "durationMs": 2718,
+      "errorMessage": "hudson.AbortException: script returned exit code 1"
+     }
+    ]
+   }
+  }
+ ]
+}

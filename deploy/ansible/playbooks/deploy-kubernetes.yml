@@ -5,7 +5,10 @@
   gather_facts: false
   vars:
     netci_kubeconfig: "{{ kubeconfig | default(lookup('env', 'KUBECONFIG'), true) }}"
-    netci_kube_context: "{{ kube_context | default('kind-netci-local') }}"
+    # The kubeconfig netCI names (kubeconfigRef) decides the cluster, with its own current
+    # context. A default of 'kind-netci-local' -- the first lab's cluster -- sent every other
+    # cluster's deployment to a context its kubeconfig does not have.
+    netci_kube_context: "{{ kube_context | default('') }}"
     netci_release_name: "{{ release_name | default('hello-kubernetes') }}"
     netci_target_namespace: "{{ target_namespace | default('staging') }}"
     netci_chart_path: "{{ chart_path | default(playbook_dir ~ '/../../helm/sample-kubernetes-app') }}"
@@ -70,7 +73,7 @@
         release_namespace: "{{ netci_target_namespace }}"
         create_namespace: false
         kubeconfig: "{{ netci_kubeconfig if netci_kubeconfig | length > 0 else omit }}"
-        kube_context: "{{ netci_kube_context }}"
+        kube_context: "{{ netci_kube_context if netci_kube_context | length > 0 else omit }}"
         release_values: "{{ netci_release_values }}"
         wait: true
         wait_timeout: 180s
@@ -86,7 +89,7 @@
         name: "{{ netci_workload_name }}"
         namespace: "{{ netci_target_namespace }}"
         kubeconfig: "{{ netci_kubeconfig if netci_kubeconfig | length > 0 else omit }}"
-        context: "{{ netci_kube_context }}"
+        context: "{{ netci_kube_context if netci_kube_context | length > 0 else omit }}"
       register: deployed_workload
 
     - name: Verify the requested digest is running
@@ -106,7 +109,7 @@
         name: "{{ netci_workload_name }}-ingress"
         namespace: "{{ netci_target_namespace }}"
         kubeconfig: "{{ netci_kubeconfig if netci_kubeconfig | length > 0 else omit }}"
-        context: "{{ netci_kube_context }}"
+        context: "{{ netci_kube_context if netci_kube_context | length > 0 else omit }}"
       register: canary_ingress
 
     - name: Verify the canary ingress carries the requested weight
@@ -126,4 +129,4 @@
         state: absent
         wait: true
         kubeconfig: "{{ netci_kubeconfig if netci_kubeconfig | length > 0 else omit }}"
-        kube_context: "{{ netci_kube_context }}"
+        kube_context: "{{ netci_kube_context if netci_kube_context | length > 0 else omit }}"

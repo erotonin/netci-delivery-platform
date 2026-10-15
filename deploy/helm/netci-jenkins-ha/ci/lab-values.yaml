@@ -27,6 +27,10 @@ jenkins:
   cascConfigMap: casc
   fence: kubernetes-power
   drainSeconds: 20
+  # ADR-091: the IDP pipeline's credentials, as files for ${readFile:...} (lab/aa/idp.sh ci-prepare).
+  extraSecretMounts:
+    - secretName: ci-credentials
+      mountPath: /run/secrets/ci
   terminationGracePeriodSeconds: 45
   minReadySeconds: 30
 
@@ -76,3 +80,8 @@ queue:
   configMap: queue
   jenkinsSecret: queue-jenkins
   nodePort: 30091
+
+# ADR-091: build pods in aa-build (lab/aa/casc-ci.yaml's Kubernetes cloud).
+buildPods:
+  enabled: true
+  namespace: aa-build

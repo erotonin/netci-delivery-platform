@@ -1,0 +1,135 @@
+{
+ "scenario": "aa-idp-e2e",
+ "started": "2026-10-15T05:54:12+00:00",
+ "steps": [
+  {
+   "step": "read git refs",
+   "code": 200,
+   "ok": true,
+   "body": {
+    "main": "545d56ab7faf759287d5f8b10ac0c9d48695632e",
+    "error": null
+   }
+  },
+  {
+   "step": "start run",
+   "code": 202,
+   "ok": true,
+   "body": {
+    "id": "dbcbfdd0-4cb7-41c1-8ae8-673c20921c83",
+    "applicationId": "54a92407-0861-4cf7-8a95-4371f8477dd8",
+    "status": "queued",
+    "commitSha": "545d56ab7faf759287d5f8b10ac0c9d48695632e",
+    "branch": "main",
+    "environment": "dev",
+    "parameters": {},
+    "correlationId": "6815efbe-4eee-4a1b-9a2b-b1e4ddc10a94",
+    "jenkinsRunId": "jenkins-ha:queue:cfc21136-86b5-4e88-9f59-8df7c3fd7083",
+    "workflowId": null,
+    "artifactDigest": null,
+    "consoleUrl": null,
+    "retryOf": null,
+    "configRevisionId": "a83fe664-ac2b-41f0-9c15-4398daed571e",
+    "startedBy": "dana",
+    "deployAfterBuild": false,
+    "publishArtifact": true,
+    "releaseTag": null,
+    "trigger": {
+     "event": "manual",
+     "reason": "started from the portal, build only",
+     "sender": "dana",
+     "actorKind": "human"
+    },
+    "admittedAt": "2026-10-15T05:54:12.304132+00:00",
+    "concurrencyGroup": null,
+    "supersededBy": null,
+    "ciFinishedAt": null,
+    "createdAt": "2026-10-15T05:54:12.280362+00:00",
+    "updatedAt": "2026-10-15T05:54:12.771835+00:00"
+   }
+  },
+  {
+   "step": "run finished",
+   "code": 200,
+   "ok": true,
+   "body": {
+    "run": {
+     "id": "dbcbfdd0-4cb7-41c1-8ae8-673c20921c83",
+     "applicationId": "54a92407-0861-4cf7-8a95-4371f8477dd8",
+     "status": "succeeded",
+     "commitSha": "545d56ab7faf759287d5f8b10ac0c9d48695632e",
+     "branch": "main",
+     "environment": "dev",
+     "parameters": {},
+     "correlationId": "6815efbe-4eee-4a1b-9a2b-b1e4ddc10a94",
+     "jenkinsRunId": "jenkins-ha:queue:cfc21136-86b5-4e88-9f59-8df7c3fd7083",
+     "workflowId": null,
+     "artifactDigest": "sha256:f28ea2ce0fb0364046186ec1074aa354099f18d491e6fba361496fb51859df4d",
+     "consoleUrl": null,
+     "retryOf": null,
+     "configRevisionId": "a83fe664-ac2b-41f0-9c15-4398daed571e",
+     "startedBy": "dana",
+     "deployAfterBuild": false,
+     "publishArtifact": true,
+     "releaseTag": null,
+     "trigger": {
+      "event": "manual",
+      "reason": "started from the portal, build only",
+      "sender": "dana",
+      "actorKind": "human"
+     },
+     "admittedAt": "2026-10-15T05:54:12.304132+00:00",
+     "concurrencyGroup": null,
+     "supersededBy": null,
+     "ciFinishedAt": "2026-10-15T05:55:21.430890+00:00",
+     "createdAt": "2026-10-15T05:54:12.280362+00:00",
+     "updatedAt": "2026-10-15T05:55:21.430352+00:00"
+    },
+    "stages": [
+     {
+      "stageId": "checkout",
+      "status": "succeeded",
+      "durationMs": null,
+      "errorMessage": null
+     },
+     {
+      "stageId": "unit-test",
+      "status": "succeeded",
+      "durationMs": 1725,
+      "errorMessage": null
+     },
+     {
+      "stageId": "build",
+      "status": "succeeded",
+      "durationMs": 5658,
+      "errorMessage": null
+     },
+     {
+      "stageId": "sbom",
+      "status": "succeeded",
+      "durationMs": 4465,
+      "errorMessage": null
+     },
+     {
+      "stageId": "vulnerability-scan",
+      "status": "succeeded",
+      "durationMs": 7002,
+      "errorMessage": null
+     },
+     {
+      "stageId": "sign",
+      "status": "succeeded",
+      "durationMs": 4263,
+      "errorMessage": null
+     },
+     {
+      "stageId": "publish",
+      "status": "succeeded",
+      "durationMs": 2931,
+      "errorMessage": null
+     }
+    ]
+   }
+  }
+ ]
+}

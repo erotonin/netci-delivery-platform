@@ -2693,6 +2693,25 @@ GIT_URL_SCHEMES = frozenset({"http", "https", "ssh"})
 _GIT_ENV = {"GIT_TERMINAL_PROMPT": "0", "GIT_ASKPASS": "/bin/true"}
 
 
+def _git_read_config() -> list[str]:
+    """git options that let the API read a private repository, or none (anonymous).
+
+    NETCI_GIT_CREDENTIALS_FILE names a git credential-store file (one
+    `https://user:token@host` per line, mode 600) with a read-only token. git asks the store
+    for the host it dials, so the token is never an argument (any process listing would show
+    it) or part of a URL a git error could echo. Any helper the API's user has configured is
+    reset first: only this file answers. Set but unreadable is a misconfiguration, said so --
+    not a silent fall back to anonymous reads that then fail as "authentication failed".
+    """
+
+    path = os.getenv("NETCI_GIT_CREDENTIALS_FILE", "").strip()
+    if not path:
+        return []
+    if not os.access(path, os.R_OK):
+        raise ValueError("NETCI_GIT_CREDENTIALS_FILE is set but cannot be read")
+    return ["-c", "credential.helper=", "-c", f"credential.helper=store --file={path}"]
+
+
 def list_recent_commits(
     repository_url: str, ref: str, *, limit: int = 15, timeout_seconds: float = 20.0
 ) -> list[dict[str, str]]:
@@ -2713,11 +2732,12 @@ def list_recent_commits(
         raise ValueError(f"{ref!r} is not a branch or tag name")
     limit = max(1, min(int(limit), 50))
     env = {**os.environ, **_GIT_ENV}
+    credentials = _git_read_config()
     with tempfile.TemporaryDirectory(prefix="netci-commits-") as scratch:
         subprocess.run(["git", "init", "--bare", "-q", scratch], check=True, env=env,
                        capture_output=True, timeout=timeout_seconds)
         fetch = subprocess.run(
-            ["git", "-C", scratch, "fetch", "--quiet", "--no-tags", f"--depth={limit}",
+            ["git", *credentials, "-C", scratch, "fetch", "--quiet", "--no-tags", f"--depth={limit}",
              "--filter=blob:none", repository_url, ref],
             capture_output=True, text=True, timeout=timeout_seconds, env=env, check=False,
         )
@@ -2742,8 +2762,9 @@ def list_remote_refs(repository_url: str, timeout_seconds: float = 15.0) -> dict
     """Branches and tags of a repository with the commit each points at, from the
     repository itself (`git ls-remote`) -- what the "run this branch" dialog offers.
 
-    Read-only and anonymous: repositories that need credentials answer with an
-    error the caller sees as "refs unavailable", never with a guess. Only http(s)
+    Read-only, and anonymous unless NETCI_GIT_CREDENTIALS_FILE names a read token
+    (`_git_read_config`): a repository the API cannot read answers with an error the
+    caller sees as "refs unavailable", never with a guess. Only http(s)
     and ssh URLs are dialled, and git's own credential prompting is disabled so a
     protected repository fails fast instead of hanging.
     """
@@ -2752,7 +2773,7 @@ def list_remote_refs(repository_url: str, timeout_seconds: float = 15.0) -> dict
     if parsed.scheme not in GIT_URL_SCHEMES:
         raise ValueError(f"unsupported repository URL scheme {parsed.scheme!r}")
     result = subprocess.run(
-        ["git", "ls-remote", "--heads", "--tags", "--refs", repository_url],
+        ["git", *_git_read_config(), "ls-remote", "--heads", "--tags", "--refs", repository_url],
         capture_output=True, text=True, timeout=timeout_seconds, check=False,
         env={**os.environ, "GIT_TERMINAL_PROMPT": "0", "GIT_ASKPASS": "/bin/true"},
     )

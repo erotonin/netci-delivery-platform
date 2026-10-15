@@ -1,0 +1,105 @@
+# What the active-active replicas need to run the IDP's pipeline (ADR-091), merged into the lab's
+# JCasC by `lab/aa/idp.sh casc`. Modelled on the corp controller (infra/corp/jenkins/values.yaml),
+# with two differences an active-active pair needs:
+#  - each replica's build pods dial back to that replica (${POD_NAME}), not to the balancer: a pod
+#    is an agent of the controller that created it;
+#  - credentials are read from files (${readFile:...}, the chart's jenkins.extraSecretMounts), so
+#    nothing secret is in the ConfigMap.
+credentials:
+  system:
+    domainCredentials:
+      - credentials:
+          - string:
+              id: netci-cosign-key
+              scope: GLOBAL
+              description: "cosign private key, bound in Sign only"
+              secret: "${readFile:/run/secrets/ci/cosign-key}"
+          - usernamePassword:
+              id: netci-git
+              scope: GLOBAL
+              description: "GitLab token, read_repository: library and checkout"
+              username: oauth2
+              password: "${readFile:/run/secrets/ci/gitlab-token}"
+          - usernamePassword:
+              id: netci-harbor
+              scope: GLOBAL
+              description: "Harbor robot account: push and pull"
+              username: "${readFile:/run/secrets/ci/harbor-robot-name}"
+              password: "${readFile:/run/secrets/ci/harbor-robot-secret}"
+unclassified:
+  globalLibraries:
+    libraries:
+      - name: netci-shared-library
+        defaultVersion: main
+        implicit: false
+        allowVersionOverride: true
+        retriever:
+          modernSCM:
+            scm:
+              git:
+                remote: "http://172.17.0.1:8929/platform/netci-shared-library.git"
+                credentialsId: netci-git
+jenkins:
+  clouds:
+    - kubernetes:
+        name: netci-builds
+        # Empty serverUrl: the in-cluster API, with the replica's service account (the chart's
+        # buildPods Role in aa-build) -- no token stored.
+        namespace: aa-build
+        jenkinsUrl: "http://${POD_NAME}.jenkins.aa-p2.svc.cluster.local:8080/"
+        webSocket: true
+        containerCapStr: "2"
+        podRetention: never
+        templates:
+          - name: netci-ephemeral
+            label: netci-ephemeral
+            namespace: aa-build
+            serviceAccount: jenkins-agent
+            nodeUsageMode: EXCLUSIVE
+            workspaceVolume:
+              emptyDirWorkspaceVolume:
+                memory: false
+            podRetention: never
+            idleMinutes: 0
+            imagePullSecrets:
+              - name: harbor-pull
+            yaml: |
+              apiVersion: v1
+              kind: Pod
+              metadata:
+                labels:
+                  netci.io/agent: ephemeral
+              spec:
+                automountServiceAccountToken: false
+                serviceAccountName: jenkins-agent
+                restartPolicy: Never
+                securityContext: {runAsNonRoot: true, runAsUser: 1000, runAsGroup: 1000, fsGroup: 1000}
+                volumes:
+                  - name: lab-ca
+                    configMap: {name: lab-ca}
+                containers:
+                  - name: jnlp
+                    image: 172.17.0.1:8930/mirror/jenkins/inbound-agent@sha256:18a5c2cc22847349e1542ff2c6184d7472913ae0d26d625aef82e41becb36342
+                    env:
+                      - {name: NETCI_BUILD_CONTAINER, value: builder}
+                      - {name: NETCI_AGENT_DISPOSABLE, value: "true"}
+                    securityContext: {allowPrivilegeEscalation: false, capabilities: {drop: ["ALL"]}}
+                    resources: {requests: {cpu: 100m, memory: 256Mi}, limits: {cpu: 500m, memory: 768Mi}}
+                  - name: builder
+                    image: 172.17.0.1:8930/netci/ci-toolbox@sha256:9bfafb56ec626f9bd7f322ba73356f31ee07afe637fc0a09f39710c64418d8f5
+                    command: ["sleep"]
+                    args: ["99d"]
+                    tty: true
+                    env:
+                      - {name: BUILDAH_ISOLATION, value: chroot}
+                      - {name: STORAGE_DRIVER, value: vfs}
+                      - {name: SSL_CERT_DIR, value: "/etc/ssl/certs:/etc/netci/registry-ca"}
+                    volumeMounts:
+                      - {name: lab-ca, mountPath: "/etc/containers/certs.d/172.17.0.1:8930/ca.crt", subPath: ca.crt, readOnly: true}
+                      - {name: lab-ca, mountPath: /etc/netci/registry-ca, readOnly: true}
+                    # Rootless Buildah needs userns + mount, which the runtime's default profile and
+                    # Ubuntu's userns restriction deny: deploy/apparmor/netci-builder, loaded on the nodes.
+                    securityContext:
+                      allowPrivilegeEscalation: true
+                      appArmorProfile: {type: Localhost, localhostProfile: netci-builder}
+                    resources: {requests: {cpu: 500m, memory: 768Mi}, limits: {cpu: "2", memory: 2Gi}}

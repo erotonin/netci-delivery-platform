@@ -11,7 +11,10 @@
   gather_facts: false
   vars:
     netci_kubeconfig: "{{ kubeconfig | default(lookup('env', 'KUBECONFIG'), true) }}"
-    netci_kube_context: "{{ kube_context | default('kind-netci-local') }}"
+    # The kubeconfig netCI names (kubeconfigRef) decides the cluster, with its own current
+    # context. A default of 'kind-netci-local' -- the first lab's cluster -- sent every other
+    # cluster's deployment to a context its kubeconfig does not have.
+    netci_kube_context: "{{ kube_context | default('') }}"
     netci_action: "{{ preview_action | default('deploy') }}"
     netci_namespace: "{{ preview_namespace | default('') }}"
     netci_release: "{{ preview_release | default('') }}"
@@ -49,7 +52,7 @@
         kind: Namespace
         name: "{{ netci_namespace }}"
         kubeconfig: "{{ netci_kubeconfig if netci_kubeconfig | length > 0 else omit }}"
-        context: "{{ netci_kube_context }}"
+        context: "{{ netci_kube_context if netci_kube_context | length > 0 else omit }}"
       register: preview_ns
     - name: An existing namespace must already be a netCI preview
       when: netci_action == 'deploy' and preview_ns.resources | length == 1
@@ -62,7 +65,7 @@
       kubernetes.core.k8s:
         state: present
         kubeconfig: "{{ netci_kubeconfig if netci_kubeconfig | length > 0 else omit }}"
-        context: "{{ netci_kube_context }}"
+        context: "{{ netci_kube_context if netci_kube_context | length > 0 else omit }}"
         definition:
           apiVersion: v1
           kind: Namespace
@@ -79,7 +82,7 @@
         release_namespace: "{{ netci_namespace }}"
         create_namespace: false
         kubeconfig: "{{ netci_kubeconfig if netci_kubeconfig | length > 0 else omit }}"
-        kube_context: "{{ netci_kube_context }}"
+        kube_context: "{{ netci_kube_context if netci_kube_context | length > 0 else omit }}"
         release_values:
           environment: preview
           image: {repository: "{{ netci_image_repository }}", digest: "{{ netci_artifact_digest }}"}
@@ -97,7 +100,7 @@
         name: "{{ netci_workload_name }}"
         namespace: "{{ netci_namespace }}"
         kubeconfig: "{{ netci_kubeconfig if netci_kubeconfig | length > 0 else omit }}"
-        context: "{{ netci_kube_context }}"
+        context: "{{ netci_kube_context if netci_kube_context | length > 0 else omit }}"
       register: preview_workload
     - name: Verify the preview runs the requested digest
       when: netci_action == 'deploy'
@@ -116,7 +119,7 @@
         kind: Ingress
         namespace: "{{ netci_namespace }}"
         kubeconfig: "{{ netci_kubeconfig if netci_kubeconfig | length > 0 else omit }}"
-        context: "{{ netci_kube_context }}"
+        context: "{{ netci_kube_context if netci_kube_context | length > 0 else omit }}"
       register: preview_ingress
     - name: Report the preview URL
       when: netci_action == 'deploy' and preview_ingress.resources | length > 0
@@ -129,7 +132,7 @@
         kind: Namespace
         name: "{{ netci_namespace }}"
         kubeconfig: "{{ netci_kubeconfig if netci_kubeconfig | length > 0 else omit }}"
-        context: "{{ netci_kube_context }}"
+        context: "{{ netci_kube_context if netci_kube_context | length > 0 else omit }}"
       register: teardown_ns
     - name: Only a labelled preview namespace is ever deleted
       when: netci_action == 'teardown' and teardown_ns.resources | length == 1
@@ -145,7 +148,7 @@
         state: absent
         wait: true
         kubeconfig: "{{ netci_kubeconfig if netci_kubeconfig | length > 0 else omit }}"
-        kube_context: "{{ netci_kube_context }}"
+        kube_context: "{{ netci_kube_context if netci_kube_context | length > 0 else omit }}"
     - name: Delete the preview namespace
       when: netci_action == 'teardown' and teardown_ns.resources | length == 1
       kubernetes.core.k8s:
@@ -154,4 +157,4 @@
         name: "{{ netci_namespace }}"
         wait: true
         kubeconfig: "{{ netci_kubeconfig if netci_kubeconfig | length > 0 else omit }}"
-        context: "{{ netci_kube_context }}"
+        context: "{{ netci_kube_context if netci_kube_context | length > 0 else omit }}"
