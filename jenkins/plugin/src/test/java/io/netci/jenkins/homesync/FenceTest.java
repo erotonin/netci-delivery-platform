@@ -74,4 +74,22 @@ class FenceTest {
         assertFalse(Fence.KubernetesFence.decide(true, pod("Running", OLD, true), node(true, false), RENEWED),
                 "deleting: the kubelet has not stopped it yet");
     }
+
+    @Test
+    void aRenewalInTheSecondTheNewContainerStartedIsTheOldProcesssOnceItFallsSilent() {
+        // startedAt has whole seconds: the old process's last copy at 10:00:30.400, its successor's
+        // container started at 10:00:30.something, reported as 10:00:30.
+        long last = Instant.parse("2026-10-14T10:00:30.400Z").toEpochMilli();
+        JSONObject ready = node(true, false);
+        for (boolean strict : new boolean[] {false, true}) {
+            assertFalse(Fence.KubernetesFence.decide(strict, pod("Running", NEW, false), ready, last, last + 1000),
+                    "just written: a live writer copies every few seconds, wait");
+            assertTrue(Fence.KubernetesFence.decide(strict, pod("Running", NEW, false), ready, last,
+                    last + Fence.KubernetesFence.SAME_SECOND_SILENCE_MS + 1), "silent since: the old process's");
+            // An old container that merely wrote nothing for a while is not gone: idle is not dead.
+            assertFalse(Fence.KubernetesFence.decide(strict, pod("Running", OLD, false), ready, last, last + 600_000));
+        }
+        // A strict fence still believes nothing from a node that is not reporting.
+        assertFalse(Fence.KubernetesFence.decide(true, pod("Running", NEW, false), node(false, false), last, last + 600_000));
+    }
 }

@@ -1,0 +1,415 @@
+{
+  "scenario": "aa-phase5",
+  "started": "2026-10-15T07:05:27+00:00",
+  "pod": {
+    "build": 63,
+    "owner": "r0",
+    "victim": "netci-lab-2",
+    "killedAtTick": 15,
+    "adoptedBy": null,
+    "adoptedAfterSeconds": null,
+    "finishedAfterSeconds": 76.1,
+    "result": "SUCCESS",
+    "ticks": 90,
+    "missing": [],
+    "twice": [],
+    "hosts": [
+      "agent-0"
+    ],
+    "timeline": [
+      {
+        "t": 0.2,
+        "holder": "r0",
+        "building": true,
+        "result": null
+      },
+      {
+        "t": 1.5,
+        "holder": null,
+        "building": null,
+        "result": null
+      },
+      {
+        "t": 2.8,
+        "holder": null,
+        "building": null,
+        "result": null
+      },
+      {
+        "t": 4.0,
+        "holder": null,
+        "building": null,
+        "result": null
+      },
+      {
+        "t": 5.2,
+        "holder": null,
+        "building": null,
+        "result": null
+      },
+      {
+        "t": 6.4,
+        "holder": null,
+        "building": null,
+        "result": null
+      },
+      {
+        "t": 7.6,
+        "holder": null,
+        "building": null,
+        "result": null
+      },
+      {
+        "t": 8.9,
+        "holder": null,
+        "building": null,
+        "result": null
+      },
+      {
+        "t": 10.1,
+        "holder": null,
+        "building": null,
+        "result": null
+      },
+      {
+        "t": 11.3,
+        "holder": null,
+        "building": null,
+        "result": null
+      },
+      {
+        "t": 12.6,
+        "holder": null,
+        "building": null,
+        "result": null
+      },
+      {
+        "t": 13.8,
+        "holder": null,
+        "building": null,
+        "result": null
+      },
+      {
+        "t": 15.1,
+        "holder": null,
+        "building": null,
+        "result": null
+      },
+      {
+        "t": 16.4,
+        "holder": null,
+        "building": null,
+        "result": null
+      },
+      {
+        "t": 17.6,
+        "holder": null,
+        "building": null,
+        "result": null
+      },
+      {
+        "t": 18.9,
+        "holder": null,
+        "building": null,
+        "result": null
+      },
+      {
+        "t": 20.2,
+        "holder": null,
+        "building": null,
+        "result": null
+      },
+      {
+        "t": 21.4,
+        "holder": null,
+        "building": null,
+        "result": null
+      },
+      {
+        "t": 22.7,
+        "holder": null,
+        "building": null,
+        "result": null
+      },
+      {
+        "t": 24.0,
+        "holder": null,
+        "building": null,
+        "result": null
+      },
+      {
+        "t": 25.2,
+        "holder": null,
+        "building": null,
+        "result": null
+      },
+      {
+        "t": 26.5,
+        "holder": null,
+        "building": null,
+        "result": null
+      },
+      {
+        "t": 27.7,
+        "holder": null,
+        "building": null,
+        "result": null
+      },
+      {
+        "t": 29.0,
+        "holder": null,
+        "building": null,
+        "result": null
+      },
+      {
+        "t": 30.2,
+        "holder": null,
+        "building": null,
+        "result": null
+      },
+      {
+        "t": 31.4,
+        "holder": null,
+        "building": null,
+        "result": null
+      },
+      {
+        "t": 32.7,
+        "holder": null,
+        "building": null,
+        "result": null
+      },
+      {
+        "t": 33.9,
+        "holder": null,
+        "building": null,
+        "result": null
+      },
+      {
+        "t": 35.2,
+        "holder": null,
+        "building": null,
+        "result": null
+      },
+      {
+        "t": 36.4,
+        "holder": null,
+        "building": null,
+        "result": null
+      },
+      {
+        "t": 37.7,
+        "holder": null,
+        "building": null,
+        "result": null
+      },
+      {
+        "t": 39.0,
+        "holder": null,
+        "building": null,
+        "result": null
+      },
+      {
+        "t": 40.2,
+        "holder": null,
+        "building": null,
+        "result": null
+      },
+      {
+        "t": 41.4,
+        "holder": null,
+        "building": null,
+        "result": null
+      },
+      {
+        "t": 42.7,
+        "holder": null,
+        "building": null,
+        "result": null
+      },
+      {
+        "t": 43.9,
+        "holder": null,
+        "building": null,
+        "result": null
+      },
+      {
+        "t": 45.2,
+        "holder": null,
+        "building": null,
+        "result": null
+      },
+      {
+        "t": 46.4,
+        "holder": null,
+        "building": null,
+        "result": null
+      },
+      {
+        "t": 47.7,
+        "holder": null,
+        "building": null,
+        "result": null
+      },
+      {
+        "t": 48.9,
+        "holder": null,
+        "building": null,
+        "result": null
+      },
+      {
+        "t": 50.2,
+        "holder": null,
+        "building": null,
+        "result": null
+      },
+      {
+        "t": 51.4,
+        "holder": null,
+        "building": null,
+        "result": null
+      },
+      {
+        "t": 52.6,
+        "holder": null,
+        "building": null,
+        "result": null
+      },
+      {
+        "t": 53.9,
+        "holder": null,
+        "building": null,
+        "result": null
+      },
+      {
+        "t": 55.2,
+        "holder": null,
+        "building": null,
+        "result": null
+      },
+      {
+        "t": 56.7,
+        "holder": null,
+        "building": null,
+        "result": null
+      },
+      {
+        "t": 57.9,
+        "holder": null,
+        "building": null,
+        "result": null
+      },
+      {
+        "t": 59.2,
+        "holder": null,
+        "building": null,
+        "result": null
+      },
+      {
+        "t": 60.4,
+        "holder": null,
+        "building": null,
+        "result": null
+      },
+      {
+        "t": 61.6,
+        "holder": "r0",
+        "building": true,
+        "result": null
+      },
+      {
+        "t": 62.7,
+        "holder": "r0",
+        "building": true,
+        "result": null
+      },
+      {
+        "t": 63.8,
+        "holder": "r0",
+        "building": true,
+        "result": null
+      },
+      {
+        "t": 64.9,
+        "holder": "r0",
+        "building": true,
+        "result": null
+      },
+      {
+        "t": 66.0,
+        "holder": "r0",
+        "building": true,
+        "result": null
+      },
+      {
+        "t": 67.2,
+        "holder": "r0",
+        "building": true,
+        "result": null
+      },
+      {
+        "t": 68.3,
+        "holder": "r0",
+        "building": true,
+        "result": null
+      },
+      {
+        "t": 69.4,
+        "holder": "r0",
+        "building": true,
+        "result": null
+      },
+      {
+        "t": 70.5,
+        "holder": "r0",
+        "building": true,
+        "result": null
+      },
+      {
+        "t": 71.7,
+        "holder": "r0",
+        "building": true,
+        "result": null
+      },
+      {
+        "t": 72.8,
+        "holder": "r0",
+        "building": true,
+        "result": null
+      },
+      {
+        "t": 73.9,
+        "holder": "r0",
+        "building": true,
+        "result": null
+      },
+      {
+        "t": 75.0,
+        "holder": "r0",
+        "building": true,
+        "result": null
+      },
+      {
+        "t": 76.1,
+        "holder": "r0",
+        "building": false,
+        "result": "SUCCESS"
+      }
+    ],
+    "killedAtEpoch": 1792047950.0,
+    "adoptionLogged": {
+      "by": "jenkins-0",
+      "afterSeconds": 61.1,
+      "line": "2026-10-15 07:06:51.081+0000 [id=62]\tINFO\ti.n.j.homesync.RunningBuilds#adopt: netCI homesync: adopted long #63 (building: true)"
+    },
+    "returned": {
+      "served": "r0",
+      "state": {
+        "_class": "org.jenkinsci.plugins.workflow.job.WorkflowRun",
+        "building": false,
+        "result": "SUCCESS"
+      },
+      "logMentionsResumingTwice": false
+    }
+  }
+}

@@ -74,7 +74,22 @@ abstract class Fence {
          * enough: a machine cut off from the network keeps running its pod, which the API then shows
          * deleted or stale.
          */
+        /**
+         * How long the writer of a renewal made in the very second the pod's container started must
+         * have been silent: two of a running build's copies (RunningBuilds.EVERY_SECONDS) and a
+         * second's margin. Kubernetes reports startedAt in whole seconds. A force-deleted replica's
+         * old process lived on for a second or two and wrote one last copy; when that copy fell in the
+         * second its successor's container started, "started after the renewal" could never be true,
+         * and no survivor adopted the build -- it waited 50-60 s for the restarted replica to boot and
+         * take it back itself (the lab, 2 of 4 pod kills, 2026-10-15).
+         */
+        static final long SAME_SECOND_SILENCE_MS = (2 * RunningBuilds.EVERY_SECONDS + 1) * 1000;
+
         static boolean decide(boolean strict, JSONObject pod, JSONObject node, long lastRenewed) {
+            return decide(strict, pod, node, lastRenewed, System.currentTimeMillis());
+        }
+
+        static boolean decide(boolean strict, JSONObject pod, JSONObject node, long lastRenewed, long now) {
             boolean ready = false;
             boolean fenced = false;
             if (node != null) {
@@ -115,8 +130,16 @@ abstract class Fence {
                 if (running == null || running.isNullObject()) {
                     return true;
                 }
-                if (Instant.parse(running.getString("startedAt")).toEpochMilli() > lastRenewed) {
+                long started = Instant.parse(running.getString("startedAt")).toEpochMilli();
+                if (started > lastRenewed) {
                     return true; // started after the lease's last renewal: not the process that held it
+                }
+                // The same second: the order is not in the API. A container that has run for less
+                // than a second has written nothing (a JVM and Jenkins take seconds to start), so
+                // the renewal is an older process's -- gone once it has been silent for longer than
+                // a live one ever is. The clocks compared are the store's and this replica's.
+                if (started == lastRenewed / 1000 * 1000 && now - lastRenewed > SAME_SECOND_SILENCE_MS) {
+                    return true;
                 }
             }
             return !strict && node != null && !ready;
