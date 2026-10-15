@@ -119,4 +119,4 @@ its own 120 s kubectl timeout (fixed in `phase0_probe.k`), so that run has no ev
   `EditOrder`. If the store refuses it, the item is moved back.
 - **netci-queue** dispatches by job name. A run queued for the old name is answered 404 by Jenkins
   after the rename. The IDP does not rename the jobs it creates.
-- **Views are still not replicated.**
+- **Views were still not replicated** (done since, ADR-088).
