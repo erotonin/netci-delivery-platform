@@ -168,6 +168,11 @@ public final class BuildOwnership {
                     });
                     return blockage("netCI: this run is " + r.holder + " #" + r.current + " already");
                 }
+                if ("LOCKED".equals(r.code)) {
+                    // The job or its folder is being changed on another replica -- renamed, perhaps,
+                    // which must not be overtaken by a build starting under the old name (ADR-087).
+                    return blockage("netCI: " + name + " is being changed on replica " + r.holder + "; the build waits");
+                }
                 if ("NUMBER_TAKEN".equals(r.code)) {
                     try {
                         job.updateNextBuildNumber((int) r.current + 1);
@@ -218,7 +223,11 @@ public final class BuildOwnership {
                 LEASES.put(e.getKey(), new Lease(lease.epoch(), System.currentTimeMillis() + lease.expiresInMs() - 500));
             } catch (HomeSyncClient.Refused r) {
                 LEASES.remove(e.getKey());
-                LOGGER.warning(() -> "netCI homesync: lost the lease of " + e.getKey() + " to " + r.holder);
+                if ("GONE".equals(r.code)) {
+                    LOGGER.info(() -> "netCI homesync: " + e.getKey() + " is deleted, renamed or moved; its lease is let go");
+                } else {
+                    LOGGER.warning(() -> "netCI homesync: lost the lease of " + e.getKey() + " to " + r.holder);
+                }
             } catch (IOException ex) {
                 LOGGER.log(Level.FINE, "netCI homesync: could not renew " + e.getKey(), ex);
             } catch (InterruptedException ex) {

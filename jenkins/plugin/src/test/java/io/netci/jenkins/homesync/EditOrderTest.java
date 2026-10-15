@@ -59,4 +59,21 @@ class EditOrderTest {
         assertNull(EditOrder.editedItem("GET", "/user/alice/configure", null));
         assertNull(EditOrder.editedItem("POST", "/user/alice", null));
     }
+
+    @Test
+    void aRenameOrAMoveNamesBothItsNames() {
+        assertEquals(new EditOrder.Move("app", "svc"), EditOrder.moved("POST", "/job/app/confirmRename", "svc", null));
+        assertEquals(new EditOrder.Move("team/app", "team/svc"), EditOrder.moved("POST", "/job/team/job/app/confirmRename", " svc ", null));
+        assertEquals(new EditOrder.Move("app", "team/app"), EditOrder.moved("POST", "/job/app/move/move", null, "/team"));
+        assertEquals(new EditOrder.Move("team/app", "app"), EditOrder.moved("POST", "/job/team/job/app/move/move", null, "/"));
+        assertEquals(new EditOrder.Move("a b", "x/a b"), EditOrder.moved("POST", "/job/a%20b/move/move", null, "/x"));
+        assertNull(EditOrder.moved("GET", "/job/app/confirmRename", "svc", null));
+        assertNull(EditOrder.moved("POST", "/job/app/confirmRename", "", null));
+        assertNull(EditOrder.moved("POST", "/job/app/move/move", null, "team"));
+        assertNull(EditOrder.moved("POST", "/job/app/move", null, "/team"));
+        assertNull(EditOrder.moved("POST", "/confirmRename", "x", null));
+        assertTrue(new EditOrder.Move("a", "b").covers("a/x"));
+        assertTrue(new EditOrder.Move("a", "b").covers("b"));
+        assertTrue(!new EditOrder.Move("a", "b").covers("ab"));
+    }
 }

@@ -39,8 +39,15 @@ final class HomeSyncClient {
         }
     }
 
-    /** One entry of the store's feed. */
-    record Change(long seq, String path, long version, boolean deleted, String origin) {}
+    /** One entry of the store's feed; movedTo, on a renamed or moved item's tombstone, is its new name (ADR-087). */
+    record Change(long seq, String path, long version, boolean deleted, String origin, String movedTo) {
+        Change(long seq, String path, long version, boolean deleted, String origin) {
+            this(seq, path, version, deleted, origin, null);
+        }
+    }
+
+    /** A move done: the new name's version and digest, the old name's tombstone version (ADR-087). */
+    record Moved(long version, String sha256, long fromVersion) {}
 
     /** A page of the feed and its head. */
     /** A page of the feed; compactedThrough: the feed has dropped entries up to there (ADR-083). */
@@ -149,6 +156,9 @@ final class HomeSyncClient {
         if (r.statusCode() == 423) {
             throw new Refused("OWNED", o.optLong("epoch"), o.optString("owner"), "owned by " + o.optString("owner"));
         }
+        if (r.statusCode() == 410) {
+            throw new Refused("GONE", 0, "", o.optString("message", "the job is deleted, renamed or moved in the store"));
+        }
         throw new IOException("homesync answered HTTP " + r.statusCode() + " to a claim of " + job);
     }
 
@@ -175,7 +185,37 @@ final class HomeSyncClient {
         if (r.statusCode() == 409) {
             throw new Refused(o.optString("code"), o.optLong("max"), "", o.optString("message"));
         }
+        if (r.statusCode() == 423) {
+            throw new Refused("LOCKED", 0, o.optString("holder"), o.optString("message"));
+        }
         throw new IOException("homesync answered HTTP " + r.statusCode() + " to a reservation of " + job + " #" + number);
+    }
+
+    /**
+     * Rename or move an item, its children and its builds in the store (ADR-087), under this
+     * replica's locks on both names (0: none held). With dryRun, only whether it would be done.
+     * Refused with NO_ITEM, EXISTS, BUSY (a build under it runs; holder is where), LOCKED,
+     * LOCK_LOST or BAD_MOVE; anything else is the store's failure.
+     */
+    Moved move(String from, String to, long fromToken, long toToken, boolean dryRun) throws IOException, InterruptedException {
+        HttpRequest.Builder b = request("/v1/moves?from=" + enc(from) + "&to=" + enc(to) + (dryRun ? "&dryRun=true" : ""))
+                .POST(HttpRequest.BodyPublishers.noBody());
+        if (fromToken > 0) {
+            b.header("X-Lock-Token", Long.toString(fromToken));
+        }
+        if (toToken > 0) {
+            b.header("X-To-Lock-Token", Long.toString(toToken));
+        }
+        HttpResponse<String> r = HTTP.send(b.build(), HttpResponse.BodyHandlers.ofString());
+        JSONObject o = json(r.body());
+        if (r.statusCode() == 200) {
+            return new Moved(o.optLong("version"), o.optString("sha256"), o.optLong("fromVersion"));
+        }
+        if (r.statusCode() == 400 || r.statusCode() == 404 || r.statusCode() == 409 || r.statusCode() == 423) {
+            throw new Refused(o.optString("code", r.statusCode() == 423 ? "LOCKED" : "BAD_MOVE"), 0, o.optString("holder"),
+                    o.optString("message"));
+        }
+        throw new IOException("homesync answered HTTP " + r.statusCode() + " to a move of " + from + " to " + to);
     }
 
     /** Where a netCI run was given its number, or null when it has none (ADR-081). */
@@ -224,8 +264,9 @@ final class HomeSyncClient {
         JSONArray a = o.getJSONArray("changes");
         for (int i = 0; i < a.size(); i++) {
             JSONObject c = a.getJSONObject(i);
+            String movedTo = c.optString("movedTo", "");
             list.add(new Change(c.getLong("seq"), c.getString("path"), c.getLong("version"),
-                    c.getBoolean("deleted"), c.getString("origin")));
+                    c.getBoolean("deleted"), c.getString("origin"), movedTo.isEmpty() ? null : movedTo));
         }
         return new Changes(list, o.getLong("head"), o.optLong("compactedThrough", 0));
     }

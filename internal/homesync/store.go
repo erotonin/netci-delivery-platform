@@ -84,6 +84,8 @@ type Change struct {
 	Deleted bool      `json:"deleted"`
 	Origin  string    `json:"origin"`
 	At      time.Time `json:"at"`
+	// MovedTo, on the tombstone of a renamed or moved item: its new name (ADR-087).
+	MovedTo string `json:"movedTo,omitempty"`
 }
 
 // Store is the PostgreSQL behind every netci-homesync replica; they share nothing else.
@@ -238,14 +240,14 @@ func (s *Store) Changes(ctx context.Context, after int64, limit int) ([]Change, 
 	if limit <= 0 || limit > 1000 {
 		limit = 1000
 	}
-	rows, err := s.Pool.Query(ctx, `SELECT seq, path, version, deleted, origin, at FROM home_changes
+	rows, err := s.Pool.Query(ctx, `SELECT seq, path, version, deleted, origin, at, COALESCE(moved_to, '') FROM home_changes
 		WHERE seq > $1 ORDER BY seq LIMIT $2`, after, limit)
 	if err != nil {
 		return nil, 0, err
 	}
 	changes, err := pgx.CollectRows(rows, func(r pgx.CollectableRow) (Change, error) {
 		var c Change
-		return c, r.Scan(&c.Seq, &c.Path, &c.Version, &c.Deleted, &c.Origin, &c.At)
+		return c, r.Scan(&c.Seq, &c.Path, &c.Version, &c.Deleted, &c.Origin, &c.At, &c.MovedTo)
 	})
 	if err != nil {
 		return nil, 0, err

@@ -78,7 +78,7 @@ public final class PublishChanges {
                 return;
             }
             // Only the item's own configuration: builds and other files an item saves are not it.
-            if (!file.getFile().equals(item.getConfigFile().getFile())) {
+            if (!file.getFile().equals(item.getConfigFile().getFile()) || EditOrder.pendingMove(item.getFullName())) {
                 return;
             }
             try {
@@ -101,7 +101,8 @@ public final class PublishChanges {
         @Override
         public void onCreated(Item created) {
             HomeSync sync = HomeSync.get();
-            if (sync == null || !sync.ready() || HomeSync.APPLYING.get() || !(created instanceof AbstractItem item)) {
+            if (sync == null || !sync.ready() || HomeSync.APPLYING.get() || !(created instanceof AbstractItem item)
+                    || EditOrder.pendingMove(item.getFullName())) {
                 return;
             }
             try {
@@ -115,10 +116,29 @@ public final class PublishChanges {
         @Override
         public void onDeleted(Item item) {
             HomeSync sync = HomeSync.get();
-            if (sync == null || !sync.ready() || HomeSync.APPLYING.get()) {
+            if (sync == null || !sync.ready() || HomeSync.APPLYING.get() || EditOrder.pendingMove(item.getFullName())) {
                 return;
             }
             sync.publishDelete(item.getFullName(), EditOrder.tokenFor(item.getFullName()));
+        }
+
+        /**
+         * A rename or a move, made here (ADR-087). Jenkins moves the directory and then says so,
+         * without a save: before this, the other replicas got the new name as a new job with no
+         * builds, and kept the old one.
+         */
+        @Override
+        public void onLocationChanged(Item item, String oldFullName, String newFullName) {
+            HomeSync sync = HomeSync.get();
+            if (sync == null || HomeSync.APPLYING.get() || HomeSync.childOfMove(oldFullName, newFullName)) {
+                return;
+            }
+            if (!sync.ready()) {
+                LOGGER.severe(() -> "netCI homesync: " + oldFullName + " was moved to " + newFullName + " before this replica caught up;"
+                        + " the other replicas still have it under its old name");
+                return;
+            }
+            sync.publishMove(oldFullName, newFullName, EditOrder.tokenFor(oldFullName), EditOrder.tokenFor(newFullName));
         }
     }
 }

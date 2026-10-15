@@ -113,18 +113,13 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/jobs/reserve", s.authed(s.reserve))
 	mux.HandleFunc("GET /v1/runs", s.authed(s.run))
 	mux.HandleFunc("DELETE /v1/runs", s.authed(s.releaseRun))
+	mux.HandleFunc("POST /v1/moves", s.authed(s.move))
 	return mux
 }
 
 // jobPath reads ?job= with the rules of an item's full name.
 func jobPath(r *http.Request) (string, error) {
-	q := r.URL.Query()
-	q.Set("path", q.Get("job"))
-	r2 := *r
-	u := *r.URL
-	u.RawQuery = q.Encode()
-	r2.URL = &u
-	return itemPath(&r2)
+	return itemPath(withPath(r, r.URL.Query().Get("job")))
 }
 
 func (s *Server) claimJob(w http.ResponseWriter, r *http.Request, replica string) {
@@ -143,6 +138,8 @@ func (s *Server) claimJob(w http.ResponseWriter, r *http.Request, replica string
 	case errors.As(err, &owned):
 		writeJSON(w, http.StatusLocked, map[string]any{"code": "OWNED", "owner": owned.Ownership.Owner,
 			"epoch": owned.Ownership.Epoch, "expiresInMs": owned.Ownership.ExpiresIn})
+	case errors.Is(err, ErrJobGone):
+		writeJSON(w, http.StatusGone, map[string]any{"code": "GONE", "message": err.Error()})
 	case err != nil:
 		writeJSON(w, http.StatusBadRequest, map[string]any{"code": "BAD_REQUEST", "message": err.Error()})
 	default:
@@ -195,6 +192,8 @@ func (s *Server) reserve(w http.ResponseWriter, r *http.Request, replica string)
 		writeJSON(w, http.StatusConflict, map[string]any{"code": "NUMBER_TAKEN", "max": taken.Max})
 	case errors.Is(err, ErrNotOwner):
 		writeJSON(w, http.StatusConflict, map[string]any{"code": "NOT_OWNER", "message": err.Error()})
+	case errors.As(err, new(*LockedError)):
+		s.refuse(w, err)
 	default:
 		s.fail(w, err)
 	}
@@ -339,6 +338,58 @@ func (s *Server) change(w http.ResponseWriter, r *http.Request, replica string, 
 		}
 	}
 	writeJSON(w, http.StatusBadRequest, map[string]any{"code": "BAD_REQUEST", "message": err.Error()})
+}
+
+// move renames or moves an item (ADR-087): from and to are full names, X-Lock-Token and
+// X-To-Lock-Token the caller's locks on them; dryRun=true checks without writing.
+func (s *Server) move(w http.ResponseWriter, r *http.Request, replica string) {
+	q := r.URL.Query()
+	from, ferr := itemPath(withPath(r, q.Get("from")))
+	to, terr := itemPath(withPath(r, q.Get("to")))
+	var fromToken, toToken int64
+	var err error
+	for _, t := range []struct {
+		header string
+		into   *int64
+	}{{"X-Lock-Token", &fromToken}, {"X-To-Lock-Token", &toToken}} {
+		if raw := r.Header.Get(t.header); raw != "" && err == nil {
+			if *t.into, err = strconv.ParseInt(raw, 10, 64); err == nil && *t.into <= 0 {
+				err = errors.New(t.header + " must be a token Lock returned")
+			}
+		}
+	}
+	if ferr != nil || terr != nil || err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"code": "BAD_REQUEST",
+			"message": "from and to must be items' full names; lock tokens must be the ones Lock returned"})
+		return
+	}
+	res, err := s.Store.Move(r.Context(), from, to, replica, fromToken, toToken, q.Get("dryRun") == "true")
+	var exists *ExistsError
+	var busy *BusyError
+	switch {
+	case err == nil:
+		writeJSON(w, http.StatusOK, res)
+	case errors.Is(err, ErrNoItem):
+		writeJSON(w, http.StatusNotFound, map[string]any{"code": "NO_ITEM", "message": err.Error()})
+	case errors.Is(err, ErrBadMove):
+		writeJSON(w, http.StatusBadRequest, map[string]any{"code": "BAD_MOVE", "message": err.Error()})
+	case errors.As(err, &exists):
+		writeJSON(w, http.StatusConflict, map[string]any{"code": "EXISTS", "message": err.Error()})
+	case errors.As(err, &busy):
+		writeJSON(w, http.StatusConflict, map[string]any{"code": "BUSY", "holder": busy.Replica, "message": err.Error()})
+	default:
+		s.refuse(w, err)
+	}
+}
+
+func withPath(r *http.Request, path string) *http.Request {
+	q := r.URL.Query()
+	q.Set("path", path)
+	r2 := *r
+	u := *r.URL
+	u.RawQuery = q.Encode()
+	r2.URL = &u
+	return &r2
 }
 
 func (s *Server) refuse(w http.ResponseWriter, err error) {

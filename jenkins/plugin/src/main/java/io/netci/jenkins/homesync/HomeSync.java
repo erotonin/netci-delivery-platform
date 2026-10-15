@@ -31,6 +31,9 @@ import java.util.concurrent.locks.ReentrantLock;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import javax.xml.transform.stream.StreamSource;
+import hudson.model.Items;
+import hudson.model.TopLevelItem;
+import jenkins.model.DirectlyModifiableTopLevelItemGroup;
 import jenkins.model.Jenkins;
 import jenkins.model.ModifiableTopLevelItemGroup;
 
@@ -42,9 +45,9 @@ import jenkins.model.ModifiableTopLevelItemGroup;
  * <p>Off unless {@code NETCI_HOMESYNC_URL} is set: a single controller (a cell) has no other home
  * to agree with.
  *
- * <p>Items and users are replicated. What this does not do yet, said here rather than discovered:
- * views, renames and moves are not replicated; a folder's deletion removes its children here and on the others, but the
- * children's own entries are not tombstoned in the store.
+ * <p>Items, users, finished builds, renames and moves (ADR-087) are replicated. What this does not
+ * do yet, said here rather than discovered: views are not replicated; a folder's deletion removes
+ * its children here and on the others, but the children's own entries are not tombstoned in the store.
  */
 public final class HomeSync {
     private static final Logger LOGGER = Logger.getLogger(HomeSync.class.getName());
@@ -80,7 +83,11 @@ public final class HomeSync {
      */
     static volatile Duration publishWait = Duration.ofSeconds(10);
     /** A publish that could not take its item's lock in time: redone by the lease thread, outside Jenkins' locks. */
-    record Deferred(byte[] content, boolean delete) {}
+    record Deferred(byte[] content, boolean delete, String movedTo) {
+        Deferred(byte[] content, boolean delete) {
+            this(content, delete, null);
+        }
+    }
     final Map<String, Deferred> deferred = new ConcurrentHashMap<>();
 
     /** Every change up to this sequence number is applied here. Only ever raised. */
@@ -290,9 +297,34 @@ public final class HomeSync {
             return;
         }
         if (c.version() > versions.getOrDefault(c.path(), 0L)) {
+            if (c.movedTo() != null) {
+                try {
+                    if (moveLocal(c.path(), c.movedTo())) {
+                        versions.put(c.path(), c.version());
+                        published.remove(c.path());
+                        LOGGER.info(() -> "netCI homesync: " + c.path() + " is " + c.movedTo() + " here too (moved on " + c.origin() + ")");
+                        return;
+                    }
+                } catch (IOException | RuntimeException e) {
+                    LOGGER.log(Level.WARNING, "netCI homesync: could not move " + c.path() + " to " + c.movedTo()
+                            + " here; it is deleted and its new name fetched instead", e);
+                }
+            }
+            if (c.path().startsWith(BUILDS) && c.deleted() != hasBuild(c.path())) {
+                // A finished build is immutable: one here already (moved with its job) is the same
+                // build, and its archive is not fetched again; one deleted that is not here (it
+                // moved away with its job) has nothing to delete.
+                versions.put(c.path(), c.version());
+                return;
+            }
             // The latest content, which may be newer than this entry: later entries are then no-ops.
             HomeSyncClient.Item item = client.get(c.path());
             if (item.version() > versions.getOrDefault(c.path(), 0L)) {
+                if (item.content() != null && Arrays.equals(local(c.path()), item.content())) {
+                    // Already what this home holds (a move's new names, on the replica that made it).
+                    recordApplied(c.path(), item.version(), item.content());
+                    return;
+                }
                 try {
                     apply(c.path(), item.version(), item.content());
                 } catch (IOException | RuntimeException e) {
@@ -396,7 +428,9 @@ public final class HomeSync {
                 // a change from the feed was replacing, and publishing it would undo that change in
                 // the store while this home kept it (the test caught exactly that).
                 byte[] now = d.delete() || path.startsWith(BUILDS) ? d.content() : local(path);
-                if (d.delete()) {
+                if (d.movedTo() != null) {
+                    moveInOrder(path, d.movedTo(), 0, 0);
+                } else if (d.delete()) {
                     deleteInOrder(path, 0);
                 } else if (now != null) {
                     publishInOrder(path, now, 0);
@@ -455,6 +489,130 @@ public final class HomeSync {
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
         }
+    }
+
+    /**
+     * The move this thread last published. Jenkins tells of a moved folder's children after the
+     * folder itself (ItemListener.fireLocationChange), and the store moved them with it.
+     */
+    private static final ThreadLocal<String[]> LAST_MOVE = new ThreadLocal<>();
+
+    static boolean childOfMove(String from, String to) {
+        String[] m = LAST_MOVE.get();
+        return m != null && from.startsWith(m[0] + "/") && to.equals(m[1] + from.substring(m[0].length()));
+    }
+
+    /**
+     * Publish a rename or move Jenkins has made in this home (ADR-087): one change of the store that
+     * carries the item's children, builds, lease and numbers to the new name.
+     */
+    void publishMove(String from, String to, long fromToken, long toToken) {
+        LAST_MOVE.set(new String[] {from, to});
+        EditOrder.movePublished();
+        ReentrantLock l = lockOf(from);
+        if (!tryLock(l, from, new Deferred(null, false, to))) {
+            return;
+        }
+        try {
+            moveInOrder(from, to, fromToken, toToken);
+        } finally {
+            l.unlock();
+        }
+    }
+
+    private void moveInOrder(String from, String to, long fromToken, long toToken) {
+        try {
+            HomeSyncClient.Moved m = client.move(from, to, fromToken, toToken, false);
+            versions.put(from, m.fromVersion());
+            published.remove(from);
+            byte[] now = local(to);
+            if (now != null && sha256(now).equals(m.sha256())) {
+                versions.put(to, m.version());
+                published.put(to, m.sha256());
+            }
+            LOGGER.info(() -> "netCI homesync: " + from + " is " + to + " on every replica now");
+        } catch (HomeSyncClient.Refused r) {
+            // Checked before Jenkins moved it here (EditOrder), so only a move no request ordered
+            // (a script) or one that lost its lock gets here. The store is the truth: this home's
+            // copy goes back to the old name, once Jenkins has finished moving it.
+            LOGGER.severe(() -> "netCI homesync: the store refused the move of " + from + " to " + to + " (" + r.code + "): "
+                    + r.getMessage() + "; it is moved back here");
+            jenkins.util.Timer.get().schedule(() -> undoMove(from, to), 1, TimeUnit.SECONDS);
+        } catch (IOException e) {
+            LOGGER.log(Level.SEVERE, "netCI homesync: could not publish the move of " + from + " to " + to
+                    + "; the other replicas have it under its old name until it is retried", e);
+            deferred.put(from, new Deferred(null, false, to));
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            deferred.put(from, new Deferred(null, false, to));
+        }
+    }
+
+    private void undoMove(String from, String to) {
+        try {
+            if (client.get(from).content() != null && client.get(to).content() == null && moveLocal(to, from)) {
+                LOGGER.info(() -> "netCI homesync: " + to + " is " + from + " here again, as on the other replicas");
+            } else {
+                LOGGER.severe(() -> "netCI homesync: " + to + " (moved from " + from + ") differs from the store here; rename it by hand");
+            }
+        } catch (IOException | RuntimeException e) {
+            LOGGER.log(Level.SEVERE, "netCI homesync: could not move " + to + " back to " + from, e);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+    }
+
+    /**
+     * Rename or move this home's own copy of an item, its builds going with its directory -- not
+     * delete it and fetch every build's archive again. False when there is nothing here to move,
+     * or the new name is taken here: the feed's plain entries then make this home what the store says.
+     */
+    boolean moveLocal(String from, String to) throws IOException {
+        APPLYING.set(true);
+        try (ACLContext ignored = ACL.as2(ACL.SYSTEM2)) {
+            Jenkins j = Jenkins.get();
+            if (!(j.getItemByFullName(from) instanceof AbstractItem item) || j.getItemByFullName(to) != null) {
+                return false;
+            }
+            int slash = to.lastIndexOf('/');
+            String parent = slash < 0 ? "" : to.substring(0, slash);
+            String name = to.substring(slash + 1);
+            if (!item.getParent().getFullName().equals(parent)) {
+                Object dest = parent.isEmpty() ? j : j.getItemByFullName(parent);
+                if (!(dest instanceof DirectlyModifiableTopLevelItemGroup group) || !(item instanceof TopLevelItem)) {
+                    LOGGER.warning(() -> "netCI homesync: cannot move " + from + " here: " + parent + " is not a folder here");
+                    return false;
+                }
+                item = moveInto(item, group);
+            }
+            if (!item.getName().equals(name)) {
+                renameItem(item, name);
+            }
+            return true;
+        } finally {
+            APPLYING.set(false);
+        }
+    }
+
+    /**
+     * AbstractItem.renameTo is protected; jobs and folders make it public (Job, cloudbees-folder's
+     * AbstractFolder). Not doConfirmRename: that refuses a job building here, and this rename is
+     * already the store's -- which checked for builds on every replica.
+     */
+    private static void renameItem(AbstractItem item, String name) throws IOException {
+        try {
+            item.getClass().getMethod("renameTo", String.class).invoke(item, name);
+        } catch (java.lang.reflect.InvocationTargetException e) {
+            throw e.getCause() instanceof IOException io ? io : new IOException(e.getCause());
+        } catch (ReflectiveOperationException e) {
+            throw new IOException(item.getClass().getName() + " cannot be renamed from outside", e);
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private static <I extends AbstractItem & TopLevelItem> AbstractItem moveInto(AbstractItem item, DirectlyModifiableTopLevelItemGroup group)
+            throws IOException {
+        return Items.move((I) item, group);
     }
 
     private void reapply(String path) {
@@ -526,7 +684,9 @@ public final class HomeSync {
         int number = Integer.parseInt(path.substring(slash + 1));
         Job<?, ?> job = Jenkins.get().getItemByFullName(jobName, Job.class);
         if (job == null) {
-            LOGGER.warning(() -> "netCI homesync: a build of " + jobName + ", which is not here");
+            if (content != null) { // a deletion of what is not here is done
+                LOGGER.warning(() -> "netCI homesync: a build of " + jobName + ", which is not here");
+            }
             return;
         }
         if (content == null) {
@@ -550,6 +710,14 @@ public final class HomeSync {
         }
         if (job.getNextBuildNumber() <= number) {
             job.updateNextBuildNumber(number + 1);
+        }
+    }
+
+    private static boolean hasBuild(String path) {
+        int slash = path.lastIndexOf('/');
+        try (ACLContext ignored = ACL.as2(ACL.SYSTEM2)) {
+            Job<?, ?> job = Jenkins.get().getItemByFullName(path.substring(BUILDS.length(), slash), Job.class);
+            return job != null && new File(job.getBuildDir(), path.substring(slash + 1)).isDirectory();
         }
     }
 

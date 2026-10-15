@@ -38,6 +38,10 @@ final class FakeHomeSync {
     record RunAt(String job, int number, String replica, long at) {}
 
     final Map<String, RunAt> runs = new HashMap<>();
+    /** Jobs with a build running on some replica, by job: a move over them is refused BUSY (ADR-087). */
+    final Map<String, String> busy = new HashMap<>();
+    /** Every path read, in order. */
+    final List<String> reads = new ArrayList<>();
     /** Feed entries up to here are gone (ADR-083); see compact(). */
     long compactedThrough;
     private long epochs = 1000;
@@ -70,6 +74,8 @@ final class FakeHomeSync {
         jobEpoch.clear();
         reserved.clear();
         runs.clear();
+        busy.clear();
+        reads.clear();
         compactedThrough = 0;
         down = false;
         beforeGet = path -> {};
@@ -128,14 +134,20 @@ final class FakeHomeSync {
                 case "POST /v1/jobs/reserve" -> reserve(x, q.get("job"), Integer.parseInt(q.get("number")), Long.parseLong(q.get("epoch")), q.get("run"));
                 case "GET /v1/runs" -> run(x, q.get("id"));
                 case "DELETE /v1/runs" -> releaseRun(x, q.get("id"), q.get("job"), Integer.parseInt(q.get("number")));
+                case "POST /v1/moves" -> move(x, q.get("from"), q.get("to"), "true".equals(q.get("dryRun")));
                 default -> reply(x, 404, new JSONObject());
             }
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
+        } catch (RuntimeException e) {
+            // The fake's own mistake: said, or the plugin sees only a closed connection.
+            e.printStackTrace();
+            throw e;
         }
     }
 
     private synchronized void getItem(HttpExchange x, String path) throws IOException {
+        reads.add(path);
         Entry e = items.get(path);
         x.getResponseHeaders().set("X-Version", Long.toString(e == null ? 0 : e.version()));
         if (e != null) {
@@ -200,6 +212,10 @@ final class FakeHomeSync {
     }
 
     private synchronized void claim(HttpExchange x, String job) throws IOException {
+        if (items.containsKey(job) && items.get(job).content() == null) {
+            reply(x, 410, new JSONObject().element("code", "GONE").element("message", "gone"));
+            return;
+        }
         String owner = jobOwner.get(job);
         if (owner != null && !owner.equals("me")) {
             reply(x, 423, new JSONObject().element("code", "OWNED").element("owner", owner).element("epoch", jobEpoch.get(job)));
@@ -244,7 +260,14 @@ final class FakeHomeSync {
             reply(x, 409, new JSONObject().element("code", "RUN_TAKEN").element("job", had.job()).element("number", had.number()));
             return;
         }
-        if (!"me".equals(jobOwner.get(job)) || jobEpoch.get(job) != epoch) {
+        for (String p = job; p != null; p = p.contains("/") ? p.substring(0, p.lastIndexOf('/')) : null) {
+            String holder = lockHolder.get(p);
+            if (holder != null && !holder.equals("me")) {
+                reply(x, 423, new JSONObject().element("code", "LOCKED").element("holder", holder).element("message", "locked"));
+                return;
+            }
+        }
+        if (!"me".equals(jobOwner.get(job)) || jobEpoch.get(job) == null || jobEpoch.get(job) != epoch) {
             reply(x, 409, new JSONObject().element("code", "NOT_OWNER").element("message", "not the owner"));
             return;
         }
@@ -288,6 +311,118 @@ final class FakeHomeSync {
             list.add(feed.get(i));
         }
         reply(x, 200, new JSONObject().element("changes", list).element("head", feed.size()).element("compactedThrough", compactedThrough));
+    }
+
+    /** Another replica renames or moves an item, as the store would (ADR-087). */
+    synchronized void moveFrom(String replica, String from, String to) {
+        String refused = moveIn(replica, from, to, false);
+        if (refused != null) {
+            throw new IllegalStateException(refused);
+        }
+    }
+
+    private static boolean under(String path, String root) {
+        return path.equals(root) || path.startsWith(root + "/");
+    }
+
+    /** The move, or the code it is refused with. */
+    private String moveIn(String replica, String from, String to, boolean dryRun) {
+        if (from.equals(to) || to.startsWith(from + "/")) {
+            return "BAD_MOVE";
+        }
+        Entry f = items.get(from);
+        if (f == null || f.content() == null) {
+            return "NO_ITEM";
+        }
+        if (items.containsKey(to) && items.get(to).content() != null) {
+            return "EXISTS";
+        }
+        for (Map.Entry<String, String> l : lockHolder.entrySet()) {
+            if ((under(l.getKey(), from) || l.getKey().equals(to)) && !l.getValue().equals(replica)) {
+                return "LOCKED:" + l.getValue();
+            }
+        }
+        for (Map.Entry<String, String> b : busy.entrySet()) {
+            if (under(b.getKey(), from)) {
+                return "BUSY:" + b.getValue();
+            }
+        }
+        if (dryRun) {
+            return null;
+        }
+        List<String> moving = new ArrayList<>();
+        for (Map.Entry<String, Entry> e : items.entrySet()) {
+            if (e.getValue().content() != null && (under(e.getKey(), from) || e.getKey().startsWith("@builds/" + from + "/"))) {
+                moving.add(e.getKey());
+            }
+        }
+        moving.sort(java.util.Comparator.comparing((String p) -> p.startsWith("@")).thenComparingInt(p -> p.split("/").length)
+                .thenComparing(p -> p));
+        java.util.function.Function<String, String> renamed = p -> p.startsWith("@builds/" + from + "/")
+                ? "@builds/" + to + p.substring(("@builds/" + from).length()) : to + p.substring(from.length());
+        Map<String, byte[]> contents = new HashMap<>();
+        moving.forEach(p -> contents.put(p, items.get(p).content()));
+        record(replica, from, null, to);
+        for (String p : moving) {
+            record(replica, renamed.apply(p), contents.get(p), null);
+        }
+        for (String p : moving) {
+            if (!p.equals(from)) {
+                record(replica, p, null, null);
+            }
+        }
+        for (Map<String, ?> m : List.of(jobOwner, jobEpoch, reserved)) {
+            @SuppressWarnings("unchecked")
+            Map<String, Object> mm = (Map<String, Object>) m;
+            for (String k : new ArrayList<>(mm.keySet())) {
+                if (under(k, from)) {
+                    mm.put(to + k.substring(from.length()), mm.remove(k));
+                }
+            }
+        }
+        notifyAll();
+        return null;
+    }
+
+    private void record(String replica, String path, byte[] content, String movedTo) {
+        long v = items.containsKey(path) ? items.get(path).version() + 1 : 1;
+        items.put(path, new Entry(v, content, replica));
+        JSONObject c = new JSONObject().element("seq", feed.size() + 1).element("path", path).element("version", v)
+                .element("deleted", content == null).element("origin", replica);
+        if (movedTo != null) {
+            c.element("movedTo", movedTo);
+        }
+        feed.add(c);
+    }
+
+    private synchronized void move(HttpExchange x, String from, String to, boolean dryRun) throws IOException {
+        for (String[] name : new String[][] {{from, "X-Lock-Token"}, {to, "X-To-Lock-Token"}}) {
+            String tok = x.getRequestHeaders().getFirst(name[1]);
+            if (tok != null && (!"me".equals(lockHolder.get(name[0])) || lockToken.get(name[0]) != Long.parseLong(tok))) {
+                reply(x, 409, new JSONObject().element("code", "LOCK_LOST").element("message", "lock lost"));
+                return;
+            }
+        }
+        if (!dryRun) {
+            seen.add(new Seen("MOVE", from + " -> " + to, 0, 0));
+        }
+        String refused = moveIn("me", from, to, dryRun);
+        if (refused == null) {
+            reply(x, 200, new JSONObject().element("version", items.containsKey(to) ? items.get(to).version() : 0)
+                    .element("sha256", dryRun ? "" : HomeSync.sha256(items.get(to).content()))
+                    .element("fromVersion", items.get(from).version()));
+            return;
+        }
+        String[] code = refused.split(":", 2);
+        int status = switch (code[0]) {
+            case "NO_ITEM" -> 404;
+            case "BAD_MOVE" -> 400;
+            case "LOCKED" -> 423;
+            default -> 409;
+        };
+        reply(x, status, new JSONObject().element("code", code[0]).element("holder", code.length > 1 ? code[1] : "")
+                .element("message", code[0].equals("BUSY") ? from + " #1 is running on " + code[1] + "; an item is not renamed or moved while it builds"
+                        : code[0]));
     }
 
     private static void reply(HttpExchange x, int code, JSONObject body) throws IOException {

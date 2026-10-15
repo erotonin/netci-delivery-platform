@@ -15,7 +15,9 @@ import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.logging.Level;
 import java.util.logging.Logger;
@@ -39,7 +41,18 @@ public final class EditOrder implements Filter {
 
     private static final ThreadLocal<Held> HELD = new ThreadLocal<>();
 
-    private record Held(String path, long token) {}
+    /** The store's locks this request holds, by path: one for an edit, both names for a move. */
+    private record Held(Map<String, Long> tokens) {}
+
+    /** A rename or a move (ADR-087): the item's full name before and after. */
+    record Move(String from, String to) {
+        boolean covers(String path) {
+            return path.equals(from) || path.startsWith(from + "/") || path.equals(to) || path.startsWith(to + "/");
+        }
+    }
+
+    /** The move this request makes, until it is published (see {@link #pendingMove}). */
+    private static final ThreadLocal<Move> MOVING = new ThreadLocal<>();
 
     @Initializer(after = InitMilestone.PLUGINS_STARTED)
     public static void register() throws ServletException {
@@ -51,7 +64,60 @@ public final class EditOrder implements Filter {
     /** The lock token the current request holds for {@code path}, or 0 (a save no request ordered). */
     static long tokenFor(String path) {
         Held held = HELD.get();
-        return held != null && held.path().equals(path) ? held.token() : 0;
+        return held == null ? 0 : held.tokens().getOrDefault(path, 0L);
+    }
+
+    /**
+     * Whether a save, creation or deletion of {@code path} on this thread happens inside a move not
+     * yet published: it is the move's, and published as part of it. Published alone first, the new
+     * name would exist in the store, and the move onto it would be refused.
+     */
+    static boolean pendingMove(String path) {
+        Move m = MOVING.get();
+        return m != null && m.covers(path);
+    }
+
+    /** The move this request made is published (or deferred): later saves are changes of their own. */
+    static void movePublished() {
+        MOVING.remove();
+    }
+
+    /**
+     * A rename ({@code /job/a/confirmRename}, newName) or a move ({@code /job/a/move/move},
+     * destination {@code /} or {@code /folder}, cloudbees-folder's): null when the request is
+     * neither, or names nothing to move to (Jenkins answers it).
+     */
+    static Move moved(String method, String path, String newName, String destination) {
+        if (!"POST".equals(method)) {
+            return null;
+        }
+        String[] parts = path.split("/");
+        List<String> names = new ArrayList<>();
+        int i = 0;
+        while (i < parts.length && parts[i].isEmpty()) {
+            i++;
+        }
+        while (i + 1 < parts.length && "job".equals(parts[i])) {
+            names.add(URLDecoder.decode(parts[i + 1], StandardCharsets.UTF_8));
+            i += 2;
+        }
+        if (names.isEmpty()) {
+            return null;
+        }
+        String from = String.join("/", names);
+        String parent = from.contains("/") ? from.substring(0, from.lastIndexOf('/') + 1) : "";
+        String name = names.get(names.size() - 1);
+        if (i == parts.length - 1 && "confirmRename".equals(parts[i])) {
+            return newName == null || newName.isBlank() ? null : new Move(from, parent + newName.trim());
+        }
+        if (i == parts.length - 2 && "move".equals(parts[i]) && "move".equals(parts[i + 1])) {
+            if (destination == null || !destination.startsWith("/")) {
+                return null;
+            }
+            String folder = destination.substring(1);
+            return new Move(from, folder.isEmpty() ? name : folder + "/" + name);
+        }
+        return null;
     }
 
     /**
@@ -95,9 +161,16 @@ public final class EditOrder implements Filter {
     public void doFilter(ServletRequest req, ServletResponse rsp, FilterChain chain) throws IOException, ServletException {
         HttpServletRequest http = (HttpServletRequest) req;
         String rest = http.getRequestURI().substring(http.getContextPath().length());
+        HomeSync sync = HomeSync.get();
+        Move move = sync == null ? null : moved(http.getMethod(), rest,
+                rest.endsWith("/confirmRename") ? http.getParameter("newName") : null,
+                rest.endsWith("/move/move") ? http.getParameter("destination") : null);
+        if (move != null && !move.from().equals(move.to())) {
+            orderMove(sync, move, http, (HttpServletResponse) rsp, chain);
+            return;
+        }
         String path = editedItem(http.getMethod(), rest,
                 rest.endsWith("/createItem") ? http.getParameter("name") : null);
-        HomeSync sync = HomeSync.get();
         if (path == null || sync == null) {
             chain.doFilter(req, rsp);
             return;
@@ -125,18 +198,87 @@ public final class EditOrder implements Filter {
             refuse(out, 503, "interrupted while ordering the edit of " + path);
             return;
         }
-        HELD.set(new Held(path, lock.token()));
+        HELD.set(new Held(Map.of(path, lock.token())));
         try {
             chain.doFilter(req, rsp);
         } finally {
             HELD.remove();
-            try {
-                sync.client.unlock(path, lock.token());
-            } catch (IOException e) {
-                LOGGER.log(Level.WARNING, "netCI homesync: could not release the lock of " + path + "; it expires in " + LOCK_TTL, e);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
+            unlock(sync, path, lock.token());
+        }
+    }
+
+    /**
+     * A rename or move, ordered like an edit but under both names' locks, and asked of the store
+     * before Jenkins does it here: Jenkins moves this home's directory at once and cannot be made to
+     * take it back, so whatever the store would refuse -- a build under the item running on another
+     * replica, the new name taken there, a child being edited there -- is refused first, with its
+     * reason. The move itself is published when Jenkins has made it ({@code onLocationChanged}).
+     */
+    private void orderMove(HomeSync sync, Move move, HttpServletRequest req, HttpServletResponse out, FilterChain chain)
+            throws IOException, ServletException {
+        if (!sync.ready()) {
+            refuse(out, 503, "this replica has not caught up with the others yet, so " + move.from()
+                    + " cannot be renamed or moved safely; reads work, try again in a moment");
+            return;
+        }
+        Map<String, Long> tokens = new LinkedHashMap<>();
+        try {
+            long head = 0;
+            for (String p : List.of(move.from(), move.to())) {
+                HomeSyncClient.Lock lock = sync.client.lock(p, LOCK_TTL);
+                tokens.put(p, lock.token());
+                head = Math.max(head, lock.head());
             }
+            sync.catchUp(head);
+            sync.client.move(move.from(), move.to(), tokens.get(move.from()), tokens.get(move.to()), true);
+        } catch (HomeSyncClient.Refused r) {
+            // Which lock was another replica's: the first name's, the second's, or (from the dry
+            // run, both held) one of the item's children.
+            String locked = tokens.isEmpty() ? move.from() : tokens.size() == 1 ? move.to() : "an item in " + move.from();
+            unlockAll(sync, tokens);
+            switch (r.code) {
+                case "LOCKED" -> refuse(out, 409, locked + " is being changed on replica " + r.holder + "; try again in a moment");
+                case "BUSY" -> refuse(out, 409, r.getMessage() + "; try again when it has finished");
+                case "EXISTS" -> refuse(out, 409, move.to() + " exists on another replica already");
+                case "NO_ITEM" -> refuse(out, 409, move.from() + " is not in the replicas' shared store yet, so it cannot be renamed"
+                        + " or moved on every replica; try again in a moment");
+                default -> chain.doFilter(req, out); // BAD_MOVE: a name Jenkins refuses itself, and says why
+            }
+            return;
+        } catch (IOException e) {
+            unlockAll(sync, tokens);
+            LOGGER.log(Level.WARNING, "netCI homesync: refusing a move of " + move.from() + ": the store is unreachable", e);
+            refuse(out, 503, "the replicas' shared order (netci-homesync) cannot be reached, so " + move.from()
+                    + " cannot be renamed or moved safely; reads work");
+            return;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            unlockAll(sync, tokens);
+            refuse(out, 503, "interrupted while ordering the move of " + move.from());
+            return;
+        }
+        HELD.set(new Held(Map.copyOf(tokens)));
+        MOVING.set(move);
+        try {
+            chain.doFilter(req, out);
+        } finally {
+            HELD.remove();
+            MOVING.remove();
+            unlockAll(sync, tokens);
+        }
+    }
+
+    private static void unlockAll(HomeSync sync, Map<String, Long> tokens) {
+        tokens.forEach((p, t) -> unlock(sync, p, t));
+    }
+
+    private static void unlock(HomeSync sync, String path, long token) {
+        try {
+            sync.client.unlock(path, token);
+        } catch (IOException e) {
+            LOGGER.log(Level.WARNING, "netCI homesync: could not release the lock of " + path + "; it expires in " + LOCK_TTL, e);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
         }
     }
 

@@ -28,6 +28,11 @@ func (e *OwnedError) Error() string {
 // ErrNotOwner: the caller does not hold the job's live lease under the epoch it gave.
 var ErrNotOwner = errors.New("the job's lease is not held under this epoch")
 
+// ErrJobGone: the job is deleted in the store, or was renamed or moved away (ADR-087). A replica
+// that has not applied that yet must not start a build under the old name: the build would run
+// in a directory its own replica is about to move.
+var ErrJobGone = errors.New("the job is deleted, renamed or moved in the store")
+
 // RunTakenError: the run has a number already, this one (ADR-081).
 type RunTakenError struct {
 	Job    string
@@ -60,8 +65,23 @@ func (s *Store) ClaimJob(ctx context.Context, job, replica string, ttl time.Dura
 	if job == "" || replica == "" || ttl <= 0 || ttl > 5*time.Minute {
 		return Ownership{}, errors.New("a job, a replica and a lease of at most 5 minutes are required")
 	}
+	tx, err := s.Pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return Ownership{}, err
+	}
+	defer tx.Rollback(context.Background()) //nolint:errcheck
+	// The job's item row, shared: a move holds it exclusively until it commits, so a claim either
+	// comes before the move (whose lease it then carries to the new name) or sees the tombstone.
+	// No row at all is a job not published yet, which may build.
+	var deleted bool
+	err = tx.QueryRow(ctx, `SELECT deleted FROM home_items WHERE path = $1 FOR SHARE`, job).Scan(&deleted)
+	if err == nil && deleted {
+		return Ownership{}, ErrJobGone
+	} else if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return Ownership{}, err
+	}
 	var o Ownership
-	err := s.Pool.QueryRow(ctx, `INSERT INTO home_job_owners (job, owner, epoch, expires_at)
+	err = tx.QueryRow(ctx, `INSERT INTO home_job_owners (job, owner, epoch, expires_at)
 		VALUES ($1, $2, nextval('home_owner_epochs'), now() + $3 * interval '1 millisecond')
 		ON CONFLICT (job) DO UPDATE SET
 			owner = EXCLUDED.owner,
@@ -72,13 +92,17 @@ func (s *Store) ClaimJob(ctx context.Context, job, replica string, ttl time.Dura
 		RETURNING job, owner, epoch, (extract(epoch FROM expires_at - now()) * 1000)::bigint`,
 		job, replica, ttl.Milliseconds()).Scan(&o.Job, &o.Owner, &o.Epoch, &o.ExpiresIn)
 	if errors.Is(err, pgx.ErrNoRows) {
+		_ = tx.Rollback(ctx)
 		current, cerr := s.JobOwner(ctx, job)
 		if cerr != nil {
 			return Ownership{}, cerr
 		}
 		return Ownership{}, &OwnedError{Ownership: current}
 	}
-	return o, err
+	if err != nil {
+		return Ownership{}, err
+	}
+	return o, tx.Commit(ctx)
 }
 
 // JobOwner returns a job's lease as it stands (ExpiresIn <= 0: nobody holds it live).
@@ -115,6 +139,17 @@ func (s *Store) ReserveRun(ctx context.Context, job string, number int, replica 
 		return ErrNotOwner
 	}
 	if err != nil {
+		return err
+	}
+	// The job, or a folder it is in, being changed on another replica -- a rename or move above
+	// all, which is checked against builds about to start and must not be overtaken by one
+	// (ADR-087). The build waits the few seconds an edit holds its lock.
+	var holder string
+	err = tx.QueryRow(ctx, `SELECT holder FROM home_locks WHERE path = ANY($1) AND expires_at > now() AND holder <> $2 LIMIT 1`,
+		withParents(job), replica).Scan(&holder)
+	if err == nil {
+		return &LockedError{Holder: holder}
+	} else if !errors.Is(err, pgx.ErrNoRows) {
 		return err
 	}
 	var max int
@@ -183,4 +218,15 @@ func (s *Store) MaxReserved(ctx context.Context, job string) (int, error) {
 	var max int
 	err := s.Pool.QueryRow(ctx, `SELECT COALESCE(max(number), 0) FROM home_build_numbers WHERE job = $1`, job).Scan(&max)
 	return max, err
+}
+
+// withParents: "a/b/c" is a, a/b and a/b/c.
+func withParents(job string) []string {
+	var out []string
+	for i := 0; i < len(job); i++ {
+		if job[i] == '/' {
+			out = append(out, job[:i])
+		}
+	}
+	return append(out, job)
 }

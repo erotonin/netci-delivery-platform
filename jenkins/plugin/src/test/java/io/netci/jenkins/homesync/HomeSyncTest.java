@@ -613,4 +613,125 @@ class HomeSyncTest {
         await("the change made meanwhile applied", () -> j.jenkins.getItemByFullName("from-r1-meanwhile") != null);
         await("what only this home had published", () -> stored("made-while-down") != null);
     }
+
+    private static Page post(JenkinsRule j, String path) throws Exception {
+        JenkinsRule.WebClient wc = j.createWebClient();
+        wc.setThrowExceptionOnFailingStatusCode(false);
+        wc.setRedirectEnabled(false);
+        WebRequest req = new WebRequest(new URL(j.getURL(), path), HttpMethod.POST);
+        wc.addCrumb(req);
+        return wc.getPage(req);
+    }
+
+    private static boolean deleted(String path) {
+        synchronized (STORE) {
+            FakeHomeSync.Entry e = STORE.items.get(path);
+            return e != null && e.content() == null;
+        }
+    }
+
+    @Test
+    void aRenameHereIsOneMoveInTheStoreAndTheJobKeepsItsBuilds(JenkinsRule j) throws Exception {
+        // Before ADR-087 the other replicas got the new name as a new job with no builds, and kept
+        // the old one: two jobs, one of them without its history.
+        ready();
+        WorkflowJob job = pipeline(j, "before");
+        j.buildAndAssertSuccess(job);
+        await("build #1 published", () -> STORE.items.containsKey("@builds/before/1"));
+        Page done = post(j, "job/before/confirmRename?newName=after");
+        assertTrue(done.getWebResponse().getStatusCode() < 400, done.getWebResponse().getContentAsString());
+        assertNotNull(j.jenkins.getItemByFullName("after", WorkflowJob.class));
+        await("the move in the store", () -> stored("after") != null && deleted("before"));
+        assertTrue(stored("@builds/after/1") != null && deleted("@builds/before/1"), "the build did not move with the job");
+        assertEquals("after", movedTo("before"));
+        // One move: the new name was never published as a job of its own, and both locks are let go.
+        assertTrue(STORE.seen().stream().noneMatch(x -> x.path().equals("after") && !x.method().equals("MOVE")), STORE.seen().toString());
+        synchronized (STORE) {
+            assertTrue(STORE.lockHolder.isEmpty(), STORE.lockHolder.toString());
+        }
+        // The lease went with it: the job builds on under its new name, numbering on.
+        assertEquals(2, j.buildAndAssertSuccess(j.jenkins.getItemByFullName("after", WorkflowJob.class)).getNumber());
+        assertEquals(List.of(1, 2), STORE.reservedFor("after"));
+    }
+
+    private static String movedTo(String path) {
+        synchronized (STORE) {
+            return STORE.feed.stream().filter(c -> c.getString("path").equals(path) && c.has("movedTo"))
+                    .map(c -> c.getString("movedTo")).findFirst().orElse(null);
+        }
+    }
+
+    @Test
+    void aRenameIsRefusedWhileABuildOfTheJobRunsOnAnotherReplica(JenkinsRule j) throws Exception {
+        ready();
+        pipeline(j, "building-there");
+        await("the create published", () -> storedVersion("building-there") >= 1);
+        synchronized (STORE) {
+            STORE.busy.put("building-there", "r1");
+        }
+        Page refused = post(j, "job/building-there/confirmRename?newName=elsewhere");
+        assertEquals(409, refused.getWebResponse().getStatusCode());
+        assertTrue(refused.getWebResponse().getContentAsString().contains("running on r1"), refused.getWebResponse().getContentAsString());
+        assertNotNull(j.jenkins.getItemByFullName("building-there"), "Jenkins renamed its copy although the store refused");
+        assertNull(j.jenkins.getItemByFullName("elsewhere"));
+        assertTrue(STORE.seen().stream().noneMatch(x -> x.method().equals("MOVE")));
+    }
+
+    @Test
+    void anotherReplicasRenameRenamesTheJobHereWithoutFetchingItsBuildsAgain(JenkinsRule j) throws Exception {
+        ready();
+        WorkflowJob job = pipeline(j, "theirs");
+        j.buildAndAssertSuccess(job);
+        await("build #1 published", () -> STORE.items.containsKey("@builds/theirs/1"));
+        synchronized (STORE) {
+            STORE.reads.clear();
+        }
+        STORE.moveFrom("r1", "theirs", "renamed-there");
+        await("the rename here", () -> j.jenkins.getItemByFullName("renamed-there") != null && j.jenkins.getItemByFullName("theirs") == null);
+        WorkflowJob renamed = j.jenkins.getItemByFullName("renamed-there", WorkflowJob.class);
+        assertNotNull(renamed.getBuildByNumber(1), "the build did not come with the job");
+        assertTrue(renamed.getBuildByNumber(1).getLog().contains("hi"));
+        await("the feed applied", () -> HomeSync.get().versions.getOrDefault("@builds/renamed-there/1", 0L) > 0);
+        synchronized (STORE) {
+            assertTrue(STORE.reads.stream().noneMatch(r -> r.startsWith("@builds/")), "a build's archive was fetched again: " + STORE.reads);
+        }
+        // Nothing published back: the rename was the other replica's.
+        assertTrue(STORE.seen().stream().noneMatch(x -> x.path().contains("renamed-there")), STORE.seen().toString());
+    }
+
+    @Test
+    void aMoveIntoAFolderGoesEverywhereWithItsBuilds(JenkinsRule j) throws Exception {
+        ready();
+        j.jenkins.createProject(com.cloudbees.hudson.plugins.folder.Folder.class, "team");
+        WorkflowJob job = pipeline(j, "loose");
+        j.buildAndAssertSuccess(job);
+        await("published", () -> stored("team") != null && STORE.items.containsKey("@builds/loose/1"));
+        Page moved = post(j, "job/loose/move/move?destination=/team");
+        assertTrue(moved.getWebResponse().getStatusCode() < 400, moved.getWebResponse().getContentAsString());
+        assertNotNull(j.jenkins.getItemByFullName("team/loose", WorkflowJob.class));
+        await("the move in the store", () -> stored("team/loose") != null && deleted("loose") && stored("@builds/team/loose/1") != null);
+        assertEquals("team/loose", movedTo("loose"));
+
+        // And back out of it, by another replica, with the folder renamed in the same breath.
+        STORE.moveFrom("r1", "team/loose", "loose-again");
+        STORE.moveFrom("r1", "team", "crew");
+        await("both here", () -> j.jenkins.getItemByFullName("loose-again") != null && j.jenkins.getItemByFullName("crew") != null
+                && j.jenkins.getItemByFullName("team") == null);
+        assertNotNull(j.jenkins.getItemByFullName("loose-again", WorkflowJob.class).getBuildByNumber(1));
+    }
+
+    @Test
+    void aFoldersRenameCarriesItsJobsWithItAsOneMove(JenkinsRule j) throws Exception {
+        ready();
+        com.cloudbees.hudson.plugins.folder.Folder team = j.jenkins.createProject(com.cloudbees.hudson.plugins.folder.Folder.class, "squad");
+        team.createProject(WorkflowJob.class, "svc").setDefinition(new org.jenkinsci.plugins.workflow.cps.CpsFlowDefinition("echo 'hi'", true));
+        await("published", () -> stored("squad/svc") != null);
+        Page done = post(j, "job/squad/confirmRename?newName=platoon");
+        assertTrue(done.getWebResponse().getStatusCode() < 400, done.getWebResponse().getContentAsString());
+        await("the move in the store", () -> stored("platoon/svc") != null && deleted("squad/svc") && deleted("squad"));
+        // The folder's job was told of its new name too (fireLocationChange), but was moved by the
+        // folder's one move, not published again.
+        assertEquals(1, STORE.seen().stream().filter(x -> x.method().equals("MOVE")).count(), STORE.seen().toString());
+        assertNull(movedTo("squad/svc"));
+    }
 }

@@ -242,3 +242,49 @@ func TestARunsNumberOverHTTP(t *testing.T) {
 		t.Fatalf("lookup without a replica's token: %d", code)
 	}
 }
+
+// A move over HTTP: refused with a code the plugin can tell apart, and done under the caller's locks.
+func TestAMoveIsAskedDoneAndRefusedOverHTTP(t *testing.T) {
+	srv := testServer(t)
+	for _, p := range []string{"team", "team/app"} {
+		if code, _, _, raw := call(t, srv, "PUT", "/v1/items?path="+p, tokenR0, map[string]string{"If-Match": "0"}, "<x/>"); code != 200 {
+			t.Fatalf("%s: %d %s", p, code, raw)
+		}
+	}
+	code, _, body, _ := call(t, srv, "POST", "/v1/locks?path=team&ttl=30s", tokenR1, nil, "")
+	if code != 200 {
+		t.Fatalf("lock: %d", code)
+	}
+	from := strconv.FormatInt(int64(body["token"].(float64)), 10)
+	if code, _, body, _ := call(t, srv, "POST", "/v1/moves?from=team&to=crew", tokenR0, nil, ""); code != http.StatusLocked || body["holder"] != "r1" {
+		t.Fatalf("a move of an item another replica is editing: %d %v", code, body)
+	}
+	if code, _, _, _ := call(t, srv, "POST", "/v1/moves?from=team&to=team/inner", tokenR1, map[string]string{"X-Lock-Token": from}, ""); code != 400 {
+		t.Fatalf("into itself: %d", code)
+	}
+	if code, _, body, _ := call(t, srv, "POST", "/v1/moves?from=team&to=team/app", tokenR1, map[string]string{"X-Lock-Token": from}, ""); code != 400 {
+		t.Fatalf("onto its own child: %d %v", code, body)
+	}
+	if code, _, body, _ := call(t, srv, "POST", "/v1/moves?from=nobody&to=crew", tokenR1, nil, ""); code != 404 || body["code"] != "NO_ITEM" {
+		t.Fatalf("from nothing: %d %v", code, body)
+	}
+	if code, _, body, _ := call(t, srv, "POST", "/v1/moves?from=team/app&to=team", tokenR1, nil, ""); code != 409 || body["code"] != "EXISTS" {
+		t.Fatalf("onto an item: %d %v", code, body)
+	}
+	if code, _, _, _ := call(t, srv, "POST", "/v1/moves?from=team&to=crew&dryRun=true", tokenR1, map[string]string{"X-Lock-Token": from}, ""); code != 200 {
+		t.Fatalf("dry run: %d", code)
+	}
+	_, _, before, _ := call(t, srv, "GET", "/v1/changes?after=0", tokenR0, nil, "")
+	code, _, body, raw := call(t, srv, "POST", "/v1/moves?from=team&to=crew", tokenR1, map[string]string{"X-Lock-Token": from}, "")
+	if code != 200 || body["moved"] != float64(2) || body["version"] != float64(1) {
+		t.Fatalf("move: %d %s", code, raw)
+	}
+	_, _, feed, _ := call(t, srv, "GET", "/v1/changes?after="+strconv.FormatInt(int64(before["head"].(float64)), 10), tokenR0, nil, "")
+	first := feed["changes"].([]any)[0].(map[string]any)
+	if first["path"] != "team" || first["movedTo"] != "crew" || first["deleted"] != true {
+		t.Fatalf("the feed's first entry of the move: %v", first)
+	}
+	if code, _, body, _ := call(t, srv, "POST", "/v1/jobs/claim?job=team/app&ttl=15s", tokenR0, nil, ""); code != http.StatusGone || body["code"] != "GONE" {
+		t.Fatalf("claiming the old name: %d %v", code, body)
+	}
+}

@@ -69,6 +69,12 @@
       <artifactId>workflow-basic-steps</artifactId>
       <scope>test</scope>
     </dependency>
+    <!-- Folders, and their "Move" action, in the rename and move tests (ADR-087). -->
+    <dependency>
+      <groupId>org.jenkins-ci.plugins</groupId>
+      <artifactId>cloudbees-folder</artifactId>
+      <scope>test</scope>
+    </dependency>
   </dependencies>
 
   <build>
