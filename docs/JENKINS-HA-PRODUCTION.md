@@ -77,7 +77,7 @@ Phiên bản đã chạy ở lab:
 
 | Image | Phiên bản lab | Ghi chú |
 |---|---|---|
-| controller netCI | `jenkins-controller:2.555.3-netci31` | build từ `jenkins/Dockerfile.controller`, sạch từ HEAD |
+| controller netCI | `jenkins-controller:2.555.3-netci32` | build từ `jenkins/Dockerfile.controller`, sạch từ HEAD |
 | netCI (homesync, queue, supervisor) | commit `53e62f9` trở lên | `make image` |
 | HAProxy | `haproxy@sha256:e3229153…` | |
 | kube-vip | `ghcr.io/kube-vip/kube-vip@sha256:c6d4f3a3…` | chỉ khi `vip.mode: kubevip` |
@@ -326,7 +326,10 @@ Chart IDP từ chối nếu `runQueueUrl` đi cùng nhiều hơn một controlle
 
 - **Script đăng nhập bằng mật khẩu và giữ crumb** vẫn bị 403 sau khi replica của nó restart.
   Script nên dùng API token (ADR-086).
-- **View và đổi tên** item chưa được làm (JENKINS-HA.md).
+- **View** chưa được đồng bộ giữa các replica (JENKINS-HA.md).
+- **Đổi tên và di chuyển item** được đồng bộ (ADR-087). Thao tác bị từ chối (409, kèm lý do) khi
+  một build của item đang chạy trên bất kỳ replica nào. Một run của netci-queue xếp cho tên cũ sẽ
+  nhận 404 sau khi đổi tên, nên đừng đổi tên các job mà IDP tạo.
 - **Ngân sách hàng đợi của IDP (ADR-050)** chỉ đếm hàng đợi của một replica. Giới hạn thực tế là
   budget của netci-queue (ADR-063).
 - **Build bị nhận lại** dựa trên bản sao chạy mỗi 3 s: vài giây log cuối có thể chỉ còn trong Loki

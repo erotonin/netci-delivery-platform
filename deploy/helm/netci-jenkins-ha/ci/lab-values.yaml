@@ -1,6 +1,6 @@
 images:
-  controller: "172.17.0.1:8930/netci/jenkins-controller@sha256:e502eff806930684ef0d7ce15e3f81ed2aa8ce6dcb4606d11a75918762a09eb3"
-  netci: "172.17.0.1:8930/netci/netci@sha256:cd6745b8c58e1f47bd843c51aef85c63f8fefe746cba2f210a53c4356ee96dfd"
+  controller: "172.17.0.1:8930/netci/jenkins-controller@sha256:52f86aee3135a7381e92e7a3cb38a4935100db4443df1227e6d720c9230abee2"
+  netci: "172.17.0.1:8930/netci/netci@sha256:b3bba48f82b1026312999bee0960d453516493f161edd25880d0c6218a267e09"
   haproxy: "haproxy@sha256:e3229153dd6429fc71f8a9a1f1ccbf8dab6962422d7043c81e84dd6a075e90ee"
   kubeVip: "ghcr.io/kube-vip/kube-vip@sha256:c6d4f3a3fc2b7e95a23a20a0b05b7c64b2e5620783c8fa69a9bac753f99cc8bc"
   postgres: "172.17.0.1:8930/netci/cnpg-postgresql:16.15-system-trixie@sha256:236091e55fda2ba92dbb60c020a5c63e788303c4faf816d2950ae6d3ef345b13"

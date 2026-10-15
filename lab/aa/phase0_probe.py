@@ -39,7 +39,11 @@ CONTROLLER = "172.17.0.1:8930/netci/jenkins-controller@sha256:1177c784cd43b29608
 
 
 def k(*args: str, check: bool = True, stdin: str | None = None) -> str:
-    r = subprocess.run(["kubectl", *args], capture_output=True, text=True, input=stdin, timeout=120,
+    # A command that waits (`rollout status --timeout=1200s`) gets its own wait and some: a fixed
+    # 120 s killed the upgrade probe in the middle of a rolling restart, before it wrote its evidence.
+    waits = [int(a.split("=", 1)[1].rstrip("s")) for a in args if a.startswith("--timeout=") and a.endswith("s")
+             and a.split("=", 1)[1].rstrip("s").isdigit()]
+    r = subprocess.run(["kubectl", *args], capture_output=True, text=True, input=stdin, timeout=max([120] + [w + 30 for w in waits]),
                        env={"KUBECONFIG": str(STATE / "kubeconfig"), "PATH": "/usr/local/bin:/usr/bin:/bin",
                             # without HOME kubectl caches discovery in the working directory (a .kube/ in the repo)
                             "HOME": str(Path.home())})

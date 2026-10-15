@@ -59,7 +59,8 @@ kube-vip VIP, 2 inbound agents with 2 executors each.
 | One chart installs it | `deploy/helm/netci-jenkins-ha`: replicas, homesync, balancer, VIP (kube-vip or Octavia), store, queue; refuses a tag without digest (ADR-085) | **Lab**: the running lab adopted and upgraded by the chart under load, UI 219 of 219, creates 220 of 220 (`aa-phase6-upgrade-20261014T175148Z.json`) |
 | A form works on every replica | The CSRF crumb bound to the shared sign-in, not to one JVM's session (ADR-086) | **Lab**: a rolling restart, two people signed in through the form: 239 creates, none refused, one crumb answered by both replicas (`aa-phase6-upgrade-20261014T193437Z.json`) |
 | No CloudBees limit kept | Agents keep several executors; Pipeline resumes; REST answers from any replica | Agents ran with 2 executors each. Freestyle is not covered (the site has none) |
-| Not done, said plainly | Edits are refused for 28-45 s while the store's primary fails over (longer when the Barman Cloud plugin's leader died with it, ADR-085); views, renames and moves of items are not replicated; a script that signs in with a password keeps Jenkins' own session-bound crumb (an API token needs none, ADR-086); Nova fencing, Octavia and kube-vip with allowed-address-pairs are tested against fakes or not at all, never against a real OpenStack | -- |
+| A rename or move goes everywhere | One change of the store moves the item, its children, its builds, lease and numbers; the other replica renames its own copy; refused while a build under it runs on any replica (ADR-087) | **Lab**: renamed on r1, on both 1.1 s later with its builds, next build #3; refused (409, "running on jenkins-0") while building, renamed once finished; moved into a folder, the folder renamed (`aa-phase9-rename-20261015T014229Z.json`) |
+| Not done, said plainly | Edits are refused for 28-45 s while the store's primary fails over (longer when the Barman Cloud plugin's leader died with it, ADR-085); views are not replicated; a script that signs in with a password keeps Jenkins' own session-bound crumb (an API token needs none, ADR-086); Nova fencing, Octavia and kube-vip with allowed-address-pairs are tested against fakes or not at all, never against a real OpenStack | -- |
 
 ## Builds on the agent fabric
 
@@ -121,6 +122,7 @@ deploy/helm/netci/ci/test-rules.sh   # promtool checks and unit tests of the ale
 - [ADR-084 — fencing active-active replicas by power](decisions/ADR-084-fencing-active-active-replicas-by-power.md)
 - [ADR-085 — installed by one chart; backups through the Barman Cloud plugin](decisions/ADR-085-active-active-jenkins-installed-by-one-chart.md)
 - [ADR-086 — a CSRF crumb every replica accepts](decisions/ADR-086-a-crumb-every-replica-accepts.md)
+- [ADR-087 — renames and moves are one change of the store](decisions/ADR-087-renames-and-moves-are-one-change-of-the-store.md)
 
 Deploying it at a site: [docs/JENKINS-HA-PRODUCTION.md](JENKINS-HA-PRODUCTION.md) (Vietnamese: prerequisites,
 operators, Secrets, the chart, VIP, Nova fencing, agents, the IDP, checks, operations).
