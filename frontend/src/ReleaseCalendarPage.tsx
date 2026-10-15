@@ -546,7 +546,7 @@ export function ReleaseCalendarPage({ now: fixedNow }: { now?: Date }) {
                 >
                   <div>
                     <strong>{freeze.name}</strong>
-                    <small style={{ display: 'block', color: 'var(--muted)', fontSize: '11px' }}>
+                    <small style={{ display: 'block', color: 'var(--muted)', fontSize: '12px' }}>
                       {timeRange} · {freeze.environments.join(', ')} · scope: {scope}
                     </small>
                     <p style={{ margin: '4px 0 0', fontSize: '12px' }}>{freeze.reason}</p>
@@ -1027,7 +1027,7 @@ export function ReleaseCalendarPage({ now: fixedNow }: { now?: Date }) {
                             <strong className="cal-side-release-title">
                               {req.modules.map((m) => `${m.moduleName || m.moduleId} ${m.version}`).join(' · ')}
                             </strong>
-                            <small className="muted" style={{ display: 'block', fontSize: '11px', marginTop: '2px' }}>
+                            <small className="muted" style={{ display: 'block', fontSize: '12px', marginTop: '2px' }}>
                               {new Date(req.scheduledFor).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })} · requested by {req.requestedBy}
                             </small>
                           </div>

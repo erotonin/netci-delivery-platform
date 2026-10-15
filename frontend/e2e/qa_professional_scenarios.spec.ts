@@ -39,7 +39,7 @@ test.describe('Professional QA End-to-End Test Suite for netCI Platform', () => 
     await page.reload()
 
     // Expect login page
-    await expect(page.locator('h1, h2').first()).toContainText(/Track every release|Đăng nhập|Sign in|netCI/i)
+    await expect(page.locator('h1, h2').first()).toContainText(/Every release|Track every release|Đăng nhập|Sign in|netCI/i)
 
     // 1. Negative Test: empty credentials
     const usernameInput = page.locator('#login-username, input[placeholder*="admin, dev"]').first()
@@ -88,7 +88,7 @@ test.describe('Professional QA End-to-End Test Suite for netCI Platform', () => 
     const logoutBtn = page.locator('button:has-text("Logout"), button:has-text("Đăng xuất")')
     if (await logoutBtn.isVisible()) {
       await logoutBtn.click()
-      await expect(page.locator('h1, h2').first()).toContainText(/Track every release|Đăng nhập|Sign in|netCI/i)
+      await expect(page.locator('h1, h2').first()).toContainText(/Every release|Track every release|Đăng nhập|Sign in|netCI/i)
       
       // Log back in for remaining tests
       const quickLogin = page.locator('button:has-text("Admin"), button:has-text("Developer")').first()
@@ -197,7 +197,7 @@ test.describe('Professional QA End-to-End Test Suite for netCI Platform', () => 
     expect(tabCount).toBeGreaterThanOrEqual(3)
 
     // Click through each tab
-    const tabNames = ['Overview', 'Pipelines', 'Configuration', 'DORA']
+    const tabNames = ['Delivery', 'Builds', 'Releases', 'Configuration', 'Metrics']
     for (const name of tabNames) {
       const tab = page.locator(`[role="tab"]:has-text("${name}"), .tabs button:has-text("${name}")`).first()
       if (await tab.isVisible()) {

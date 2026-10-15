@@ -301,14 +301,14 @@ function RequestDetails({
         <div className="canary-rules-panel" style={{ margin: '10px 0', padding: '10px 14px', background: 'rgba(2, 132, 199, 0.08)', borderRadius: 8, border: '1px solid rgba(2, 132, 199, 0.2)' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
             <Split size={15} color="#0284c7" />
-            <strong style={{ fontSize: 12, color: '#0284c7' }}>L7 Traffic Steering & Routing Policy</strong>
+            <strong style={{ fontSize: 12, color: 'var(--info-text)' }}>L7 Traffic Steering & Routing Policy</strong>
           </div>
           <div style={{ fontSize: 12, display: 'flex', gap: 16, flexWrap: 'wrap' }}>
             {currentReq.canaryRules?.header_name || (currentReq.strategyConfig?.canary_rules as any)?.header_name ? (
-              <span>HTTP Header: <code className="mono" style={{ color: '#38bdf8' }}>{currentReq.canaryRules?.header_name || (currentReq.strategyConfig?.canary_rules as any)?.header_name}: {currentReq.canaryRules?.header_value || (currentReq.strategyConfig?.canary_rules as any)?.header_value || 'true'}</code></span>
+              <span>HTTP Header: <code className="mono" style={{ color: 'var(--info-text)' }}>{currentReq.canaryRules?.header_name || (currentReq.strategyConfig?.canary_rules as any)?.header_name}: {currentReq.canaryRules?.header_value || (currentReq.strategyConfig?.canary_rules as any)?.header_value || 'true'}</code></span>
             ) : null}
             {currentReq.canaryRules?.cookie || (currentReq.strategyConfig?.canary_rules as any)?.cookie ? (
-              <span>Session Cookie: <code className="mono" style={{ color: '#38bdf8' }}>{currentReq.canaryRules?.cookie || (currentReq.strategyConfig?.canary_rules as any)?.cookie}</code></span>
+              <span>Session Cookie: <code className="mono" style={{ color: 'var(--info-text)' }}>{currentReq.canaryRules?.cookie || (currentReq.strategyConfig?.canary_rules as any)?.cookie}</code></span>
             ) : null}
             {!currentReq.canaryRules?.header_name && !(currentReq.strategyConfig?.canary_rules as any)?.header_name && !currentReq.canaryRules?.cookie && !(currentReq.strategyConfig?.canary_rules as any)?.cookie ? (
               <span className="muted">Standard progressive percentage split (Step 1: 10%)</span>
@@ -331,7 +331,7 @@ function RequestDetails({
           <div style={{ display: 'flex', gap: 8 }}>
             <button
               className="primary-button"
-              style={{ padding: '4px 10px', fontSize: 11 }}
+              style={{ padding: '4px 10px', fontSize: 12 }}
               disabled={canaryBusy || (trafficInfo ? trafficInfo.trafficWeight >= 100 : false)}
               onClick={handleAdvanceCanary}
             >
@@ -339,7 +339,7 @@ function RequestDetails({
             </button>
             <button
               className="danger-button"
-              style={{ padding: '4px 10px', fontSize: 11 }}
+              style={{ padding: '4px 10px', fontSize: 12 }}
               disabled={canaryBusy}
               onClick={handleAbortCanary}
             >
@@ -361,7 +361,7 @@ function RequestDetails({
               <div key={wave.wave} className={`wave-card ${wave.status === 'in_progress' ? 'wave-active' : wave.status === 'succeeded' ? 'wave-done' : ''}`}>
                 <div className="wave-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   <span>Wave {wave.wave}</span>
-                  <span style={{ fontSize: '11px', fontWeight: 600 }}>
+                  <span style={{ fontSize: '12px', fontWeight: 600 }}>
                     {wave.status === 'in_progress' ? '⚡ Executing' : wave.status === 'succeeded' ? '✅ Completed' : '⏳ Pending Prior Wave'}
                   </span>
                 </div>
@@ -400,18 +400,18 @@ function RequestDetails({
             <ShieldCheck size={16} />
             Approval Gates &amp; Policy Verification
           </h4>
-          {currentReq.policyDecision ? <span className="risk-badge" style={{ padding: '2px 8px', borderRadius: 12, fontSize: 11, fontWeight: 600, background: currentReq.policyDecision.allowed ? '#14532d' : '#7f1d1d', color: currentReq.policyDecision.allowed ? '#86efac' : '#fca5a5' }}>
+          {currentReq.policyDecision ? <span className="risk-badge" style={{ padding: '2px 8px', borderRadius: 12, fontSize: 12, fontWeight: 600, background: currentReq.policyDecision.allowed ? '#14532d' : '#7f1d1d', color: currentReq.policyDecision.allowed ? '#86efac' : '#fca5a5' }}>
             policy: {currentReq.policyDecision.allowed ? 'allow' : 'deny'} · risk {currentReq.policyDecision.riskScore}/100
-          </span> : <span className="risk-badge" style={{ padding: '2px 8px', borderRadius: 12, fontSize: 11, color: '#94a3b8', border: '1px solid rgba(148,163,184,.4)' }}>policy evaluated on approval</span>}
+          </span> : <span className="risk-badge" style={{ padding: '2px 8px', borderRadius: 12, fontSize: 12, color: 'var(--text-3)', border: '1px solid rgba(148,163,184,.4)' }}>policy evaluated on approval</span>}
         </div>
-        <div style={{ fontSize: 12, color: '#94a3b8', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+        <div style={{ fontSize: 12, color: 'var(--text-3)', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
           <div><strong>Approval:</strong> distinct reviewer from requester ({currentReq.requestedBy})</div>
           <div><strong>Automated Tests:</strong> {currentReq.runAutomationTests ? 'enforced autoTest: passed' : 'optional'}</div>
           <div><strong>Artifact:</strong> immutable sha256 digest from signed/scanned build</div>
           <div><strong>Rollback:</strong> {currentReq.rollbackStrategy}</div>
         </div>
         {currentReq.policyDecision?.reason && (
-          <div style={{ marginTop: 8, fontSize: 11, color: '#cbd5e1', borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: 6 }}>
+          <div style={{ marginTop: 8, fontSize: 12, color: 'var(--text-3)', borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: 6 }}>
             <strong>Gate Verdict:</strong> {currentReq.policyDecision.reason}
           </div>
         )}
@@ -694,7 +694,7 @@ function NewRequest({
               <button
                 type="button"
                 className="secondary-button"
-                style={{ fontSize: '11px', padding: '4px 10px' }}
+                style={{ fontSize: '12px', padding: '4px 10px' }}
                 onClick={selectAllVersioned}
               >
                 ⚡ Select all modules with versions
@@ -794,12 +794,12 @@ function NewRequest({
                 })}
               </div>
               {dagAnalysis.cycle ? (
-                <div style={{ marginTop: '12px', padding: '10px 14px', background: 'rgba(239, 68, 68, 0.1)', border: '1px solid #ef4444', borderRadius: '8px', color: '#dc2626', fontSize: '12px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <div style={{ marginTop: '12px', padding: '10px 14px', background: 'rgba(239, 68, 68, 0.1)', border: '1px solid var(--danger)', borderRadius: '8px', color: 'var(--danger-text)', fontSize: '12px', display: 'flex', alignItems: 'center', gap: '8px' }}>
                   <CircleAlert size={16} />
                   <strong>{dagAnalysis.cycle}</strong>
                 </div>
               ) : dagAnalysis.isMultiWave ? (
-                <div style={{ marginTop: '12px', padding: '10px 14px', background: 'rgba(14, 165, 233, 0.08)', border: '1px solid #38bdf8', borderRadius: '8px', color: '#0369a1', fontSize: '12px' }}>
+                <div style={{ marginTop: '12px', padding: '10px 14px', background: 'rgba(14, 165, 233, 0.08)', border: '1px solid var(--info)', borderRadius: '8px', color: 'var(--info-text)', fontSize: '12px' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px' }}>
                     <Layers size={15} />
                     <strong>Kahn's algorithm identified {dagAnalysis.waves.length} Waves for sequential deployment:</strong>
@@ -807,10 +807,10 @@ function NewRequest({
                   <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
                     {dagAnalysis.waves.map((wave, idx) => (
                       <span key={idx} style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
-                        <span className="mono" style={{ background: '#e0f2fe', padding: '2px 8px', borderRadius: '4px', fontWeight: 600 }}>
+                        <span className="mono" style={{ background: 'var(--info-soft)', padding: '2px 8px', borderRadius: '4px', fontWeight: 600 }}>
                           Wave {idx + 1}: {wave.join(', ')}
                         </span>
-                        {idx < dagAnalysis.waves.length - 1 && <span style={{ color: '#0284c7' }}>➔</span>}
+                        {idx < dagAnalysis.waves.length - 1 && <span style={{ color: 'var(--info-text)' }}>➔</span>}
                       </span>
                     ))}
                   </div>
@@ -864,7 +864,7 @@ function NewRequest({
                   borderRadius: '8px',
                 }}
               >
-                <strong style={{ display: 'block', fontSize: '13px', color: '#0284c7', marginBottom: '8px' }}>
+                <strong style={{ display: 'block', fontSize: '13px', color: 'var(--info-text)', marginBottom: '8px' }}>
                   L7 Traffic Steering & Header Routing (Zero-Downtime Canary)
                 </strong>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
@@ -909,7 +909,7 @@ function NewRequest({
               <button
                 type="button"
                 className="secondary-button"
-                style={{ fontSize: '11px', padding: '3px 8px' }}
+                style={{ fontSize: '12px', padding: '3px 8px' }}
                 onClick={() => setScheduledFor(localScheduleDefault())}
               >
                 ⚡ Deploy immediately upon approval
@@ -1006,17 +1006,17 @@ function NewRequest({
               <strong>{automation ? 'Passing result required' : 'Not required'}</strong>
             </div>
             {dagAnalysis.isMultiWave && (
-              <div style={{ gridColumn: '1 / -1', padding: '10px 14px', background: 'rgba(14, 165, 233, 0.08)', borderRadius: '8px', border: '1px solid #38bdf8' }}>
-                <span style={{ display: 'block', fontSize: '11px', color: '#0369a1', fontWeight: 600, marginBottom: '6px' }}>
+              <div style={{ gridColumn: '1 / -1', padding: '10px 14px', background: 'rgba(14, 165, 233, 0.08)', borderRadius: '8px', border: '1px solid var(--info)' }}>
+                <span style={{ display: 'block', fontSize: '12px', color: 'var(--info-text)', fontWeight: 600, marginBottom: '6px' }}>
                   Kahn's Topological Waves ({dagAnalysis.waves.length} sequential Waves)
                 </span>
                 <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
                   {dagAnalysis.waves.map((wave, idx) => (
                     <span key={idx} style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
-                      <span className="mono" style={{ background: '#e0f2fe', padding: '3px 8px', borderRadius: '4px', fontWeight: 600, color: '#0369a1' }}>
+                      <span className="mono" style={{ background: 'var(--info-soft)', padding: '3px 8px', borderRadius: '4px', fontWeight: 600, color: 'var(--info-text)' }}>
                         Wave {idx + 1}: {wave.join(', ')}
                       </span>
-                      {idx < dagAnalysis.waves.length - 1 && <span style={{ color: '#0284c7' }}>➔</span>}
+                      {idx < dagAnalysis.waves.length - 1 && <span style={{ color: 'var(--info-text)' }}>➔</span>}
                     </span>
                   ))}
                 </div>

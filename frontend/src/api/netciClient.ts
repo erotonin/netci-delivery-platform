@@ -563,6 +563,11 @@ export type PortalDashboard = {
     systems: number
     modules: number
     pipelineRuns: number
+    /** Finished runs; the rates are over these two, never over queued or running ones. */
+    succeededRuns?: number
+    failedRuns?: number
+    inProgressRuns?: number
+    cancelledRuns?: number
     successRate: number
     failureRate: number
   }

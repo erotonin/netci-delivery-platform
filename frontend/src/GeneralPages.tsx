@@ -37,6 +37,10 @@ import { AsyncPanel, LoadFailure, Skeleton, useAsyncData } from './AsyncState'
 import { DoraCards, Modal, PageHeader, StatusPill, type Navigate } from './PortalShell'
 import type { DoraCardMetric, PortalServer, PortalSystemView } from './portalTypes'
 
+export function plural(n: number, noun: string): string {
+  return `${n} ${noun}${n === 1 ? '' : 's'}`
+}
+
 function serverFromApi(item: ServerInventoryItem): PortalServer {
   const environment: PortalServer['environment'] = item.environment === 'prod' ? 'Production' : item.environment === 'staging' ? 'Staging' : 'Dev'
   const status: PortalServer['status'] = item.status === 'maintenance' ? 'Maintenance' : item.status === 'offline' ? 'Offline' : item.status === 'online' ? 'Online' : 'Unknown'
@@ -56,26 +60,31 @@ export function DashboardPage({ navigate }: { navigate: Navigate }) {
 }
 
 function DashboardContent({ dashboard, navigate }: { dashboard: PortalDashboard; navigate: Navigate }) {
-  const successfulRuns = Math.max(0, Math.round(dashboard.kpis.pipelineRuns * dashboard.kpis.successRate / 100))
+  const k = dashboard.kpis
+  const succeeded = k.succeededRuns ?? 0
+  const failed = k.failedRuns ?? 0
+  const finished = succeeded + failed
   const kpis = [
-    { label: 'Total Systems', value: String(dashboard.kpis.systems), sub: `${dashboard.kpis.modules} modules`, icon: Layers3, tone: 'pink' },
-    { label: 'Pipeline Activity', value: String(dashboard.kpis.pipelineRuns), sub: 'Total pipeline runs', icon: Activity, tone: 'blue' },
-    { label: 'Success Rate', value: `${dashboard.kpis.successRate}%`, sub: `${successfulRuns} successful`, icon: CheckCircle2, tone: 'green' },
-    { label: 'Failure Rate', value: `${dashboard.kpis.failureRate}%`, sub: `${Math.max(dashboard.kpis.pipelineRuns - successfulRuns, 0)} failed`, icon: CircleAlert, tone: 'red' },
+    { label: 'Systems', value: String(k.systems), sub: plural(k.modules, 'module'), icon: Layers3, tone: 'pink' },
+    { label: 'Pipeline runs', value: String(k.pipelineRuns), sub: k.inProgressRuns ? `${k.inProgressRuns} in progress` : 'none in progress', icon: Activity, tone: 'blue' },
+    { label: 'Success rate', value: finished ? `${k.successRate}%` : '—', sub: finished ? `${succeeded} of ${plural(finished, 'finished run')}` : 'no finished runs yet', icon: CheckCircle2, tone: 'green' },
+    { label: 'Failure rate', value: finished ? `${k.failureRate}%` : '—', sub: `${plural(failed, 'failed run')}`, icon: CircleAlert, tone: 'red' },
   ]
-  const maximumActivity = Math.max(1, ...dashboard.pipelineActivity.map((item) => item.succeeded + item.failed))
+  // Rounded up to a multiple of 3 so the axis' thirds are distinct whole numbers (1, 1, 0, 0 before).
+  const busiest = Math.max(0, ...dashboard.pipelineActivity.map((item) => item.succeeded + item.failed))
+  const maximumActivity = Math.max(3, Math.ceil(busiest / 3) * 3)
   return <>
     <div className="kpi-grid">{kpis.map((item) => <article className="kpi-card" key={item.label}><span className={`kpi-icon tone-${item.tone}`}><item.icon size={19} /></span><div><p>{item.label}</p><strong>{item.value}</strong><small>{item.sub}</small></div></article>)}</div>
     <section className="panel chart-panel">
       <div className="panel-heading"><div><h2>Pipeline Activity · Last 7 Days</h2><p>Release activity across all systems</p></div><div className="chart-legend"><span><i className="legend-success" />Success</span><span><i className="legend-failed" />Failure</span></div></div>
-      <div className="bar-chart"><div className="chart-y"><span>{maximumActivity}</span><span>{Math.round(maximumActivity * 2 / 3)}</span><span>{Math.round(maximumActivity / 3)}</span><span>0</span></div><div className="chart-grid-lines"><i /><i /><i /><i /></div><div className="bar-groups">{dashboard.pipelineActivity.map((item) => <div className="bar-group" key={item.date}><div className="bar-stack"><i className="bar-success" style={{ height: `${item.succeeded / maximumActivity * 116}px` }} /><i className="bar-failed" style={{ height: `${item.failed / maximumActivity * 116}px` }} /></div><span>{new Intl.DateTimeFormat('en-US', { day: '2-digit', month: '2-digit', timeZone: 'UTC' }).format(new Date(`${item.date}T00:00:00Z`))}</span></div>)}</div></div>
+      <div className="bar-chart"><div className="chart-y"><span>{maximumActivity}</span><span>{maximumActivity * 2 / 3}</span><span>{maximumActivity / 3}</span><span>0</span></div><div className="chart-grid-lines"><i /><i /><i /><i /></div><div className="bar-groups">{dashboard.pipelineActivity.map((item) => <div className="bar-group" key={item.date}><div className="bar-stack"><i className="bar-success" style={{ height: `${item.succeeded / maximumActivity * 100}%` }} title={`${item.succeeded} succeeded`} /><i className="bar-failed" style={{ height: `${item.failed / maximumActivity * 100}%` }} title={`${item.failed} failed`} /></div><span>{new Intl.DateTimeFormat('en-US', { day: '2-digit', month: '2-digit', timeZone: 'UTC' }).format(new Date(`${item.date}T00:00:00Z`))}</span></div>)}</div></div>
     </section>
     <section className="panel activity-panel">
       <div className="panel-heading"><div><h2>Activity by System</h2><p>Pipeline activity by system and current health</p></div><button className="text-button" onClick={() => navigate('systems')}>View all <ArrowRight size={15} /></button></div>
       <div className="data-table dashboard-table"><div className="table-row table-head"><span>System</span><span>Activity</span><span>Success</span><span>Failure</span><span>Modules</span><span /></div>{dashboard.systems.map((system) => {
         const successRate = system.pipelineRuns ? Math.round((system.pipelineRuns - system.failedRuns) / system.pipelineRuns * 100) : 0
         const failureRate = system.pipelineRuns ? Math.round(system.failedRuns / system.pipelineRuns * 100) : 0
-        return <button className="table-row table-button" key={system.id} onClick={() => navigate('system', { systemId: system.id })}><span className="strong-cell"><i className={`system-health health-${system.status === 'healthy' ? 'green' : system.status === 'degraded' ? 'amber' : system.status === 'critical' ? 'red' : 'gray'}`} />{system.id}</span><span><Activity size={15} />{system.pipelineRuns ? `${system.pipelineRuns} runs` : 'No data yet'}</span><span className="progress-value"><i className="progress"><b className="success-fill" style={{ width: `${successRate}%` }} /></i>{system.pipelineRuns ? `${successRate}%` : '—'}</span><span className="progress-value"><i className="progress"><b className="failed-fill" style={{ width: `${failureRate}%` }} /></i>{system.pipelineRuns ? `${failureRate}%` : '—'}</span><span><Box size={15} />{system.moduleCount} modules</span><ChevronRight size={16} /></button>
+        return <button className="table-row table-button" key={system.id} onClick={() => navigate('system', { systemId: system.id })}><span className="strong-cell"><i className={`system-health health-${system.status === 'healthy' ? 'green' : system.status === 'degraded' ? 'amber' : system.status === 'critical' ? 'red' : 'gray'}`} />{system.id}</span><span><Activity size={15} />{system.pipelineRuns ? plural(system.pipelineRuns, 'run') : 'No runs yet'}</span><span className="progress-value"><i className="progress"><b className="success-fill" style={{ width: `${successRate}%` }} /></i>{system.pipelineRuns ? `${successRate}%` : '—'}</span><span className="progress-value"><i className="progress"><b className="failed-fill" style={{ width: `${failureRate}%` }} /></i>{system.pipelineRuns ? `${failureRate}%` : '—'}</span><span><Box size={15} />{plural(system.moduleCount, 'module')}</span><ChevronRight size={16} /></button>
       })}</div>
     </section>
   </>
@@ -191,7 +200,7 @@ export function SystemsPage({ navigate }: { navigate: Navigate }) {
     <PageHeader title="Systems" description="Manage registered systems in Release Portal." action={<button className="primary-button" onClick={() => { setFormError(''); setModal(true) }}><Plus size={16} />New System</button>} />
     <section className="panel table-panel">
       <div className="table-toolbar"><label className="input-with-icon"><Search size={16} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search systems…" /></label></div>
-      <div className="data-table systems-table"><div className="table-row table-head"><span>System</span><span>Unit</span><span>Description</span><span>Modules</span><span>Status</span><span /></div>{filtered.map((system) => <button className="table-row table-button" key={system.id} onClick={() => navigate('system', { systemId: system.id })}><span className="strong-cell"><i className={`system-health health-${system.status === 'healthy' ? 'green' : system.status === 'degraded' ? 'amber' : system.status === 'critical' ? 'red' : 'gray'}`} />{system.id}</span><span className="truncate">{system.unit}</span><span className="truncate">{system.description}</span><span><Box size={15} />{system.modules.length} modules</span><StatusPill status={system.status[0].toUpperCase() + system.status.slice(1)} /><ChevronRight size={16} /></button>)}</div>{!filtered.length && loadState === 'loading' && <Skeleton rows={4} />}
+      <div className="data-table systems-table"><div className="table-row table-head"><span>System</span><span>Unit</span><span>Description</span><span>Modules</span><span>Status</span><span /></div>{filtered.map((system) => <button className="table-row table-button" key={system.id} onClick={() => navigate('system', { systemId: system.id })}><span className="strong-cell"><i className={`system-health health-${system.status === 'healthy' ? 'green' : system.status === 'degraded' ? 'amber' : system.status === 'critical' ? 'red' : 'gray'}`} />{system.id}</span><span className="truncate">{system.unit}</span><span className="truncate">{system.description}</span><span><Box size={15} />{plural(system.modules.length, 'module')}</span><StatusPill status={system.status[0].toUpperCase() + system.status.slice(1)} /><ChevronRight size={16} /></button>)}</div>{!filtered.length && loadState === 'loading' && <Skeleton rows={4} />}
       {!filtered.length && loadState === 'error' && <LoadFailure error={loadError} onRetry={() => setAttempt((value) => value + 1)} />}
       {!filtered.length && loadState === 'ready' && <div className="empty-table"><Search size={22} /><strong>{query ? 'No systems found' : 'No systems yet'}</strong><span>{query ? 'Try another name, service code, or unit.' : 'Add your first system to get started.'}</span></div>}
     </section>
@@ -398,7 +407,7 @@ export function ServersPage() {
               <span className="strong-cell">
                 <Server size={16} />{server.id}
                 {agentMap[server.id] && (
-                  <span className="mono" style={{ fontSize: '10px', color: '#10b981', background: 'rgba(16, 185, 129, 0.1)', padding: '1px 5px', borderRadius: 4, marginLeft: 6, display: 'inline-flex', alignItems: 'center', gap: 2 }}>
+                  <span className="mono" style={{ fontSize: '12px', color: 'var(--success-text)', background: 'rgba(16, 185, 129, 0.1)', padding: '1px 5px', borderRadius: 4, marginLeft: 6, display: 'inline-flex', alignItems: 'center', gap: 2 }}>
                     <Zap size={10} /> Edge Agent
                   </span>
                 )}
@@ -410,8 +419,7 @@ export function ServersPage() {
               <span>
                 <button
                   type="button"
-                  className={isMaint ? 'secondary-button' : 'primary-button'}
-                  style={{ fontSize: '11px', padding: '3px 8px', height: '26px' }}
+                  className="secondary-button compact-button"
                   onClick={async () => {
                     try {
                       await toggleServerMaintenance(server.id, !isMaint, isMaint ? 'Exit maintenance' : 'Scheduled maintenance')
@@ -446,13 +454,13 @@ export function ServersPage() {
 
     {/* VEX Security Waivers Section */}
     <section className="panel table-panel" style={{ marginTop: '24px' }}>
-      <div className="panel-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '14px 20px', borderBottom: '1px solid var(--border-subtle, #e2e8f0)' }}>
+      <div className="panel-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '14px 20px', borderBottom: '1px solid var(--border-subtle, var(--border))' }}>
         <div>
           <h3 style={{ margin: 0, fontSize: '15px', display: 'flex', alignItems: 'center', gap: '8px' }}>
             <ShieldAlert size={18} color="#0284c7" />
             VEX Security Waivers
           </h3>
-          <p style={{ margin: '4px 0 0 0', fontSize: '12px', color: 'var(--text-muted, #64748b)' }}>
+          <p style={{ margin: '4px 0 0 0', fontSize: '12px', color: 'var(--text-muted, var(--text-2))' }}>
             Time-bound waivers for Critical CVEs with documented compensating controls or non-exploitable contexts.
           </p>
         </div>
@@ -471,7 +479,7 @@ export function ServersPage() {
         </div>
         {waivers.map((w) => (
           <div className="table-row" key={w.id}>
-            <span className="strong-cell mono" style={{ color: '#e11d48' }}>{w.cveId}</span>
+            <span className="strong-cell mono" style={{ color: 'var(--accent-text)' }}>{w.cveId}</span>
             <span>{w.moduleId || 'All Modules'}</span>
             <span>{w.reason}</span>
             <span>{w.approvedBy}</span>
@@ -481,7 +489,7 @@ export function ServersPage() {
                 <button
                   type="button"
                   className="secondary-button"
-                  style={{ fontSize: '11px', padding: '2px 8px', color: '#e11d48' }}
+                  style={{ fontSize: '12px', padding: '2px 8px', color: 'var(--accent-text)' }}
                   onClick={async () => {
                     try {
                       await revokeSecurityWaiver(w.id)
@@ -574,7 +582,7 @@ export function ServersPage() {
         </div>
 
         {/* Live Host Telemetry Panel */}
-        <div style={{ padding: '14px 16px', background: 'rgba(255, 255, 255, 0.03)', borderRadius: 8, border: '1px solid var(--border-subtle, #e2e8f0)' }}>
+        <div style={{ padding: '14px 16px', background: 'rgba(255, 255, 255, 0.03)', borderRadius: 8, border: '1px solid var(--border-subtle, var(--border))' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
             <h4 style={{ margin: 0, fontSize: 13, display: 'flex', alignItems: 'center', gap: 6 }}>
               <Activity size={16} color="#0284c7" />
@@ -582,7 +590,7 @@ export function ServersPage() {
             </h4>
             {selectedTelemetry && (
               <span style={{
-                fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 10,
+                fontSize: 12, fontWeight: 600, padding: '2px 8px', borderRadius: 10,
                 background: selectedTelemetry.status === 'critical' ? '#ffe4e6' : '#dcfce7',
                 color: selectedTelemetry.status === 'critical' ? '#e11d48' : '#16a34a',
               }}>
@@ -600,7 +608,7 @@ export function ServersPage() {
                   <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}><Cpu size={14} /> CPU Usage</span>
                   <strong className="mono">{selectedTelemetry.cpuPercent.toFixed(1)}%</strong>
                 </div>
-                <div style={{ height: 6, background: '#334155', borderRadius: 3, overflow: 'hidden' }}>
+                <div style={{ height: 6, background: 'var(--nav-surface)', borderRadius: 3, overflow: 'hidden' }}>
                   <div style={{ width: `${Math.min(selectedTelemetry.cpuPercent, 100)}%`, height: '100%', background: selectedTelemetry.cpuPercent > 95 ? '#e11d48' : '#0284c7', transition: 'width 0.3s ease' }} />
                 </div>
               </div>
@@ -610,8 +618,8 @@ export function ServersPage() {
                   <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}><Activity size={14} /> Memory Usage</span>
                   <strong className="mono">{selectedTelemetry.memPercent.toFixed(1)}%</strong>
                 </div>
-                <div style={{ height: 6, background: '#334155', borderRadius: 3, overflow: 'hidden' }}>
-                  <div style={{ width: `${Math.min(selectedTelemetry.memPercent, 100)}%`, height: '100%', background: '#3b82f6', transition: 'width 0.3s ease' }} />
+                <div style={{ height: 6, background: 'var(--nav-surface)', borderRadius: 3, overflow: 'hidden' }}>
+                  <div style={{ width: `${Math.min(selectedTelemetry.memPercent, 100)}%`, height: '100%', background: 'var(--info)', transition: 'width 0.3s ease' }} />
                 </div>
               </div>
 
@@ -622,11 +630,11 @@ export function ServersPage() {
                     {selectedTelemetry.diskPercent.toFixed(1)}%
                   </strong>
                 </div>
-                <div style={{ height: 6, background: '#334155', borderRadius: 3, overflow: 'hidden' }}>
+                <div style={{ height: 6, background: 'var(--nav-surface)', borderRadius: 3, overflow: 'hidden' }}>
                   <div style={{ width: `${Math.min(selectedTelemetry.diskPercent, 100)}%`, height: '100%', background: selectedTelemetry.diskPercent > 90 ? '#e11d48' : '#10b981', transition: 'width 0.3s ease' }} />
                 </div>
                 {selectedTelemetry.diskPercent > 90 && (
-                  <small style={{ color: '#e11d48', marginTop: 4, display: 'block' }}>
+                  <small style={{ color: 'var(--accent-text)', marginTop: 4, display: 'block' }}>
                     Warning: Disk usage above 90%, pre-flight gate will block automatic deployment.
                   </small>
                 )}
@@ -640,10 +648,10 @@ export function ServersPage() {
         {/* Outbound Runner Agent Panel */}
         <div style={{ marginTop: 14, padding: '14px 16px', background: 'rgba(16, 185, 129, 0.04)', borderRadius: 8, border: '1px solid rgba(16, 185, 129, 0.2)' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
-            <h4 style={{ margin: 0, fontSize: 13, display: 'flex', alignItems: 'center', gap: 6, color: '#10b981' }}>
+            <h4 style={{ margin: 0, fontSize: 13, display: 'flex', alignItems: 'center', gap: 6, color: 'var(--success-text)' }}>
               <Zap size={16} /> Outbound Edge Runner Agent
             </h4>
-            <span style={{ fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 10, background: agentMap[details.id] ? '#dcfce7' : 'rgba(255,255,255,0.08)', color: agentMap[details.id] ? '#16a34a' : 'var(--text-muted)' }}>
+            <span style={{ fontSize: 12, fontWeight: 600, padding: '2px 8px', borderRadius: 10, background: agentMap[details.id] ? '#dcfce7' : 'rgba(255,255,255,0.08)', color: agentMap[details.id] ? '#16a34a' : 'var(--text-muted)' }}>
               {agentMap[details.id] ? 'AGENT CONNECTED (WS)' : 'AGENT STANDBY / LOCAL'}
             </span>
           </div>
@@ -686,12 +694,12 @@ export function ServersPage() {
           </div>
 
           {agentOutput && (
-            <div id="agent-command-output" style={{ background: '#0f172a', padding: 10, borderRadius: 6, border: '1px solid #334155' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: '#94a3b8', marginBottom: 6 }}>
-                <span>Command: <code style={{ color: '#38bdf8' }}>{agentOutput.command}</code></span>
+            <div id="agent-command-output" style={{ background: 'var(--nav-surface)', padding: 10, borderRadius: 6, border: '1px solid var(--text)' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: 'var(--text-3)', marginBottom: 6 }}>
+                <span>Command: <code style={{ color: 'var(--info-text)' }}>{agentOutput.command}</code></span>
                 <span>Exit Code: <strong style={{ color: agentOutput.exitCode === 0 ? '#4ade80' : '#f87171' }}>{agentOutput.exitCode}</strong> ({agentOutput.durationMs}ms)</span>
               </div>
-              <pre style={{ margin: 0, fontSize: 11, fontFamily: 'monospace', color: '#f1f5f9', whiteSpace: 'pre-wrap', maxHeight: 150, overflowY: 'auto' }}>
+              <pre style={{ margin: 0, fontSize: 12, fontFamily: 'monospace', color: 'var(--nav-text)', whiteSpace: 'pre-wrap', maxHeight: 150, overflowY: 'auto' }}>
                 {agentOutput.stdout || agentOutput.stderr || '(No output)'}
               </pre>
             </div>
@@ -758,7 +766,7 @@ export function SystemPage({ systemId, navigate }: { systemId: string; navigate:
     <div className="system-heading"><div><div className="title-status"><h1>{system.id}</h1><StatusPill status={system.status[0].toUpperCase() + system.status.slice(1)} /></div><p>{system.description}</p><small>Unit: {system.unit} · Created by: <span title={system.owner}>{/^[0-9a-f]{8}-[0-9a-f]{4}-/.test(system.owner) ? `${system.owner.slice(0, 8)}…` : system.owner}</span></small></div><div className="heading-actions"><button className="danger-button" onClick={() => setDeleteModal(true)}><Trash2 size={16} />Delete System</button><button className="primary-button" onClick={() => navigate('new-module', { systemId })}><Plus size={16} />New Module</button></div></div>
     <div className="dora-section-label">DORA METRICS · LAST 30 DAYS</div>
     <DoraCards metrics={doraMetrics} />
-    <section className="modules-section"><div className="section-heading"><h2>{system.modules.length} modules</h2><span>Live API projection</span></div><div className="module-grid">{system.modules.map((module) => <article className="module-card" key={module.id}><div className="module-card-top"><span className={`module-icon ${module.type === 'Frontend' ? 'blue' : 'purple'}`}><Box size={19} /></span><div><h3>{module.name}</h3><p>{module.description}</p></div><em className={`type-badge ${module.type === 'Frontend' ? 'blue' : 'purple'}`}>{module.type}</em></div><label>Versions</label><div className="version-chips">{module.versions.length ? module.versions.map((version) => <span key={version}>{version}</span>) : <span>None</span>}</div><label>Environments</label><div className="environment-grid">{module.environments.map((environment) => <div key={environment.name}><span>{environment.name === 'prod' ? 'Production' : environment.name === 'staging' ? 'Staging' : 'Dev'}</span><StatusPill status={environment.status.replace('_', ' ')} /></div>)}</div><button className="module-view-button" onClick={() => navigate('module', { systemId, moduleId: module.id })}>View Module <ArrowRight size={15} /></button></article>)}{!system.modules.length && <div className="empty-module-state"><Box size={27} /><strong>No modules yet</strong><span>Add a DCIM module to configure its delivery lifecycle.</span><button className="primary-button" onClick={() => navigate('new-module', { systemId })}><Plus size={15} />Add module</button></div>}</div></section>
+    <section className="modules-section"><div className="section-heading"><h2>{plural(system.modules.length, 'module')}</h2><span>Live API projection</span></div><div className="module-grid">{system.modules.map((module) => <article className="module-card" key={module.id}><div className="module-card-top"><span className={`module-icon ${module.type === 'Frontend' ? 'blue' : 'purple'}`}><Box size={19} /></span><div><h3>{module.name}</h3><p>{module.description}</p></div><em className={`type-badge ${module.type === 'Frontend' ? 'blue' : 'purple'}`}>{module.type}</em></div><label>Versions</label><div className="version-chips">{module.versions.length ? module.versions.map((version) => <span key={version}>{version}</span>) : <span>None</span>}</div><label>Environments</label><div className="environment-grid">{module.environments.map((environment) => <div key={environment.name}><span>{environment.name === 'prod' ? 'Production' : environment.name === 'staging' ? 'Staging' : 'Dev'}</span><StatusPill status={environment.status.replace('_', ' ')} /></div>)}</div><button className="module-view-button" onClick={() => navigate('module', { systemId, moduleId: module.id })}>View Module <ArrowRight size={15} /></button></article>)}{!system.modules.length && <div className="empty-module-state"><Box size={27} /><strong>No modules yet</strong><span>Add a DCIM module to configure its delivery lifecycle.</span><button className="primary-button" onClick={() => navigate('new-module', { systemId })}><Plus size={15} />Add module</button></div>}</div></section>
     {deleteModal && <Modal title="Delete System" description={`Are you sure you want to delete system "${system.id}"?`} onClose={() => setDeleteModal(false)} footer={<><button className="secondary-button" onClick={() => setDeleteModal(false)}>Cancel</button><button className="danger-button" disabled={deleting} onClick={handleDeleteSystem}>{deleting ? 'Deleting…' : 'Confirm Delete'}</button></>}><div className="inline-error" role="status">Warning: This action will delete system {system.id} and detach all associated modules from the Release Portal.</div></Modal>}
   </>
 }

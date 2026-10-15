@@ -66,9 +66,9 @@ export function ToolchainPage() {
               role="alert"
               data-testid="trivy-stale-warning"
               style={{
-                background: '#fff1f3',
-                border: '1px solid #f2b5bd',
-                color: '#a9293a',
+                background: 'var(--danger-soft)',
+                border: '1px solid var(--danger-border)',
+                color: 'var(--danger-text)',
                 padding: '12px 16px',
                 borderRadius: '8px',
                 marginBottom: '20px',
@@ -90,9 +90,9 @@ export function ToolchainPage() {
             <div
               data-testid="trivy-fresh-status"
               style={{
-                background: '#f0fdf4',
-                border: '1px solid #bbf7d0',
-                color: '#166534',
+                background: 'var(--success-soft)',
+                border: '1px solid var(--success-border)',
+                color: 'var(--success-text)',
                 padding: '10px 16px',
                 borderRadius: '8px',
                 marginBottom: '20px',
@@ -172,9 +172,9 @@ export function ToolchainPage() {
             <div
               data-testid="no-drift-banner"
               style={{
-                background: '#f0fdf4',
-                border: '1px solid #bbf7d0',
-                color: '#166534',
+                background: 'var(--success-soft)',
+                border: '1px solid var(--success-border)',
+                color: 'var(--success-text)',
                 padding: '10px 16px',
                 borderRadius: '8px',
                 marginBottom: '24px',
@@ -230,7 +230,7 @@ export function ToolchainPage() {
                     <td style={{ padding: '10px 14px' }}>
                       <code>{tool.version}</code>
                     </td>
-                    <td style={{ padding: '10px 14px', fontFamily: 'monospace', fontSize: '11px' }}>
+                    <td style={{ padding: '10px 14px', fontFamily: 'monospace', fontSize: '12px' }}>
                       {tool.sha256 ? `${tool.sha256.slice(0, 16)}...` : tool.package ? `apt: ${tool.package}` : '—'}
                     </td>
                     <td style={{ padding: '10px 14px', fontSize: '12px', color: 'var(--muted)' }}>

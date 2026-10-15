@@ -1,0 +1,138 @@
+/* netCI's design tokens. Every colour the Portal paints comes from here, so the light and the dark
+   theme are one switch (`data-theme` on <html>, see theme.ts) and a component never picks a hex
+   value of its own -- the 233 the stylesheets used to hold made a dark theme impossible.
+
+   Contrast: every text token meets WCAG AA (4.5:1) on --surface and --canvas in both themes; the
+   browser suite's axe scan checks it. Status colours come in three strengths: the fill/border
+   (`--success`), text that sits on the soft tint (`--success-text`), and the tint (`--success-soft`). */
+
+:root {
+  color-scheme: light;
+  --font-sans: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-mono: ui-monospace, "SFMono-Regular", "JetBrains Mono", Menlo, Consolas, monospace;
+
+  --canvas: #f5f6f8;
+  --surface: #ffffff;
+  --surface-2: #f9fafb;
+  --surface-3: #f2f4f7;
+  --surface-raised: #ffffff;
+  --border: #e4e7ec;
+  --border-strong: #d0d5dd;
+  --text: #101828;
+  --text-2: #475467;
+  --text-3: #5d6679;
+  --muted: var(--text-2);
+  --subtle: var(--text-3);
+
+  --accent: #e11d48;
+  --accent-hover: #be123c;
+  --accent-text: #be123c;
+  --accent-soft: #fff1f3;
+  --accent-border: #fecdd6;
+  --on-accent: #ffffff;
+  --ring: rgba(225, 29, 72, .28);
+
+  --success: #12b76a;
+  --success-text: #067647;
+  --success-soft: #ecfdf3;
+  --success-border: #abefc6;
+  --warning: #f79009;
+  --warning-text: #b54708;
+  --warning-soft: #fffaeb;
+  --warning-border: #fedf89;
+  --danger: #f04438;
+  --danger-text: #b42318;
+  --danger-soft: #fef3f2;
+  --danger-border: #fecdca;
+  --info: #2e90fa;
+  --info-text: #175cd3;
+  --info-soft: #eff8ff;
+  --info-border: #b2ddff;
+  --violet: #7a5af8;
+  --violet-text: #5925dc;
+  --violet-soft: #f4f3ff;
+  --violet-border: #d9d6fe;
+  --neutral-text: #475467;
+  --neutral-soft: #f2f4f7;
+
+  /* Kept for the components that still name them. */
+  --green: var(--success);
+  --amber: var(--warning);
+  --red: var(--danger);
+  --blue: var(--info);
+  --purple: var(--violet);
+
+  --nav-bg: #0c111d;
+  --nav-surface: #161b26;
+  --nav-border: #1f2531;
+  --nav-text: #cecfd2;
+  --nav-text-2: #94969c;
+  --nav-hover: rgba(255, 255, 255, .06);
+  --nav-active: rgba(255, 255, 255, .1);
+
+  --shadow-xs: 0 1px 2px rgba(16, 24, 40, .05);
+  --shadow-sm: 0 1px 3px rgba(16, 24, 40, .08), 0 1px 2px rgba(16, 24, 40, .04);
+  --shadow-md: 0 8px 20px -4px rgba(16, 24, 40, .08), 0 3px 6px -2px rgba(16, 24, 40, .03);
+  --shadow-lg: 0 20px 40px -8px rgba(16, 24, 40, .16), 0 6px 12px -4px rgba(16, 24, 40, .05);
+  --scrim: rgba(12, 17, 29, .55);
+
+  --radius-sm: 6px;
+  --radius: 8px;
+  --radius-lg: 12px;
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --canvas: #0c111d;
+  --surface: #131826;
+  --surface-2: #181e2c;
+  --surface-3: #1f2636;
+  --surface-raised: #1a2030;
+  --border: #262d3d;
+  --border-strong: #343c4f;
+  --text: #f5f5f6;
+  --text-2: #c4c7cd;
+  --text-3: #9a9fa8;
+
+  /* The light theme's accent: white text on the brighter rose is 3.7:1, short of AA. */
+  --accent: #e11d48;
+  --accent-hover: #f43f5e;
+  --accent-text: #fda4af;
+  --accent-soft: rgba(244, 63, 94, .14);
+  --accent-border: rgba(244, 63, 94, .38);
+  --on-accent: #ffffff;
+  --ring: rgba(251, 113, 133, .4);
+
+  --success: #32d583;
+  --success-text: #75e0a7;
+  --success-soft: rgba(50, 213, 131, .12);
+  --success-border: rgba(50, 213, 131, .32);
+  --warning: #fdb022;
+  --warning-text: #fec84b;
+  --warning-soft: rgba(253, 176, 34, .12);
+  --warning-border: rgba(253, 176, 34, .32);
+  --danger: #f97066;
+  --danger-text: #fda29b;
+  --danger-soft: rgba(249, 112, 102, .12);
+  --danger-border: rgba(249, 112, 102, .34);
+  --info: #53b1fd;
+  --info-text: #84caff;
+  --info-soft: rgba(83, 177, 253, .12);
+  --info-border: rgba(83, 177, 253, .32);
+  --violet: #9b8afb;
+  --violet-text: #bdb4fe;
+  --violet-soft: rgba(155, 138, 251, .13);
+  --violet-border: rgba(155, 138, 251, .34);
+  --neutral-text: #c4c7cd;
+  --neutral-soft: #1f2636;
+
+  --nav-bg: #090d17;
+  --nav-surface: #111624;
+  --nav-border: #1a2030;
+
+  --shadow-xs: 0 1px 2px rgba(0, 0, 0, .3);
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, .4);
+  --shadow-md: 0 8px 20px -4px rgba(0, 0, 0, .45);
+  --shadow-lg: 0 20px 40px -8px rgba(0, 0, 0, .6);
+  --scrim: rgba(0, 0, 0, .65);
+}

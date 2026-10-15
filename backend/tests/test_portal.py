@@ -81,6 +81,25 @@ def test_portal_dashboard_has_reference_systems_and_four_dora_metrics():
     ]
 
 
+def test_a_run_without_an_outcome_is_not_counted_as_a_success_or_as_degraded_health():
+    # One queued run used to read "100% success, 1 successful" and turned its system
+    # "degraded" -- before anything had been built or deployed.
+    started = client.post('/modules/hello-container/pipeline-runs', headers={'Idempotency-Key': 'kpi-1'},
+                          json={'commitSha': '0123456789abcdef0123456789abcdef01234567', 'environment': 'dev'})
+    assert started.status_code == 202
+
+    kpis = client.get('/portal/dashboard').json()['kpis']
+    assert kpis['pipelineRuns'] == 1
+    assert (kpis['succeededRuns'], kpis['failedRuns'], kpis['inProgressRuns']) == (0, 0, 1)
+    assert (kpis['successRate'], kpis['failureRate']) == (0, 0)
+    assert client.get('/systems/hello-container').json()['status'] == 'unknown'
+
+    cancelled = client.post(f"/pipeline-runs/{started.json()['id']}/cancel", json={'reason': 'kpi test'})
+    assert cancelled.status_code == 200, cancelled.text
+    kpis = client.get('/portal/dashboard').json()['kpis']
+    assert (kpis['cancelledRuns'], kpis['inProgressRuns'], kpis['successRate']) == (1, 0, 0)
+
+
 def test_portal_system_detail_and_module_overview_are_hierarchical():
     system = client.get('/systems/hello-container')
     assert system.status_code == 200

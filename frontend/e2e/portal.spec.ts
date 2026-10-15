@@ -30,13 +30,13 @@ test('the shell loads from the API rather than from invented defaults', async ({
 
   // The KPI numbers come from the API. Before this suite existed the page seeded itself
   // with plausible fixtures while loading, so a broken API looked like a healthy platform.
-  await expect(page.getByText(/Total Systems/i)).toBeVisible()
+  await expect(page.getByText(/^Pipeline runs$/i)).toBeVisible()
 })
 
 test('navigating to systems and back keeps the URL and the view in step', async ({ page }) => {
   await signIn(page)
 
-  await page.getByRole('button', { name: /^Systems & Pipelines$/i }).click()
+  await page.getByRole('button', { name: /^Systems$/i }).click()
   await expect(page).toHaveURL(/#\/systems$/)
 
   await page.getByRole('button', { name: /^Servers$/i }).click()
@@ -93,7 +93,7 @@ test('the retry actually re-requests, and recovers', async ({ page }) => {
   await page.goto('/')
   await page.getByRole('alert').first().getByRole('button', { name: /Retry/i }).click()
 
-  await expect(page.getByText(/Total Systems/i)).toBeVisible()
+  await expect(page.getByText(/^Pipeline runs$/i)).toBeVisible()
   expect(attempts).toBeGreaterThan(1)
 })
 

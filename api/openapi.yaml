@@ -459,7 +459,12 @@ paths:
           description: Dashboard read model
           content:
             application/json:
-              schema: { type: object, additionalProperties: true }
+              schema:
+                type: object
+                additionalProperties: true
+                required: [kpis]
+                properties:
+                  kpis: { $ref: '#/components/schemas/PortalDashboardKpis' }
   /dcim/services:
     get:
       operationId: searchDcimServices
@@ -4380,6 +4385,22 @@ components:
         name: { type: string }
         runtime: { $ref: '#/components/schemas/Runtime' }
         stageIds: { type: array, items: { type: string } }
+    PortalDashboardKpis:
+      type: object
+      description: >-
+        Rates are over finished runs only (succeeded + failed): a queued, running or cancelled
+        run has no outcome yet and is counted in inProgressRuns / cancelledRuns, never as a success.
+      required: [systems, modules, pipelineRuns, succeededRuns, failedRuns, inProgressRuns, successRate, failureRate]
+      properties:
+        systems: { type: integer }
+        modules: { type: integer }
+        pipelineRuns: { type: integer, description: Every run, whatever its state }
+        succeededRuns: { type: integer }
+        failedRuns: { type: integer }
+        inProgressRuns: { type: integer, description: 'queued, running or waiting for approval' }
+        cancelledRuns: { type: integer }
+        successRate: { type: number, description: 'succeededRuns / (succeededRuns + failedRuns) * 100; 0 when none finished' }
+        failureRate: { type: number }
     PipelineRunCreate:
       type: object
       additionalProperties: false

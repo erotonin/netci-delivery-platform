@@ -48,7 +48,7 @@ test.describe.serial('Demo Kahn Algorithm Multi-Module CI/CD & Streamlined UX', 
     await page.waitForLoadState('networkidle')
 
     // Verify streamlined sidebar items
-    await expect(page.locator('button:has-text("Systems & Pipelines")')).toBeVisible()
+    await expect(page.locator('nav button:has-text("Systems")')).toBeVisible()
     await expect(page.locator('button:has-text("Production Requests")')).toBeVisible()
     // Verify removed items are NOT present
     await expect(page.locator('button:has-text("CI Cost")')).toHaveCount(0)

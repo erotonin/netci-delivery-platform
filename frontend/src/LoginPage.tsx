@@ -1,6 +1,7 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { KeyRound, Loader2, LogIn, ShieldAlert, ShieldCheck, UserCheck, UserCog } from 'lucide-react'
 import { NetciApiError, whoami, type Identity } from './api/netciClient'
+import { BrandMark } from './PortalShell'
 import { beginOidcLogin, completeOidcLogin, fetchAuthConfig, isOidcCallback, type OidcBrowserConfig } from './auth/oidc'
 
 /** The signed-in user, as the *server* described them. The browser never decides this. */
@@ -141,18 +142,18 @@ export function LoginPage({ onLogin }: { onLogin: (session: AuthSession) => void
 
   return <main className="login-page">
     <section className="login-story" aria-labelledby="login-story-title">
-      <div className="login-brand"><span style={{ backgroundColor: '#ee0033', color: '#fff', fontSize: '13px', fontWeight: 900 }}>netci</span><strong>netCI Delivery Platform</strong></div>
+      <div className="login-brand"><BrandMark size={36} /><strong>netCI</strong></div>
       <div className="login-story-copy">
-        <span className="login-eyebrow"><ShieldCheck size={16} />netCI Platform · Continuous Delivery</span>
-        <h1 id="login-story-title">Track every release, from commit to production.</h1>
-        <p>Single Sign-On (SSO) to manage pipelines, versions, and release requests across all systems.</p>
+        <span className="login-eyebrow"><ShieldCheck size={15} />Internal Developer Platform</span>
+        <h1 id="login-story-title">Every release, <em>from commit to production.</em></h1>
+        <p>Build once, sign and scan the artifact, then promote that same digest through dev, staging and production -- with the evidence and approvals each step needs.</p>
       </div>
-      <small>netCI Platform · Continuous Delivery</small>
+      <small>netCI · build, verify, promote</small>
     </section>
     <section className="login-panel">
       <div className="login-card">
-        <div className="login-mark" style={{ backgroundColor: '#ee0033', color: '#fff', fontSize: '13px', fontWeight: 900, textTransform: 'lowercase' }}>netci</div>
-        <h2>Sign in to your account</h2>
+        <div className="login-mark"><BrandMark size={40} /></div>
+        <h2>Sign in to netCI</h2>
 
         {authMode === null && <p className="login-checking" role="status"><Loader2 size={16} className="spin" />Checking authentication configuration…</p>}
 
@@ -181,8 +182,8 @@ export function LoginPage({ onLogin }: { onLogin: (session: AuthSession) => void
                 onClick={() => loginWithPersona('admin')}
                 disabled={busy}
                 style={{
-                  background: 'linear-gradient(135deg, #1e3a8a, #3b82f6)',
-                  borderColor: '#60a5fa',
+                  background: 'linear-gradient(135deg, var(--info), var(--info))',
+                  borderColor: 'var(--info)',
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'flex-start',
@@ -191,7 +192,7 @@ export function LoginPage({ onLogin }: { onLogin: (session: AuthSession) => void
                   textAlign: 'left'
                 }}
               >
-                <UserCog size={24} style={{ color: '#93c5fd' }} />
+                <UserCog size={24} style={{ color: 'var(--info-text)' }} />
                 <div>
                   <div style={{ fontWeight: 600, fontSize: '0.95rem' }}>1. Persona: admin / admin</div>
                   <div style={{ fontSize: '0.8rem', opacity: 0.85 }}>Alexander Admin (Platform Lead & Reviewer - Approves Releases)</div>
@@ -204,8 +205,8 @@ export function LoginPage({ onLogin }: { onLogin: (session: AuthSession) => void
                 onClick={() => loginWithPersona('dev')}
                 disabled={busy}
                 style={{
-                  background: 'linear-gradient(135deg, #064e3b, #10b981)',
-                  borderColor: '#34d399',
+                  background: 'linear-gradient(135deg, var(--success), var(--success))',
+                  borderColor: 'var(--success)',
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'flex-start',
@@ -214,7 +215,7 @@ export function LoginPage({ onLogin }: { onLogin: (session: AuthSession) => void
                   textAlign: 'left'
                 }}
               >
-                <UserCheck size={24} style={{ color: '#a7f3d0' }} />
+                <UserCheck size={24} style={{ color: 'var(--success-text)' }} />
                 <div>
                   <div style={{ fontWeight: 600, fontSize: '0.95rem' }}>2. Persona: dev / dev</div>
                   <div style={{ fontSize: '0.8rem', opacity: 0.85 }}>David Developer (Creates Modules, CI Builds, Submits Releases)</div>
@@ -224,7 +225,7 @@ export function LoginPage({ onLogin }: { onLogin: (session: AuthSession) => void
 
             <div style={{ position: 'relative', textAlign: 'center', margin: '16px 0' }}>
               <hr style={{ borderColor: 'rgba(255,255,255,0.1)' }} />
-              <span style={{ position: 'absolute', top: '-10px', left: '50%', transform: 'translateX(-50%)', background: '#1e293b', padding: '0 8px', fontSize: '0.75rem', color: '#94a3b8' }}>OR MANUAL SIGN IN</span>
+              <span style={{ position: 'absolute', top: '-10px', left: '50%', transform: 'translateX(-50%)', background: 'var(--nav-surface)', padding: '0 8px', fontSize: '0.75rem', color: 'var(--text-3)' }}>OR MANUAL SIGN IN</span>
             </div>
 
             <form className="login-form" onSubmit={handleCredentialsSubmit} noValidate>
@@ -255,7 +256,7 @@ export function LoginPage({ onLogin }: { onLogin: (session: AuthSession) => void
 
               {error && <div className="login-error" role="alert">{error}</div>}
 
-              <button className="login-primary" type="submit" disabled={busy} style={{ backgroundColor: '#ee0033', borderColor: '#ee0033' }}>
+              <button className="login-primary" type="submit" disabled={busy} style={{ backgroundColor: 'var(--accent)', borderColor: 'var(--accent)' }}>
                 {busy ? <Loader2 size={18} className="spin" /> : <LogIn size={18} />}
                 {busy ? 'Authenticating…' : 'Sign In'}
               </button>
@@ -265,7 +266,7 @@ export function LoginPage({ onLogin }: { onLogin: (session: AuthSession) => void
 
         {authMode === 'oidc' && oidc && !oidc.error && (
           <div className="login-sso">
-            <button className="login-primary" type="button" onClick={signInWithProvider} disabled={busy} data-testid="sso-login" style={{ backgroundColor: '#ee0033', borderColor: '#ee0033', fontWeight: 700 }}>
+            <button className="login-primary" type="button" onClick={signInWithProvider} disabled={busy} data-testid="sso-login" style={{ backgroundColor: 'var(--accent)', borderColor: 'var(--accent)', fontWeight: 700 }}>
               {busy ? <Loader2 size={18} className="spin" /> : <LogIn size={18} />}
               {busy ? 'Authenticating…' : 'Sign in with SSO (Keycloak)'}
             </button>

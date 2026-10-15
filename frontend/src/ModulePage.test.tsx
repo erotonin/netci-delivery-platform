@@ -42,10 +42,10 @@ describe('ModulePage pipeline contract', () => {
     render(<PortalFeedbackProvider><ModulePage moduleId="notification-worker" onSettings={vi.fn()} /></PortalFeedbackProvider>)
 
     await screen.findByRole('heading', { name: 'Notification Worker' })
-    await user.click(screen.getByRole('tab', { name: 'Pipeline' }))
+    await user.click(screen.getByRole('tab', { name: 'Builds' }))
 
-    // One card per configured environment, carrying the branch the wizard configured for it.
-    expect(await screen.findByText(/(?:nhánh|branch) release\/\*/)).toBeTruthy()
+    // The branch the wizard configured is the one a build starts from.
+    expect(await screen.findByText('release/*')).toBeTruthy()
   })
 
 
@@ -61,7 +61,7 @@ describe('ModulePage pipeline contract', () => {
 
     render(<PortalFeedbackProvider><ModulePage moduleId="notification-worker" onSettings={vi.fn()} /></PortalFeedbackProvider>)
     await screen.findByRole('heading', { name: 'Notification Worker' })
-    await user.click(screen.getByRole('tab', { name: 'DORA Metrics' }))
+    await user.click(screen.getByRole('tab', { name: 'Metrics' }))
 
     expect(await screen.findByText(/projected from 6 delivery events/)).toBeTruthy()
   })
@@ -78,7 +78,7 @@ describe('ModulePage pipeline contract', () => {
 
     render(<PortalFeedbackProvider><ModulePage moduleId="notification-worker" onSettings={vi.fn()} /></PortalFeedbackProvider>)
     await screen.findByRole('heading', { name: 'Notification Worker' })
-    await user.click(screen.getByRole('tab', { name: 'DORA Metrics' }))
+    await user.click(screen.getByRole('tab', { name: 'Metrics' }))
 
     expect(await screen.findByText(/no delivery events recorded yet/)).toBeTruthy()
   })
@@ -88,13 +88,24 @@ describe('ModulePage pipeline contract', () => {
     const user = userEvent.setup()
     render(<PortalFeedbackProvider><ModulePage moduleId="notification-worker" onSettings={vi.fn()} /></PortalFeedbackProvider>)
     await screen.findByRole('heading', { name: 'Notification Worker' })
-    await user.click(screen.getByRole('tab', { name: 'Pipeline' }))
-    await user.click((await screen.findAllByRole('button', { name: /^Run / }))[0])
+    await user.click(screen.getByRole('tab', { name: 'Builds' }))
+    await user.click(await screen.findByRole('button', { name: 'Run build' }))
 
     const picker = await screen.findByTestId('run-commit-picker')
     expect(within(picker).getByText(/feat: batch notifications/)).toBeTruthy()
     await user.selectOptions(picker, 'c'.repeat(40))
     expect((screen.getByPlaceholderText('7–64 hex characters') as HTMLInputElement).value).toBe('c'.repeat(40))
+  })
+
+  it('never offers to deploy a build to production: with only production configured, a build is build-only', async () => {
+    const user = userEvent.setup()
+    render(<PortalFeedbackProvider><ModulePage moduleId="notification-worker" onSettings={vi.fn()} /></PortalFeedbackProvider>)
+    await screen.findByRole('heading', { name: 'Notification Worker' })
+    await user.click(screen.getByRole('tab', { name: 'Builds' }))
+    await user.click(await screen.findByRole('button', { name: 'Run build' }))
+    expect((screen.getByTestId('run-build-only') as HTMLInputElement).checked).toBe(true)
+    expect(screen.queryByText(/Deploy to Production/)).toBeNull()
+    expect(screen.getByText(/released by a production request, never by a build/)).toBeTruthy()
   })
 
   it('says drift was not verified when nothing could be compared, instead of "In Sync"', async () => {

@@ -101,10 +101,10 @@ function RegisterStageForm({ onRegistered, onCancel }: { onRegistered: (stage: S
 
 function StageStatus({ stage }: { stage: StageDefinition }) {
   if (stage.kind !== 'custom') return null
-  if (stage.status === 'active') return <em className="type-badge" style={{ background: '#eaf7ef', color: '#23804a' }}>approved{stage.approvedBy ? ` by ${stage.approvedBy}` : ''}</em>
-  if (stage.status === 'proposed') return <em className="type-badge" style={{ background: '#fff6e5', color: '#9a5b00', display: 'inline-flex', alignItems: 'center', gap: 4 }}><Hourglass size={11} aria-hidden="true" />Pending approval — not yet usable</em>
+  if (stage.status === 'active') return <em className="type-badge" style={{ background: 'var(--success-soft)', color: 'var(--success-text)' }}>approved{stage.approvedBy ? ` by ${stage.approvedBy}` : ''}</em>
+  if (stage.status === 'proposed') return <em className="type-badge" style={{ background: 'var(--warning-soft)', color: 'var(--warning-text)', display: 'inline-flex', alignItems: 'center', gap: 4 }}><Hourglass size={11} aria-hidden="true" />Pending approval — not yet usable</em>
   // `rejected`, or anything the API adds later: say what it is and that it does not run.
-  return <em className="type-badge" style={{ background: '#fff4f5', color: '#b83240' }}>{stage.status ?? 'unknown state'} — not usable</em>
+  return <em className="type-badge" style={{ background: 'var(--danger-soft)', color: 'var(--danger-text)' }}>{stage.status ?? 'unknown state'} — not usable</em>
 }
 
 function StageRow({ stage, anchorName, admin, subject, separationOfDuties, onChanged }: {

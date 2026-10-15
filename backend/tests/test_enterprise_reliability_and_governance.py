@@ -530,6 +530,13 @@ def test_sod_admin_and_service_account_restrictions(client: TestClient):
     """Verify that Separation of Duties is strictly enforced across boundaries:
     neither Admin users nor Service Accounts can approve their own production release requests."""
     main.portal.reset()
+    # The version a request names must be registered: the test says so rather than leaning on
+    # whatever the demo seed happens to write.
+    from app.store import VersionRow
+    with main.portal.database.transaction() as tx:
+        if tx.portal_version("hello-container", "v1.0.0") is None:
+            tx.insert_portal_version(VersionRow(module_id="hello-container", version="v1.0.0",
+                                                metadata={"artifactDigest": "sha256:" + "1" * 64, "createdBy": "alice"}))
 
     # 1. Domain-level check: create production request
     req = main.portal.create_production_request(

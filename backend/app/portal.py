@@ -1440,9 +1440,11 @@ class PortalService:
             module.id: self._module_runs(transaction, module) for module in modules
         }
         runs = sum(len(found) for found in module_runs.values())
-        failed = sum(
-            1 for found in module_runs.values() for run in found if run.status.value == "failed"
-        )
+        by_status: dict[str, int] = {}
+        for found in module_runs.values():
+            for run in found:
+                by_status[run.status.value] = by_status.get(run.status.value, 0) + 1
+        failed = by_status.get("failed", 0)
         latest_deployments = {}
         for module in modules:
             if not module.application_id:
@@ -1452,26 +1454,16 @@ class PortalService:
             ):
                 latest_deployments[(module.application_id, deployment.environment)] = deployment
         deployment_states = [deployment.status.value for deployment in latest_deployments.values()]
-        latest_runs = [found[-1] for found in module_runs.values() if found]
         if any(state == "failed" for state in deployment_states):
             system_status = "critical"
         elif any(state in {"deploying", "pending_approval"} for state in deployment_states):
             system_status = "degraded"
         elif any(state in {"healthy", "rolled_back"} for state in deployment_states):
             system_status = "healthy"
-        elif latest_runs:
-            # A queued/running/failed CI run is delivery activity, not runtime-health
-            # evidence. It may make the delivery surface degraded, but a successful build
-            # on its own can never turn a system green.
-            system_status = (
-                "degraded"
-                if any(
-                    run.status.value in {"queued", "running", "waiting_approval", "failed"}
-                    for run in latest_runs
-                )
-                else "unknown"
-            )
         else:
+            # Health is what runs, and nothing does: a build -- queued, running, failed or
+            # green -- says nothing about a service's runtime. It used to: a system whose only
+            # event was a queued build showed "degraded" before anything had been deployed.
             system_status = "unknown"
         return {
             "id": item.id,
@@ -1482,6 +1474,9 @@ class PortalService:
             "moduleCount": len(modules),
             "pipelineRuns": runs,
             "failedRuns": failed,
+            "succeededRuns": by_status.get("succeeded", 0),
+            "inProgressRuns": sum(by_status.get(s, 0) for s in ("queued", "running", "waiting_approval")),
+            "cancelledRuns": by_status.get("cancelled", 0),
             "modules": [self._module(transaction, module.id) for module in modules],
         }
 
@@ -1658,16 +1653,24 @@ class PortalService:
                 visible = self._system(transaction, item.id, application_ids)
                 if application_ids is None or not module_ids or visible["modules"]:
                     systems.append(visible)
-            total_runs = sum(int(item["pipelineRuns"]) for item in systems)
-            failed_runs = sum(int(item["failedRuns"]) for item in systems)
-            successful_runs = max(total_runs - failed_runs, 0)
+            def total(key: str) -> int:
+                return sum(int(item[key]) for item in systems)
+
+            failed_runs, succeeded_runs = total("failedRuns"), total("succeededRuns")
+            # Over finished runs only: total - failed counted every queued, running and
+            # cancelled run as a success (one queued run made the dashboard say 100%).
+            finished = failed_runs + succeeded_runs
             return {
                 "kpis": {
                     "systems": len(systems),
-                    "modules": sum(int(item["moduleCount"]) for item in systems),
-                    "pipelineRuns": total_runs,
-                    "successRate": round(successful_runs / total_runs * 100, 1) if total_runs else 0,
-                    "failureRate": round(failed_runs / total_runs * 100, 1) if total_runs else 0,
+                    "modules": total("moduleCount"),
+                    "pipelineRuns": total("pipelineRuns"),
+                    "succeededRuns": succeeded_runs,
+                    "failedRuns": failed_runs,
+                    "inProgressRuns": total("inProgressRuns"),
+                    "cancelledRuns": total("cancelledRuns"),
+                    "successRate": round(succeeded_runs / finished * 100, 1) if finished else 0,
+                    "failureRate": round(failed_runs / finished * 100, 1) if finished else 0,
                 },
                 "pipelineActivity": self._activity_by_day(transaction, application_ids),
                 "systems": systems,

@@ -17,7 +17,8 @@ vi.mock('./api/netciClient', async (importOriginal) => {
 })
 
 import type { PipelineRun } from './api/netciClient'
-import { DeliveryFlowPanel, isPromotable, runIntent, triggerText } from './ModulePage'
+import { isPromotable, runIntent, triggerText } from './ModulePage'
+import { RulesPanel, promotionGate } from './DeliveryView'
 
 const run = (over: Partial<PipelineRun>): PipelineRun => ({
   id: 'r1', applicationId: 'a1', status: 'succeeded', commitSha: 'a'.repeat(40), branch: 'main',
@@ -47,14 +48,35 @@ describe('delivery intent in the portal', () => {
     expect(isPromotable(run({ artifactDigest: null }))).toBe(false)
   })
 
-  it('states the rules in force, first match first, and that prod needs a request', async () => {
-    render(<DeliveryFlowPanel moduleId="orders" />)
-    const panel = await screen.findByTestId('delivery-flow')
+  it('states the rules in force, first match first, and that prod needs a request', () => {
+    render(<RulesPanel rules={{
+      moduleId: 'orders', defaulted: false, forkPullRequests: 'verify',
+      triggers: [
+        { on: 'push', branches: ['release/**'], deployTo: 'staging' },
+        { on: 'tag', tags: ['v*'], registerVersion: true },
+      ],
+      promotion: { prod: { requireHealthyIn: 'staging', minSoakMinutes: 60 } },
+    }} />)
+    const panel = screen.getByTestId('delivery-rules')
     const items = panel.querySelectorAll('li')
-    expect(items[0].textContent).toBe('push release/** → build → deploy staging')
-    expect(items[1].textContent).toBe('tag v* → build only + register version')
+    expect(items[0].textContent).toContain('Push to release/**')
+    expect(items[0].textContent).toContain('deploy to staging')
+    expect(items[1].textContent).toContain('Tag v*')
+    expect(items[1].textContent).toContain('registers the version')
     expect(panel.textContent).toContain('verified only — never signed or published')
-    expect(panel.textContent).toContain('prod needs the artifact healthy in staging for 60 min')
+    expect(panel.textContent).toContain('once healthy in staging for 60 min')
     expect(panel.textContent).toContain('only through a production request')
+  })
+
+  it('lets an artifact move on only when the environment before it is healthy and has soaked', () => {
+    const rules = { moduleId: 'm', defaulted: false, forkPullRequests: 'ignore' as const, triggers: [],
+      promotion: { staging: { requireHealthyIn: 'dev' as const, minSoakMinutes: 30 } } }
+    const now = Date.parse('2026-10-15T12:00:00Z')
+    const dev = (status: string, minutesAgo: number) => ({ environment: 'dev' as const, status, artifactDigest: `sha256:${'c'.repeat(64)}`,
+      pipelineRunId: 'r1', updatedAt: new Date(now - minutesAgo * 60000).toISOString() })
+    expect(promotionGate(rules, { environment: 'dev', status: 'never_deployed' }, 'staging', now).tone).toBe('blocked')
+    expect(promotionGate(rules, dev('failed', 90), 'staging', now)).toEqual({ tone: 'blocked', text: 'Development is failed, not healthy' })
+    expect(promotionGate(rules, dev('healthy', 10), 'staging', now)).toEqual({ tone: 'wait', text: 'Soaking in development: 20 min of 30 left' })
+    expect(promotionGate(rules, dev('healthy', 31), 'staging', now).tone).toBe('ok')
   })
 })

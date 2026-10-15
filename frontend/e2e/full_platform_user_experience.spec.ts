@@ -63,11 +63,11 @@ test.describe.serial('Comprehensive Real-User Platform Experience & Zero-Mock Ve
     await viewModBtn.click()
 
     // Switch to Pipeline tab
-    await page.click('button[role="tab"]:has-text("Pipeline")')
-    await expect(page.locator('.pipeline-card-grid')).toBeVisible()
+    await page.click('button[role="tab"]:has-text("Builds")')
+    await expect(page.locator('.builds-table')).toBeVisible()
 
     // Run Pipeline on Dev
-    const runBtn = page.locator('.pipeline-card:has-text("Dev") button:has-text("Run Pipeline")').first()
+    const runBtn = page.locator('.builds-toolbar button:has-text("Run build")').first()
     await expect(runBtn).toBeVisible()
     await runBtn.click()
     await expect(page.locator('.modal')).toBeVisible()
@@ -81,7 +81,7 @@ test.describe.serial('Comprehensive Real-User Platform Experience & Zero-Mock Ve
     expect(commitSha).toMatch(/^[0-9a-f]{7,64}$/i)
 
     // Trigger the real pipeline run
-    const triggerBtn = page.locator('.modal button:has-text("Run Pipeline"), .modal button:has-text("Trigger")').first()
+    const triggerBtn = page.locator('.modal button:has-text("Run build"), .modal button:has-text("Trigger")').first()
     await triggerBtn.click()
     await expect(page.locator('.modal')).toBeHidden()
 
@@ -92,7 +92,7 @@ test.describe.serial('Comprehensive Real-User Platform Experience & Zero-Mock Ve
     console.log(`[E2E 1] Live Jenkins build queued and Real-Time DAG rendered successfully!`)
 
     // Verify DORA Metrics Tab
-    await page.click('button[role="tab"]:has-text("DORA Metrics")')
+    await page.click('button[role="tab"]:has-text("Metrics")')
     await expect(page.locator('.dora-grid')).toBeVisible()
     const doraCards = page.locator('.dora-card')
     expect(await doraCards.count()).toBe(4)

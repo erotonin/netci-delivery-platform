@@ -22,6 +22,7 @@ import { ToolchainPage } from './ToolchainPage'
 import { PipelinesPage } from './PipelinesPage'
 import type { PageId } from './portalTypes'
 import './styles.css'
+import './ui.css'
 
 const pipelineTemplateForRuntime: Record<Runtime, string> = {
   docker: 'container-ci-cd-v1',

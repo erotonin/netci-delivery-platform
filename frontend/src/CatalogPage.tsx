@@ -461,7 +461,7 @@ export function CatalogPage({
         role="tablist"
         className="tabs"
         style={{
-          borderBottom: '1px solid var(--border-color, #e2e8f0)',
+          borderBottom: '1px solid var(--border-color, var(--border))',
           marginBottom: '1.5rem',
         }}
       >
@@ -510,12 +510,12 @@ export function CatalogPage({
                 placeholder="Search services by ID, name, or owning team..."
                 value={serviceSearch}
                 onChange={(e) => setServiceSearch(e.target.value)}
-                style={{ flex: 1, padding: '0.5rem 0.75rem', borderRadius: '6px', border: '1px solid #cbd5e1' }}
+                style={{ flex: 1, padding: '0.5rem 0.75rem', borderRadius: '6px', border: '1px solid var(--border-strong)' }}
               />
               <select
                 value={serviceTierFilter}
                 onChange={(e) => setServiceTierFilter(e.target.value)}
-                style={{ padding: '0.5rem 0.75rem', borderRadius: '6px', border: '1px solid #cbd5e1' }}
+                style={{ padding: '0.5rem 0.75rem', borderRadius: '6px', border: '1px solid var(--border-strong)' }}
               >
                 <option value="all">All Tiers</option>
                 <option value="tier-1">Tier 1</option>
@@ -525,7 +525,7 @@ export function CatalogPage({
             </div>
 
             {filteredServices.length === 0 ? (
-              <div className="empty-state" style={{ textAlign: 'center', padding: '3rem', border: '1px dashed #cbd5e1', borderRadius: '8px' }}>
+              <div className="empty-state" style={{ textAlign: 'center', padding: '3rem', border: '1px dashed var(--border-strong)', borderRadius: '8px' }}>
                 <Box size={40} style={{ opacity: 0.4, margin: '0 auto 1rem' }} />
                 <h3>No services found in catalog</h3>
                 <p>Register your microservices and APIs to establish platform ownership and dependency topology.</p>
@@ -555,24 +555,24 @@ export function CatalogPage({
                     >
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '0.5rem' }}>
                         <div>
-                          <strong style={{ fontSize: '1.1rem', color: '#1e293b' }}>{svc.name}</strong>
-                          <span style={{ marginLeft: '0.5rem', fontSize: '0.85rem', color: '#64748b' }}>({svc.serviceId})</span>
+                          <strong style={{ fontSize: '1.1rem', color: 'var(--text)' }}>{svc.name}</strong>
+                          <span style={{ marginLeft: '0.5rem', fontSize: '0.85rem', color: 'var(--text-2)' }}>({svc.serviceId})</span>
                         </div>
                         <div style={{ display: 'flex', gap: '0.5rem' }}>
                           <span className={`status status-${tier.tone}`} style={{ fontSize: '0.75rem' }}>{tier.label}</span>
                           <span className={`status status-${life.tone}`} style={{ fontSize: '0.75rem' }}>{life.label}</span>
                         </div>
                       </div>
-                      {svc.description && <p style={{ fontSize: '0.9rem', color: '#475569', marginBottom: '0.75rem' }}>{svc.description}</p>}
-                      <div style={{ display: 'flex', gap: '1.5rem', fontSize: '0.8rem', color: '#64748b' }}>
+                      {svc.description && <p style={{ fontSize: '0.9rem', color: 'var(--text-2)', marginBottom: '0.75rem' }}>{svc.description}</p>}
+                      <div style={{ display: 'flex', gap: '1.5rem', fontSize: '0.8rem', color: 'var(--text-2)' }}>
                         <span>Team: <strong>{svc.owningTeam}</strong></span>
                         {svc.repoUrl && (
-                          <a href={svc.repoUrl} target="_blank" rel="noopener noreferrer" style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', color: '#2563eb' }}>
+                          <a href={svc.repoUrl} target="_blank" rel="noopener noreferrer" style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', color: 'var(--info-text)' }}>
                             <Code2 size={13} /> Repository
                           </a>
                         )}
                         {svc.docsUrl && (
-                          <a href={svc.docsUrl} target="_blank" rel="noopener noreferrer" style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', color: '#2563eb' }}>
+                          <a href={svc.docsUrl} target="_blank" rel="noopener noreferrer" style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', color: 'var(--info-text)' }}>
                             <BookOpen size={13} /> Documentation
                           </a>
                         )}
@@ -588,8 +588,8 @@ export function CatalogPage({
           {selectedService && (
             <div
               style={{
-                background: '#ffffff',
-                border: '1px solid #e2e8f0',
+                background: 'var(--surface)',
+                border: '1px solid var(--border)',
                 borderRadius: '8px',
                 padding: '1.5rem',
                 position: 'sticky',
@@ -597,10 +597,10 @@ export function CatalogPage({
                 height: 'fit-content',
               }}
             >
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem', borderBottom: '1px solid #f1f5f9', paddingBottom: '0.75rem' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem', borderBottom: '1px solid var(--border)', paddingBottom: '0.75rem' }}>
                 <div>
-                  <h3 style={{ margin: 0, fontSize: '1.25rem', color: '#0f172a' }}>{selectedService.name}</h3>
-                  <small style={{ color: '#64748b' }}>ID: {selectedService.serviceId} · Owner: {selectedService.owningTeam}</small>
+                  <h3 style={{ margin: 0, fontSize: '1.25rem', color: 'var(--text)' }}>{selectedService.name}</h3>
+                  <small style={{ color: 'var(--text-2)' }}>ID: {selectedService.serviceId} · Owner: {selectedService.owningTeam}</small>
                 </div>
                 <button
                   type="button"
@@ -614,7 +614,7 @@ export function CatalogPage({
 
               {/* Cycle Warning Banner */}
               {dependencyGraph?.hasCycle && (
-                <div style={{ padding: '0.75rem 1rem', background: '#fef2f2', border: '1px solid #f87171', borderRadius: '6px', marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '0.5rem', color: '#991b1b' }}>
+                <div style={{ padding: '0.75rem 1rem', background: 'var(--danger-soft)', border: '1px solid var(--danger)', borderRadius: '6px', marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--danger-text)' }}>
                   <AlertTriangle size={18} />
                   <div>
                     <strong>Circular Dependency Detected!</strong>
@@ -634,15 +634,15 @@ export function CatalogPage({
               </div>
 
               {loadingGraph ? (
-                <p style={{ color: '#64748b' }}>Analyzing dependency topology...</p>
+                <p style={{ color: 'var(--text-2)' }}>Analyzing dependency topology...</p>
               ) : (
                 <div>
                   <div style={{ marginBottom: '1.25rem' }}>
-                    <strong style={{ fontSize: '0.85rem', color: '#475569', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                    <strong style={{ fontSize: '0.85rem', color: 'var(--text-2)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
                       Upstream Dependencies (Calls to other services)
                     </strong>
                     {dependencyGraph?.upstream.length === 0 ? (
-                      <p style={{ fontSize: '0.85rem', color: '#94a3b8', fontStyle: 'italic', margin: '0.5rem 0' }}>No upstream dependencies declared</p>
+                      <p style={{ fontSize: '0.85rem', color: 'var(--text-3)', fontStyle: 'italic', margin: '0.5rem 0' }}>No upstream dependencies declared</p>
                     ) : (
                       <ul style={{ listStyle: 'none', padding: 0, margin: '0.5rem 0' }}>
                         {dependencyGraph?.edges
@@ -655,7 +655,7 @@ export function CatalogPage({
                                 justifyContent: 'space-between',
                                 alignItems: 'center',
                                 padding: '0.5rem 0.75rem',
-                                background: '#f8fafc',
+                                background: 'var(--surface-2)',
                                 borderRadius: '6px',
                                 marginBottom: '0.4rem',
                                 fontSize: '0.85rem',
@@ -663,15 +663,15 @@ export function CatalogPage({
                             >
                               <span>
                                 <strong>{edge.target}</strong>{' '}
-                                <span style={{ color: '#64748b' }}>({edge.dependencyType})</span>
-                                {edge.description && <small style={{ display: 'block', color: '#64748b' }}>{edge.description}</small>}
+                                <span style={{ color: 'var(--text-2)' }}>({edge.dependencyType})</span>
+                                {edge.description && <small style={{ display: 'block', color: 'var(--text-2)' }}>{edge.description}</small>}
                               </span>
                               <button
                                 type="button"
                                 className="icon-button"
                                 aria-label={`Remove dependency on ${edge.target}`}
                                 onClick={() => handleRemoveDependency(edge.target)}
-                                style={{ color: '#ef4444' }}
+                                style={{ color: 'var(--danger-text)' }}
                               >
                                 <Trash2 size={14} />
                               </button>
@@ -682,11 +682,11 @@ export function CatalogPage({
                   </div>
 
                   <div>
-                    <strong style={{ fontSize: '0.85rem', color: '#475569', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                    <strong style={{ fontSize: '0.85rem', color: 'var(--text-2)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
                       Downstream Consumers (Depended on by)
                     </strong>
                     {dependencyGraph?.downstream.length === 0 ? (
-                      <p style={{ fontSize: '0.85rem', color: '#94a3b8', fontStyle: 'italic', margin: '0.5rem 0' }}>No downstream consumers</p>
+                      <p style={{ fontSize: '0.85rem', color: 'var(--text-3)', fontStyle: 'italic', margin: '0.5rem 0' }}>No downstream consumers</p>
                     ) : (
                       <ul style={{ listStyle: 'none', padding: 0, margin: '0.5rem 0' }}>
                         {dependencyGraph?.downstream.map((sourceId) => (
@@ -694,7 +694,7 @@ export function CatalogPage({
                             key={sourceId}
                             style={{
                               padding: '0.5rem 0.75rem',
-                              background: '#f8fafc',
+                              background: 'var(--surface-2)',
                               borderRadius: '6px',
                               marginBottom: '0.4rem',
                               fontSize: '0.85rem',
@@ -741,7 +741,7 @@ export function CatalogPage({
           </div>
 
           {filteredPreviews.length === 0 ? (
-            <div className="empty-state" style={{ textAlign: 'center', padding: '3rem', border: '1px dashed #cbd5e1', borderRadius: '8px' }}>
+            <div className="empty-state" style={{ textAlign: 'center', padding: '3rem', border: '1px dashed var(--border-strong)', borderRadius: '8px' }}>
               <GitBranch size={40} style={{ opacity: 0.4, margin: '0 auto 1rem' }} />
               <h3>No preview environments found</h3>
               <p>Spin up ephemeral full-stack environments for pull requests with automatic TTL-based reconciliation.</p>
@@ -751,9 +751,9 @@ export function CatalogPage({
             </div>
           ) : (
             <div style={{ overflowX: 'auto' }}>
-              <table style={{ width: '100%', borderCollapse: 'collapse', background: '#ffffff', border: '1px solid #e2e8f0', borderRadius: '8px' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: '8px' }}>
                 <thead>
-                  <tr style={{ background: '#f8fafc', textAlign: 'left', borderBottom: '1px solid #e2e8f0', fontSize: '0.85rem', color: '#475569' }}>
+                  <tr style={{ background: 'var(--surface-2)', textAlign: 'left', borderBottom: '1px solid var(--border)', fontSize: '0.85rem', color: 'var(--text-2)' }}>
                     <th style={{ padding: '0.75rem 1rem' }}>Application / Namespace</th>
                     <th style={{ padding: '0.75rem 1rem' }}>PR & Commit</th>
                     <th style={{ padding: '0.75rem 1rem' }}>Status</th>
@@ -766,14 +766,14 @@ export function CatalogPage({
                   {filteredPreviews.map((p) => {
                     const isExpired = new Date(p.expiresAt).getTime() < Date.now()
                     return (
-                      <tr key={p.previewId} style={{ borderBottom: '1px solid #f1f5f9', fontSize: '0.9rem' }}>
+                      <tr key={p.previewId} style={{ borderBottom: '1px solid var(--border)', fontSize: '0.9rem' }}>
                         <td style={{ padding: '0.75rem 1rem' }}>
-                          <strong style={{ display: 'block', color: '#0f172a' }}>{p.namespace}</strong>
-                          <small style={{ color: '#64748b' }}>App: {p.applicationId.slice(0, 8)}...</small>
+                          <strong style={{ display: 'block', color: 'var(--text)' }}>{p.namespace}</strong>
+                          <small style={{ color: 'var(--text-2)' }}>App: {p.applicationId.slice(0, 8)}...</small>
                         </td>
                         <td style={{ padding: '0.75rem 1rem' }}>
                           <div><strong>PR #{p.pullRequestId}</strong></div>
-                          <code style={{ fontSize: '0.8rem', background: '#f1f5f9', padding: '0.1rem 0.3rem', borderRadius: '4px' }}>
+                          <code style={{ fontSize: '0.8rem', background: 'var(--surface-3)', padding: '0.1rem 0.3rem', borderRadius: '4px' }}>
                             {p.commitSha.slice(0, 7)}
                           </code>
                         </td>
@@ -795,14 +795,14 @@ export function CatalogPage({
                             <Clock size={14} />
                             <span>Expires: {new Date(p.expiresAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', month: 'short', day: 'numeric' })}</span>
                           </div>
-                          <small style={{ color: '#64748b' }}>TTL: {Math.round(p.ttlSeconds / 3600)}h</small>
+                          <small style={{ color: 'var(--text-2)' }}>TTL: {Math.round(p.ttlSeconds / 3600)}h</small>
                         </td>
                         <td style={{ padding: '0.75rem 1rem' }}>
                           <a
                             href={p.url}
                             target="_blank"
                             rel="noopener noreferrer"
-                            style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem', color: '#2563eb' }}
+                            style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem', color: 'var(--info-text)' }}
                           >
                             <ExternalLink size={14} /> {p.url}
                           </a>
@@ -812,7 +812,7 @@ export function CatalogPage({
                             <button
                               className="secondary-button"
                               onClick={() => handleTeardownPreview(p.previewId)}
-                              style={{ padding: '0.35rem 0.65rem', fontSize: '0.8rem', color: '#dc2626' }}
+                              style={{ padding: '0.35rem 0.65rem', fontSize: '0.8rem', color: 'var(--danger-text)' }}
                             >
                               <Trash2 size={13} /> Teardown
                             </button>
@@ -853,7 +853,7 @@ export function CatalogPage({
           </div>
 
           {filteredResources.length === 0 ? (
-            <div className="empty-state" style={{ textAlign: 'center', padding: '3rem', border: '1px dashed #cbd5e1', borderRadius: '8px' }}>
+            <div className="empty-state" style={{ textAlign: 'center', padding: '3rem', border: '1px dashed var(--border-strong)', borderRadius: '8px' }}>
               <Database size={40} style={{ opacity: 0.4, margin: '0 auto 1rem' }} />
               <h3>No resource requests found</h3>
               <p>Request managed databases, caches, buckets, and cloud resources with automated dual-control enforcement.</p>
@@ -863,9 +863,9 @@ export function CatalogPage({
             </div>
           ) : (
             <div style={{ overflowX: 'auto' }}>
-              <table style={{ width: '100%', borderCollapse: 'collapse', background: '#ffffff', border: '1px solid #e2e8f0', borderRadius: '8px' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: '8px' }}>
                 <thead>
-                  <tr style={{ background: '#f8fafc', textAlign: 'left', borderBottom: '1px solid #e2e8f0', fontSize: '0.85rem', color: '#475569' }}>
+                  <tr style={{ background: 'var(--surface-2)', textAlign: 'left', borderBottom: '1px solid var(--border)', fontSize: '0.85rem', color: 'var(--text-2)' }}>
                     <th style={{ padding: '0.75rem 1rem' }}>Resource Type / Env</th>
                     <th style={{ padding: '0.75rem 1rem' }}>Team / Requester</th>
                     <th style={{ padding: '0.75rem 1rem' }}>Status</th>
@@ -877,9 +877,9 @@ export function CatalogPage({
                   {filteredResources.map((req) => {
                     const badge = resourceStatusBadge(req.status)
                     return (
-                      <tr key={req.requestId} style={{ borderBottom: '1px solid #f1f5f9', fontSize: '0.9rem' }}>
+                      <tr key={req.requestId} style={{ borderBottom: '1px solid var(--border)', fontSize: '0.9rem' }}>
                         <td style={{ padding: '0.75rem 1rem' }}>
-                          <strong style={{ display: 'block', color: '#0f172a', textTransform: 'capitalize' }}>
+                          <strong style={{ display: 'block', color: 'var(--text)', textTransform: 'capitalize' }}>
                             {req.resourceType}
                           </strong>
                           <span className={`status status-${req.environment === 'prod' ? 'red' : 'blue'}`} style={{ fontSize: '0.75rem' }}>
@@ -888,13 +888,13 @@ export function CatalogPage({
                         </td>
                         <td style={{ padding: '0.75rem 1rem' }}>
                           <div><strong>{req.teamId}</strong></div>
-                          <small style={{ color: '#64748b' }}>By: {req.requestedBy}</small>
-                          {req.approvedBy && <small style={{ display: 'block', color: '#16a34a' }}>Approved by: {req.approvedBy}</small>}
+                          <small style={{ color: 'var(--text-2)' }}>By: {req.requestedBy}</small>
+                          {req.approvedBy && <small style={{ display: 'block', color: 'var(--success-text)' }}>Approved by: {req.approvedBy}</small>}
                         </td>
                         <td style={{ padding: '0.75rem 1rem' }}>
                           <span className={`status ${badge.className}`}>{badge.label}</span>
                           {req.statusReason && (
-                            <small style={{ display: 'block', color: '#64748b', marginTop: '0.25rem' }}>
+                            <small style={{ display: 'block', color: 'var(--text-2)', marginTop: '0.25rem' }}>
                               {req.statusReason}
                             </small>
                           )}
@@ -902,7 +902,7 @@ export function CatalogPage({
                         <td style={{ padding: '0.75rem 1rem' }}>
                           <div><strong>Provider:</strong> {req.provider || 'none'}</div>
                           {Object.keys(req.outputs || {}).length > 0 && (
-                            <code style={{ fontSize: '0.75rem', background: '#f8fafc', padding: '0.2rem 0.4rem', borderRadius: '4px', display: 'block', marginTop: '0.25rem' }}>
+                            <code style={{ fontSize: '0.75rem', background: 'var(--surface-2)', padding: '0.2rem 0.4rem', borderRadius: '4px', display: 'block', marginTop: '0.25rem' }}>
                               {JSON.stringify(req.outputs)}
                             </code>
                           )}
@@ -922,7 +922,7 @@ export function CatalogPage({
                               <button
                                 className="secondary-button"
                                 onClick={() => handleDeprovisionResource(req.requestId)}
-                                style={{ padding: '0.35rem 0.65rem', fontSize: '0.8rem', color: '#dc2626' }}
+                                style={{ padding: '0.35rem 0.65rem', fontSize: '0.8rem', color: 'var(--danger-text)' }}
                               >
                                 <Trash2 size={13} /> Deprovision
                               </button>
@@ -961,7 +961,7 @@ export function CatalogPage({
                 placeholder="e.g. payment-service"
                 value={serviceForm.serviceId}
                 onChange={(e) => setServiceForm({ ...serviceForm, serviceId: e.target.value })}
-                style={{ width: '100%', padding: '0.5rem', borderRadius: '4px', border: '1px solid #cbd5e1' }}
+                style={{ width: '100%', padding: '0.5rem', borderRadius: '4px', border: '1px solid var(--border-strong)' }}
               />
             </div>
             <div>
@@ -972,7 +972,7 @@ export function CatalogPage({
                 placeholder="e.g. Payment Gateway Service"
                 value={serviceForm.name}
                 onChange={(e) => setServiceForm({ ...serviceForm, name: e.target.value })}
-                style={{ width: '100%', padding: '0.5rem', borderRadius: '4px', border: '1px solid #cbd5e1' }}
+                style={{ width: '100%', padding: '0.5rem', borderRadius: '4px', border: '1px solid var(--border-strong)' }}
               />
             </div>
             <div>
@@ -983,7 +983,7 @@ export function CatalogPage({
                 placeholder="e.g. payments-team"
                 value={serviceForm.owningTeam}
                 onChange={(e) => setServiceForm({ ...serviceForm, owningTeam: e.target.value })}
-                style={{ width: '100%', padding: '0.5rem', borderRadius: '4px', border: '1px solid #cbd5e1' }}
+                style={{ width: '100%', padding: '0.5rem', borderRadius: '4px', border: '1px solid var(--border-strong)' }}
               />
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
@@ -992,7 +992,7 @@ export function CatalogPage({
                 <select
                   value={serviceForm.tier}
                   onChange={(e) => setServiceForm({ ...serviceForm, tier: e.target.value })}
-                  style={{ width: '100%', padding: '0.5rem', borderRadius: '4px', border: '1px solid #cbd5e1' }}
+                  style={{ width: '100%', padding: '0.5rem', borderRadius: '4px', border: '1px solid var(--border-strong)' }}
                 >
                   <option value="tier-1">Tier 1 · Mission Critical</option>
                   <option value="tier-2">Tier 2 · Standard Core</option>
@@ -1004,7 +1004,7 @@ export function CatalogPage({
                 <select
                   value={serviceForm.lifecycle}
                   onChange={(e) => setServiceForm({ ...serviceForm, lifecycle: e.target.value })}
-                  style={{ width: '100%', padding: '0.5rem', borderRadius: '4px', border: '1px solid #cbd5e1' }}
+                  style={{ width: '100%', padding: '0.5rem', borderRadius: '4px', border: '1px solid var(--border-strong)' }}
                 >
                   <option value="active">Active</option>
                   <option value="deprecated">Deprecated</option>
@@ -1019,7 +1019,7 @@ export function CatalogPage({
                 placeholder="https://github.com/org/payment-service"
                 value={serviceForm.repoUrl}
                 onChange={(e) => setServiceForm({ ...serviceForm, repoUrl: e.target.value })}
-                style={{ width: '100%', padding: '0.5rem', borderRadius: '4px', border: '1px solid #cbd5e1' }}
+                style={{ width: '100%', padding: '0.5rem', borderRadius: '4px', border: '1px solid var(--border-strong)' }}
               />
             </div>
             <div>
@@ -1029,7 +1029,7 @@ export function CatalogPage({
                 placeholder="https://docs.corp.internal/services/payment"
                 value={serviceForm.docsUrl}
                 onChange={(e) => setServiceForm({ ...serviceForm, docsUrl: e.target.value })}
-                style={{ width: '100%', padding: '0.5rem', borderRadius: '4px', border: '1px solid #cbd5e1' }}
+                style={{ width: '100%', padding: '0.5rem', borderRadius: '4px', border: '1px solid var(--border-strong)' }}
               />
             </div>
             <div>
@@ -1039,7 +1039,7 @@ export function CatalogPage({
                 placeholder="Purpose, responsibilities, SLA guarantees..."
                 value={serviceForm.description}
                 onChange={(e) => setServiceForm({ ...serviceForm, description: e.target.value })}
-                style={{ width: '100%', padding: '0.5rem', borderRadius: '4px', border: '1px solid #cbd5e1' }}
+                style={{ width: '100%', padding: '0.5rem', borderRadius: '4px', border: '1px solid var(--border-strong)' }}
               />
             </div>
           </form>
@@ -1066,7 +1066,7 @@ export function CatalogPage({
                 required
                 value={depTargetId}
                 onChange={(e) => setDepTargetId(e.target.value)}
-                style={{ width: '100%', padding: '0.5rem', borderRadius: '4px', border: '1px solid #cbd5e1' }}
+                style={{ width: '100%', padding: '0.5rem', borderRadius: '4px', border: '1px solid var(--border-strong)' }}
               >
                 <option value="">Select target service...</option>
                 {services
@@ -1083,7 +1083,7 @@ export function CatalogPage({
               <select
                 value={depType}
                 onChange={(e) => setDepType(e.target.value)}
-                style={{ width: '100%', padding: '0.5rem', borderRadius: '4px', border: '1px solid #cbd5e1' }}
+                style={{ width: '100%', padding: '0.5rem', borderRadius: '4px', border: '1px solid var(--border-strong)' }}
               >
                 <option value="sync">Synchronous (gRPC / HTTP REST)</option>
                 <option value="async">Asynchronous (Kafka / RabbitMQ event)</option>
@@ -1097,7 +1097,7 @@ export function CatalogPage({
                 placeholder="e.g. Calls auth-service for JWT token validation"
                 value={depDesc}
                 onChange={(e) => setDepDesc(e.target.value)}
-                style={{ width: '100%', padding: '0.5rem', borderRadius: '4px', border: '1px solid #cbd5e1' }}
+                style={{ width: '100%', padding: '0.5rem', borderRadius: '4px', border: '1px solid var(--border-strong)' }}
               />
             </div>
           </form>
@@ -1127,7 +1127,7 @@ export function CatalogPage({
                 placeholder="e.g. 550e8400-e29b-41d4-a716-446655440000"
                 value={previewAppId}
                 onChange={(e) => setPreviewAppId(e.target.value)}
-                style={{ width: '100%', padding: '0.5rem', borderRadius: '4px', border: '1px solid #cbd5e1' }}
+                style={{ width: '100%', padding: '0.5rem', borderRadius: '4px', border: '1px solid var(--border-strong)' }}
               />
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
@@ -1139,7 +1139,7 @@ export function CatalogPage({
                   placeholder="e.g. 142"
                   value={previewPr}
                   onChange={(e) => setPreviewPr(e.target.value)}
-                  style={{ width: '100%', padding: '0.5rem', borderRadius: '4px', border: '1px solid #cbd5e1' }}
+                  style={{ width: '100%', padding: '0.5rem', borderRadius: '4px', border: '1px solid var(--border-strong)' }}
                 />
               </div>
               <div>
@@ -1150,7 +1150,7 @@ export function CatalogPage({
                   placeholder="e.g. 9f8a3c2"
                   value={previewSha}
                   onChange={(e) => setPreviewSha(e.target.value)}
-                  style={{ width: '100%', padding: '0.5rem', borderRadius: '4px', border: '1px solid #cbd5e1' }}
+                  style={{ width: '100%', padding: '0.5rem', borderRadius: '4px', border: '1px solid var(--border-strong)' }}
                 />
               </div>
             </div>
@@ -1159,7 +1159,7 @@ export function CatalogPage({
               <select
                 value={previewTtl}
                 onChange={(e) => setPreviewTtl(parseInt(e.target.value, 10))}
-                style={{ width: '100%', padding: '0.5rem', borderRadius: '4px', border: '1px solid #cbd5e1' }}
+                style={{ width: '100%', padding: '0.5rem', borderRadius: '4px', border: '1px solid var(--border-strong)' }}
               >
                 <option value={7200}>2 Hours (Fast feature test)</option>
                 <option value={28800}>8 Hours (Working day)</option>
@@ -1193,7 +1193,7 @@ export function CatalogPage({
                 placeholder="e.g. 550e8400-e29b-41d4-a716-446655440000"
                 value={resAppId}
                 onChange={(e) => setResAppId(e.target.value)}
-                style={{ width: '100%', padding: '0.5rem', borderRadius: '4px', border: '1px solid #cbd5e1' }}
+                style={{ width: '100%', padding: '0.5rem', borderRadius: '4px', border: '1px solid var(--border-strong)' }}
               />
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
@@ -1204,7 +1204,7 @@ export function CatalogPage({
                   type="text"
                   value={resTeam}
                   onChange={(e) => setResTeam(e.target.value)}
-                  style={{ width: '100%', padding: '0.5rem', borderRadius: '4px', border: '1px solid #cbd5e1' }}
+                  style={{ width: '100%', padding: '0.5rem', borderRadius: '4px', border: '1px solid var(--border-strong)' }}
                 />
               </div>
               <div>
@@ -1212,7 +1212,7 @@ export function CatalogPage({
                 <select
                   value={resEnv}
                   onChange={(e) => setResEnv(e.target.value)}
-                  style={{ width: '100%', padding: '0.5rem', borderRadius: '4px', border: '1px solid #cbd5e1' }}
+                  style={{ width: '100%', padding: '0.5rem', borderRadius: '4px', border: '1px solid var(--border-strong)' }}
                 >
                   <option value="preview">Preview / Ephemeral</option>
                   <option value="dev">Development</option>
@@ -1226,7 +1226,7 @@ export function CatalogPage({
               <select
                 value={resType}
                 onChange={(e) => setResType(e.target.value)}
-                style={{ width: '100%', padding: '0.5rem', borderRadius: '4px', border: '1px solid #cbd5e1' }}
+                style={{ width: '100%', padding: '0.5rem', borderRadius: '4px', border: '1px solid var(--border-strong)' }}
               >
                 <option value="postgresql">PostgreSQL Database Instance</option>
                 <option value="redis">Redis Cache Cluster</option>
@@ -1241,7 +1241,7 @@ export function CatalogPage({
                 rows={4}
                 value={resSpec}
                 onChange={(e) => setResSpec(e.target.value)}
-                style={{ width: '100%', padding: '0.5rem', fontFamily: 'monospace', fontSize: '0.85rem', borderRadius: '4px', border: '1px solid #cbd5e1' }}
+                style={{ width: '100%', padding: '0.5rem', fontFamily: 'monospace', fontSize: '0.85rem', borderRadius: '4px', border: '1px solid var(--border-strong)' }}
               />
             </div>
           </form>

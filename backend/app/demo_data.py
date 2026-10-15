@@ -8,12 +8,19 @@ installation is empty, and the Portal shows empty states rather than invented sy
 Seeding writes real rows through the normal commands, so the demo installation exercises
 the same code path an operator does. It is idempotent: a second call finds the systems
 already present and does nothing.
+
+It also registers three versions per module, so a demo can walk a production request (and
+its second approver) without a CI server. They say what they are: created by the demo seed,
+no build behind them, no evidence. They used to carry a CI report -- 42 tests passed, 94.5%
+coverage, "created by netCI Pipeline" -- that no build had produced: release evidence nothing
+stood behind, which the Portal then showed as if it had been measured.
 """
 
 from __future__ import annotations
 
 import logging
 import os
+
 from datetime import datetime, timezone
 
 from .domain.models import Environment, Runtime
@@ -71,6 +78,11 @@ def seed_demo_data(platform, portal) -> bool:
     for module_id, display_name, description, runtime, template, module_type in DEMO_APPLICATIONS:
         with platform.database.transaction() as transaction:
             if transaction.portal_system(module_id) is not None:
+                # Already seeded: only versions a previous seed did not write are added.
+                for tag in DEMO_VERSIONS:
+                    if transaction.portal_version(module_id, tag) is None:
+                        transaction.insert_portal_version(_version_row(module_id, tag))
+                        written = True
                 continue
             transaction.insert_portal_system(
                 _system_row(module_id, description)
@@ -99,9 +111,7 @@ def seed_demo_data(platform, portal) -> bool:
             )
             for tag in DEMO_VERSIONS:
                 if transaction.portal_version(module_id, tag) is None:
-                    transaction.insert_portal_version(
-                        _version_row(module_id, tag)
-                    )
+                    transaction.insert_portal_version(_version_row(module_id, tag))
             written = True
     if written:
         logger.warning(
@@ -130,17 +140,9 @@ def _version_row(module_id: str, tag: str):
         module_id=module_id,
         version=tag,
         metadata={
-            "gitTagUrl": f"https://github.com/example/{module_id}/releases/tag/{tag}",
-            "artifactUrl": f"http://127.0.0.1:55000/{module_id}:{tag}",
-            "createdBy": "netCI Pipeline",
+            "createdBy": "demo seed (NETCI_DEMO_DATA)",
             "createdAt": datetime.now(timezone.utc).isoformat(),
-            "ciReport": {
-                "testPassCount": 42,
-                "testFailCount": 0,
-                "coveragePercentage": 94.5,
-                "vulnerabilityScan": "passed",
-                "sastPassed": True,
-                "buildDurationSeconds": 48,
-            },
+            # No build made it, so nothing about one is claimed: no digest, no CI report.
+            "demo": True,
         },
     )

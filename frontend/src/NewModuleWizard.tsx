@@ -194,7 +194,7 @@ function GeneralStep({
                     <div style={{ marginTop: '4px', display: 'flex', gap: '6px', fontSize: '0.72rem', flexWrap: 'wrap' }}>
                       <span style={{ background: 'rgba(255,255,255,0.06)', padding: '1px 5px', borderRadius: '3px' }}>Runtime: <b>{sample.runtime}</b></span>
                       <span style={{ background: 'rgba(255,255,255,0.06)', padding: '1px 5px', borderRadius: '3px' }}>{sample.hasTests ? 'has tests' : 'no tests'}</span>
-                      {!sample.repositoryUrl && <span style={{ background: 'rgba(245,158,11,0.15)', color: '#f59e0b', padding: '1px 5px', borderRadius: '3px' }}>repository not configured</span>}
+                      {!sample.repositoryUrl && <span style={{ background: 'rgba(245,158,11,0.15)', color: 'var(--warning-text)', padding: '1px 5px', borderRadius: '3px' }}>repository not configured</span>}
                     </div>
                   </button>
                 )
@@ -252,10 +252,10 @@ function GeneralStep({
               />
 
             <div style={{ marginTop: '10px', padding: '10px 14px', background: 'rgba(59, 130, 246, 0.08)', borderRadius: '8px', border: '1px solid rgba(59, 130, 246, 0.2)' }}>
-              <div style={{ fontWeight: 600, color: '#60a5fa', fontSize: '0.84rem', marginBottom: '3px' }}>
+              <div style={{ fontWeight: 600, color: 'var(--info-text)', fontSize: '0.84rem', marginBottom: '3px' }}>
                 💡 Distinction between Source Code and Pipeline Configuration (netci.yaml):
               </div>
-              <p style={{ margin: 0, fontSize: '0.78rem', color: '#cbd5e1', lineHeight: 1.5 }}>
+              <p style={{ margin: 0, fontSize: '0.78rem', color: 'var(--text-3)', lineHeight: 1.5 }}>
                 • <strong>Source Code</strong>: Contains application business logic (.py, .ts, .go, Dockerfile...). Provide a Git URL checkoutable by Jenkins.<br />
                 • <strong>netci.yaml</strong>: CI/CD workflow steps (Test, Build, Scan, Deploy), previewed and customizable in Step 2.
               </p>
@@ -422,7 +422,7 @@ export function PipelineStep({
                               width: '8px',
                               height: '8px',
                               borderRadius: '50%',
-                              background: '#3b82f6',
+                              background: 'var(--info)',
                             }}
                           />
                         )}
@@ -438,7 +438,7 @@ export function PipelineStep({
                         padding: '2px 8px',
                         borderRadius: '12px',
                         background: 'rgba(59, 130, 246, 0.12)',
-                        color: '#2563eb',
+                        color: 'var(--info-text)',
                         whiteSpace: 'nowrap',
                       }}
                     >
@@ -493,7 +493,7 @@ export function PipelineStep({
                   padding: '16px',
                   border: '1px dashed var(--border)',
                   borderRadius: '8px',
-                  background: 'var(--surface-alt, #fafbfc)',
+                  background: 'var(--surface-alt, var(--surface-2))',
                   display: 'flex',
                   flexDirection: 'column',
                   gap: '10px',
@@ -510,7 +510,7 @@ export function PipelineStep({
                         width: '16px',
                         height: '16px',
                         borderRadius: '50%',
-                        border: '1px solid #ccd0d6',
+                        border: '1px solid var(--border-strong)',
                         opacity: 0.5,
                         flexShrink: 0,
                       }}
@@ -524,7 +524,7 @@ export function PipelineStep({
                       padding: '2px 8px',
                       borderRadius: '12px',
                       background: 'rgba(239, 68, 68, 0.1)',
-                      color: '#dc2626',
+                      color: 'var(--danger-text)',
                       whiteSpace: 'nowrap',
                     }}
                   >

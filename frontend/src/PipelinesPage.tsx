@@ -516,10 +516,10 @@ export function PipelinesPage({ moduleId, navigate }: { moduleId?: string; navig
         />
 
         {moduleId && (
-          <div className="pl-card" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: '#eff6ff', borderColor: '#bfdbfe' }}>
+          <div className="pl-card" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: 'var(--info-soft)', borderColor: 'var(--info-border)' }}>
             <div>
-              <strong style={{ color: '#1e40af' }}>Module {moduleId} shared pipeline:</strong>
-              <div style={{ fontSize: '0.875rem', color: '#1d4ed8' }}>
+              <strong style={{ color: 'var(--info-text)' }}>Module {moduleId} shared pipeline:</strong>
+              <div style={{ fontSize: '0.875rem', color: 'var(--info-text)' }}>
                 {currentModulePipeline ? `Current pipeline: ${currentModulePipeline}` : 'No shared pipeline assigned (using module-specific stage catalog).'}
               </div>
             </div>
@@ -527,7 +527,7 @@ export function PipelinesPage({ moduleId, navigate }: { moduleId?: string; navig
               <select 
                 value={currentModulePipeline} 
                 onChange={e => setCurrentModulePipeline(e.target.value)}
-                style={{ padding: '0.4rem', borderRadius: '4px', border: '1px solid #93c5fd' }}
+                style={{ padding: '0.4rem', borderRadius: '4px', border: '1px solid var(--info-border)' }}
               >
                 <option value="">-- No shared pipeline --</option>
                 {pipelines.filter(p => p.activeVersion !== null).map(p => (
@@ -555,8 +555,14 @@ export function PipelinesPage({ moduleId, navigate }: { moduleId?: string; navig
           </div>
         )}
 
-        {loadingPipelines && <div>Loading pipelines...</div>}
-        {errorPipelines && <div style={{ color: 'red' }}>Error: {errorPipelines}</div>}
+        {loadingPipelines && <div className="panel empty-table">Loading pipelines…</div>}
+        {errorPipelines && <div className="inline-error" role="alert">Could not load pipelines: {errorPipelines}</div>}
+        {!loadingPipelines && !errorPipelines && pipelines.length === 0 && <section className="panel empty-tab-state">
+          <GitBranch size={28} />
+          <h2>No shared pipelines yet</h2>
+          <p>A shared pipeline is one reviewed definition of the CI stages -- test, build, SBOM, scan, sign, publish -- that many modules use. Until a module is given one, it runs its own stages from the Stage Catalog.</p>
+          <button className="primary-button" onClick={() => setView({ type: 'designer' })}><Plus size={15} />Design the first pipeline</button>
+        </section>}
 
         <div className="pl-grid">
           {pipelines.map(p => (
@@ -571,10 +577,10 @@ export function PipelinesPage({ moduleId, navigate }: { moduleId?: string; navig
                   {p.activeVersion !== null ? (
                     <span className="pl-chip pl-chip-builtin" style={{ margin: 0 }}>v{p.activeVersion}</span>
                   ) : (
-                    <span style={{ fontSize: '0.75rem', color: '#dc2626', background: '#fee2e2', padding: '2px 8px', borderRadius: '12px' }}>no approved version</span>
+                    <span style={{ fontSize: '0.75rem', color: 'var(--danger-text)', background: 'var(--danger-soft)', padding: '2px 8px', borderRadius: '12px' }}>no approved version</span>
                   )}
                 </div>
-                <p style={{ fontSize: '0.875rem', color: '#6b7280', margin: '0 0 1rem 0' }}>{p.description || 'No description'}</p>
+                <p style={{ fontSize: '0.875rem', color: 'var(--text-2)', margin: '0 0 1rem 0' }}>{p.description || 'No description'}</p>
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', marginBottom: '1rem' }}>
                   {p.stages.map(s => (
                     <span key={s.id} className={`pl-chip ${s.builtin ? 'pl-chip-builtin' : 'pl-chip-custom'}`} style={{ margin: 0 }}>
@@ -583,10 +589,10 @@ export function PipelinesPage({ moduleId, navigate }: { moduleId?: string; navig
                   ))}
                 </div>
               </div>
-              <div style={{ borderTop: '1px solid var(--border, #e5e7eb)', paddingTop: '0.75rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.75rem', color: '#6b7280' }}>
+              <div style={{ borderTop: '1px solid var(--border, var(--border))', paddingTop: '0.75rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.75rem', color: 'var(--text-2)' }}>
                 <span>Used by: {p.usedBy.length} modules</span>
                 {p.pendingVersions.length > 0 && (
-                  <span style={{ color: '#d97706', fontWeight: 500 }}>pending approval v{p.pendingVersions.join(', v')}</span>
+                  <span style={{ color: 'var(--warning-text)', fontWeight: 500 }}>pending approval v{p.pendingVersions.join(', v')}</span>
                 )}
               </div>
             </div>
@@ -621,7 +627,7 @@ export function PipelinesPage({ moduleId, navigate }: { moduleId?: string; navig
               <GitBranch size={16} />
               Pipeline Execution Flow Preview
             </h4>
-            <span style={{ fontSize: '12px', color: 'var(--muted, #64748b)' }}>
+            <span style={{ fontSize: '12px', color: 'var(--muted, var(--text-2))' }}>
               {parsedStages.length} configured stage(s)
             </span>
           </div>
@@ -647,7 +653,7 @@ export function PipelinesPage({ moduleId, navigate }: { moduleId?: string; navig
                     {s.id === 'publish' && <Box size={14} />}
                     {!['unit-test', 'build', 'sbom', 'vulnerability-scan', 'sign', 'publish'].includes(s.id) && <Terminal size={14} />}
                     <span>{s.name}</span>
-                    <small style={{ fontSize: '10px', opacity: 0.8, textTransform: 'uppercase' }}>
+                    <small style={{ fontSize: '12px', opacity: 0.8, textTransform: 'uppercase' }}>
                       {isRequired ? 'Required' : s.builtin ? 'CI Gate' : 'Custom'}
                     </small>
                     {!isRequired && (
@@ -667,7 +673,7 @@ export function PipelinesPage({ moduleId, navigate }: { moduleId?: string; navig
                           alignItems: 'center',
                           justifyContent: 'center',
                           cursor: 'pointer',
-                          color: '#ef4444',
+                          color: 'var(--danger-text)',
                           fontWeight: 'bold',
                           fontSize: '13px',
                           lineHeight: '1',
@@ -686,7 +692,7 @@ export function PipelinesPage({ moduleId, navigate }: { moduleId?: string; navig
             <div className="pl-flow-node cd" title="CD Deployment coordinated by netCI Temporal Worker">
               <Check size={14} />
               <span>CD Deployment</span>
-              <small style={{ fontSize: '10px', background: '#10b981', color: '#fff', padding: '1px 4px', borderRadius: '3px' }}>Temporal</small>
+              <small style={{ fontSize: '12px', background: 'var(--success)', color: 'var(--on-accent)', padding: '1px 4px', borderRadius: '3px' }}>Temporal</small>
             </div>
           </div>
         </div>
@@ -713,7 +719,7 @@ export function PipelinesPage({ moduleId, navigate }: { moduleId?: string; navig
                     ⚡ Load Standard Template
                   </button>
                 </div>
-                <p style={{ margin: '0 0 10px 0', fontSize: '11.5px', color: 'var(--muted, #64748b)' }}>
+                <p style={{ margin: '0 0 10px 0', fontSize: '11.5px', color: 'var(--muted, var(--text-2))' }}>
                   Standard quality & security gates executed in netCI build toolbox:
                 </p>
 
@@ -728,11 +734,11 @@ export function PipelinesPage({ moduleId, navigate }: { moduleId?: string; navig
                           type="button"
                           className="pl-block-item"
                           disabled={true}
-                          style={{ cursor: 'not-allowed', background: '#f8fafc' }}
+                          style={{ cursor: 'not-allowed', background: 'var(--surface-2)' }}
                         >
                           <div className="pl-block-title">
                             <span>{b.name}</span>
-                            <span style={{ color: '#ef4444', fontSize: '10.5px' }}>(Required)</span>
+                            <span style={{ color: 'var(--danger-text)', fontSize: '10.5px' }}>(Required)</span>
                           </div>
                           <div className="pl-block-desc">
                             {b.id === 'unit-test' && 'Run unit tests & code coverage analysis'}
@@ -742,7 +748,7 @@ export function PipelinesPage({ moduleId, navigate }: { moduleId?: string; navig
                             {b.id === 'sign' && 'Cryptographically sign provenance attestations (SLSA v1) via Cosign'}
                             {b.id === 'publish' && 'Publish container image & signatures to Harbor Registry'}
                           </div>
-                          <div style={{ fontSize: '11px', color: '#10b981', marginTop: '4px', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '4px' }}>
+                          <div style={{ fontSize: '12px', color: 'var(--success-text)', marginTop: '4px', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '4px' }}>
                             <Check size={12} /> added
                           </div>
                         </button>
@@ -750,7 +756,7 @@ export function PipelinesPage({ moduleId, navigate }: { moduleId?: string; navig
                     }
                     if (added) {
                       return (
-                        <div key={b.id} className="pl-block-item" style={{ cursor: 'default', background: '#f8fafc' }}>
+                        <div key={b.id} className="pl-block-item" style={{ cursor: 'default', background: 'var(--surface-2)' }}>
                           <div className="pl-block-title">
                             <span>{b.name}</span>
                           </div>
@@ -763,13 +769,13 @@ export function PipelinesPage({ moduleId, navigate }: { moduleId?: string; navig
                             {b.id === 'publish' && 'Publish container image & signatures to Harbor Registry'}
                           </div>
                           <div style={{ marginTop: '8px', display: 'flex', gap: '8px', alignItems: 'center' }}>
-                            <div style={{ fontSize: '11px', color: '#10b981', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '4px' }}>
+                            <div style={{ fontSize: '12px', color: 'var(--success-text)', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '4px' }}>
                               <Check size={12} /> added
                             </div>
                             <button
                               type="button"
                               className="secondary-button"
-                              style={{ fontSize: '11px', padding: '2px 8px', color: '#ef4444', borderColor: '#fca5a5', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
+                              style={{ fontSize: '12px', padding: '2px 8px', color: 'var(--danger-text)', borderColor: 'var(--danger-border)', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
                               onClick={() => removeStage(b.id)}
                             >
                               <Trash2 size={11} /> Remove
@@ -788,7 +794,7 @@ export function PipelinesPage({ moduleId, navigate }: { moduleId?: string; navig
                       >
                         <div className="pl-block-title">
                           <span>{b.name}</span>
-                          {isRequired && <span style={{ color: '#ef4444', fontSize: '10.5px' }}>(Required)</span>}
+                          {isRequired && <span style={{ color: 'var(--danger-text)', fontSize: '10.5px' }}>(Required)</span>}
                         </div>
                         <div className="pl-block-desc">
                           {b.id === 'unit-test' && 'Run unit tests & code coverage analysis'}
@@ -798,7 +804,7 @@ export function PipelinesPage({ moduleId, navigate }: { moduleId?: string; navig
                           {b.id === 'sign' && 'Cryptographically sign provenance attestations (SLSA v1) via Cosign'}
                           {b.id === 'publish' && 'Publish container image & signatures to Harbor Registry'}
                         </div>
-                        <div style={{ fontSize: '11px', color: '#2563eb', marginTop: '6px', fontWeight: 500, display: 'flex', alignItems: 'center', gap: '4px' }}>
+                        <div style={{ fontSize: '12px', color: 'var(--info-text)', marginTop: '6px', fontWeight: 500, display: 'flex', alignItems: 'center', gap: '4px' }}>
                           <Plus size={12} /> Add to pipeline
                         </div>
                       </button>
@@ -810,7 +816,7 @@ export function PipelinesPage({ moduleId, navigate }: { moduleId?: string; navig
                   <Terminal size={16} color="#7c3aed" />
                   Templates
                 </h4>
-                <p style={{ margin: '0 0 10px 0', fontSize: '11.5px', color: 'var(--muted, #64748b)' }}>
+                <p style={{ margin: '0 0 10px 0', fontSize: '11.5px', color: 'var(--muted, var(--text-2))' }}>
                   Custom verification steps (executed in sandbox without privileged credentials):
                 </p>
 
@@ -819,19 +825,19 @@ export function PipelinesPage({ moduleId, navigate }: { moduleId?: string; navig
                     const added = parsedStages.some(s => s.id === t.id)
                     if (added) {
                       return (
-                        <div key={t.id} className="pl-block-item" style={{ cursor: 'default', background: '#f8fafc' }}>
+                        <div key={t.id} className="pl-block-item" style={{ cursor: 'default', background: 'var(--surface-2)' }}>
                           <div className="pl-block-title">
                             <span>{t.name}</span>
                           </div>
                           <div className="pl-block-desc">{t.description}</div>
                           <div style={{ marginTop: '8px', display: 'flex', gap: '8px', alignItems: 'center' }}>
-                            <div style={{ fontSize: '11px', color: '#10b981', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '4px' }}>
+                            <div style={{ fontSize: '12px', color: 'var(--success-text)', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '4px' }}>
                               <Check size={12} /> added
                             </div>
                             <button
                               type="button"
                               className="secondary-button"
-                              style={{ fontSize: '11px', padding: '2px 8px', color: '#ef4444', borderColor: '#fca5a5', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
+                              style={{ fontSize: '12px', padding: '2px 8px', color: 'var(--danger-text)', borderColor: 'var(--danger-border)', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
                               onClick={() => removeStage(t.id)}
                             >
                               <Trash2 size={11} /> Remove
@@ -910,7 +916,7 @@ export function PipelinesPage({ moduleId, navigate }: { moduleId?: string; navig
                       <>
                         <Sliders size={14} color="#a78bfa" />
                         <span>Jenkinsfile</span>
-                        <span className="file-badge" style={{ background: '#7c3aed' }}>DECLARATIVE GROOVY</span>
+                        <span className="file-badge" style={{ background: 'var(--violet)' }}>DECLARATIVE GROOVY</span>
                       </>
                     )}
                     {editorTab === 'script' && (
@@ -931,7 +937,7 @@ export function PipelinesPage({ moduleId, navigate }: { moduleId?: string; navig
                   <div className="pl-editor-actions">
                     {editorTab === 'jenkinsfile' && (
                       <>
-                        <span style={{ fontSize: '11px', color: '#a78bfa', marginRight: '6px' }}>
+                        <span style={{ fontSize: '12px', color: 'var(--violet-text)', marginRight: '6px' }}>
                           ⚡ Auto-generated from selected stages
                         </span>
                         <button type="button" className="pl-editor-btn" onClick={handleCopyJenkinsfile}>
@@ -942,7 +948,7 @@ export function PipelinesPage({ moduleId, navigate }: { moduleId?: string; navig
                     )}
                     {editorTab === 'script' && (
                       <>
-                        <span style={{ fontSize: '11px', color: '#94a3b8' }}>
+                        <span style={{ fontSize: '12px', color: 'var(--text-3)' }}>
                           {designerScript.split('\n').length} lines · {parsedStages.length} stage(s)
                         </span>
                         <button type="button" className="pl-editor-btn" onClick={handleCopyScript}>
@@ -975,11 +981,11 @@ export function PipelinesPage({ moduleId, navigate }: { moduleId?: string; navig
                 )}
 
                 {editorTab === 'compliance' && (
-                  <div style={{ padding: '1.25rem', color: '#e2e8f0' }}>
-                    <h4 style={{ margin: '0 0 10px 0', fontSize: '14px', color: '#fff' }}>
+                  <div style={{ padding: '1.25rem', color: 'var(--nav-text)' }}>
+                    <h4 style={{ margin: '0 0 10px 0', fontSize: '14px', color: 'var(--on-accent)' }}>
                       Quality Gate Compliance Verification
                     </h4>
-                    <p style={{ margin: '0 0 14px 0', fontSize: '12px', color: '#94a3b8' }}>
+                    <p style={{ margin: '0 0 14px 0', fontSize: '12px', color: 'var(--text-3)' }}>
                       netCI enforces a strict 100% Fail-closed policy. Builds are promoted only when all mandatory quality gates pass:
                     </p>
 
@@ -1032,7 +1038,7 @@ export function PipelinesPage({ moduleId, navigate }: { moduleId?: string; navig
               <div className="pl-card">
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
                   <h4 style={{ margin: 0, fontSize: '0.875rem' }}>Execution Stage Order ({parsedStages.length})</h4>
-                  <span style={{ fontSize: '11px', color: 'var(--muted, #64748b)' }}>Sequential execution in build toolbox</span>
+                  <span style={{ fontSize: '12px', color: 'var(--muted, var(--text-2))' }}>Sequential execution in build toolbox</span>
                 </div>
                 <ol className="pl-preview-list">
                   {parsedStages.map((s, idx) => {
@@ -1042,18 +1048,18 @@ export function PipelinesPage({ moduleId, navigate }: { moduleId?: string; navig
                         <div>
                           <strong>{s.name}</strong> <code>{s.id}</code>{' '}
                           {isRequired ? (
-                            <span style={{ color: '#ef4444', fontSize: '0.75rem', fontWeight: 600 }}>(required)</span>
+                            <span style={{ color: 'var(--danger-text)', fontSize: '0.75rem', fontWeight: 600 }}>(required)</span>
                           ) : s.builtin ? (
-                            <span style={{ color: '#1d4ed8', fontSize: '0.75rem', fontWeight: 600 }}>(builtin)</span>
+                            <span style={{ color: 'var(--info-text)', fontSize: '0.75rem', fontWeight: 600 }}>(builtin)</span>
                           ) : (
-                            <span style={{ color: '#7c3aed', fontSize: '0.75rem', fontWeight: 600 }}>(custom)</span>
+                            <span style={{ color: 'var(--violet-text)', fontSize: '0.75rem', fontWeight: 600 }}>(custom)</span>
                           )}
                         </div>
                         {!isRequired && (
                           <button
                             type="button"
                             className="secondary-button"
-                            style={{ fontSize: '10.5px', padding: '1px 6px', color: '#ef4444', borderColor: '#fca5a5', display: 'inline-flex', alignItems: 'center', gap: '3px' }}
+                            style={{ fontSize: '10.5px', padding: '1px 6px', color: 'var(--danger-text)', borderColor: 'var(--danger-border)', display: 'inline-flex', alignItems: 'center', gap: '3px' }}
                             onClick={() => removeStage(s.id)}
                             title={`Remove stage ${s.name}`}
                           >
@@ -1072,7 +1078,7 @@ export function PipelinesPage({ moduleId, navigate }: { moduleId?: string; navig
               </div>
               
               {designerSubmitError && (
-                <div style={{ color: 'red', padding: '1rem', background: '#fee2e2', borderRadius: '6px', fontSize: '13px' }}>
+                <div style={{ color: 'red', padding: '1rem', background: 'var(--danger-soft)', borderRadius: '6px', fontSize: '13px' }}>
                   Error: {designerSubmitError}
                 </div>
               )}
@@ -1081,7 +1087,7 @@ export function PipelinesPage({ moduleId, navigate }: { moduleId?: string; navig
                 <button className="primary-button" style={{ alignSelf: 'flex-start' }} disabled={designerSubmitting} onClick={handleDesignerSubmit}>
                   {designerSubmitting ? 'Saving…' : view.pipelineName ? 'Save pipeline version' : 'Create pipeline'}
                 </button>
-                <small style={{ color: 'var(--muted, #64748b)', fontSize: '12px' }}>
+                <small style={{ color: 'var(--muted, var(--text-2))', fontSize: '12px' }}>
                   * Pipeline takes effect immediately and is ready to be used by all modules.
                 </small>
               </div>
@@ -1113,7 +1119,7 @@ export function PipelinesPage({ moduleId, navigate }: { moduleId?: string; navig
                   <GitBranch size={16} />
                   Stage Execution Flow for Pipeline {detailPipeline.name}
                 </h4>
-                <span style={{ fontSize: '12px', color: 'var(--muted, #64748b)' }}>
+                <span style={{ fontSize: '12px', color: 'var(--muted, var(--text-2))' }}>
                   Active version: {detailPipeline.activeVersion !== null ? `v${detailPipeline.activeVersion}` : 'None'}
                 </span>
               </div>
@@ -1137,7 +1143,7 @@ export function PipelinesPage({ moduleId, navigate }: { moduleId?: string; navig
                       {s.id === 'publish' && <Box size={14} />}
                       {!['unit-test', 'build', 'sbom', 'vulnerability-scan', 'sign', 'publish'].includes(s.id) && <Terminal size={14} />}
                       <span>{s.name}</span>
-                      <small style={{ fontSize: '10px', opacity: 0.8, textTransform: 'uppercase' }}>
+                      <small style={{ fontSize: '12px', opacity: 0.8, textTransform: 'uppercase' }}>
                         {s.builtin ? 'Built-in' : 'Custom'}
                       </small>
                     </div>
@@ -1167,7 +1173,7 @@ export function PipelinesPage({ moduleId, navigate }: { moduleId?: string; navig
               </div>
               <div>
                 <span style={{ fontWeight: 500 }}>Used by: </span>
-                <span style={{ color: '#6b7280' }}>{detailPipeline.usedBy.join(', ') || 'Not used by any module yet'}</span>
+                <span style={{ color: 'var(--text-2)' }}>{detailPipeline.usedBy.join(', ') || 'Not used by any module yet'}</span>
               </div>
               <div style={{ marginTop: '1.5rem' }}>
                 <button 
@@ -1186,7 +1192,7 @@ export function PipelinesPage({ moduleId, navigate }: { moduleId?: string; navig
             <div className="pl-card">
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1rem' }}>
                 <h4 style={{ margin: 0 }}>Version History</h4>
-                <small style={{ color: 'var(--muted, #64748b)' }}>Separation of duties: Authors cannot approve their own proposed versions</small>
+                <small style={{ color: 'var(--muted, var(--text-2))' }}>Separation of duties: Authors cannot approve their own proposed versions</small>
               </div>
               
               <div style={{ overflowX: 'auto' }}>
@@ -1204,13 +1210,13 @@ export function PipelinesPage({ moduleId, navigate }: { moduleId?: string; navig
                   <tbody>
                     {detailPipeline.versions.map(v => (
                       <tr key={v.version}>
-                        <td>v{v.version} <div style={{ fontSize: '10px', color: '#9ca3af', fontFamily: 'monospace' }}>{v.sha256?.substring(0, 12)}</div></td>
+                        <td>v{v.version} <div style={{ fontSize: '12px', color: 'var(--text-3)', fontFamily: 'monospace' }}>{v.sha256?.substring(0, 12)}</div></td>
                         <td><StatusPill status={v.status} /></td>
                         <td>{v.createdBy}</td>
                         <td>{new Date(v.createdAt).toLocaleString()}</td>
                         <td>
                           {v.decidedBy ? `${v.decidedBy} at ${new Date(v.decidedAt!).toLocaleString()}` : '-'}
-                          {v.rejectionReason && <div style={{ color: '#991b1b', fontSize: '12px' }}>Reason: {v.rejectionReason}</div>}
+                          {v.rejectionReason && <div style={{ color: 'var(--danger-text)', fontSize: '12px' }}>Reason: {v.rejectionReason}</div>}
                         </td>
                         <td>
                           <button className="link-button" onClick={() => setViewScriptVersion(viewScriptVersion === v.version ? null : v.version)}>
@@ -1303,7 +1309,7 @@ export function PipelinesPage({ moduleId, navigate }: { moduleId?: string; navig
                         <pre className="pl-diff-pre">
                           {diffs.map((d, i) => (
                             <div key={i} className={d.type === 'added' ? 'pl-diff-added' : d.type === 'removed' ? 'pl-diff-removed' : ''}>
-                              <span style={{ display: 'inline-block', width: '20px', userSelect: 'none', color: '#94a3b8' }}>
+                              <span style={{ display: 'inline-block', width: '20px', userSelect: 'none', color: 'var(--text-3)' }}>
                                 {d.type === 'added' ? '+' : d.type === 'removed' ? '-' : ' '}
                               </span>
                               {d.text}

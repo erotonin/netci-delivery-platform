@@ -69,12 +69,12 @@ test.describe.serial('Comprehensive Real-User Experience & Zero-Mock Platform Au
     await viewModBtn.click()
 
     // 3. Switch to Pipeline Tab
-    await page.click('button[role="tab"]:has-text("Pipeline")')
-    await expect(page.locator('.pipeline-card-grid')).toBeVisible()
+    await page.click('button[role="tab"]:has-text("Builds")')
+    await expect(page.locator('.builds-table')).toBeVisible()
     await page.screenshot({ path: path.join(ARTIFACT_DIR, 'user_audit_03_pipeline_dev.png') })
 
     // 4. Trigger CI Run via Smart Git Picker
-    const runBtn = page.locator('.pipeline-card:has-text("Dev") button:has-text("Run Pipeline")').first()
+    const runBtn = page.locator('.builds-toolbar button:has-text("Run build")').first()
     await expect(runBtn).toBeVisible()
     await runBtn.click()
     await expect(page.locator('.modal')).toBeVisible()
@@ -83,7 +83,7 @@ test.describe.serial('Comprehensive Real-User Experience & Zero-Mock Platform Au
     await expect(commitInput).toBeVisible()
     await page.waitForTimeout(500)
 
-    const triggerBtn = page.locator('.modal button:has-text("Run Pipeline")').last()
+    const triggerBtn = page.locator('.modal button:has-text("Run build")').last()
     await expect(triggerBtn).toBeEnabled()
     await triggerBtn.click()
 

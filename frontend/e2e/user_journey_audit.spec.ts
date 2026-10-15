@@ -66,7 +66,8 @@ test.describe.serial('Full User Journey & End-to-End Enterprise Experience Audit
     await expect(page.locator('h1')).toContainText('Systems')
 
     // Select system (hello-container)
-    const systemRow = page.locator('.systems-table button').first()
+    // By name: other specs create systems (with no modules yet), and the list is sorted.
+    const systemRow = page.locator('.systems-table button:has-text("hello-container")').first()
     await expect(systemRow).toBeVisible()
     const systemName = await systemRow.locator('.strong-cell').textContent()
     console.log(`[Audit] Navigating into system: ${systemName}`)
@@ -78,13 +79,13 @@ test.describe.serial('Full User Journey & End-to-End Enterprise Experience Audit
     await viewModBtn.click()
 
     // Pipeline Tab
-    await page.click('button[role="tab"]:has-text("Pipeline")')
-    await expect(page.locator('.pipeline-card-grid')).toBeVisible()
+    await page.click('button[role="tab"]:has-text("Builds")')
+    await expect(page.locator('.builds-table')).toBeVisible()
     await page.screenshot({ path: path.join(ARTIFACT_DIR, 'audit_02_pipeline_cards.png') })
-    console.log('[Audit] Pipeline environment cards loaded (Dev, Staging, Prod)')
+    console.log('[Audit] Builds list loaded')
 
     // Check Run Pipeline Dialog & Smart Git Picker
-    const runBtn = page.locator('.pipeline-card button:has-text("Run Pipeline")').first()
+    const runBtn = page.locator('.builds-toolbar button:has-text("Run build")').first()
     await expect(runBtn).toBeVisible()
     await runBtn.click()
     await expect(page.locator('.modal')).toBeVisible()
@@ -102,7 +103,7 @@ test.describe.serial('Full User Journey & End-to-End Enterprise Experience Audit
 
     // Open a run to view the Real-Time Pipeline DAG
     // The DAG belongs to a run: with none recorded (CI has no Jenkins) there is nothing to open.
-    const lastBuild = page.locator('.last-build').first()
+    const lastBuild = page.locator('.builds-table .table-button').first()
     if ((await hasSucceededRun(page.request, 'hello-container')) && (await lastBuild.isVisible())) {
       await lastBuild.click()
       await expect(page.locator('.stage-graph')).toBeVisible({ timeout: 15_000 })
@@ -126,7 +127,7 @@ test.describe.serial('Full User Journey & End-to-End Enterprise Experience Audit
     }
 
     // DORA Metrics Tab
-    await page.click('button[role="tab"]:has-text("DORA Metrics")')
+    await page.click('button[role="tab"]:has-text("Metrics")')
     await expect(page.locator('.dora-grid')).toBeVisible()
     const doraCards = page.locator('.dora-card')
     expect(await doraCards.count()).toBe(4)

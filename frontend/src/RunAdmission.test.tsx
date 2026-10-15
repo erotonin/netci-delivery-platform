@@ -58,17 +58,18 @@ vi.mock('./api/netciClient', async (importOriginal) => {
 })
 
 import { ModulePage, RunStatus } from './ModulePage'
+import { RulesPanel } from './DeliveryView'
 import { PortalFeedbackProvider } from './PortalFeedback'
 
 const openPipelineTab = async () => {
   const user = userEvent.setup()
   render(<PortalFeedbackProvider><ModulePage moduleId="payments-api" onSettings={vi.fn()} /></PortalFeedbackProvider>)
   await screen.findByRole('heading', { name: 'Payments API' })
-  await user.click(screen.getByRole('tab', { name: 'Pipeline' }))
+  await user.click(screen.getByRole('tab', { name: 'Builds' }))
   return user
 }
 
-const card = async (name: string) => (await screen.findByRole('heading', { name, level: 3 })).closest('article') as HTMLElement
+const row = async (build: string) => screen.findByRole('button', { name: `Open build ${build}` })
 
 describe('admission and supersession in the portal (ADR-050)', () => {
   it('shows a queued run without admittedAt as waiting, never as queued for CI or running', () => {
@@ -85,17 +86,16 @@ describe('admission and supersession in the portal (ADR-050)', () => {
     expect(admitted.textContent).toBe('queued')
   })
 
-  it('labels the waiting run on its environment card and not as running', async () => {
+  it('labels the waiting run in the build list and not as running', async () => {
     await openPipelineTab()
-    const dev = await card('Development')
-    expect(await within(dev).findByText(/waiting admission|chờ tới lượt/)).toBeTruthy()
-    expect(dev.textContent).not.toMatch(/running/i)
+    const waitingRow = await row('#11111111')
+    expect(within(waitingRow).getByText(/waiting admission|chờ tới lượt/)).toBeTruthy()
+    expect(waitingRow.textContent).not.toMatch(/running/i)
   })
 
   it('explains the wait on the run page', async () => {
     const user = await openPipelineTab()
-    const dev = await card('Development')
-    await user.click(await within(dev).findByText(/waiting admission|chờ tới lượt/))
+    await user.click(await row('#11111111'))
     const notice = await screen.findByTestId('run-admission-notice')
     expect(notice.textContent).toMatch(/not been submitted to Jenkins|chưa được gửi tới Jenkins/)
     expect(notice.textContent).toContain('app-1:branch/main')
@@ -104,10 +104,9 @@ describe('admission and supersession in the portal (ADR-050)', () => {
 
   it('names the run that superseded a cancelled one, and opens it', async () => {
     const user = await openPipelineTab()
-    await user.click(screen.getByRole('button', { name: 'Open history Staging' }))
-    const row = (await screen.findByText('superseded by #22222222')).closest('button') as HTMLElement
-    expect(row).toBeTruthy()
-    await user.click(row)
+    const supersededRow = (await screen.findByText('superseded by #22222222')).closest('button') as HTMLElement
+    expect(supersededRow).toBeTruthy()
+    await user.click(supersededRow)
 
     const notice = await screen.findByTestId('run-superseded-notice')
     expect(notice.textContent).toContain('Superseded by #22222222')
@@ -119,12 +118,17 @@ describe('admission and supersession in the portal (ADR-050)', () => {
   })
 
   it('states each trigger rule\'s cancelInProgress and path filters when set', async () => {
-    await openPipelineTab()
-    const panel = await screen.findByTestId('delivery-flow')
-    const items = panel.querySelectorAll('li')
-    expect(items[0].textContent).toBe('push main → build → deploy dev · cancelInProgress: false · paths: src/**, Dockerfile')
-    expect(items[1].textContent).toBe('pull_request ** → build only · cancelInProgress: true · pathsIgnore: docs/**')
-    expect(items[2].textContent).toBe('tag v* → build only + register version')
-    expect(panel.textContent).toContain('only when the SCM reported every changed file')
+    const { getModuleDeliveryRules } = await import('./api/netciClient')
+    render(<RulesPanel rules={await getModuleDeliveryRules('payments-api')} />)
+    const items = screen.getByTestId('delivery-rules').querySelectorAll('li')
+    expect(items[0].textContent).toContain('Push to main')
+    expect(items[0].textContent).toContain('deploy to development')
+    expect(items[0].textContent).toContain('never cancelled by a newer build')
+    expect(items[0].textContent).toContain('only when src/**, Dockerfile changed')
+    expect(items[1].textContent).toContain('Pull request to **')
+    expect(items[1].textContent).toContain('a newer build cancels this one')
+    expect(items[1].textContent).toContain('not when only docs/** changed')
+    expect(items[2].textContent).toContain('registers the version')
+    expect(screen.getByTestId('delivery-rules').textContent).toContain('only when the repository reported every changed file')
   })
 })

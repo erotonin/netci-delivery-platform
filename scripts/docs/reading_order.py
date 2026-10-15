@@ -52,7 +52,7 @@ def adr(n: int) -> Path:
 def main() -> None:
     tb = sections(TB)
     pick = lambda *keys: "\n".join(tb[k] for k in keys)  # noqa: E731
-    adrs = [60, 63, 65, 61, 64, 66, 67, 68, 69, 70, 71, 72, 74, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89]
+    adrs = [60, 63, 65, 61, 64, 66, 67, 68, 69, 70, 71, 72, 74, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90]
     steps = [
         ("Bước 1 — Nền tảng", "Tuần 1",
          "Đọc câu chuyện để hiểu vì sao có đề tài, rồi học Jenkins, container, Kubernetes, storage, hệ phân tán, BMC. "
