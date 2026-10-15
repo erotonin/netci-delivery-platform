@@ -65,8 +65,35 @@ def write() -> int:
         target = DESTINATION / relative
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(content)
-    print(f"shared library tooling written: {len(wanted) - 1} files")
+    ON_AGENTS.write_bytes(pipeline_on_agents())
+    print(f"shared library tooling written: {len(wanted) - 1} files, and {ON_AGENTS.relative_to(ROOT)}")
     return 0
+
+
+VARS = ROOT / "jenkins" / "shared-library" / "vars"
+ON_AGENTS = VARS / "netciPipelineOnAgents.groovy"
+
+
+def pipeline_on_agents() -> bytes:
+    """vars/netciPipeline.groovy for inbound agents (ADR-092): the same stages, with the agent
+    chosen by label -- a VM's inbound agents -- instead of a Kubernetes build pod. Generated,
+    because Declarative cannot pick its agent's kind at run time and a hand-kept second copy of
+    500 lines would drift from the first."""
+
+    source = (VARS / "netciPipeline.groovy").read_text()
+    head, _, rest = source.partition("    // netci:dispatch-begin\n")
+    _, _, rest = rest.partition("    // netci:dispatch-end\n")
+    before, _, after = (head + rest).partition("        // netci:agent-begin\n")
+    _, _, after = after.partition("        // netci:agent-end\n")
+    if not after:
+        raise SystemExit("vars/netciPipeline.groovy lost its netci:dispatch / netci:agent markers")
+    agent = ("        // An inbound agent labelled agentTemplate (the job's agentLabel), with the\n"
+             "        // toolbox on PATH: no containers to switch into, so netciInBuilder runs the\n"
+             "        // work in place. Its workspace outlives the build; the post step wipes it.\n"
+             "        agent { label agentTemplate }\n")
+    banner = ("// GENERATED from vars/netciPipeline.groovy by scripts/sync_shared_library.py -- do not edit.\n"
+              "// The netCI pipeline on inbound agents (ADR-092); netciPipeline calls it for NETCI_AGENT_KIND=static.\n")
+    return (banner + before + agent + after).encode()
 
 
 def check() -> int:
@@ -74,6 +101,8 @@ def check() -> int:
     drift = sorted(
         {name for name in set(wanted) | set(found) if wanted.get(name) != found.get(name)}
     )
+    if not ON_AGENTS.is_file() or ON_AGENTS.read_bytes() != pipeline_on_agents():
+        drift.append(str(ON_AGENTS.relative_to(ROOT)))
     if drift:
         print(
             "jenkins/shared-library/resources/netci/tooling is stale -- run "

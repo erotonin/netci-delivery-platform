@@ -5,7 +5,9 @@
 #   lab/aa/idp.sh casc         merge lab/aa/casc-ci.yaml into the lab's JCasC ConfigMap (applied at the
 #                              replicas' next start: lab/aa/chart.sh upgrade, or a rolling restart)
 #   lab/aa/idp.sh deploy-prepare  namespaces dev/staging/prod and the worker's own kubeconfig (aa-lab)
-#   lab/aa/idp.sh env          write .netci-gate/aa/idp.env: the IDP against the replicas, through netci-queue
+#   lab/aa/idp.sh vm-agents    the lab's inbound agents (agent-0/1, the mentor's VM) carry the build toolbox,
+#                              for NETCI_AGENT_KIND=static (ADR-092)
+#   lab/aa/idp.sh env         write .netci-gate/aa/idp.env: the IDP against the replicas, through netci-queue
 #   lab/aa/idp.sh api|worker   run the IDP's API (:18100, reachable by build pods) or its CD worker
 #
 # Credentials come from .netci-gate and go into the Secret through files in a private temporary
@@ -130,10 +132,41 @@ print(f"wrote {path} (netci-deployer, namespaces dev/staging/prod)")
 EOF
 }
 
+# The lab's two inbound agents stand for the mentor's large VM (phase5.yaml): one agent per replica,
+# each sent home by HAProxy. For the IDP's pipeline on static agents (ADR-092) they run the build
+# toolbox image -- an inbound agent with buildah, syft, trivy and cosign on PATH, what the VM would
+# have installed -- under the builder's AppArmor profile, trusting the registry's CA.
+vm_agents() {
+  kubectl -n "$NS" create configmap lab-ca --from-file=ca.crt="$C/pki/ca.crt" --dry-run=client -o yaml | kubectl apply -f - >/dev/null
+  python3 - <<'EOF' | kubectl -n "$NS" patch statefulset agent --type strategic --patch-file /dev/stdin >/dev/null
+import json, yaml
+cloud = yaml.safe_load(open("lab/aa/casc-ci.yaml"))["jenkins"]["clouds"][0]["kubernetes"]
+pod = yaml.safe_load(cloud["templates"][0]["yaml"])
+toolbox = next(c["image"] for c in pod["spec"]["containers"] if c["name"] == "builder")
+print(json.dumps({"spec": {"template": {"spec": {
+    "imagePullSecrets": [{"name": "harbor-pull"}],
+    "volumes": [{"name": "lab-ca", "configMap": {"name": "lab-ca"}}],
+    "containers": [{
+        "name": "agent", "image": toolbox,
+        "env": [{"name": "BUILDAH_ISOLATION", "value": "chroot"}, {"name": "STORAGE_DRIVER", "value": "vfs"},
+                {"name": "SSL_CERT_DIR", "value": "/etc/ssl/certs:/etc/netci/registry-ca"}],
+        "securityContext": {"allowPrivilegeEscalation": True,
+                            "appArmorProfile": {"type": "Localhost", "localhostProfile": "netci-builder"}},
+        # Requests as before (netci-lab-3 is full); a build needs more than an idle agent.
+        "resources": {"limits": {"memory": "2Gi"}},
+        "volumeMounts": [
+            {"name": "lab-ca", "mountPath": "/etc/containers/certs.d/172.17.0.1:8930/ca.crt", "subPath": "ca.crt", "readOnly": True},
+            {"name": "lab-ca", "mountPath": "/etc/netci/registry-ca", "readOnly": True}]}]}}}}))
+EOF
+  kubectl -n "$NS" rollout status statefulset/agent --timeout=600s >/dev/null
+  kubectl -n "$NS" get statefulset agent -o jsonpath='agents run {.spec.template.spec.containers[0].image}{"\n"}'
+}
+
 case "${1:-}" in
   ci-prepare) ci_prepare ;;
   deploy-prepare) deploy_prepare ;;
   casc) casc ;;
+  vm-agents) vm_agents ;;
   env) env_file ;;
   api|worker) run "$1" ;;
   *) sed -n '2,10p' "$0"; exit 2 ;;

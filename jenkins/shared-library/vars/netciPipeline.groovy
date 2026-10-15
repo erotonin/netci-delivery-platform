@@ -8,6 +8,23 @@
  * that could not be verified.
  */
 def call(Map config = [:]) {
+    // netci:dispatch-begin
+    // Inbound agents -- a VM's, the mentor's layout -- instead of Kubernetes build pods (ADR-092).
+    // netCI decides it (the job's agentKind), never the build's parameters. Declarative cannot
+    // choose its agent's kind at run time, so this same pipeline with `agent { label ... }` is
+    // generated into vars/netciPipelineOnAgents.groovy by scripts/sync_shared_library.py, and
+    // CI checks the copy is current.
+    def agentKind = config.get('agentKind', 'kubernetes')
+    if (agentKind == 'static') {
+        if (params.NETCI_BUILD_NAMESPACE?.trim()) {
+            error('a per-project build namespace was named, but this job runs on static agents, which are in none')
+        }
+        return netciPipelineOnAgents(config)
+    }
+    if (agentKind != 'kubernetes') {
+        error("unknown agentKind '${agentKind}': kubernetes or static")
+    }
+    // netci:dispatch-end
     def template = config.get('template', 'container-ci-cd-v1')
     def defaultStages = [
         'checkout', 'unit-test', 'build', 'sbom',
@@ -46,6 +63,7 @@ def call(Map config = [:]) {
     def podIdleMinutes = reusablePod ? 120 : 0
 
     pipeline {
+        // netci:agent-begin
         agent {
             kubernetes {
                 inheritFrom agentTemplate
@@ -58,6 +76,7 @@ def call(Map config = [:]) {
                 defaultContainer 'jnlp'
             }
         }
+        // netci:agent-end
         options {
             timestamps()
             skipDefaultCheckout(true)
@@ -396,6 +415,8 @@ def call(Map config = [:]) {
                         netciInBuilder {
                             cleanWs(deleteDirs: true, disableDeferredWipeout: true)
                         }
+                        // After the wipe, whose own netciInBuilder would set the storage up again.
+                        netciInBuilder.dropStorage()
                     }
                 }
             }

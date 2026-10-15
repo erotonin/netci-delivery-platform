@@ -48,6 +48,10 @@ class JenkinsHttpConfig:
     callback_url: str = "http://host.docker.internal:8000"
     callback_credentials_id: str = "netci-pipeline-api-key"
     agent_label: str = "netci-ephemeral"
+    # Where builds run (ADR-092): "kubernetes", a build pod per build, or "static", the inbound
+    # agents labelled agent_label (a VM's). The operator's choice, baked into the job; a run
+    # never picks it.
+    agent_kind: str = "kubernetes"
     shared_library: str = "netci-shared-library"
     # Where the build pushes and pulls. A build agent generally cannot reach the public
     # internet, so the base image comes from the same registry as everything else.
@@ -100,6 +104,7 @@ class JenkinsHttpConfig:
             callback_url=os.getenv("NETCI_CALLBACK_URL", "http://host.docker.internal:8000").rstrip("/"),
             callback_credentials_id=os.getenv("NETCI_CALLBACK_CREDENTIALS_ID", "netci-pipeline-api-key"),
             agent_label=os.getenv("NETCI_AGENT_LABEL", "netci-ephemeral"),
+            agent_kind=agent_kind_setting(),
             shared_library=os.getenv("NETCI_SHARED_LIBRARY", "netci-shared-library"),
             registry_push_host=os.getenv("NETCI_REGISTRY_PUSH_HOST", ""),
             registry_pull_host=os.getenv("NETCI_REGISTRY_PULL_HOST", ""),
@@ -124,6 +129,22 @@ class JenkinsHttpConfig:
             keep_builds=_positive_int("NETCI_JENKINS_KEEP_BUILDS", 100),
             keep_days=_positive_int("NETCI_JENKINS_KEEP_DAYS", 30),
         )
+
+
+def agent_kind_setting() -> str:
+    """NETCI_AGENT_KIND, or a refusal at startup.
+
+    Per-project build namespaces (ADR-030) are Kubernetes namespaces: a static agent cannot be
+    put in one, so the two together would claim an isolation no build had.
+    """
+    kind = os.getenv("NETCI_AGENT_KIND", "").strip().lower() or "kubernetes"
+    if kind not in {"kubernetes", "static"}:
+        raise ValueError(f"NETCI_AGENT_KIND must be kubernetes or static (got {kind!r})")
+    if kind == "static" and os.getenv("NETCI_BUILD_ISOLATION", "").strip().lower() == "kubernetes":
+        raise ValueError(
+            "NETCI_AGENT_KIND=static cannot be combined with NETCI_BUILD_ISOLATION=kubernetes: "
+            "builds on static agents run in no per-project namespace")
+    return kind
 
 
 #: OCI repository path components (distribution spec), joined by "/".
@@ -595,6 +616,7 @@ class JenkinsHttpAdapter:
             "netciPipeline(\n"
             f"    template: params.NETCI_TEMPLATE ?: '{template_id}',\n"
             f"    agentLabel: '{self.config.agent_label}',\n"
+            f"    agentKind: '{self.config.agent_kind}',\n"
             f"    callbackCredentialsId: '{self.config.callback_credentials_id}',\n"
             f"    cosignCredentialsId: '{self.config.cosign_credentials_id}',\n"
             # Empty is an unencrypted key, anonymous git, an anonymous registry (ADR-054).

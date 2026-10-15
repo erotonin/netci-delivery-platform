@@ -72,6 +72,7 @@ data:
   {{- end }}
   NETCI_CALLBACK_URL: {{ include "netci.callbackUrl" . | quote }}
   NETCI_AGENT_LABEL: {{ .Values.jenkins.agentLabel | quote }}
+  NETCI_AGENT_KIND: {{ .Values.jenkins.agentKind | default "kubernetes" | quote }}
   NETCI_SHARED_LIBRARY: {{ .Values.jenkins.sharedLibrary | quote }}
   NETCI_CALLBACK_CREDENTIALS_ID: {{ .Values.jenkins.callbackCredentialsId | quote }}
   NETCI_COSIGN_CREDENTIALS_ID: {{ .Values.jenkins.cosignCredentialsId | quote }}

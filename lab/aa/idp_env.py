@@ -52,6 +52,10 @@ def main() -> None:
         "NETCI_BUILD_BASE_IMAGE": "172.17.0.1:8930/mirror/netci/python-base:3.12-alpine",
         "NETCI_TRIVY_DB_REPOSITORY": "172.17.0.1:8930/mirror/aquasec/trivy-db:2",
         "NETCI_BUILD_ISOLATION": "none",
+        # Where builds run (ADR-092): build pods of the replicas' cloud, or -- with
+        # IDP_AGENT_KIND=static -- the lab's inbound agents standing for the mentor's VM.
+        "NETCI_AGENT_KIND": os.environ.get("IDP_AGENT_KIND", "kubernetes"),
+        "NETCI_AGENT_LABEL": "netci-vm" if os.environ.get("IDP_AGENT_KIND") == "static" else "netci-ephemeral",
         # cosign, run by the worker to verify a digest before deploying it, must trust the
         # registry's CA; without it the TLS attempt failed and go-containerregistry fell back to
         # plain HTTP on an RFC 1918 address ("plain HTTP request was sent to HTTPS port").

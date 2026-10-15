@@ -73,6 +73,9 @@ jenkins:
   # What the generated jobs ask the controller for. These must exist on the controller:
   # scripts/jenkins_preflight.py checks each one.
   agentLabel: netci-ephemeral
+  # Where builds run (ADR-092): kubernetes (a pod per build, agentLabel names the pod template) or
+  # static (inbound agents labelled agentLabel, e.g. a VM's; not with buildIsolation kubernetes).
+  agentKind: kubernetes
   sharedLibrary: netci-shared-library
   callbackCredentialsId: netci-pipeline-api-key
   cosignCredentialsId: netci-cosign-key

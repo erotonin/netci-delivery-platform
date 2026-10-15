@@ -297,8 +297,11 @@ Chart IDP từ chối nếu `runQueueUrl` đi cùng nhiều hơn một controlle
   minh được chữ ký và mọi lần deploy đều bị chặn.
 - **Trivy DB:** mirror theo lịch (timer `netci-trivy-db-mirror`). Với `NETCI_TOOLCHAIN_ENFORCE=enforce`,
   DB cũ hơn 72 giờ sẽ chặn artifact.
-- **Giới hạn:** pipeline hiện chỉ chạy được trên pod Kubernetes, chưa chạy được trên agent inbound
-  đặt trên VM.
+- **Agent inbound trên VM (ADR-092):** đặt `NETCI_AGENT_KIND=static` và `NETCI_AGENT_LABEL=<label của
+  các agent trên VM>` cho API. VM cần những gì image `jenkins/agent-toolbox` có: buildah, syft,
+  trivy, cosign, git, python3, CA của registry, và profile AppArmor `netci-builder`. Cần một agent
+  cho mỗi replica (`agents.homes`). Không dùng chung với `NETCI_BUILD_ISOLATION=kubernetes`; API sẽ
+  từ chối khởi động nếu đặt cả hai.
 
 ## 10. Kiểm tra sau khi cài (làm tại site, ghi kết quả)
 

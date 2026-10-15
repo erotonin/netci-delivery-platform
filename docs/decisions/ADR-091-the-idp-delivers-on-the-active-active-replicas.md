@@ -79,10 +79,8 @@ The rolling upgrades that applied the chart changes failed nothing: 329 of 329 r
 
 ## What it costs, said plainly
 
-- **The pipeline needs Kubernetes build pods.** `netciPipeline` declares
-  `agent { kubernetes { … } }`, so it cannot run on inbound agents on a VM, which is the mentor's
-  production layout (one large OpenStack VM for agents). That needs a pipeline variant for labelled
-  static agents; it is not done.
+- **The pipeline needed Kubernetes build pods.** `netciPipeline` declared `agent { kubernetes { … } }`,
+  so it could not run on inbound agents on a VM, which is the mentor's layout. ADR-092 added that.
 - **A build pod is an agent of one replica.** If that replica dies mid-build, the build is not
   adopted (ADR-079 adopts builds on inbound agents, which reconnect). It fails and is retried.
 - **The builder's AppArmor profile is node configuration.** A node without it cannot run a build.

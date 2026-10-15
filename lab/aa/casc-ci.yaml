@@ -40,6 +40,21 @@ unclassified:
                 remote: "http://172.17.0.1:8929/platform/netci-shared-library.git"
                 credentialsId: netci-git
 jenkins:
+  # The lab's two inbound agents (the mentor's VM: one agent per replica, phase5.yaml), labelled
+  # netci-vm as well for the IDP's pipeline on static agents (ADR-092, `lab/aa/idp.sh vm-agents`).
+  nodes:
+    - permanent:
+        name: agent-0
+        labelString: "linux netci-vm"
+        numExecutors: 2
+        remoteFS: /home/jenkins/agent
+        launcher: {inbound: {webSocket: true}}
+    - permanent:
+        name: agent-1
+        labelString: "linux netci-vm"
+        numExecutors: 2
+        remoteFS: /home/jenkins/agent
+        launcher: {inbound: {webSocket: true}}
   clouds:
     - kubernetes:
         name: netci-builds
