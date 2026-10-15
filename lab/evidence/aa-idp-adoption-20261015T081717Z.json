@@ -1,0 +1,110 @@
+{
+  "run": "2fc6c92b-caea-48a7-8f01-bc49bb906fa1",
+  "commit": "355cfd6d24b21d3febc07d41d374d010bca88680",
+  "killed": "pod",
+  "during": "vulnerability-scan",
+  "owner": "r1",
+  "node": "netci-lab-1",
+  "adoptedBy": "r0",
+  "adoptedAfterSeconds": 6.3,
+  "runStatus": "failed",
+  "finishedAfterSeconds": 13.1,
+  "artifactDigest": null,
+  "stages": {
+    "checkout": "succeeded",
+    "unit-test": "succeeded",
+    "build": "succeeded",
+    "sbom": "succeeded",
+    "vulnerability-scan": "failed"
+  },
+  "adoptionLogged": {
+    "by": "jenkins-0",
+    "line": "2026-10-15 08:17:10.799+0000 [id=63]\tINFO\ti.n.j.homesync.RunningBuilds#adopt: netCI homesync: adopted netci-54a92407-0861-4cf7-8a95-4371f8477dd8 #13 (building: true)"
+  },
+  "stageCallbacks": {
+    "checkout": 0,
+    "unit-test": 0,
+    "build": 0,
+    "sbom": 0,
+    "vulnerability-scan": 0
+  },
+  "timeline": [
+    {
+      "t": 0.5,
+      "holder": "r1",
+      "building": true,
+      "jenkinsResult": null,
+      "runStatus": "running"
+    },
+    {
+      "t": 1.7,
+      "holder": null,
+      "building": null,
+      "jenkinsResult": null,
+      "runStatus": "running"
+    },
+    {
+      "t": 3.0,
+      "holder": null,
+      "building": null,
+      "jenkinsResult": null,
+      "runStatus": "running"
+    },
+    {
+      "t": 4.3,
+      "holder": null,
+      "building": null,
+      "jenkinsResult": null,
+      "runStatus": "running"
+    },
+    {
+      "t": 6.3,
+      "holder": "r0",
+      "building": true,
+      "jenkinsResult": null,
+      "runStatus": "running"
+    },
+    {
+      "t": 7.5,
+      "holder": "r0",
+      "building": true,
+      "jenkinsResult": null,
+      "runStatus": "running"
+    },
+    {
+      "t": 8.6,
+      "holder": "r0",
+      "building": true,
+      "jenkinsResult": null,
+      "runStatus": "running"
+    },
+    {
+      "t": 9.7,
+      "holder": "r0",
+      "building": true,
+      "jenkinsResult": null,
+      "runStatus": "running"
+    },
+    {
+      "t": 10.8,
+      "holder": "r0",
+      "building": true,
+      "jenkinsResult": "FAILURE",
+      "runStatus": "running"
+    },
+    {
+      "t": 12.0,
+      "holder": "r0",
+      "building": true,
+      "jenkinsResult": "FAILURE",
+      "runStatus": "running"
+    },
+    {
+      "t": 13.1,
+      "holder": "r0",
+      "building": true,
+      "jenkinsResult": "FAILURE",
+      "runStatus": "failed"
+    }
+  ]
+}

@@ -64,6 +64,7 @@ kube-vip VIP, 2 inbound agents with 2 executors each.
 | A drain cuts nothing in flight | HAProxy's agent check: "maint" while draining (nothing new sent, in-flight requests finish), the preStop waits until none is in flight; a changed haproxy.cfg reloaded in place, the VIP staying (ADR-089) | **Lab**: rolling restart 324/324 reads, 630 creates none missing; a config change reloaded by all 3 balancers, 242/242 reads (`aa-phase6-upgrade-20261015T024350Z.json`, `…024008Z.json`) |
 | The IDP delivers on the replicas | Build pods from the replicas' Kubernetes cloud, the shared library and credentials by JCasC, the builder's AppArmor profile, private repositories read with a token file (ADR-091) | **Lab**: payments-api built through netci-queue, signed and verified, promoted dev → staging, released to prod by a second person; a real GitLab push webhook built and deployed to dev under `enforce` (`aa-idp-e2e-20261015T061405Z.json`) |
 | The pipeline on a VM's inbound agents | `NETCI_AGENT_KIND=static`: the same pipeline, generated with `agent { label }`; each build has its own image storage, dropped at the end (ADR-092) | **Lab**: a GitLab push built on `agent-0` with no pod and deployed to dev; the pod path still built with the same library |
+| Adoption with the IDP's own pipeline | Fence no longer misses a renewal in its successor's first second (netci35); the IDP build tested by killing its replica (ADR-093) | **Lab**: `long` adopted by the survivor in 4.6-9.6 s; the IDP's build adopted but then failed (`withCredentials` cannot resume) or hung -- **not established** for it |
 | Not done, said plainly | Edits are refused for 28-45 s while the store's primary fails over (longer when the Barman Cloud plugin's leader died with it, ADR-085); a new HAProxy image still replaces the balancers, and kube-vip can then move the VIP (ADR-089); a script that signs in with a password keeps Jenkins' own session-bound crumb (an API token needs none, ADR-086); Nova fencing, Octavia and kube-vip with allowed-address-pairs are tested against fakes or not at all, never against a real OpenStack | -- |
 
 ## Builds on the agent fabric
@@ -131,6 +132,7 @@ deploy/helm/netci/ci/test-rules.sh   # promtool checks and unit tests of the ale
 - [ADR-089 — a drain lets what is in flight finish](decisions/ADR-089-a-drain-lets-what-is-in-flight-finish.md)
 - [ADR-091 — the IDP delivers on the active-active replicas](decisions/ADR-091-the-idp-delivers-on-the-active-active-replicas.md)
 - [ADR-092 — the pipeline runs on a VM's inbound agents too](decisions/ADR-092-the-pipeline-runs-on-a-vms-inbound-agents.md)
+- [ADR-093 — adoption tested with the IDP's own pipeline](decisions/ADR-093-adoption-with-the-idps-own-pipeline.md)
 
 Deploying it at a site: [docs/JENKINS-HA-PRODUCTION.md](JENKINS-HA-PRODUCTION.md) (Vietnamese: prerequisites,
 operators, Secrets, the chart, VIP, Nova fencing, agents, the IDP, checks, operations).

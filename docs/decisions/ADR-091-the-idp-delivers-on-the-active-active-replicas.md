@@ -74,6 +74,12 @@ developer, rae a reviewer. The evidence is in `lab/evidence/aa-idp-e2e-*.json`.
 | The same build under `enforce` | refused at first: netCI's own plugin was undeclared (decision 5) |
 | Retried after the fix | all 9 stages, deploy and health check included; dev healthy on `sha256:f770e5bc…`, while staging and prod stay on v1.0.0 (`…061405Z`) |
 
+Later the same day the IDP's commit statuses reached GitLab: `netci/pipeline=success` on 355cfd6, linking to
+the Jenkins build. Before that, all 22 statuses had been dead-lettered, each with its reason, because no
+token was configured. GitLab sets a status on a protected branch only for a user who may push or merge
+to it, so a Developer token was refused 403. The lab now uses a Maintainer project access token for
+payments-api only.
+
 The rolling upgrades that applied the chart changes failed nothing: 329 of 329 reads,
 `aa-phase6-upgrade-20261015T053255Z.json`.
 

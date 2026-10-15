@@ -63,6 +63,11 @@ def main() -> None:
         # The scan's Trivy DB is mirrored on a timer (netci-trivy-db-mirror), so a stale one stops
         # the artifact rather than being let through with a warning.
         "NETCI_TOOLCHAIN_ENFORCE": "enforce",
+        # Commit statuses back to GitLab (scm.commit_status): a project access token of
+        # payments-api, Developer, api scope -- never the admin token. Without it every status was
+        # dead-lettered ("NETCI_GITLAB_TOKEN_FILE is not configured"), which is the honest outcome.
+        "NETCI_GITLAB_URL": "http://172.17.0.1:8929",
+        "NETCI_GITLAB_TOKEN_FILE": str(ROOT / ".netci-gate/aa/gitlab-status-token"),
         "NETCI_CD_MODE": "temporal",
         # kubeconfigRef "aa-lab" (lab/aa/idp.sh deploy-prepare): netci-deployer, three namespaces.
         "NETCI_KUBECONFIG_DIR": str(ROOT / ".netci-gate/aa/kubeconfigs"),

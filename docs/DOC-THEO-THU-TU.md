@@ -1134,7 +1134,7 @@ Cách tìm cũng giống nhau: dựng lại đúng điều kiện thật, đo, v
 
 # Bước 4 — Các quyết định kiến trúc (ADR, tiếng Anh)
 
-> **Tuần 3.** Mỗi ADR ghi một quyết định: bối cảnh, quyết định, bằng chứng, phương án bị loại. Thứ tự: 060 (quan trọng nhất), 063 (hàng đợi), 065 (netciOnce), 061 và 064 (fabric), rồi 066–072, mỗi cái một bài học cụ thể; rồi 074 và 076–080: active-active, từ cái gì hỏng khi dùng chung một home tới nhận nuôi build đang chạy và kho HA; cuối cùng 081–089: đưa lên production (hàng đợi, IDP, backup, fence bằng Nova, một chart, crumb, đổi tên và di chuyển job, view, drain không cắt request, IDP build–deploy thật trên lab HA, pipeline trên agent inbound của VM).
+> **Tuần 3.** Mỗi ADR ghi một quyết định: bối cảnh, quyết định, bằng chứng, phương án bị loại. Thứ tự: 060 (quan trọng nhất), 063 (hàng đợi), 065 (netciOnce), 061 và 064 (fabric), rồi 066–072, mỗi cái một bài học cụ thể; rồi 074 và 076–080: active-active, từ cái gì hỏng khi dùng chung một home tới nhận nuôi build đang chạy và kho HA; cuối cùng 081–089: đưa lên production (hàng đợi, IDP, backup, fence bằng Nova, một chart, crumb, đổi tên và di chuyển job, view, drain không cắt request, IDP build–deploy thật trên lab HA, pipeline trên agent inbound của VM, adopt với pipeline thật của IDP).
 
 ## ADR-060: Jenkins cells, a global queue outside Jenkins, and fenced takeover
 
@@ -4207,6 +4207,12 @@ developer, rae a reviewer. The evidence is in `lab/evidence/aa-idp-e2e-*.json`.
 | The same build under `enforce` | refused at first: netCI's own plugin was undeclared (decision 5) |
 | Retried after the fix | all 9 stages, deploy and health check included; dev healthy on `sha256:f770e5bc…`, while staging and prod stay on v1.0.0 (`…061405Z`) |
 
+Later the same day the IDP's commit statuses reached GitLab: `netci/pipeline=success` on 355cfd6, linking to
+the Jenkins build. Before that, all 22 statuses had been dead-lettered, each with its reason, because no
+token was configured. GitLab sets a status on a protected branch only for a user who may push or merge
+to it, so a Developer token was refused 403. The lab now uses a Maintainer project access token for
+payments-api only.
+
 The rolling upgrades that applied the chart changes failed nothing: 329 of 329 reads,
 `aa-phase6-upgrade-20261015T053255Z.json`.
 
@@ -4301,6 +4307,77 @@ was taken to `netci-0.5.3`.
   survives its replica's death, but it proved it with a shell loop, not with the IDP's pipeline.
 - **Two agents on one VM is not two machines.** If the VM is lost, every build on it is lost, and
   nothing in netCI can change that; it is the site's choice of one large VM.
+
+## ADR-093: Adoption tested with the IDP's own pipeline -- what holds and what does not
+
+- Status: accepted (the fence fix); the rest is open, measured
+- Date: 2026-10-15
+- Refines: ADR-079 (adoption), ADR-084 (strict fence), ADR-092 (static agents)
+
+### Context
+
+ADR-079 measured adoption with `long`, a pipeline of 90 one-second `sh` ticks. When its replica's
+pod was killed, the surviving replica took the build over in 4.3 s. The mentor's requirement is
+"no lost builds", and the build that matters is the IDP's: about 9 stages, each wrapped in
+callbacks that bind a credential and run a short `sh`. `lab/aa/idp_adoption_probe.py` starts a
+real build of payments-api through the IDP on the lab's inbound agents and kills the replica that
+owns it.
+
+### Decision: the fence no longer misses a renewal written in its successor's first second
+
+Kubernetes reports a container's `startedAt` in whole seconds. After a force-delete, the old
+process lived on for a second or two and wrote one last copy of its running build. When that copy
+fell in the second its successor's container started, "started after the renewal" could never be
+true. No survivor adopted the build; it waited 50-60 s for the restarted replica to boot and take
+it back itself. This happened in 2 of 4 kills before the fix.
+
+In that second, the renewal can only be the old process's: a new JVM has written nothing yet. The
+fence now counts the old process as gone once it has been silent for two copy periods plus a second
+(`SAME_SECOND_SILENCE_MS`, 7 s). The rule applies in both modes, and only while the node is Ready
+and reporting. `FenceTest` covers it; it ships in controller `2.555.3-netci35`.
+
+### Measured on the lab (controller netci35, pod of the owner killed, no grace)
+
+| Build | Adopted by the survivor | End |
+|---|---|---|
+| `long` #67 | after 9.6 s | SUCCESS, all 90 ticks once |
+| `long` #68 | after 4.6 s | SUCCESS, all 90 ticks once |
+| `long` #69 | after 4.2 s | **ABORTED**: 30 s after adoption the agent's channel stopped (the replica's ping failed). The agent's writer stayed blocked, so it noticed only at TCP's broken pipe, 5 min later, which is the build's wait for its agent |
+| IDP payments-api #9 (before the fix) | no: the restarted owner took it back after 61 s | succeeded, signed, policy allow |
+| IDP #12, killed during Build | after 17.9 s | **hung**: resumed from a copy taken before the old process's last steps, in an `sh` whose control directory that process had already removed. Cancelled through the IDP after 15 min |
+| IDP #13, killed during the scan | after 6.3 s | **failed**: `SynchronousResumeNotSupportedException: withCredentials cannot be resumed after a controller restart`. The IDP run ended failed, honestly |
+
+Evidence: `lab/evidence/aa-phase5-20261015T07*.json` and `aa-idp-adoption-20261015T0*.json`.
+
+### What this establishes, said plainly
+
+- **A build made of long steps survives its replica's death and is adopted in seconds.**
+- **The IDP's pipeline does not, reliably.** In 2 of 3 kills it was adopted and then failed or hung.
+  It is never reported as a success it did not have: the run ends failed, or stays running until
+  cancelled, and a retry rebuilds it. But "no lost builds" is not established for it.
+
+There are two causes.
+
+1. **A copy is not taken at a point the pipeline can resume from.** Copies are taken every 3 s, and
+   the old process runs on for a second or two after it is "dead". So the adopted state can be:
+   - inside a step that cannot resume (`withCredentials` while it binds), or
+   - behind steps the old process already finished and cleaned up (an `sh` whose control
+     directory is gone).
+
+   The IDP's pipeline runs dozens of such short steps per build, so it is far more exposed than
+   `long`.
+2. **An inbound agent can take minutes to notice its channel is dead**, when its writer blocks.
+
+### Directions, not done
+
+- Take a copy at step boundaries: a graph listener on each new flow node, alongside the timer.
+  Never take one while a step that cannot resume is starting, so that the copy is always resumable.
+- Bind credentials to fewer, longer blocks. The callback token, though, stays bound only around
+  the callback: user code (unit tests) runs on the same agent and could forge results with it.
+- Wrap the node in `retry(conditions: [nonresumable(), agent()])`. Its first attempt still reports
+  "failed" to the IDP before the retry, so the IDP's run model has to learn "retrying" first.
+- On the agent, a socket write timeout, so a blocked writer is found in seconds, not at TCP's
+  give-up.
 
 
 ---

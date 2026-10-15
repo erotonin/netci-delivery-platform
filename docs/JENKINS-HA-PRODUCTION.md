@@ -81,7 +81,7 @@ Phiên bản đã chạy ở lab:
 
 | Image | Phiên bản lab | Ghi chú |
 |---|---|---|
-| controller netCI | `jenkins-controller:2.555.3-netci34` | build từ `jenkins/Dockerfile.controller`, sạch từ HEAD |
+| controller netCI | `jenkins-controller:2.555.3-netci35` | build từ `jenkins/Dockerfile.controller`, sạch từ HEAD |
 | netCI (homesync, queue, supervisor) | commit `53e62f9` trở lên | `make image` |
 | HAProxy | `haproxy@sha256:e3229153…` | |
 | kube-vip | `ghcr.io/kube-vip/kube-vip@sha256:c6d4f3a3…` | chỉ khi `vip.mode: kubevip` |
@@ -295,6 +295,11 @@ Chart IDP từ chối nếu `runQueueUrl` đi cùng nhiều hơn một controlle
   chỉ-đọc, quyền 600), để dialog chọn branch và commit hoạt động.
 - **CA của registry:** worker cần tin CA của registry (`SSL_CERT_DIR`), nếu không cosign không xác
   minh được chữ ký và mọi lần deploy đều bị chặn.
+- **Trạng thái commit về GitLab:** đặt `NETCI_GITLAB_URL` và `NETCI_GITLAB_TOKEN_FILE` (token scope
+  `api`). GitLab chỉ cho đặt status trên nhánh được bảo vệ (`main`) nếu người dùng của token được
+  push/merge vào nhánh đó. Vì vậy token Developer bị 403; trên lab dùng project access token
+  Maintainer của đúng project đó. Nếu thiếu token, status vào `dead_letter` kèm lý do, không bị
+  bỏ qua âm thầm.
 - **Trivy DB:** mirror theo lịch (timer `netci-trivy-db-mirror`). Với `NETCI_TOOLCHAIN_ENFORCE=enforce`,
   DB cũ hơn 72 giờ sẽ chặn artifact.
 - **Agent inbound trên VM (ADR-092):** đặt `NETCI_AGENT_KIND=static` và `NETCI_AGENT_LABEL=<label của
