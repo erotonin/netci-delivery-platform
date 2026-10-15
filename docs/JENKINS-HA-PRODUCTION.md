@@ -46,7 +46,11 @@ Số đo nằm trong ADR-079, ADR-080, ADR-084 và ADR-085.
 - **Cài, nâng cấp, khởi động lại:**
   - cài bằng chart lên lab đang chạy: 219/219 lần đọc UI, 220/220 lần tạo job;
   - nâng cấp controller cuốn chiếu: 358/358 lần đọc UI;
-  - rolling restart với người dùng đăng nhập qua form: 0 lần tạo job bị từ chối (ADR-086).
+  - rolling restart với người dùng đăng nhập qua form: 0 lần tạo job bị từ chối (ADR-086);
+  - rolling restart khi drain qua agent-check: 324/324 lần đọc UI, kể cả trên lab có 22.677 job
+    với dashboard mất 17 s (ADR-089).
+- **Đổi tên, di chuyển job và folder; view ở cấp gốc:** lan sang replica kia trong 0,1–1,1 s
+  (ADR-087, ADR-088).
 - **netci-queue:** mỗi run chạy đúng một lần trên hai replica, kể cả khi mất máy.
 - **IDP qua queue:** adapter thật của IDP tạo job, chạy build, hủy build.
 
@@ -77,7 +81,7 @@ Phiên bản đã chạy ở lab:
 
 | Image | Phiên bản lab | Ghi chú |
 |---|---|---|
-| controller netCI | `jenkins-controller:2.555.3-netci32` | build từ `jenkins/Dockerfile.controller`, sạch từ HEAD |
+| controller netCI | `jenkins-controller:2.555.3-netci34` | build từ `jenkins/Dockerfile.controller`, sạch từ HEAD |
 | netCI (homesync, queue, supervisor) | commit `53e62f9` trở lên | `make image` |
 | HAProxy | `haproxy@sha256:e3229153…` | |
 | kube-vip | `ghcr.io/kube-vip/kube-vip@sha256:c6d4f3a3…` | chỉ khi `vip.mode: kubevip` |
@@ -303,8 +307,15 @@ Chart IDP từ chối nếu `runQueueUrl` đi cùng nhiều hơn một controlle
 - **Nâng cấp controller.** Mỗi thay đổi plugin là một tag và digest mới. Đổi `images.controller` rồi
   chạy `helm upgrade`.
   - StatefulSet cuốn chiếu từng replica, chờ `minReadySeconds` (30 s) giữa hai replica.
-  - Replica dừng sẽ drain 6 s trước (`/netci-ready/` trả 503).
-  - Lab đo được 358/358 lần đọc UI.
+  - Replica sắp dừng vào drain (ADR-089):
+    - agent-check trên cổng 8098 báo `maint`, nên HAProxy không gửi request mới tới nó;
+    - request đang chạy được làm nốt; preStop đợi tới khi không còn request nào, tối đa
+      `drainSeconds` (30 s);
+    - nếu site có NetworkPolicy, phải mở cổng 8098 từ HAProxy tới các pod Jenkins.
+  - Lab đo được 324/324 lần đọc UI.
+- **Đổi `haproxy.cfg`** (qua chart): balancer tự kiểm tra config mới bằng `haproxy -c` rồi reload tại
+  chỗ trong khoảng một phút, không thay pod. Config bị `haproxy -c` từ chối thì không được áp dụng,
+  và log balancer ghi `netci: the changed haproxy.cfg is refused`.
 - **Nâng cấp Barman Cloud plugin** (Recreate): trong vài giây giữa hai pod, store không failover
   được. Đừng nâng cấp lúc đang có máy bảo trì.
 - **Nâng cấp CNPG operator:** lên 1.31 trở đi thì phải dùng `backup.mode: plugin`, vì 1.31 bỏ
@@ -326,7 +337,11 @@ Chart IDP từ chối nếu `runQueueUrl` đi cùng nhiều hơn một controlle
 
 - **Script đăng nhập bằng mật khẩu và giữ crumb** vẫn bị 403 sau khi replica của nó restart.
   Script nên dùng API token (ADR-086).
-- **View** chưa được đồng bộ giữa các replica (JENKINS-HA.md).
+- **View ở cấp gốc** được đồng bộ (ADR-088). View nào là view chính thì do từng replica tự giữ,
+  theo JCasC.
+- **Đổi image HAProxy** vẫn phải thay pod balancer. Khi dùng kube-vip, VIP có thể chuyển máy một
+  lần trên mỗi máy (khoảng 2 s kết nối bị từ chối, ADR-089). Hãy làm việc này ngoài giờ cao điểm.
+  Riêng đổi `haproxy.cfg` thì được reload tại chỗ, không làm rớt kết nối nào.
 - **Đổi tên và di chuyển item** được đồng bộ (ADR-087). Thao tác bị từ chối (409, kèm lý do) khi
   một build của item đang chạy trên bất kỳ replica nào. Một run của netci-queue xếp cho tên cũ sẽ
   nhận 404 sau khi đổi tên, nên đừng đổi tên các job mà IDP tạo.

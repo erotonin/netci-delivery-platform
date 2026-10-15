@@ -1134,7 +1134,7 @@ Cách tìm cũng giống nhau: dựng lại đúng điều kiện thật, đo, v
 
 # Bước 4 — Các quyết định kiến trúc (ADR, tiếng Anh)
 
-> **Tuần 3.** Mỗi ADR ghi một quyết định: bối cảnh, quyết định, bằng chứng, phương án bị loại. Thứ tự: 060 (quan trọng nhất), 063 (hàng đợi), 065 (netciOnce), 061 và 064 (fabric), rồi 066–072, mỗi cái một bài học cụ thể; rồi 074 và 076–080: active-active, từ cái gì hỏng khi dùng chung một home tới nhận nuôi build đang chạy và kho HA; cuối cùng 081–087: đưa lên production (hàng đợi, IDP, backup, fence bằng Nova, một chart, crumb, đổi tên và di chuyển job).
+> **Tuần 3.** Mỗi ADR ghi một quyết định: bối cảnh, quyết định, bằng chứng, phương án bị loại. Thứ tự: 060 (quan trọng nhất), 063 (hàng đợi), 065 (netciOnce), 061 và 064 (fabric), rồi 066–072, mỗi cái một bài học cụ thể; rồi 074 và 076–080: active-active, từ cái gì hỏng khi dùng chung một home tới nhận nuôi build đang chạy và kho HA; cuối cùng 081–089: đưa lên production (hàng đợi, IDP, backup, fence bằng Nova, một chart, crumb, đổi tên và di chuyển job, view, drain không cắt request).
 
 ## ADR-060: Jenkins cells, a global queue outside Jenkins, and fenced takeover
 
@@ -3848,7 +3848,11 @@ to one replica through the VIP:
 
 The rollout to netci32 itself was a Helm upgrade of the chart. The upgrade probe watching it died on
 its own 120 s kubectl timeout (fixed in `phase0_probe.k`), so that run has no evidence. A
-`--restart` roll measured afterwards is the evidence for netci32.
+`--restart` roll measured afterwards is the evidence for netci32 (`aa-phase6-upgrade-20261015T014337Z.json`):
+- the UI answered 356 of 356 reads;
+- 624 creates were acknowledged, and none is missing on either replica;
+- the two people signed in through the form made 270 creates, none refused;
+- the two scripts sending a password were each refused once (403, ADR-086's known limit).
 
 ### What it costs, said plainly
 
@@ -3862,6 +3866,167 @@ its own 120 s kubectl timeout (fixed in `phase0_probe.k`), so that run has no ev
 - **netci-queue** dispatches by job name. A run queued for the old name is answered 404 by Jenkins
   after the rename. The IDP does not rename the jobs it creates.
 - **Views are still not replicated.**
+
+## ADR-088: Root views are replicated; a job's pages reached through a view are ordered too
+
+- Status: accepted; unit-tested, measured in the lab (below)
+- Date: 2026-10-15
+- Refines: ADR-076 (replicated homes), ADR-078 (owner routing)
+
+### Context
+
+A view at the top of Jenkins lives in Jenkins' own `config.xml`, together with the global settings
+each replica gets from JCasC. That file is not replicated, so a view made on one replica never
+reached the other: after a failover a person's views were gone. Other views were already
+replicated:
+- a folder's views are in the folder's configuration;
+- a user's "My Views" are in the user's configuration.
+
+A second defect was found while doing this. A job's pages are reached through the view a person is
+looking at as well, `/view/team/job/app/configSubmit`; these are the links a view's own page gives.
+`EditOrder` and `OwnerRouting` read only paths that start with `/job/`, so:
+- an edit made there was not ordered at all;
+- "Build now" there, on a replica that does not own the job, was declined without a word.
+
+### Decision
+
+1. **Each root view is an entry of the store, `@views/<name>`**, holding the view's own XML
+   (`View.writeXml`).
+   - A replica applies another's change with `View.updateByXml`, or with
+     `View.createViewFromXML` + `Jenkins.addView`, or with `deleteView`.
+   - The primary view is never deleted this way.
+   - At start, a home publishes the views the store does not have, like its items. Views equal to
+     the store's are held as applied, so they are not published again.
+2. **A view request is ordered like an edit.** `EditOrder.editedView` maps the request to the view:
+   - `/createView` (name);
+   - `/view/<name>/` + `configSubmit`, `config.xml`, `submitDescription`, `doDelete`, `addJobToView`
+     or `removeJobFromView`;
+   - a view inside a view: the outer one.
+
+   The view is locked, and the home catches up. After Jenkins has acted, still under the lock, every
+   root view is compared with what this home last published or applied. What differs is published,
+   and what is gone is published as deleted. This runs on the request's thread, not in a save
+   listener: Jenkins saves holding its monitor, and applying another replica's view needs that
+   monitor too.
+3. **Other saves of Jenkins' configuration** (a list view following a renamed job, a script) compare
+   the views a second later, on a timer, outside that monitor.
+4. **`/view/<v>[/view/<w>…]` is skipped before a job's path is read**, in `EditOrder` and
+   `OwnerRouting` alike.
+
+### Tests
+
+- **Plugin (JenkinsRule, fake store):**
+  - a view made here is published;
+  - its description set through the web is published under its lock, and its deletion is published;
+  - another replica's view is made here, changed, deleted, and nothing is published back;
+  - an edit through `/view/all/job/<j>/` is made under the job's lock.
+- **`EditOrderTest`:** the view a request changes, nested views, `/view/<v>/job/<j>/…` for edits,
+  moves and owner routing.
+
+### Lab (controller netci34)
+
+`lab/aa/phase10_views_probe.py`, `aa-phase10-views-20261015T024853Z.json`:
+
+| Step | Seen on the other replica after |
+|---|---|
+| V1: a list view made on r0 (XML, as the API does) | 0.12 s |
+| V2: a job added to it and its description set on r1 | 0.10 s |
+| V3: a job's description set through `/view/<v>/job/<j>/` on r0 | 0.09 s |
+| V4: the view deleted on r0 | 0.12 s |
+
+### What it costs, said plainly
+
+- **Which view is the primary one** stays each replica's own; JCasC sets it.
+- **Every save of Jenkins' configuration** compares the root views a second later. It is a
+  serialisation of each view, cheap for tens of views.
+- **Two people editing the same view at once**, on two replicas, are ordered by its lock: the second
+  is refused for a moment (409), as for jobs.
+
+## ADR-089: A drain lets what is in flight finish; the balancers reload their configuration in place
+
+- Status: accepted; measured in the lab (below)
+- Date: 2026-10-15
+- Refines: ADR-080 (drained rolling restart), ADR-085 (the chart)
+
+### Context
+
+The rolling upgrade to netci33 failed one UI read of 360. The lab holds 22,677 jobs, and its
+dashboard takes 17 s to render. HAProxy's log showed what happened:
+1. The draining replica's health check answered 503 (ADR-080).
+2. The balancer marked it down.
+3. `on-marked-down shutdown-sessions` closed the 17 s request in flight on it (`DCVN`).
+
+`shutdown-sessions` is there for a machine that lost power: without it, an agent's WebSocket stays
+open for the tunnel's hour, and the build it runs is not adopted. A drain is not that case, but the
+balancer could not tell them apart.
+
+Fixing it showed two defects in how the balancers are run:
+- **The DaemonSet did not carry its configuration's digest.** A changed `haproxy.cfg` sat unread
+  in the ConfigMap until someone restarted the balancers by hand.
+- **Restarting a balancer takes the VIP down.** kube-vip elects the VIP's machine among the
+  Service's endpoints, and restarts that election whenever an endpoint goes away. In the upgrade
+  to netci34, replacing the balancers with a surge (a new pod ready before the old one stops) still
+  refused connections for about 2 s: "existing endpoint has been removed, restarting
+  leaderElection … Deleting VIP".
+
+### Decision
+
+1. **The plugin answers HAProxy's agent check** (`DrainAgent`, `NETCI_DRAIN_AGENT_PORT`, 8098). It
+   says `maint` while `/tmp/netci-draining` exists and `ready` otherwise. In maintenance the balancer
+   sends nothing new to the replica, cookie-pinned requests included, and lets what is in flight
+   finish. With the agent, `/netci-ready/` stays 200 while the replica drains. Only a replica that
+   is gone, or still starting, is marked down, and only then are its sessions closed.
+2. **The preStop waits for what is in flight.** It:
+   1. creates the drain file;
+   2. gives the balancers 2 s (agent checks run every 1 s);
+   3. polls `/netci-ready/busy` until no request is in flight, for at most `drainSeconds`.
+
+   The count leaves out the drain's own polls and WebSockets (an agent's lasts hours). The chart
+   refuses a grace period shorter than `drainSeconds` + 20.
+3. **The balancers reload a changed configuration in place.** HAProxy runs master-worker under a
+   loop that:
+   - checks a changed file (the kubelet updates the mount within a minute) with `haproxy -c`;
+   - reloads it with SIGUSR2, the old worker finishing its connections;
+   - keeps a configuration HAProxy refuses out, and says so.
+
+   The pod, its endpoint and the VIP stay. The image's stop signal (SIGUSR1, a soft stop) is passed
+   on. A new balancer image still replaces the pods. For that the DaemonSet now surges (one new pod
+   beside the old one on each machine) and the old pod leaves the endpoints 3 s before it stops
+   listening.
+
+### Measured in the lab
+
+`phase6_upgrade_probe.py`: UI reads twice a second, two writers pinned by cookie, two people signed
+in through the form.
+
+| Run | Reads | Creates | Evidence |
+|---|---|---|---|
+| upgrade to netci33 (before) | 359 of 360: one cut in flight | 676, none missing | `…20261015T015907Z` |
+| upgrade to netci34, balancers replaced (the digest) | 368 of 369: refused while the VIP moved | 523, none missing | `…20261015T023008Z` |
+| the balancers' new command applied (replaced once more) | 223 of 223 | 374, none missing | `…20261015T023647Z` |
+| a change of `haproxy.cfg` only: all 3 balancers reloaded in ~36 s, no pod replaced | 242 of 242 | 357, none missing | `…20261015T024008Z` |
+| rolling restart, both replicas netci34 (the agent check in use) | 324 of 324 | 630, none missing; 308 form creates, none refused | `…20261015T024350Z` |
+
+In the last run HAProxy logged `Server jenkins/r1 is going DOWN for maintenance … 0 sessions
+active`, then `leaving forced maintenance` once the new pod's agent answered. Replacing the
+balancers once more (third row) failed nothing, but replacing a balancer remains exposed to the VIP
+moving; only the in-place reload avoids it.
+
+The two scripts that send a password were still refused once each per roll (403, ADR-086's known
+limit). The upgrade probe's r1 writer died in the netci34 run on a crumb it could not fetch (fixed:
+the failure is now that request's answer), so that run has 20 of its writes.
+
+### What it costs, said plainly
+
+- **A stop waits for the slowest request in flight**, up to `drainSeconds` (30 by default). A rolling
+  restart is that much longer per replica when someone is rendering a very large page.
+- **The agent port is unauthenticated.** It answers one word and accepts nothing.
+- **A new HAProxy image still replaces the balancers**, and with kube-vip's per-endpoint election
+  the VIP can move once per machine. With an Octavia LoadBalancer the endpoints are health-checked
+  by the load balancer instead.
+- **A dashboard of 22,000 jobs takes 17 s**, and a person's first page after a replica restarts
+  (cold) took 100 s in one run. That is Jenkins with that many top-level items, replicated or not;
+  folders and views keep a page small.
 
 
 ---

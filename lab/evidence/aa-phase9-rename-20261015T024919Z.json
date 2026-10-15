@@ -1,0 +1,85 @@
+{
+ "started": "2026-10-15T02:49:19.970956+00:00",
+ "image": "172.17.0.1:8930/netci/jenkins-controller@sha256:9a04987986698775268a8102360c1f6857f28ee47ea5975436741e1beea33a91",
+ "T1": {
+  "code": 200,
+  "served": "r1",
+  "renamedEverywhereAfter": 0.4657251834869385,
+  "build3": true,
+  "builds": {
+   "r0": {
+    "3": "SUCCESS",
+    "2": "SUCCESS",
+    "1": "SUCCESS"
+   },
+   "r1": {
+    "3": "SUCCESS",
+    "2": "SUCCESS",
+    "1": "SUCCESS"
+   }
+  },
+  "oldNameGone": {
+   "r0": true,
+   "r1": true
+  },
+  "took": 2.27
+ },
+ "T2": {
+  "whileBuilding": {
+   "code": 409,
+   "served": "r1",
+   "body": "netCI: rn-024919-long #1 is running on jenkins-0; an item is not renamed or moved while it builds; try again when it has finished",
+   "stillOldName": {
+    "r0": true,
+    "r1": true
+   }
+  },
+  "buildFinished": true,
+  "renamedAfter": 0.3316977024078369,
+  "attempts": [
+   {
+    "code": 200,
+    "body": ""
+   }
+  ],
+  "everywhere": 0.3106238842010498
+ },
+ "T3": {
+  "code": 200,
+  "served": "r1",
+  "everywhere": 0.5918300151824951,
+  "builds": {
+   "r0": {
+    "3": "SUCCESS",
+    "2": "SUCCESS",
+    "1": "SUCCESS"
+   },
+   "r1": {
+    "3": "SUCCESS",
+    "2": "SUCCESS",
+    "1": "SUCCESS"
+   }
+  }
+ },
+ "T4": {
+  "code": 200,
+  "served": "r0",
+  "everywhere": 0.5780088901519775,
+  "next": 0.6300356388092041,
+  "builds": {
+   "r0": {
+    "4": "SUCCESS",
+    "3": "SUCCESS",
+    "2": "SUCCESS",
+    "1": "SUCCESS"
+   },
+   "r1": {
+    "4": "SUCCESS",
+    "3": "SUCCESS",
+    "2": "SUCCESS",
+    "1": "SUCCESS"
+   }
+  }
+ },
+ "ok": true
+}

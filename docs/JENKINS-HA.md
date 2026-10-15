@@ -60,7 +60,9 @@ kube-vip VIP, 2 inbound agents with 2 executors each.
 | A form works on every replica | The CSRF crumb bound to the shared sign-in, not to one JVM's session (ADR-086) | **Lab**: a rolling restart, two people signed in through the form: 239 creates, none refused, one crumb answered by both replicas (`aa-phase6-upgrade-20261014T193437Z.json`) |
 | No CloudBees limit kept | Agents keep several executors; Pipeline resumes; REST answers from any replica | Agents ran with 2 executors each. Freestyle is not covered (the site has none) |
 | A rename or move goes everywhere | One change of the store moves the item, its children, its builds, lease and numbers; the other replica renames its own copy; refused while a build under it runs on any replica (ADR-087) | **Lab**: renamed on r1, on both 1.1 s later with its builds, next build #3; refused (409, "running on jenkins-0") while building, renamed once finished; moved into a folder, the folder renamed (`aa-phase9-rename-20261015T014229Z.json`) |
-| Not done, said plainly | Edits are refused for 28-45 s while the store's primary fails over (longer when the Barman Cloud plugin's leader died with it, ADR-085); views are not replicated; a script that signs in with a password keeps Jenkins' own session-bound crumb (an API token needs none, ADR-086); Nova fencing, Octavia and kube-vip with allowed-address-pairs are tested against fakes or not at all, never against a real OpenStack | -- |
+| Views go everywhere | Each root view is an entry of the store, published after a view request under its lock; a job's pages through `/view/<v>/` ordered and routed like its own (ADR-088) | **Lab**: a view made, changed, deleted on one replica, on the other 0.09-0.12 s later (`aa-phase10-views-20261015T024853Z.json`) |
+| A drain cuts nothing in flight | HAProxy's agent check: "maint" while draining (nothing new sent, in-flight requests finish), the preStop waits until none is in flight; a changed haproxy.cfg reloaded in place, the VIP staying (ADR-089) | **Lab**: rolling restart 324/324 reads, 630 creates none missing; a config change reloaded by all 3 balancers, 242/242 reads (`aa-phase6-upgrade-20261015T024350Z.json`, `…024008Z.json`) |
+| Not done, said plainly | Edits are refused for 28-45 s while the store's primary fails over (longer when the Barman Cloud plugin's leader died with it, ADR-085); a new HAProxy image still replaces the balancers, and kube-vip can then move the VIP (ADR-089); a script that signs in with a password keeps Jenkins' own session-bound crumb (an API token needs none, ADR-086); Nova fencing, Octavia and kube-vip with allowed-address-pairs are tested against fakes or not at all, never against a real OpenStack | -- |
 
 ## Builds on the agent fabric
 
@@ -123,6 +125,8 @@ deploy/helm/netci/ci/test-rules.sh   # promtool checks and unit tests of the ale
 - [ADR-085 — installed by one chart; backups through the Barman Cloud plugin](decisions/ADR-085-active-active-jenkins-installed-by-one-chart.md)
 - [ADR-086 — a CSRF crumb every replica accepts](decisions/ADR-086-a-crumb-every-replica-accepts.md)
 - [ADR-087 — renames and moves are one change of the store](decisions/ADR-087-renames-and-moves-are-one-change-of-the-store.md)
+- [ADR-088 — root views are replicated](decisions/ADR-088-root-views-are-replicated.md)
+- [ADR-089 — a drain lets what is in flight finish](decisions/ADR-089-a-drain-lets-what-is-in-flight-finish.md)
 
 Deploying it at a site: [docs/JENKINS-HA-PRODUCTION.md](JENKINS-HA-PRODUCTION.md) (Vietnamese: prerequisites,
 operators, Secrets, the chart, VIP, Nova fencing, agents, the IDP, checks, operations).

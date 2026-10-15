@@ -52,7 +52,7 @@ def adr(n: int) -> Path:
 def main() -> None:
     tb = sections(TB)
     pick = lambda *keys: "\n".join(tb[k] for k in keys)  # noqa: E731
-    adrs = [60, 63, 65, 61, 64, 66, 67, 68, 69, 70, 71, 72, 74, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87]
+    adrs = [60, 63, 65, 61, 64, 66, 67, 68, 69, 70, 71, 72, 74, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89]
     steps = [
         ("Bước 1 — Nền tảng", "Tuần 1",
          "Đọc câu chuyện để hiểu vì sao có đề tài, rồi học Jenkins, container, Kubernetes, storage, hệ phân tán, BMC. "
@@ -69,7 +69,7 @@ def main() -> None:
          "Mỗi ADR ghi một quyết định: bối cảnh, quyết định, bằng chứng, phương án bị loại. Thứ tự: 060 (quan trọng "
          "nhất), 063 (hàng đợi), 065 (netciOnce), 061 và 064 (fabric), rồi 066–072, mỗi cái một bài học cụ thể; "
          "rồi 074 và 076–080: active-active, từ cái gì hỏng khi dùng chung một home tới nhận nuôi build đang chạy và kho HA; "
-         "cuối cùng 081–087: đưa lên production (hàng đợi, IDP, backup, fence bằng Nova, một chart, crumb, đổi tên và di chuyển job).",
+         "cuối cùng 081–089: đưa lên production (hàng đợi, IDP, backup, fence bằng Nova, một chart, crumb, đổi tên và di chuyển job, view, drain không cắt request).",
          "\n".join(demoted(adr(n)) for n in adrs)),
         ("Bước 5 — Đọc code (mở trong trình soạn thảo, đọc kèm test)", "Tuần 3",
          "Không cần đọc hết repo. Bốn chỗ này chứa phần cốt lõi; đọc test trước để biết code phải làm gì.",
