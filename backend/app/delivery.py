@@ -2005,6 +2005,7 @@ class DeliveryPlatform:
         with self._transaction() as transaction:
             outcome = self._record_ci_result(transaction, pipeline_run_id, result_status,
                                              artifact_digest, log_lines)
+        self._learn_console_url(pipeline_run_id)
         if result_status != PipelineStatus.RUNNING.value:
             # The run left Jenkins -- succeeded, failed, or on to approval -- so its slot is
             # free for the next waiting one (ADR-050), whatever this result goes on to do.
@@ -2021,6 +2022,30 @@ class DeliveryPlatform:
         application, run, deployment = outcome.pending_cd
         started = self._start_cd(application, run, deployment)
         return CiResult(self.get_pipeline(run.id), started)
+
+    def _learn_console_url(self, pipeline_run_id: UUID) -> None:
+        """Ask the engine for the build's page when the run has none yet; best effort.
+
+        Through netci-queue a build has no page at submission (no replica has numbered it), and
+        nothing filled it in later, so "Open Jenkins" stayed disabled for every queued build. The
+        link comes from the engine, never from the build's own callback. A network call, so
+        outside any transaction; a run changed meanwhile keeps its version and loses nothing.
+        """
+        lookup = getattr(self.ci_launcher, "console_url", None)
+        run = self.get_pipeline(pipeline_run_id) if lookup is not None else None
+        if run is None or run.console_url or not run.jenkins_run_id:
+            return
+        url = lookup(run.jenkins_run_id)
+        if not url:
+            return
+        try:
+            with self._transaction() as transaction:
+                current = transaction.pipeline_run(pipeline_run_id)
+                if current is None or current.console_url:
+                    return
+                self._apply(transaction, UnitOfWork(runs=[(replace(current, console_url=url, version=current.version + 1), current.version)]))
+        except Exception as exc:  # a concurrent writer won: the next result tries again
+            logger.debug("console url for run %s not recorded: %s", pipeline_run_id, exc)
 
     def _record_ci_result(
         self,

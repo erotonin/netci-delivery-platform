@@ -78,6 +78,7 @@ class CiLauncher(Protocol):
     def launch(self, request: CiLaunchRequest) -> LaunchedCi | None: ...
     def abort(self, jenkins_run_id: str) -> None: ...
     def get_status(self, jenkins_run_id: str) -> str | None: ...
+    def console_url(self, jenkins_run_id: str) -> str | None: ...
 
 
 class NullCiLauncher:
@@ -95,6 +96,9 @@ class NullCiLauncher:
         return None
 
     def get_status(self, jenkins_run_id: str) -> str | None:
+        return None
+
+    def console_url(self, jenkins_run_id: str) -> str | None:
         return None
 
 
@@ -321,6 +325,20 @@ class JenkinsCiLauncher:
                 logger.debug("failed to get status for Jenkins run %s on %s: %s", external_run_id, controller_id, exc)
                 return None
         return None
+
+
+    def console_url(self, jenkins_run_id: str) -> str | None:
+        """The build's page, asked of the engine. A build sent through netci-queue has none when
+        it is submitted -- no replica has numbered it yet -- so the run kept no link to Jenkins."""
+        controller_id, _, external_run_id = jenkins_run_id.partition(":")
+        adapter = self.adapters.get(controller_id)
+        if adapter is None or not external_run_id:
+            return None
+        try:
+            return adapter.get_status(external_run_id).console_url
+        except Exception as exc:
+            logger.debug("failed to read the console of Jenkins run %s on %s: %s", external_run_id, controller_id, exc)
+            return None
 
 
 def build_ci_launcher() -> CiLauncher:
