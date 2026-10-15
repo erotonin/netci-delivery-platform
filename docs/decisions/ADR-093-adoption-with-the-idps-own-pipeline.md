@@ -1,6 +1,6 @@
 # ADR-093: Adoption tested with the IDP's own pipeline -- what holds and what does not
 
-- Status: accepted (the fence fix); the rest is open, measured
+- Status: accepted (the fence fix); the copy problem is solved by ADR-094 (4 of 4 adopted IDP builds succeeded)
 - Date: 2026-10-15
 - Refines: ADR-079 (adoption), ADR-084 (strict fence), ADR-092 (static agents)
 

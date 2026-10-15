@@ -1,0 +1,152 @@
+{
+  "run": "70fa5422-4c85-48a0-a95e-a86d3132f29f",
+  "commit": "355cfd6d24b21d3febc07d41d374d010bca88680",
+  "killed": "pod",
+  "during": "sign",
+  "owner": "r1",
+  "node": "netci-lab-1",
+  "adoptedBy": "r0",
+  "adoptedAfterSeconds": 5.2,
+  "runStatus": "succeeded",
+  "finishedAfterSeconds": 16.5,
+  "artifactDigest": "sha256:2ea53a3c224b185a4f5b45a2fd59c827e2fdc4fe30506141dfd4d324696ce549",
+  "stages": {
+    "checkout": "succeeded",
+    "unit-test": "succeeded",
+    "build": "succeeded",
+    "sbom": "succeeded",
+    "vulnerability-scan": "succeeded",
+    "sign": "succeeded",
+    "publish": "succeeded"
+  },
+  "adoptionLogged": {
+    "by": "jenkins-0",
+    "line": "2026-10-15 09:56:43.824+0000 [id=62]\tINFO\ti.n.j.homesync.RunningBuilds#adopt: netCI homesync: adopted netci-54a92407-0861-4cf7-8a95-4371f8477dd8 #17 (building: true)"
+  },
+  "stageCallbacks": {
+    "checkout": 0,
+    "unit-test": 0,
+    "build": 0,
+    "sbom": 0,
+    "vulnerability-scan": 0,
+    "sign": 0,
+    "publish": 0
+  },
+  "securityEvidence": {
+    "code": 200,
+    "reason": "artifact satisfies the netCI supply-chain policy",
+    "decision": "allow",
+    "buildRunId": "jenkins-netci-54a92407-0861-4cf7-8a95-4371f8477dd8-17",
+    "artifactRef": "172.17.0.1:8930/apps/payments-api@sha256:2ea53a3c224b185a4f5b45a2fd59c827e2fdc4fe30506141dfd4d324696ce549",
+    "applicationId": "54a92407-0861-4cf7-8a95-4371f8477dd8",
+    "pipelineRunId": "70fa5422-4c85-48a0-a95e-a86d3132f29f",
+    "artifactDigest": "sha256:2ea53a3c224b185a4f5b45a2fd59c827e2fdc4fe30506141dfd4d324696ce549"
+  },
+  "timeline": [
+    {
+      "t": 0.3,
+      "holder": null,
+      "building": null,
+      "jenkinsResult": null,
+      "runStatus": "running"
+    },
+    {
+      "t": 1.5,
+      "holder": null,
+      "building": null,
+      "jenkinsResult": null,
+      "runStatus": "running"
+    },
+    {
+      "t": 2.8,
+      "holder": null,
+      "building": null,
+      "jenkinsResult": null,
+      "runStatus": "running"
+    },
+    {
+      "t": 4.0,
+      "holder": null,
+      "building": null,
+      "jenkinsResult": null,
+      "runStatus": "running"
+    },
+    {
+      "t": 5.2,
+      "holder": "r0",
+      "building": true,
+      "jenkinsResult": null,
+      "runStatus": "running"
+    },
+    {
+      "t": 6.4,
+      "holder": "r0",
+      "building": true,
+      "jenkinsResult": null,
+      "runStatus": "running"
+    },
+    {
+      "t": 7.5,
+      "holder": "r0",
+      "building": true,
+      "jenkinsResult": null,
+      "runStatus": "running"
+    },
+    {
+      "t": 8.6,
+      "holder": "r0",
+      "building": true,
+      "jenkinsResult": null,
+      "runStatus": "running"
+    },
+    {
+      "t": 9.7,
+      "holder": "r0",
+      "building": true,
+      "jenkinsResult": null,
+      "runStatus": "running"
+    },
+    {
+      "t": 10.8,
+      "holder": "r0",
+      "building": true,
+      "jenkinsResult": null,
+      "runStatus": "running"
+    },
+    {
+      "t": 12.0,
+      "holder": "r0",
+      "building": true,
+      "jenkinsResult": null,
+      "runStatus": "running"
+    },
+    {
+      "t": 13.1,
+      "holder": "r0",
+      "building": true,
+      "jenkinsResult": null,
+      "runStatus": "running"
+    },
+    {
+      "t": 14.2,
+      "holder": "r0",
+      "building": true,
+      "jenkinsResult": null,
+      "runStatus": "running"
+    },
+    {
+      "t": 15.4,
+      "holder": "r0",
+      "building": true,
+      "jenkinsResult": "SUCCESS",
+      "runStatus": "running"
+    },
+    {
+      "t": 16.5,
+      "holder": "r0",
+      "building": true,
+      "jenkinsResult": "SUCCESS",
+      "runStatus": "succeeded"
+    }
+  ]
+}

@@ -49,6 +49,24 @@ own sources show both causes:
   the first is 2.6 s late.
 - **A step whose control directory is gone gets exit 75 and its reason.**
 
+## Measured on the lab (controller `2.555.3-netci36`)
+
+`lab/aa/idp_adoption_probe.py --kill pod` was run four times, each killing the replica that owned
+a real build of payments-api on the lab's inbound agents at a different stage, with no grace.
+
+| Killed during | Adopted by the survivor | Run in the IDP | Artifact |
+|---|---|---|---|
+| unit-test (#14) | after 24.2 s | succeeded | signed, policy allow |
+| build (#15) | after 15.1 s | succeeded | signed, policy allow |
+| vulnerability-scan (#16) | after 11.0 s | succeeded | signed, policy allow |
+| sign (#17) | after 5.2 s | succeeded | signed, policy allow |
+
+Each build was resumed once, and `build.sh` and `scan.sh` each ran once. In #15, decision 3
+applied, to the storage-setup `sh` inside a stage callback. The callback is best effort, so it
+logged "stage report skipped: exit code 75" and the build went on; before this ADR that step was
+waited for forever. Evidence: `lab/evidence/aa-idp-adoption-20261015T095*.json`. ADR-093's three
+kills had given one hang and one failure.
+
 ## What it does not solve
 
 - **The window is narrowed, not closed.** A step can still end after the last boundary copy, in the

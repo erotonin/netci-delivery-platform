@@ -81,7 +81,7 @@ Phiên bản đã chạy ở lab:
 
 | Image | Phiên bản lab | Ghi chú |
 |---|---|---|
-| controller netCI | `jenkins-controller:2.555.3-netci35` | build từ `jenkins/Dockerfile.controller`, sạch từ HEAD |
+| controller netCI | `jenkins-controller:2.555.3-netci36` | build từ `jenkins/Dockerfile.controller`, sạch từ HEAD |
 | netCI (homesync, queue, supervisor) | commit `53e62f9` trở lên | `make image` |
 | HAProxy | `haproxy@sha256:e3229153…` | |
 | kube-vip | `ghcr.io/kube-vip/kube-vip@sha256:c6d4f3a3…` | chỉ khi `vip.mode: kubevip` |

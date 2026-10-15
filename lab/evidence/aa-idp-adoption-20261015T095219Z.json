@@ -1,0 +1,551 @@
+{
+  "run": "642d05a7-68f5-4847-b55c-e7f078d479e9",
+  "commit": "355cfd6d24b21d3febc07d41d374d010bca88680",
+  "killed": "pod",
+  "during": "unit-test",
+  "owner": "r1",
+  "node": "netci-lab-1",
+  "adoptedBy": "r0",
+  "adoptedAfterSeconds": 24.2,
+  "runStatus": "succeeded",
+  "finishedAfterSeconds": 88.8,
+  "artifactDigest": "sha256:29c10a05615c08e0a5d7e5c7b10062d70e03ae93e68301a35421818ef7f19f22",
+  "stages": {
+    "checkout": "succeeded",
+    "unit-test": "succeeded",
+    "build": "succeeded",
+    "sbom": "succeeded",
+    "vulnerability-scan": "succeeded",
+    "sign": "succeeded",
+    "publish": "succeeded"
+  },
+  "adoptionLogged": {
+    "by": "jenkins-0",
+    "line": "2026-10-15 09:51:14.570+0000 [id=63]\tINFO\ti.n.j.homesync.RunningBuilds#adopt: netCI homesync: adopted netci-54a92407-0861-4cf7-8a95-4371f8477dd8 #14 (building: true)"
+  },
+  "stageCallbacks": {
+    "checkout": 0,
+    "unit-test": 0,
+    "build": 0,
+    "sbom": 0,
+    "vulnerability-scan": 0,
+    "sign": 0,
+    "publish": 0
+  },
+  "securityEvidence": {
+    "code": 200,
+    "reason": "artifact satisfies the netCI supply-chain policy",
+    "decision": "allow",
+    "buildRunId": "jenkins-netci-54a92407-0861-4cf7-8a95-4371f8477dd8-14",
+    "artifactRef": "172.17.0.1:8930/apps/payments-api@sha256:29c10a05615c08e0a5d7e5c7b10062d70e03ae93e68301a35421818ef7f19f22",
+    "applicationId": "54a92407-0861-4cf7-8a95-4371f8477dd8",
+    "pipelineRunId": "642d05a7-68f5-4847-b55c-e7f078d479e9",
+    "artifactDigest": "sha256:29c10a05615c08e0a5d7e5c7b10062d70e03ae93e68301a35421818ef7f19f22"
+  },
+  "timeline": [
+    {
+      "t": 0.5,
+      "holder": null,
+      "building": null,
+      "jenkinsResult": null,
+      "runStatus": "running"
+    },
+    {
+      "t": 1.8,
+      "holder": null,
+      "building": null,
+      "jenkinsResult": null,
+      "runStatus": "running"
+    },
+    {
+      "t": 3.1,
+      "holder": null,
+      "building": null,
+      "jenkinsResult": null,
+      "runStatus": "running"
+    },
+    {
+      "t": 4.4,
+      "holder": null,
+      "building": null,
+      "jenkinsResult": null,
+      "runStatus": "running"
+    },
+    {
+      "t": 5.6,
+      "holder": null,
+      "building": null,
+      "jenkinsResult": null,
+      "runStatus": "running"
+    },
+    {
+      "t": 6.9,
+      "holder": null,
+      "building": null,
+      "jenkinsResult": null,
+      "runStatus": "running"
+    },
+    {
+      "t": 8.1,
+      "holder": null,
+      "building": null,
+      "jenkinsResult": null,
+      "runStatus": "running"
+    },
+    {
+      "t": 9.4,
+      "holder": null,
+      "building": null,
+      "jenkinsResult": null,
+      "runStatus": "running"
+    },
+    {
+      "t": 10.6,
+      "holder": null,
+      "building": null,
+      "jenkinsResult": null,
+      "runStatus": "running"
+    },
+    {
+      "t": 11.9,
+      "holder": null,
+      "building": null,
+      "jenkinsResult": null,
+      "runStatus": "running"
+    },
+    {
+      "t": 13.1,
+      "holder": null,
+      "building": null,
+      "jenkinsResult": null,
+      "runStatus": "running"
+    },
+    {
+      "t": 14.4,
+      "holder": null,
+      "building": null,
+      "jenkinsResult": null,
+      "runStatus": "running"
+    },
+    {
+      "t": 15.7,
+      "holder": null,
+      "building": null,
+      "jenkinsResult": null,
+      "runStatus": "running"
+    },
+    {
+      "t": 22.8,
+      "holder": null,
+      "building": null,
+      "jenkinsResult": null,
+      "runStatus": "running"
+    },
+    {
+      "t": 24.2,
+      "holder": "r0",
+      "building": true,
+      "jenkinsResult": null,
+      "runStatus": "running"
+    },
+    {
+      "t": 25.4,
+      "holder": "r0",
+      "building": true,
+      "jenkinsResult": null,
+      "runStatus": "running"
+    },
+    {
+      "t": 26.5,
+      "holder": "r0",
+      "building": true,
+      "jenkinsResult": null,
+      "runStatus": "running"
+    },
+    {
+      "t": 27.7,
+      "holder": "r0",
+      "building": true,
+      "jenkinsResult": null,
+      "runStatus": "running"
+    },
+    {
+      "t": 28.9,
+      "holder": "r0",
+      "building": true,
+      "jenkinsResult": null,
+      "runStatus": "running"
+    },
+    {
+      "t": 30.0,
+      "holder": "r0",
+      "building": true,
+      "jenkinsResult": null,
+      "runStatus": "running"
+    },
+    {
+      "t": 31.1,
+      "holder": "r0",
+      "building": true,
+      "jenkinsResult": null,
+      "runStatus": "running"
+    },
+    {
+      "t": 32.2,
+      "holder": "r0",
+      "building": true,
+      "jenkinsResult": null,
+      "runStatus": "running"
+    },
+    {
+      "t": 33.4,
+      "holder": "r0",
+      "building": true,
+      "jenkinsResult": null,
+      "runStatus": "running"
+    },
+    {
+      "t": 34.5,
+      "holder": "r0",
+      "building": true,
+      "jenkinsResult": null,
+      "runStatus": "running"
+    },
+    {
+      "t": 35.6,
+      "holder": "r0",
+      "building": true,
+      "jenkinsResult": null,
+      "runStatus": "running"
+    },
+    {
+      "t": 36.7,
+      "holder": "r0",
+      "building": true,
+      "jenkinsResult": null,
+      "runStatus": "running"
+    },
+    {
+      "t": 37.9,
+      "holder": "r0",
+      "building": true,
+      "jenkinsResult": null,
+      "runStatus": "running"
+    },
+    {
+      "t": 39.0,
+      "holder": "r0",
+      "building": true,
+      "jenkinsResult": null,
+      "runStatus": "running"
+    },
+    {
+      "t": 40.2,
+      "holder": "r0",
+      "building": true,
+      "jenkinsResult": null,
+      "runStatus": "running"
+    },
+    {
+      "t": 41.3,
+      "holder": "r0",
+      "building": true,
+      "jenkinsResult": null,
+      "runStatus": "running"
+    },
+    {
+      "t": 42.4,
+      "holder": "r0",
+      "building": true,
+      "jenkinsResult": null,
+      "runStatus": "running"
+    },
+    {
+      "t": 43.5,
+      "holder": "r0",
+      "building": true,
+      "jenkinsResult": null,
+      "runStatus": "running"
+    },
+    {
+      "t": 44.6,
+      "holder": "r0",
+      "building": true,
+      "jenkinsResult": null,
+      "runStatus": "running"
+    },
+    {
+      "t": 45.8,
+      "holder": "r0",
+      "building": true,
+      "jenkinsResult": null,
+      "runStatus": "running"
+    },
+    {
+      "t": 46.9,
+      "holder": "r0",
+      "building": true,
+      "jenkinsResult": null,
+      "runStatus": "running"
+    },
+    {
+      "t": 48.0,
+      "holder": "r0",
+      "building": true,
+      "jenkinsResult": null,
+      "runStatus": "running"
+    },
+    {
+      "t": 49.2,
+      "holder": "r0",
+      "building": true,
+      "jenkinsResult": null,
+      "runStatus": "running"
+    },
+    {
+      "t": 50.3,
+      "holder": "r0",
+      "building": true,
+      "jenkinsResult": null,
+      "runStatus": "running"
+    },
+    {
+      "t": 51.4,
+      "holder": "r0",
+      "building": true,
+      "jenkinsResult": null,
+      "runStatus": "running"
+    },
+    {
+      "t": 52.6,
+      "holder": "r0",
+      "building": true,
+      "jenkinsResult": null,
+      "runStatus": "running"
+    },
+    {
+      "t": 53.7,
+      "holder": "r0",
+      "building": true,
+      "jenkinsResult": null,
+      "runStatus": "running"
+    },
+    {
+      "t": 54.8,
+      "holder": "r0",
+      "building": true,
+      "jenkinsResult": null,
+      "runStatus": "running"
+    },
+    {
+      "t": 56.0,
+      "holder": "r0",
+      "building": true,
+      "jenkinsResult": null,
+      "runStatus": "running"
+    },
+    {
+      "t": 57.1,
+      "holder": "r0",
+      "building": true,
+      "jenkinsResult": null,
+      "runStatus": "running"
+    },
+    {
+      "t": 58.3,
+      "holder": "r0",
+      "building": true,
+      "jenkinsResult": null,
+      "runStatus": "running"
+    },
+    {
+      "t": 59.4,
+      "holder": "r0",
+      "building": true,
+      "jenkinsResult": null,
+      "runStatus": "running"
+    },
+    {
+      "t": 60.5,
+      "holder": "r0",
+      "building": true,
+      "jenkinsResult": null,
+      "runStatus": "running"
+    },
+    {
+      "t": 61.6,
+      "holder": "r0",
+      "building": true,
+      "jenkinsResult": null,
+      "runStatus": "running"
+    },
+    {
+      "t": 62.8,
+      "holder": "r0",
+      "building": true,
+      "jenkinsResult": null,
+      "runStatus": "running"
+    },
+    {
+      "t": 63.9,
+      "holder": "r0",
+      "building": true,
+      "jenkinsResult": null,
+      "runStatus": "running"
+    },
+    {
+      "t": 65.0,
+      "holder": "r0",
+      "building": true,
+      "jenkinsResult": null,
+      "runStatus": "running"
+    },
+    {
+      "t": 66.1,
+      "holder": "r0",
+      "building": true,
+      "jenkinsResult": null,
+      "runStatus": "running"
+    },
+    {
+      "t": 67.3,
+      "holder": "r0",
+      "building": true,
+      "jenkinsResult": null,
+      "runStatus": "running"
+    },
+    {
+      "t": 68.4,
+      "holder": "r0",
+      "building": true,
+      "jenkinsResult": null,
+      "runStatus": "running"
+    },
+    {
+      "t": 69.5,
+      "holder": "r0",
+      "building": true,
+      "jenkinsResult": null,
+      "runStatus": "running"
+    },
+    {
+      "t": 70.6,
+      "holder": "r0",
+      "building": true,
+      "jenkinsResult": null,
+      "runStatus": "running"
+    },
+    {
+      "t": 71.8,
+      "holder": "r0",
+      "building": true,
+      "jenkinsResult": null,
+      "runStatus": "running"
+    },
+    {
+      "t": 72.9,
+      "holder": "r0",
+      "building": true,
+      "jenkinsResult": null,
+      "runStatus": "running"
+    },
+    {
+      "t": 74.0,
+      "holder": "r0",
+      "building": true,
+      "jenkinsResult": null,
+      "runStatus": "running"
+    },
+    {
+      "t": 75.2,
+      "holder": "r0",
+      "building": true,
+      "jenkinsResult": null,
+      "runStatus": "running"
+    },
+    {
+      "t": 76.3,
+      "holder": "r0",
+      "building": true,
+      "jenkinsResult": null,
+      "runStatus": "running"
+    },
+    {
+      "t": 77.5,
+      "holder": "r0",
+      "building": true,
+      "jenkinsResult": null,
+      "runStatus": "running"
+    },
+    {
+      "t": 78.6,
+      "holder": "r0",
+      "building": true,
+      "jenkinsResult": null,
+      "runStatus": "running"
+    },
+    {
+      "t": 79.7,
+      "holder": "r0",
+      "building": true,
+      "jenkinsResult": null,
+      "runStatus": "running"
+    },
+    {
+      "t": 80.9,
+      "holder": "r0",
+      "building": true,
+      "jenkinsResult": null,
+      "runStatus": "running"
+    },
+    {
+      "t": 82.0,
+      "holder": "r0",
+      "building": true,
+      "jenkinsResult": null,
+      "runStatus": "running"
+    },
+    {
+      "t": 83.2,
+      "holder": "r0",
+      "building": true,
+      "jenkinsResult": null,
+      "runStatus": "running"
+    },
+    {
+      "t": 84.3,
+      "holder": "r0",
+      "building": true,
+      "jenkinsResult": null,
+      "runStatus": "running"
+    },
+    {
+      "t": 85.4,
+      "holder": "r0",
+      "building": true,
+      "jenkinsResult": "SUCCESS",
+      "runStatus": "running"
+    },
+    {
+      "t": 86.5,
+      "holder": "r0",
+      "building": true,
+      "jenkinsResult": "SUCCESS",
+      "runStatus": "running"
+    },
+    {
+      "t": 87.7,
+      "holder": "r0",
+      "building": true,
+      "jenkinsResult": "SUCCESS",
+      "runStatus": "running"
+    },
+    {
+      "t": 88.8,
+      "holder": "r0",
+      "building": true,
+      "jenkinsResult": "SUCCESS",
+      "runStatus": "succeeded"
+    }
+  ]
+}

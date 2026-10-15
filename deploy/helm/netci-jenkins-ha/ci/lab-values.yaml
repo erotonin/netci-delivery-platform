@@ -1,5 +1,5 @@
 images:
-  controller: "172.17.0.1:8930/netci/jenkins-controller@sha256:bbdc3efdedfeec510cd82b93a4ccf6f9261d984b46c49067bc58f499db358f40"
+  controller: "172.17.0.1:8930/netci/jenkins-controller@sha256:ee66b36f6c046c6acf959274261cd78de9ae4223c7a2564d83cb0a2f1acf552c"
   netci: "172.17.0.1:8930/netci/netci@sha256:b3bba48f82b1026312999bee0960d453516493f161edd25880d0c6218a267e09"
   haproxy: "haproxy@sha256:e3229153dd6429fc71f8a9a1f1ccbf8dab6962422d7043c81e84dd6a075e90ee"
   kubeVip: "ghcr.io/kube-vip/kube-vip@sha256:c6d4f3a3fc2b7e95a23a20a0b05b7c64b2e5620783c8fa69a9bac753f99cc8bc"
