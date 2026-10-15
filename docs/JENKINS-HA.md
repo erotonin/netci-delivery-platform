@@ -134,6 +134,7 @@ deploy/helm/netci/ci/test-rules.sh   # promtool checks and unit tests of the ale
 - [ADR-092 — the pipeline runs on a VM's inbound agents too](decisions/ADR-092-the-pipeline-runs-on-a-vms-inbound-agents.md)
 - [ADR-093 — adoption tested with the IDP's own pipeline](decisions/ADR-093-adoption-with-the-idps-own-pipeline.md)
 - [ADR-094 — a running build's copy is one it can resume from](decisions/ADR-094-a-running-builds-copy-is-one-it-can-resume-from.md)
+- [ADR-095 — one build per commit; merge requests, forks and paths from a real GitLab](decisions/ADR-095-one-build-per-commit-and-gitlab-live.md)
 
 Deploying it at a site: [docs/JENKINS-HA-PRODUCTION.md](JENKINS-HA-PRODUCTION.md) (Vietnamese: prerequisites,
 operators, Secrets, the chart, VIP, Nova fencing, agents, the IDP, checks, operations).

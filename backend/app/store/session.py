@@ -500,6 +500,10 @@ class PlatformSession(Protocol):
         """Queued or running runs of one concurrency group, locked until commit."""
         ...
 
+    def runs_of_commit_in_group(self, concurrency_group: str, commit_sha: str) -> tuple[PipelineRun, ...]:
+        """Queued, running or succeeded runs of one commit in one concurrency group, oldest first."""
+        ...
+
     def savepoint(self) -> ContextManager[None]:
         """Undo only this block's writes if it raises; the enclosing transaction goes on.
 

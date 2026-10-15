@@ -4319,7 +4319,8 @@ async def receive_scm_webhook(
     return JSONResponse(
         status_code=status.HTTP_201_CREATED,
         content={
-            "status": "triggered",
+            # Joined: the commit's build in its group already existed (ADR-095).
+            "status": "triggered" if (run.trigger or {}).get("deliveryId") == parsed.delivery_id else "joined",
             "deliveryId": parsed.delivery_id,
             "pipelineRunId": str(run.id),
             "commitSha": parsed.commit_sha,

@@ -1194,3 +1194,10 @@ CREATE UNIQUE INDEX IF NOT EXISTS shared_pipeline_versions_one_active
 -- The pipeline a module's runs use, by name; resolved to its active version per run.
 ALTER TABLE applications
     ADD COLUMN IF NOT EXISTS shared_pipeline VARCHAR(63) REFERENCES shared_pipelines (name);
+
+-- >>> migration: 0036_one_build_per_commit.sql
+-- One build per commit for a branch and its merge request (ADR-095): an SCM event finds the run
+-- of its commit in its concurrency group -- queued, running or already succeeded -- and joins it.
+CREATE INDEX IF NOT EXISTS idx_pipeline_runs_group_commit
+    ON pipeline_runs (concurrency_group, commit_sha)
+    WHERE concurrency_group IS NOT NULL;

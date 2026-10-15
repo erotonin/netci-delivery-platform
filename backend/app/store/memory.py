@@ -1188,6 +1188,12 @@ class InMemorySession:
                   and r.status in {PipelineStatus.QUEUED, PipelineStatus.RUNNING}]
         return tuple(sorted(active, key=lambda r: (r.created_at, str(r.id))))
 
+    def runs_of_commit_in_group(self, concurrency_group: str, commit_sha: str) -> tuple[PipelineRun, ...]:
+        found = [r for r in self._state.runs.values()
+                 if r.concurrency_group == concurrency_group and r.commit_sha == commit_sha
+                 and r.status in {PipelineStatus.QUEUED, PipelineStatus.RUNNING, PipelineStatus.SUCCEEDED}]
+        return tuple(sorted(found, key=lambda r: (r.created_at, str(r.id))))
+
     def count_active_pipeline_runs(self, application_ids) -> int:
         active = {PipelineStatus.QUEUED, PipelineStatus.RUNNING, PipelineStatus.WAITING_APPROVAL}
         wanted = set(application_ids) if application_ids is not None else None

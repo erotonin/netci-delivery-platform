@@ -2790,6 +2790,17 @@ class PostgresSession:
         )
         return tuple(_run(row) for row in self._cursor.fetchall())
 
+    def runs_of_commit_in_group(self, concurrency_group: str, commit_sha: str) -> tuple[PipelineRun, ...]:
+        # Read under the group's advisory lock (start_pipeline): a second event of the commit waits
+        # for the first one's transaction and then finds its run.
+        self._cursor.execute(
+            f"SELECT {RUN_COLUMNS} FROM pipeline_runs WHERE concurrency_group = %s AND commit_sha = %s"
+            " AND status = ANY(%s) ORDER BY created_at, id",
+            (concurrency_group, commit_sha,
+             [PipelineStatus.QUEUED.value, PipelineStatus.RUNNING.value, PipelineStatus.SUCCEEDED.value]),
+        )
+        return tuple(_run(row) for row in self._cursor.fetchall())
+
     def count_active_pipeline_runs(self, application_ids) -> int:
         statuses = [PipelineStatus.QUEUED.value, PipelineStatus.RUNNING.value, PipelineStatus.WAITING_APPROVAL.value]
         if application_ids is None:

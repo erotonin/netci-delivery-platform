@@ -1429,7 +1429,11 @@ paths:
               schema:
                 type: object
         '201':
-          description: Pipeline triggered by verified webhook; `decision` says what the rule chose
+          description: >-
+            Pipeline triggered by verified webhook; `decision` says what the rule chose. `status`
+            is `triggered`, or `joined` when a build of the same commit, with the same intent and
+            configuration, already existed in its group (a branch's push and its merge request,
+            ADR-095): `pipelineRunId` is then that build, and nothing is built again.
           content:
             application/json:
               schema:
@@ -4469,7 +4473,9 @@ components:
           description: >-
             `<application>:branch/<name>` or `<application>:pr/<n>` for SCM-triggered runs. A
             newer run of the group cancels a waiting one, and a building one when the
-            trigger's cancelInProgress says so. Null for tag, manual and retried runs.
+            trigger's cancelInProgress says so. A merge request from a branch of the same
+            repository is in its branch's group; one from a fork in `pr/<n>` (ADR-095). Null for
+            tag, manual and retried runs.
         supersededBy: { type: string, format: uuid, nullable: true, description: The newer run that cancelled this one. }
         ciFinishedAt:
           type: string

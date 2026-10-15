@@ -127,6 +127,11 @@ def _concurrency_group(application_id: UUID, trigger: dict[str, object], release
     if release_tag:
         return None
     event = trigger.get("event")
+    if event == "pull_request" and trigger.get("fromFork") is False and str(trigger.get("branch") or "").strip():
+        # A merge request from a branch of the same repository builds what that branch's push
+        # builds: one group, so the two events of one commit find each other (ADR-095) and a
+        # newer commit supersedes the branch's older build whichever event came first.
+        return f"{application_id}:branch/{str(trigger.get('branch')).strip()}"
     if event == "pull_request":
         number = trigger.get("pullRequest")
         if isinstance(number, int) and not isinstance(number, bool) and number > 0:
@@ -989,38 +994,85 @@ class DeliveryPlatform:
                 return replay
             group = _concurrency_group(application_id, trigger or {}, release_tag)
             superseded: list[PipelineRun] = []
+            joined: PipelineRun | None = None
             if group is not None:
                 # One writer per group: two pushes a second apart must not both find the
-                # other's run missing and both survive.
+                # other's run missing and both survive -- nor a branch's push and its merge
+                # request both build one commit.
                 transaction.advisory_xact_lock(_lock_key(f"netci-group:{group}"))
+                if not deploy_after_build and release_tag is None:
+                    joined = next((
+                        same for same in transaction.runs_of_commit_in_group(group, commit_sha)
+                        if not same.deploy_after_build and same.publish_artifact == publish_artifact
+                        and same.release_tag is None and same.config_revision_id == config_revision_id
+                    ), None)
                 superseded = [
                     older for older in transaction.lock_active_runs_in_group(group)
-                    if older.admitted_at is None or (cancel_in_progress and self._may_supersede(transaction, older))
+                    if (older.admitted_at is None or (cancel_in_progress and self._may_supersede(transaction, older)))
+                    # Joining a build: only other commits' builds that came before it.
+                    and (joined is None or (older.commit_sha != commit_sha and older.created_at < joined.created_at))
                 ]
-            self._check_queue_room(
-                transaction, application, freed=sum(1 for older in superseded if older.admitted_at is None)
-            )
-            run = self._write_queued_run(
-                transaction,
-                application_id=application_id,
-                commit_sha=commit_sha,
-                branch=branch,
-                environment=environment,
-                parameters=parameters,
-                correlation_id=correlation_id,
-                idempotency_key=idempotency_key,
-                started_by=started_by,
-                config_revision_id=config_revision_id,
-                request_payload=request_payload,
-                deploy_after_build=deploy_after_build,
-                publish_artifact=publish_artifact,
-                release_tag=release_tag,
-                trigger=dict(trigger or {}),
-                concurrency_group=group,
-            )
-            to_abort = self._supersede(transaction, superseded, by=run)
+            if joined is not None:
+                to_abort = self._join(transaction, joined, superseded, trigger=dict(trigger or {}),
+                                      idempotency_key=idempotency_key, request_payload=request_payload)
+                run = joined
+            else:
+                self._check_queue_room(
+                    transaction, application, freed=sum(1 for older in superseded if older.admitted_at is None)
+                )
+                run = self._write_queued_run(
+                    transaction,
+                    application_id=application_id,
+                    commit_sha=commit_sha,
+                    branch=branch,
+                    environment=environment,
+                    parameters=parameters,
+                    correlation_id=correlation_id,
+                    idempotency_key=idempotency_key,
+                    started_by=started_by,
+                    config_revision_id=config_revision_id,
+                    request_payload=request_payload,
+                    deploy_after_build=deploy_after_build,
+                    publish_artifact=publish_artifact,
+                    release_tag=release_tag,
+                    trigger=dict(trigger or {}),
+                    concurrency_group=group,
+                )
+                to_abort = self._supersede(transaction, superseded, by=run)
         self._abort_superseded(to_abort)
-        return self._admit_now(run)
+        return run if joined is not None else self._admit_now(run)
+
+    def _join(self, transaction: PlatformSession, joined: PipelineRun, superseded: list[PipelineRun], *,
+              trigger: dict[str, object], idempotency_key: str | None, request_payload: dict[str, object]) -> list[PipelineRun]:
+        """An SCM event of a commit whose build in its group already exists becomes part of it (ADR-095).
+
+        A branch's push and the merge request opened from it name one commit: built twice, it gave
+        two digests for one source under one tag (the HA lab, MR !2). The event is recorded on the
+        build it joined, its delivery's key answers with that build, and a merge request's
+        cancelInProgress still stops the older commits' builds of the branch.
+        """
+
+        unit = UnitOfWork()
+        event = trigger.get("event") or "an event"
+        detail = f" (merge request !{trigger['pullRequest']})" if trigger.get("pullRequest") else ""
+        unit.logs.append((joined.id, [f"{event} event{detail} for this commit joined this build instead of building it again"]))
+        unit.audit.append(AuditRecord(
+            "pipeline.joined",
+            application_id=joined.application_id,
+            pipeline_run_id=joined.id,
+            actor="netci",
+            correlation_id=joined.correlation_id,
+            payload={"event": event, "pullRequest": trigger.get("pullRequest"), "deliveryId": trigger.get("deliveryId"),
+                     "commitSha": joined.commit_sha},
+        ))
+        if idempotency_key is not None:
+            unit.idempotency.append(IdempotencyRow(
+                scope="pipeline.start", idempotency_key=idempotency_key,
+                request_hash=self._payload_hash(request_payload), resource_type="pipeline_run",
+                resource_id=joined.id, response_status=202,
+            ))
+        self._apply(transaction, unit)
+        return self._supersede(transaction, superseded, by=joined)
 
     def _write_queued_run(
         self,

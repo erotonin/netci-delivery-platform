@@ -1,0 +1,87 @@
+{
+  "steps": [
+    {
+      "step": "delivery rules set through a config revision",
+      "ok": true,
+      "code": 201,
+      "status": "active"
+    },
+    {
+      "step": "a docs-only push to main built nothing",
+      "ok": true,
+      "runs": []
+    },
+    {
+      "step": "a code push to main deploys to dev",
+      "ok": true,
+      "runs": [
+        {
+          "run": "6081cb53",
+          "status": "queued",
+          "event": "push",
+          "fromFork": false,
+          "pullRequest": null,
+          "reason": "rule 0: deploy to dev",
+          "deployAfterBuild": true,
+          "publishArtifact": true,
+          "digest": null,
+          "supersededBy": null
+        }
+      ]
+    },
+    {
+      "step": "run 6081cb53 ended",
+      "ok": true,
+      "run": "6081cb53",
+      "status": "succeeded",
+      "event": "push",
+      "fromFork": false,
+      "pullRequest": null,
+      "reason": "rule 0: deploy to dev",
+      "deployAfterBuild": true,
+      "publishArtifact": true,
+      "digest": "sha256:612bfaf4baf8",
+      "supersededBy": null
+    }
+  ],
+  "commits": [
+    "f5c061ad9e0adce2313e52752dfedb5f8d09d37c",
+    "7af92c09ee314bcdcf23c99c299bba36150bb5c1"
+  ],
+  "rules": [
+    {
+      "on": "push",
+      "branches": [
+        "main"
+      ],
+      "deployTo": "dev",
+      "pathsIgnore": [
+        "**/*.md",
+        "docs/**"
+      ]
+    },
+    {
+      "on": "push",
+      "branches": [
+        "**"
+      ],
+      "pathsIgnore": [
+        "**/*.md",
+        "docs/**"
+      ]
+    },
+    {
+      "on": "pull_request",
+      "branches": [
+        "**"
+      ]
+    },
+    {
+      "on": "tag",
+      "tags": [
+        "v*"
+      ],
+      "registerVersion": true
+    }
+  ]
+}

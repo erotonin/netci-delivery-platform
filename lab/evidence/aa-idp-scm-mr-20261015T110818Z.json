@@ -1,0 +1,76 @@
+{
+  "steps": [
+    {
+      "step": "the branch push made a build-only run",
+      "ok": true,
+      "runs": [
+        {
+          "run": "c08f7548",
+          "status": "queued",
+          "event": "push",
+          "fromFork": false,
+          "pullRequest": null,
+          "reason": "rule 1: build only; changed files unknown, path filter not applied",
+          "deployAfterBuild": false,
+          "publishArtifact": true,
+          "digest": null,
+          "supersededBy": null
+        }
+      ]
+    },
+    {
+      "step": "the merge request joined the push's build: one commit, one build (ADR-095)",
+      "ok": true,
+      "mr": 6,
+      "runs": [
+        {
+          "run": "c08f7548",
+          "status": "running",
+          "event": "push",
+          "fromFork": false,
+          "pullRequest": null,
+          "reason": "rule 1: build only; changed files unknown, path filter not applied",
+          "deployAfterBuild": false,
+          "publishArtifact": true,
+          "digest": null,
+          "supersededBy": null
+        }
+      ],
+      "joined": [
+        "pull_request event (merge request !6) for this commit joined this build instead of building it again"
+      ]
+    },
+    {
+      "step": "run c08f7548 ended",
+      "ok": true,
+      "run": "c08f7548",
+      "status": "succeeded",
+      "event": "push",
+      "fromFork": false,
+      "pullRequest": null,
+      "reason": "rule 1: build only; changed files unknown, path filter not applied",
+      "deployAfterBuild": false,
+      "publishArtifact": true,
+      "digest": "sha256:c495bec4f51d",
+      "supersededBy": null
+    },
+    {
+      "step": "no run of this commit deployed anywhere",
+      "ok": true
+    },
+    {
+      "step": "the commit's status on GitLab",
+      "ok": true,
+      "statuses": [
+        {
+          "name": "netci/pipeline",
+          "status": "success",
+          "target": "http://192.168.122.240/job/netci-54a92407-0861-4cf7-8a95-4371f8477dd8/28/"
+        }
+      ]
+    }
+  ],
+  "mr": 6,
+  "branch": "feature/mr-1792062452",
+  "commit": "464d9a4acb062759abfb42cf49d8aa2b3c7749e0"
+}

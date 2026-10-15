@@ -1,0 +1,77 @@
+{
+  "steps": [
+    {
+      "step": "outsider forked platform/payments-api",
+      "ok": true,
+      "code": 201
+    },
+    {
+      "step": "delivery rules set through a config revision",
+      "ok": true,
+      "code": 201,
+      "status": "active"
+    },
+    {
+      "step": "forkPullRequests=ignore: the fork's merge request built nothing",
+      "ok": true,
+      "mr": 4,
+      "runs": []
+    },
+    {
+      "step": "delivery rules set through a config revision",
+      "ok": true,
+      "code": 201,
+      "status": "active"
+    },
+    {
+      "step": "forkPullRequests=verify: one run, verify only",
+      "ok": true,
+      "runs": [
+        {
+          "run": "bbb237b4",
+          "status": "queued",
+          "event": "pull_request",
+          "fromFork": true,
+          "pullRequest": 4,
+          "reason": "rule 2: fork pull request, verify only",
+          "deployAfterBuild": false,
+          "publishArtifact": false,
+          "digest": null,
+          "supersededBy": null
+        }
+      ]
+    },
+    {
+      "step": "the fork's verify run ended",
+      "ok": true,
+      "run": "bbb237b4",
+      "status": "succeeded",
+      "event": "pull_request",
+      "fromFork": true,
+      "pullRequest": 4,
+      "reason": "rule 2: fork pull request, verify only",
+      "deployAfterBuild": false,
+      "publishArtifact": false,
+      "digest": null,
+      "supersededBy": null,
+      "sign": null,
+      "publish": null
+    },
+    {
+      "step": "no registry tag for the fork's commit",
+      "ok": true,
+      "tag": "58d743db88b1"
+    },
+    {
+      "step": "delivery rules set through a config revision",
+      "ok": true,
+      "code": 201,
+      "status": "active"
+    }
+  ],
+  "mr": 4,
+  "commits": [
+    "2ff9517bfefc7720532c4b0d6996cf8a9217b57e",
+    "58d743db88b1d35769bf3f1c212e40dedb9907a7"
+  ]
+}

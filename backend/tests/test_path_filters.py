@@ -119,3 +119,19 @@ def test_a_docs_only_push_starts_nothing_through_the_webhook():
     assert built.status_code == 201, built.text
     run = main_mod.platform.get_pipeline(UUID(built.json()["pipelineRunId"]))
     assert run.trigger["changedFiles"] == 2
+
+
+def test_double_star_slash_is_any_number_of_directories_none_included():
+    # GitHub's `**/README.md` matches README.md at the root too. Read as `.*/`, `**/*.md` needed a
+    # directory, and a README-only push to main deployed on the HA lab (ADR-095).
+    from app.domain.delivery_rules import matches
+
+    assert matches("**/*.md", "README.md") and matches("**/*.md", "docs/guide/a.md")
+    assert not matches("**/*.md", "app.py") and not matches("**/*.md", "README.md.py")
+    assert matches("src/**/test_*.py", "src/test_app.py") and matches("src/**/test_*.py", "src/a/b/test_app.py")
+    assert not matches("src/**/test_*.py", "lib/test_app.py")
+    assert matches("docs/**", "docs/a/b.md") and not matches("docs/**", "docsite/a.md")
+    assert matches("**", "anything/at/all")
+    rules = _rules({"on": "push", "branches": ["main"], "pathsIgnore": ["**/*.md"], "deployTo": "dev"})
+    assert not decide(rules, _push(["README.md"])).run
+    assert decide(rules, _push(["README.md", "app.py"])).run

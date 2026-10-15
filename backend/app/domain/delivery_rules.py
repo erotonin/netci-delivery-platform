@@ -126,12 +126,17 @@ class TriggerDecision:
 
 
 def _glob(pattern: str) -> re.Pattern[str]:
-    """GitHub's branch filter semantics: `*` stops at `/`, `**` does not."""
+    """GitHub's filter semantics: `*` stops at `/`, `**` does not, and `**/` is any number of
+    directories, none included -- `**/*.md` is every Markdown file, the root's README.md too. Read
+    as `.*/`, it required a directory, and a docs-only push to main deployed (the HA lab, ADR-095)."""
 
     out: list[str] = []
     i = 0
     while i < len(pattern):
-        if pattern.startswith("**", i):
+        if pattern.startswith("**/", i):
+            out.append("(?:.*/)?")
+            i += 3
+        elif pattern.startswith("**", i):
             out.append(".*")
             i += 2
         elif pattern[i] == "*":

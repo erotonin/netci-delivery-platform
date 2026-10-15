@@ -1,0 +1,69 @@
+{
+  "steps": [
+    {
+      "step": "the first commit's build is running",
+      "ok": true,
+      "run": "6dfc438b"
+    },
+    {
+      "step": "the new commit built once",
+      "ok": true,
+      "runs": [
+        {
+          "run": "5baa3f09",
+          "status": "running",
+          "event": "push",
+          "fromFork": false,
+          "pullRequest": null,
+          "reason": "rule 1: build only",
+          "deployAfterBuild": false,
+          "publishArtifact": true,
+          "digest": null,
+          "supersededBy": null
+        }
+      ]
+    },
+    {
+      "step": "the running build was superseded by the new commit",
+      "ok": true,
+      "run": "6dfc438b",
+      "status": "cancelled",
+      "event": "push",
+      "fromFork": false,
+      "pullRequest": null,
+      "reason": "rule 1: build only",
+      "deployAfterBuild": false,
+      "publishArtifact": true,
+      "digest": null,
+      "supersededBy": "5baa3f09-ae10-4504-baf5-9ed6a23d5d9c"
+    },
+    {
+      "step": "the new commit's build ended",
+      "ok": true,
+      "run": "5baa3f09",
+      "status": "succeeded",
+      "event": "push",
+      "fromFork": false,
+      "pullRequest": null,
+      "reason": "rule 1: build only",
+      "deployAfterBuild": false,
+      "publishArtifact": true,
+      "digest": "sha256:24423ac338e2",
+      "supersededBy": null
+    },
+    {
+      "step": "Jenkins stopped the old build",
+      "ok": true,
+      "jenkins": {
+        "_class": "org.jenkinsci.plugins.workflow.job.WorkflowRun",
+        "building": false,
+        "result": "ABORTED"
+      }
+    }
+  ],
+  "mr": 5,
+  "commits": [
+    "7d153b3e57bffff3e174e68ff19c24bb251251a5",
+    "64fa0e2a9c9d9e5c8bda60be6c87b0e309f8583f"
+  ]
+}
