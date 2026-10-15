@@ -51,7 +51,14 @@ def main() -> None:
         "NETCI_REGISTRY_ALLOW_HTTP": "false",
         "NETCI_BUILD_BASE_IMAGE": "172.17.0.1:8930/mirror/netci/python-base:3.12-alpine",
         "NETCI_TRIVY_DB_REPOSITORY": "172.17.0.1:8930/mirror/aquasec/trivy-db:2",
-        "NETCI_BUILD_ISOLATION": "none",
+        # A namespace per project on the lab cluster (ADR-030, ADR-096), unless builds run on the
+        # VM's agents, which are in no namespace (ADR-092 refuses the pair).
+        "NETCI_BUILD_ISOLATION": "none" if os.environ.get("IDP_AGENT_KIND") == "static" else "kubernetes",
+        "NETCI_BUILD_CLUSTER_KUBECONFIG": str(ROOT / ".netci-gate/aa/kubeconfigs/build-provisioner"),
+        "NETCI_BUILD_CONTROLLER_SERVICE_ACCOUNT": "aa-p2/jenkins",
+        "NETCI_BUILD_CACHE_STORAGE_CLASS": "local-path",
+        "NETCI_BUILD_TRUSTED_CA_FILE": str(ROOT / ".netci-gate/corp/pki/ca.crt"),
+        "NETCI_BUILD_PULL_SECRET_FILE": str(ROOT / ".netci-gate/aa/build-pull.json"),
         # Where builds run (ADR-092): build pods of the replicas' cloud, or -- with
         # IDP_AGENT_KIND=static -- the lab's inbound agents standing for the mentor's VM.
         "NETCI_AGENT_KIND": os.environ.get("IDP_AGENT_KIND", "kubernetes"),

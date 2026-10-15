@@ -76,8 +76,7 @@ jenkins:
                 memory: false
             podRetention: never
             idleMinutes: 0
-            imagePullSecrets:
-              - name: harbor-pull
+            # No pull secret named here: the agent's account carries it in every build namespace (ADR-096).
             yaml: |
               apiVersion: v1
               kind: Pod
@@ -91,7 +90,7 @@ jenkins:
                 securityContext: {runAsNonRoot: true, runAsUser: 1000, runAsGroup: 1000, fsGroup: 1000}
                 volumes:
                   - name: lab-ca
-                    configMap: {name: lab-ca}
+                    configMap: {name: netci-trusted-ca}
                 containers:
                   - name: jnlp
                     image: 172.17.0.1:8930/mirror/jenkins/inbound-agent@sha256:18a5c2cc22847349e1542ff2c6184d7472913ae0d26d625aef82e41becb36342

@@ -1,0 +1,59 @@
+# Per-project build namespaces on the HA lab (ADR-030, ADR-096): the account netCI provisions them with,
+# and the fence around it. Applied by `lab/aa/idp.sh isolation-prepare`.
+#
+# RBAC cannot say "only namespaces named netci-build-*", so the account gets what it needs cluster-wide --
+# create and patch, never read Secrets, never delete -- and a ValidatingAdmissionPolicy refuses every
+# write of that account outside netci-build-* namespaces. It may grant the controller rights on pods
+# (escalate, bind) only where the policy lets it write: in those namespaces.
+apiVersion: v1
+kind: ServiceAccount
+metadata: {name: netci-build-provisioner, namespace: netci-deploy}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata: {name: netci-build-provisioner}
+rules:
+  - {apiGroups: [""], resources: [namespaces], verbs: [get, create, patch]}
+  - {apiGroups: [""], resources: [serviceaccounts, configmaps, persistentvolumeclaims], verbs: [get, create, patch]}
+  - {apiGroups: [""], resources: [secrets], verbs: [create, patch]}
+  - {apiGroups: [networking.k8s.io], resources: [networkpolicies], verbs: [get, create, patch]}
+  - {apiGroups: [rbac.authorization.k8s.io], resources: [roles, rolebindings], verbs: [get, create, patch, bind, escalate]}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata: {name: netci-build-provisioner}
+subjects: [{kind: ServiceAccount, name: netci-build-provisioner, namespace: netci-deploy}]
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: netci-build-provisioner}
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata: {name: netci-build-provisioner-only-build-namespaces}
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: ["*"]
+        apiVersions: ["*"]
+        operations: [CREATE, UPDATE]
+        resources: ["*"]
+  matchConditions:
+    - name: the-provisioner
+      expression: "request.userInfo.username == 'system:serviceaccount:netci-deploy:netci-build-provisioner'"
+  validations:
+    - expression: "(request.kind.kind == 'Namespace' ? object.metadata.name : request.namespace).startsWith('netci-build-')"
+      message: "netci-build-provisioner writes only in netci-build-* namespaces"
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata: {name: netci-build-provisioner-only-build-namespaces}
+spec:
+  policyName: netci-build-provisioner-only-build-namespaces
+  validationActions: [Deny]
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: netci-build-provisioner-token
+  namespace: netci-deploy
+  annotations: {kubernetes.io/service-account.name: netci-build-provisioner}
+type: kubernetes.io/service-account-token

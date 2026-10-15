@@ -1,0 +1,81 @@
+{
+  "namespace": "netci-build-payments-api-c452cc",
+  "labels": {
+    "kubernetes.io/metadata.name": "netci-build-payments-api-c452cc",
+    "netci.io/application": "54a92407-0861-4cf7-8a95-4371f8477dd8",
+    "netci.io/managed-by": "netci",
+    "pod-security.kubernetes.io/enforce": "baseline"
+  },
+  "objects": [
+    "serviceaccount/jenkins-agent",
+    "role.rbac.authorization.k8s.io/jenkins-controller",
+    "rolebinding.rbac.authorization.k8s.io/jenkins-controller",
+    "networkpolicy.networking.k8s.io/build-pods",
+    "persistentvolumeclaim/netci-cache",
+    "configmap/netci-trusted-ca",
+    "secret/netci-pull"
+  ],
+  "networkPolicy": {
+    "podSelector": {},
+    "policyTypes": [
+      "Ingress"
+    ]
+  },
+  "cacheBeforeTheFix": [
+    {
+      "build": 29,
+      "basePulls": 1,
+      "blobsCopied": 17,
+      "layerCacheHits": 0,
+      "gitCache": [
+        "miss"
+      ],
+      "result": "Finished: SUCCESS"
+    },
+    {
+      "build": 30,
+      "basePulls": 1,
+      "blobsCopied": 17,
+      "layerCacheHits": 0,
+      "gitCache": [
+        "hit"
+      ],
+      "result": "Finished: SUCCESS"
+    }
+  ],
+  "cacheAfterTheFix": [
+    {
+      "build": 31,
+      "basePulls": 1,
+      "blobsCopied": 17,
+      "layerCacheHits": 0,
+      "gitCache": [
+        "hit"
+      ],
+      "result": "Finished: SUCCESS"
+    },
+    {
+      "build": 32,
+      "basePulls": 0,
+      "blobsCopied": 12,
+      "layerCacheHits": 6,
+      "gitCache": [
+        "hit"
+      ],
+      "result": "Finished: SUCCESS"
+    }
+  ],
+  "buildStageMs": {
+    "29": 10182,
+    "30": 10009,
+    "31": 8476,
+    "32": 6108
+  },
+  "ingressProbe": {
+    "fromAaBuildToProtected": "refused (curl exit 7)",
+    "sameNamespaceToProtected": "refused (curl exit 7)",
+    "fromAaBuildToUnprotectedControl": "200"
+  },
+  "admissionFence": "netci-build-provisioner refused creating a ConfigMap in default (ValidatingAdmissionPolicy)",
+  "appArmor": "profile lost on netci-lab-1 after its power cut (pod CreateContainerError); installed in /etc/apparmor.d on all nodes"
+}

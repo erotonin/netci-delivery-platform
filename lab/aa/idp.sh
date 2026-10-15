@@ -7,6 +7,8 @@
 #   lab/aa/idp.sh deploy-prepare  namespaces dev/staging/prod and the worker's own kubeconfig (aa-lab)
 #   lab/aa/idp.sh vm-agents    the lab's inbound agents (agent-0/1, the mentor's VM) carry the build toolbox,
 #                              for NETCI_AGENT_KIND=static (ADR-092)
+#   lab/aa/idp.sh isolation-prepare  per-project build namespaces (ADR-096): the provisioner account, its
+#                              admission fence, its kubeconfig and the pull secret file for the IDP
 #   lab/aa/idp.sh env         write .netci-gate/aa/idp.env: the IDP against the replicas, through netci-queue
 #   lab/aa/idp.sh api|worker   run the IDP's API (:18100, reachable by build pods) or its CD worker
 #
@@ -26,6 +28,9 @@ ci_prepare() {
     | python3 -c 'import json,sys; s=json.load(sys.stdin); m=s["metadata"]; s["metadata"]={"name":m["name"],"namespace":"'"$BUILD_NS"'"}; print(json.dumps(s))' \
     | kubectl apply -f - >/dev/null
   kubectl -n "$BUILD_NS" create configmap lab-ca --from-file=ca.crt="$C/pki/ca.crt" --dry-run=client -o yaml | kubectl apply -f - >/dev/null
+  # What every build namespace has (ADR-096): the CA as netci-trusted-ca, the pull secret on the agent's account.
+  kubectl -n "$BUILD_NS" create configmap netci-trusted-ca --from-file=ca.crt="$C/pki/ca.crt" --dry-run=client -o yaml | kubectl apply -f - >/dev/null
+  kubectl -n "$BUILD_NS" patch serviceaccount jenkins-agent -p '{"imagePullSecrets":[{"name":"harbor-pull"}]}' >/dev/null
   local tmp; tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' RETURN
   chmod 700 "$tmp"
   python3 - "$tmp" <<'EOF'
@@ -162,11 +167,36 @@ EOF
   kubectl -n "$NS" get statefulset agent -o jsonpath='agents run {.spec.template.spec.containers[0].image}{"\n"}'
 }
 
+# Per-project build namespaces (ADR-030, ADR-096): the provisioner's account and its admission fence
+# (lab/aa/build-isolation.yaml), its kubeconfig, and the pull secret the IDP writes into each namespace.
+isolation_prepare() {
+  kubectl apply -f lab/aa/build-isolation.yaml >/dev/null
+  sleep 2
+  mkdir -p .netci-gate/aa/kubeconfigs && chmod 700 .netci-gate/aa/kubeconfigs
+  python3 lab/aa/isolation_files.py
+  # The fence holds: the account is refused outside netci-build-*. A new policy takes a few seconds to
+  # be enforced; a write that got through before then is removed and counted as a failure.
+  local i out
+  for i in $(seq 1 15); do
+    out="$(kubectl --kubeconfig .netci-gate/aa/kubeconfigs/build-provisioner create configmap fence-check -n default \
+      --from-literal=a=b 2>&1 || true)"
+    if grep -q "netci-build-provisioner writes only" <<<"$out"; then
+      echo "admission fence holds: refused in default"
+      return 0
+    fi
+    kubectl -n default delete configmap fence-check --ignore-not-found >/dev/null
+    sleep 2
+  done
+  echo "admission fence did NOT refuse a write in default" >&2
+  return 1
+}
+
 case "${1:-}" in
   ci-prepare) ci_prepare ;;
   deploy-prepare) deploy_prepare ;;
   casc) casc ;;
   vm-agents) vm_agents ;;
+  isolation-prepare) isolation_prepare ;;
   env) env_file ;;
   api|worker) run "$1" ;;
   *) sed -n '2,10p' "$0"; exit 2 ;;

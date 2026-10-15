@@ -288,8 +288,10 @@ Chart IDP từ chối nếu `runQueueUrl` đi cùng nhiều hơn một controlle
   `http://${POD_NAME}.jenkins.<ns>.svc.cluster.local:8080/`, để pod gọi về đúng replica đã tạo ra nó.
 - **Credential:** dùng `jenkins.extraSecretMounts` và đọc bằng `${readFile:...}`. Không đặt bí mật
   vào ConfigMap.
-- **AppArmor:** trên mọi node build phải nạp `deploy/apparmor/netci-builder`
-  (`sudo apparmor_parser -r -W ...`). Ubuntu 24.04 chặn user namespace của buildah rootless; nếu
+- **AppArmor:** trên mọi node build phải **cài** `deploy/apparmor/netci-builder` vào `/etc/apparmor.d/`
+  rồi nạp (`sudo apparmor_parser -r -W /etc/apparmor.d/netci-builder`). Chỉ nạp bằng `apparmor_parser`
+  thì profile sẽ mất sau khi node khởi động lại: trên lab, sau lần cắt điện, mọi pod build trên node đó
+  đều lỗi "apparmor profile not found". Ubuntu 24.04 chặn user namespace của buildah rootless; nếu
   không nạp profile, build sẽ lỗi `remount /: permission denied`.
 - **Repo private:** đặt `NETCI_GIT_CREDENTIALS_FILE` cho API (file git credential-store chứa token
   chỉ-đọc, quyền 600), để dialog chọn branch và commit hoạt động.
@@ -302,6 +304,12 @@ Chart IDP từ chối nếu `runQueueUrl` đi cùng nhiều hơn một controlle
   bỏ qua âm thầm.
 - **Trivy DB:** mirror theo lịch (timer `netci-trivy-db-mirror`). Với `NETCI_TOOLCHAIN_ENFORCE=enforce`,
   DB cũ hơn 72 giờ sẽ chặn artifact.
+- **Namespace riêng cho từng project (ADR-096):** đặt `NETCI_BUILD_ISOLATION=kubernetes`,
+  `NETCI_BUILD_CLUSTER_KUBECONFIG` (account provisioner), `NETCI_BUILD_CONTROLLER_SERVICE_ACCOUNT=<ns>/<sa của
+  replica>`, `NETCI_BUILD_TRUSTED_CA_FILE` (CA của registry) và `NETCI_BUILD_PULL_SECRET_FILE` (một
+  docker config.json chỉ có quyền pull). Áp dụng `lab/aa/build-isolation.yaml` làm mẫu: account không được
+  đọc Secret, và một ValidatingAdmissionPolicy chặn mọi lần ghi của account đó ngoài các namespace
+  `netci-build-*`. Pod template không được nêu tên pull secret, và phải mount ConfigMap `netci-trusted-ca`.
 - **Agent inbound trên VM (ADR-092):** đặt `NETCI_AGENT_KIND=static` và `NETCI_AGENT_LABEL=<label của
   các agent trên VM>` cho API. VM cần những gì image `jenkins/agent-toolbox` có: buildah, syft,
   trivy, cosign, git, python3, CA của registry, và profile AppArmor `netci-builder`. Cần một agent

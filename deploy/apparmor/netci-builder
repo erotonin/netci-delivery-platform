@@ -11,7 +11,10 @@
 # that namespace's own resources. The container still runs as uid 1000 with no capabilities in the
 # node's namespace; writes to the kernel's tunables and to sysfs are denied as in the default profile.
 #
-# Load it on every build node:   sudo apparmor_parser -r -W deploy/apparmor/netci-builder
+# Install it on every build node, where boot loads it again -- loaded only with apparmor_parser it was
+# gone after the HA lab's power cut, and every build pod there failed "apparmor profile not found":
+#   sudo install -m 644 deploy/apparmor/netci-builder /etc/apparmor.d/netci-builder
+#   sudo apparmor_parser -r -W /etc/apparmor.d/netci-builder
 # Use it from a pod:             securityContext.appArmorProfile: {type: Localhost, localhostProfile: netci-builder}
 
 abi <abi/4.0>,

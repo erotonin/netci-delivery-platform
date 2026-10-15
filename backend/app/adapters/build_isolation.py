@@ -36,6 +36,8 @@ logger = logging.getLogger(__name__)
 _NAME = re.compile(r"[^a-z0-9-]+")
 NAMESPACE_PREFIX = "netci-build-"
 CACHE_CLAIM = "netci-cache"
+TRUSTED_CA = "netci-trusted-ca"
+PULL_SECRET = "netci-pull"
 AGENT_SERVICE_ACCOUNT = "jenkins-agent"
 
 
@@ -114,6 +116,8 @@ class KubernetesBuildIsolation:
         registry_hosts: tuple[str, ...] = (),
         kubectl: str = "kubectl",
         timeout_seconds: float = 60.0,
+        trusted_ca: str | None = None,
+        pull_secret: str | None = None,
     ) -> None:
         if "/" not in controller_service_account:
             raise ValueError("controller service account must be <namespace>/<name>")
@@ -124,6 +128,12 @@ class KubernetesBuildIsolation:
         self.registry_hosts = registry_hosts
         self.kubectl = kubectl
         self.timeout_seconds = timeout_seconds
+        # What a build pod needs that only the installation knows (the HA lab, ADR-096): the
+        # registry's CA, public, as a ConfigMap the pod template mounts; and a pull credential for
+        # the build images, as the agent account's image pull secret, so the template names none.
+        # Without them a pod in a new namespace could neither pull its image nor trust the registry.
+        self.trusted_ca = trusted_ca
+        self.pull_secret = pull_secret
 
     # ---------------------------------------------------------------- manifests
 
@@ -143,6 +153,7 @@ class KubernetesBuildIsolation:
                 "apiVersion": "v1", "kind": "ServiceAccount",
                 "metadata": {"name": AGENT_SERVICE_ACCOUNT, "namespace": namespace},
                 "automountServiceAccountToken": False,
+                **({"imagePullSecrets": [{"name": PULL_SECRET}]} if self.pull_secret else {}),
             },
             {
                 "apiVersion": "rbac.authorization.k8s.io/v1", "kind": "Role",
@@ -183,7 +194,22 @@ class KubernetesBuildIsolation:
                 },
             },
         ]
+        if self.trusted_ca:
+            items.append({
+                "apiVersion": "v1", "kind": "ConfigMap",
+                "metadata": {"name": TRUSTED_CA, "namespace": namespace},
+                "data": {"ca.crt": self.trusted_ca},
+            })
         return items
+
+    def pull_secret_manifest(self, namespace: str) -> dict[str, Any]:
+        import base64
+
+        return {
+            "apiVersion": "v1", "kind": "Secret", "type": "kubernetes.io/dockerconfigjson",
+            "metadata": {"name": PULL_SECRET, "namespace": namespace},
+            "data": {".dockerconfigjson": base64.b64encode(self.pull_secret.encode()).decode()},
+        }
 
     # ------------------------------------------------------------------ actions
 
@@ -196,6 +222,14 @@ class KubernetesBuildIsolation:
                 f"could not establish build isolation for {application_name} in {namespace}: "
                 f"{(result.stderr or result.stdout).strip()[-600:]}"
             )
+        if self.pull_secret:
+            # Apart, and without kubectl's words: a refused Secret's message can quote its data.
+            # Server-side: no GET first, so the account needs create and patch on Secrets, never read.
+            secret = self._kubectl(["apply", "--server-side", "--field-manager=netci-build-isolation", "-f", "-"],
+                                   stdin=json.dumps(self.pull_secret_manifest(namespace)))
+            if secret.returncode != 0:
+                raise BuildIsolationError(
+                    f"could not write the build pull secret in {namespace} (kubectl exit {secret.returncode})")
         # A PVC that is stuck (no storage class, no provisioner) would leave every pod
         # Pending; the status is a fact of the cluster, so read it back rather than
         # assume the apply meant the claim is usable.
@@ -230,6 +264,27 @@ class KubernetesBuildIsolation:
             raise BuildIsolationError(f"kubectl failed: {exc}") from exc
 
 
+def _is_docker_config(text: str) -> bool:
+    try:
+        return isinstance(json.loads(text).get("auths"), dict)
+    except (ValueError, AttributeError):
+        return False
+
+
+def _optional_file(name: str, valid, what: str) -> str | None:
+    """A setting naming a file: absent is none; named but unreadable or wrong stops startup."""
+    path = os.getenv(name, "").strip()
+    if not path:
+        return None
+    try:
+        text = Path(path).read_text()
+    except OSError as exc:
+        raise ValueError(f"{name} names {path}, which cannot be read: {exc.strerror}") from exc
+    if not valid(text):
+        raise ValueError(f"{name} must name {what}")
+    return text
+
+
 def build_isolation_provisioner() -> BuildIsolationProvisioner:
     from ..runtime_environment import is_local_runtime
 
@@ -243,6 +298,9 @@ def build_isolation_provisioner() -> BuildIsolationProvisioner:
             controller_service_account=os.getenv("NETCI_BUILD_CONTROLLER_SERVICE_ACCOUNT", "netci-build/jenkins-controller").strip(),
             cache_size=os.getenv("NETCI_BUILD_CACHE_SIZE", "2Gi").strip() or "2Gi",
             storage_class=os.getenv("NETCI_BUILD_CACHE_STORAGE_CLASS", "").strip() or None,
+            trusted_ca=_optional_file("NETCI_BUILD_TRUSTED_CA_FILE", lambda text: "BEGIN CERTIFICATE" in text,
+                                      "a PEM certificate"),
+            pull_secret=_optional_file("NETCI_BUILD_PULL_SECRET_FILE", _is_docker_config, "a docker config.json with auths"),
         )
     if mode == "none":
         return SharedNamespaceIsolation()

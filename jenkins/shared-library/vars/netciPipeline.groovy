@@ -249,6 +249,16 @@ def call(Map config = [:]) {
                             date -u +%FT%TZ > "${cache_dir}/warm"
                           fi
                           echo "NETCI_CACHE_DIR=${cache_dir}"
+                          # A project's cache claim keeps Buildah's layers too: the image storage
+                          # on the claim, through the storage.conf XDG_CONFIG_HOME points at.
+                          # Runroot stays in the pod, it is per run. The toolbox's options kept.
+                          if [ "${XDG_CONFIG_HOME:-}" = "${cache_dir}/config" ]; then
+                            mkdir -p "${cache_dir}/config/containers" "${cache_dir}/containers/storage"
+                            printf '[storage]\ndriver = "%s"\ngraphroot = "%s"\nrunroot = "%s"\n[storage.options]\nignore_chown_errors = "true"\n[storage.options.vfs]\nignore_chown_errors = "true"\n' \
+                              "${STORAGE_DRIVER:-vfs}" "${cache_dir}/containers/storage" "/tmp/netci-containers-run" \
+                              > "${cache_dir}/config/containers/storage.conf"
+                            echo "NETCI_IMAGE_STORAGE=${cache_dir}/containers/storage"
+                          fi
                           du -sh "${cache_dir}" 2>/dev/null || true
                         '''
                     }
@@ -451,6 +461,11 @@ ${account}  volumes:
           value: /netci-cache
         - name: XDG_DATA_HOME
           value: /netci-cache/xdg
+        # Where Buildah reads its storage from (Prepare Cache writes it): the toolbox's own
+        # storage.conf names a graphroot in the home, so XDG_DATA_HOME alone left every layer
+        # in the pod -- each build pulled the base again, 17 blobs (the HA lab, ADR-096).
+        - name: XDG_CONFIG_HOME
+          value: /netci-cache/config
         - name: NETCI_BUILDAH_LAYERS
           value: "true"
         - name: GOCACHE

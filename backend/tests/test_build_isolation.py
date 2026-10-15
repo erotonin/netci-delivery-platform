@@ -320,3 +320,52 @@ def test_the_reload_webhook_needs_a_signature_or_an_admin(monkeypatch):
 
     as_admin = client.post("/api/v1/ci/controllers/reload", headers={"Authorization": "Bearer platform-admin-token"})
     assert as_admin.status_code == 501
+
+
+def test_a_namespace_gets_the_registry_ca_and_the_pull_secret_and_never_quotes_the_secret(tmp_path, monkeypatch):
+    # A pod in a new project namespace could neither pull its image from a private registry nor
+    # trust the registry's CA: the HA lab's template named a ConfigMap and a Secret only aa-build had.
+    kubeconfig = tmp_path / "kubeconfig"; kubeconfig.write_text("apiVersion: v1\n")
+    config = json.dumps({"auths": {"registry.example": {"auth": "c2VjcmV0LXB1bGwtdG9rZW4="}}})
+    prov = bi.KubernetesBuildIsolation(kubeconfig=str(kubeconfig), controller_service_account="aa-p2/jenkins",
+                                       trusted_ca="-----BEGIN CERTIFICATE-----\nx\n-----END CERTIFICATE-----\n",
+                                       pull_secret=config)
+    docs = {d["kind"]: d for d in prov.manifests(APP, "payments-api")}
+    assert docs["ConfigMap"]["metadata"]["name"] == "netci-trusted-ca" and "BEGIN CERTIFICATE" in docs["ConfigMap"]["data"]["ca.crt"]
+    assert docs["ServiceAccount"]["imagePullSecrets"] == [{"name": "netci-pull"}]
+    assert "Secret" not in docs  # applied on its own
+    applied = []
+
+    def fake_run(command, input=None, **kwargs):
+        applied.append(input)
+        if command[3] == "apply" and '"Secret"' in (input or ""):
+            return subprocess.CompletedProcess(command, 1, "", f"Secret is invalid: data: {input}")
+        return subprocess.CompletedProcess(command, 0, json.dumps({"status": {"phase": "Bound"}}), "")
+
+    monkeypatch.setattr(bi.subprocess, "run", fake_run)
+    with pytest.raises(bi.BuildIsolationError) as refused:
+        prov.ensure(APP, "payments-api")
+    assert "pull secret" in str(refused.value) and "c2VjcmV0" not in str(refused.value) and "auths" not in str(refused.value)
+    secret = json.loads(applied[1])
+    assert secret["type"] == "kubernetes.io/dockerconfigjson" and secret["metadata"]["name"] == "netci-pull"
+
+
+def test_a_named_ca_or_pull_secret_file_that_cannot_be_used_stops_startup(tmp_path, monkeypatch):
+    kubeconfig = tmp_path / "kubeconfig"; kubeconfig.write_text("apiVersion: v1\n")
+    monkeypatch.setenv("NETCI_BUILD_ISOLATION", "kubernetes")
+    monkeypatch.setenv("NETCI_BUILD_CLUSTER_KUBECONFIG", str(kubeconfig))
+    monkeypatch.setenv("NETCI_BUILD_TRUSTED_CA_FILE", str(tmp_path / "missing.crt"))
+    with pytest.raises(ValueError, match="cannot be read"):
+        bi.build_isolation_provisioner()
+    (tmp_path / "ca.crt").write_text("not a certificate")
+    monkeypatch.setenv("NETCI_BUILD_TRUSTED_CA_FILE", str(tmp_path / "ca.crt"))
+    with pytest.raises(ValueError, match="PEM"):
+        bi.build_isolation_provisioner()
+    (tmp_path / "ca.crt").write_text("-----BEGIN CERTIFICATE-----\nx\n-----END CERTIFICATE-----\n")
+    (tmp_path / "pull.json").write_text("{}")
+    monkeypatch.setenv("NETCI_BUILD_PULL_SECRET_FILE", str(tmp_path / "pull.json"))
+    with pytest.raises(ValueError, match="auths"):
+        bi.build_isolation_provisioner()
+    (tmp_path / "pull.json").write_text(json.dumps({"auths": {}}))
+    prov = bi.build_isolation_provisioner()
+    assert prov.trusted_ca.startswith("-----BEGIN") and prov.pull_secret
