@@ -78,6 +78,9 @@ kills had given one hang and one failure.
   fraction of a second before its replica dies. That case now fails at once with its reason
   (decision 3). It no longer hangs.
 - **An inbound agent whose channel writer is blocked** still takes minutes to notice (ADR-093,
-  `long` #69).
+  `long` #69). It has been seen once in about 13 kills. Four more pod kills of `long` on netci36
+  (#70–#73, `aa-phase5-20261015T12*.json`) were all SUCCESS with every tick once: three were adopted
+  by the survivor in 4.1–13.3 s, and one was taken back by its restarted owner. Its cause, in the
+  network path or remoting, is not found.
 - **A step adopted from a copy before it ended runs again**, from its start or from its agent's
   mark. An `sh` with side effects must be safe to repeat; netCI's callbacks and build scripts are.

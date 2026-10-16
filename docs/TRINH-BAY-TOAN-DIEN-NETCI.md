@@ -1,5 +1,11 @@
 # netCI — Trình bày toàn diện: từ nỗi đau đến hệ thống chạy được
 
+> **Ghi chú 2026-10-15:** phần kiến trúc HA của tài liệu này (cell, supervisor, "một người ghi, chuyển nhanh",
+> ADR-060..072) là **thế hệ trước**. Hệ thống hiện tại là active-active: hai replica, home riêng được giữ giống
+> nhau qua netci-homesync, build đang chạy được replica còn sống adopt (ADR-074..089). IDP chạy thật trên nó
+> (ADR-090..096). Phần 2–4 (kiến thức nền) vẫn đúng và vẫn là chỗ nên học trước. Phần hiện tại:
+> `docs/BAO-VE-DE-TAI-NETCI.md` (bản 3) và các ADR đó.
+>
 > Bản 2, viết ngày 2026-10-12, cho nhánh `rearch/jenkins-ha-fabric` (commit `7706b02`).
 > Viết cho người **chưa vững Jenkins và Kubernetes**: mọi khái niệm được giải thích từ đầu, trước khi
 > được dùng. Đọc xong là đủ kiến thức, kỹ năng và các bước theo đúng thứ tự để **tự làm lại đề tài mà

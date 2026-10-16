@@ -11,6 +11,7 @@
 #                              admission fence, its kubeconfig and the pull secret file for the IDP
 #   lab/aa/idp.sh env         write .netci-gate/aa/idp.env: the IDP against the replicas, through netci-queue
 #   lab/aa/idp.sh api|worker   run the IDP's API (:18100, reachable by build pods) or its CD worker
+#   lab/aa/idp.sh up           (re)start both in the background and wait until the API is ready
 #
 # Credentials come from .netci-gate and go into the Secret through files in a private temporary
 # directory: never printed, never on a command line, trailing newlines stripped (a token read by
@@ -191,6 +192,39 @@ isolation_prepare() {
   return 1
 }
 
+# Start (or restart) the IDP's API and worker in the background, logs in .netci-gate/aa/. The old ones
+# are stopped by PID, found by their own command line -- never `pkill -f`, whose pattern also matches
+# the shell running it.
+up() {
+  python3 -c '
+import os, signal
+me = {os.getpid(), os.getppid()}
+for pid in filter(str.isdigit, os.listdir("/proc")):
+    if int(pid) in me:
+        continue
+    try:
+        cmd = open(f"/proc/{pid}/cmdline", "rb").read().split(b"\0")
+    except OSError:
+        continue
+    line = b" ".join(cmd)
+    if cmd and cmd[0].endswith(b"python") and (b"--port 18100" in line or b"app.workflows.worker" in line):
+        os.kill(int(pid), signal.SIGTERM)
+'
+  sleep 3
+  nohup "$0" api > .netci-gate/aa/idp-api.log 2>&1 &
+  nohup "$0" worker > .netci-gate/aa/idp-worker.log 2>&1 &
+  local i
+  for i in $(seq 1 60); do
+    if curl -sf http://127.0.0.1:18100/readyz >/dev/null; then
+      echo "IDP API ready on :18100 (logs: .netci-gate/aa/idp-api.log, idp-worker.log)"
+      return 0
+    fi
+    sleep 2
+  done
+  echo "the IDP API did not become ready; see .netci-gate/aa/idp-api.log" >&2
+  return 1
+}
+
 case "${1:-}" in
   ci-prepare) ci_prepare ;;
   deploy-prepare) deploy_prepare ;;
@@ -199,5 +233,6 @@ case "${1:-}" in
   isolation-prepare) isolation_prepare ;;
   env) env_file ;;
   api|worker) run "$1" ;;
+  up) up ;;
   *) sed -n '2,10p' "$0"; exit 2 ;;
 esac

@@ -1,0 +1,385 @@
+{
+  "scenario": "aa-phase5",
+  "started": "2026-10-15T12:26:55+00:00",
+  "pod": {
+    "build": 73,
+    "owner": "r0",
+    "victim": "netci-lab-2",
+    "killedAtTick": 15,
+    "adoptedBy": "r1",
+    "adoptedAfterSeconds": 12.8,
+    "finishedAfterSeconds": 76.7,
+    "result": "SUCCESS",
+    "ticks": 90,
+    "missing": [],
+    "twice": [],
+    "hosts": [
+      "agent-0"
+    ],
+    "timeline": [
+      {
+        "t": 0.2,
+        "holder": "r0",
+        "building": true,
+        "result": null
+      },
+      {
+        "t": 1.4,
+        "holder": null,
+        "building": null,
+        "result": null
+      },
+      {
+        "t": 2.7,
+        "holder": null,
+        "building": null,
+        "result": null
+      },
+      {
+        "t": 3.9,
+        "holder": null,
+        "building": null,
+        "result": null
+      },
+      {
+        "t": 5.2,
+        "holder": null,
+        "building": null,
+        "result": null
+      },
+      {
+        "t": 6.4,
+        "holder": null,
+        "building": null,
+        "result": null
+      },
+      {
+        "t": 7.7,
+        "holder": null,
+        "building": null,
+        "result": null
+      },
+      {
+        "t": 9.0,
+        "holder": null,
+        "building": null,
+        "result": null
+      },
+      {
+        "t": 10.2,
+        "holder": null,
+        "building": null,
+        "result": null
+      },
+      {
+        "t": 11.5,
+        "holder": null,
+        "building": null,
+        "result": null
+      },
+      {
+        "t": 12.8,
+        "holder": "r1",
+        "building": true,
+        "result": null
+      },
+      {
+        "t": 14.0,
+        "holder": "r1",
+        "building": true,
+        "result": null
+      },
+      {
+        "t": 15.4,
+        "holder": "r1",
+        "building": true,
+        "result": null
+      },
+      {
+        "t": 16.6,
+        "holder": "r1",
+        "building": true,
+        "result": null
+      },
+      {
+        "t": 18.0,
+        "holder": "r1",
+        "building": true,
+        "result": null
+      },
+      {
+        "t": 19.2,
+        "holder": "r1",
+        "building": true,
+        "result": null
+      },
+      {
+        "t": 20.5,
+        "holder": "r1",
+        "building": true,
+        "result": null
+      },
+      {
+        "t": 21.7,
+        "holder": "r1",
+        "building": true,
+        "result": null
+      },
+      {
+        "t": 23.1,
+        "holder": "r1",
+        "building": true,
+        "result": null
+      },
+      {
+        "t": 24.4,
+        "holder": "r1",
+        "building": true,
+        "result": null
+      },
+      {
+        "t": 25.8,
+        "holder": "r1",
+        "building": true,
+        "result": null
+      },
+      {
+        "t": 27.1,
+        "holder": "r1",
+        "building": true,
+        "result": null
+      },
+      {
+        "t": 28.5,
+        "holder": "r1",
+        "building": true,
+        "result": null
+      },
+      {
+        "t": 29.8,
+        "holder": "r1",
+        "building": true,
+        "result": null
+      },
+      {
+        "t": 31.1,
+        "holder": "r1",
+        "building": true,
+        "result": null
+      },
+      {
+        "t": 32.4,
+        "holder": "r1",
+        "building": true,
+        "result": null
+      },
+      {
+        "t": 33.8,
+        "holder": "r1",
+        "building": true,
+        "result": null
+      },
+      {
+        "t": 35.1,
+        "holder": "r1",
+        "building": true,
+        "result": null
+      },
+      {
+        "t": 36.4,
+        "holder": "r1",
+        "building": true,
+        "result": null
+      },
+      {
+        "t": 37.8,
+        "holder": "r1",
+        "building": true,
+        "result": null
+      },
+      {
+        "t": 39.1,
+        "holder": "r1",
+        "building": true,
+        "result": null
+      },
+      {
+        "t": 40.5,
+        "holder": "r1",
+        "building": true,
+        "result": null
+      },
+      {
+        "t": 42.0,
+        "holder": "r1",
+        "building": true,
+        "result": null
+      },
+      {
+        "t": 43.3,
+        "holder": "r1",
+        "building": true,
+        "result": null
+      },
+      {
+        "t": 44.6,
+        "holder": "r1",
+        "building": true,
+        "result": null
+      },
+      {
+        "t": 45.9,
+        "holder": "r1",
+        "building": true,
+        "result": null
+      },
+      {
+        "t": 47.3,
+        "holder": "r1",
+        "building": true,
+        "result": null
+      },
+      {
+        "t": 48.6,
+        "holder": "r1",
+        "building": true,
+        "result": null
+      },
+      {
+        "t": 49.8,
+        "holder": "r1",
+        "building": true,
+        "result": null
+      },
+      {
+        "t": 51.2,
+        "holder": "r1",
+        "building": true,
+        "result": null
+      },
+      {
+        "t": 52.6,
+        "holder": "r1",
+        "building": true,
+        "result": null
+      },
+      {
+        "t": 54.1,
+        "holder": "r1",
+        "building": true,
+        "result": null
+      },
+      {
+        "t": 55.3,
+        "holder": "r1",
+        "building": true,
+        "result": null
+      },
+      {
+        "t": 56.7,
+        "holder": "r1",
+        "building": true,
+        "result": null
+      },
+      {
+        "t": 58.1,
+        "holder": "r1",
+        "building": true,
+        "result": null
+      },
+      {
+        "t": 59.5,
+        "holder": "r1",
+        "building": true,
+        "result": null
+      },
+      {
+        "t": 60.9,
+        "holder": "r1",
+        "building": true,
+        "result": null
+      },
+      {
+        "t": 62.2,
+        "holder": "r1",
+        "building": true,
+        "result": null
+      },
+      {
+        "t": 63.6,
+        "holder": "r1",
+        "building": true,
+        "result": null
+      },
+      {
+        "t": 64.8,
+        "holder": "r1",
+        "building": true,
+        "result": null
+      },
+      {
+        "t": 67.3,
+        "holder": "r1",
+        "building": true,
+        "result": null
+      },
+      {
+        "t": 68.6,
+        "holder": "r1",
+        "building": true,
+        "result": null
+      },
+      {
+        "t": 70.0,
+        "holder": "r1",
+        "building": true,
+        "result": null
+      },
+      {
+        "t": 71.3,
+        "holder": "r1",
+        "building": true,
+        "result": null
+      },
+      {
+        "t": 72.7,
+        "holder": "r1",
+        "building": true,
+        "result": null
+      },
+      {
+        "t": 74.0,
+        "holder": "r1",
+        "building": true,
+        "result": null
+      },
+      {
+        "t": 75.5,
+        "holder": "r1",
+        "building": true,
+        "result": null
+      },
+      {
+        "t": 76.7,
+        "holder": "r0",
+        "building": false,
+        "result": "SUCCESS"
+      }
+    ],
+    "killedAtEpoch": 1792067240.1,
+    "adoptionLogged": {
+      "by": "jenkins-1",
+      "afterSeconds": 12.0,
+      "line": "2026-10-15 12:27:32.111+0000 [id=63]\tINFO\ti.n.j.homesync.RunningBuilds#adopt: netCI homesync: adopted long #73 (building: true)"
+    },
+    "returned": {
+      "served": "r0",
+      "state": {
+        "_class": "org.jenkinsci.plugins.workflow.job.WorkflowRun",
+        "building": false,
+        "result": "SUCCESS"
+      },
+      "logMentionsResumingTwice": false
+    }
+  }
+}
